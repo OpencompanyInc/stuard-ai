@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
 import {
@@ -349,7 +350,150 @@ async function handleAgentDataUpdated(msg?: any): Promise<void> {
  * Called after local knowledge/memory changes to keep VM in sync.
  * All filesystem and tar work is async — no main-thread blocking.
  */
-type AgentDataSyncMode = 'full' | 'delta';
+type AgentDataSyncMode = 'full' | 'delta' | 'manifest';
+
+// ── Manifest diff (desktop→VM) ───────────────────────────────────────────────
+// Before a push we ask the VM which DB files it already has (name+size+sha256)
+// so we skip re-shipping byte-identical files — a warm restart shouldn't
+// re-upload an unchanged file_index.db. memory.db is never manifest-diffed:
+// it's a decrypted plaintext export the VM row-merges, so its bytes never match.
+const MANIFEST_GROUPS: string[][] = [
+    ['knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm'],
+    ['file_index.db', 'file_index.db-wal', 'file_index.db-shm'],
+    ['workflow.db', 'workflow.db-wal', 'workflow.db-shm'],
+];
+
+/** Stream-hash a file in 1 MB chunks (matches the VM's algorithm). */
+function fileSha256(filePath: string): string | null {
+    try {
+        const hash = createHash('sha256');
+        const fd = fs.openSync(filePath, 'r');
+        try {
+            const buf = Buffer.allocUnsafe(1 << 20);
+            let pos = 0;
+            let bytesRead = 0;
+            while ((bytesRead = fs.readSync(fd, buf, 0, buf.length, pos)) > 0) {
+                hash.update(buf.subarray(0, bytesRead));
+                pos += bytesRead;
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
+        return hash.digest('hex');
+    } catch {
+        return null;
+    }
+}
+
+interface VmAgentDataManifest {
+    files: Map<string, { size: number; sha256: string }>;
+    memoryPresent: boolean;
+}
+
+async function fetchVmAgentDataManifest(
+    token: string,
+    apiBase: string,
+): Promise<VmAgentDataManifest | null> {
+    try {
+        const resp = await fetch(`${apiBase}/v1/vm/relay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({
+                path: '/command',
+                method: 'POST',
+                body: { command: 'agent_data_manifest', args: {} },
+                timeoutMs: 30_000,
+            }),
+            signal: AbortSignal.timeout(35_000),
+        });
+        if (!resp.ok) return null; // includes 503 vm_starting → caller ships all
+        const data: any = await resp.json().catch(() => null);
+        // The relay wraps the VM's /command body in `result`; the command itself
+        // returns { ok, files, memoryPresent }.
+        const inner = data?.result?.result ?? data?.result;
+        const files = inner?.files;
+        if (!Array.isArray(files)) return null;
+        const map = new Map<string, { size: number; sha256: string }>();
+        for (const f of files) {
+            if (f && typeof f.name === 'string') {
+                map.set(f.name, { size: Number(f.size) || 0, sha256: String(f.sha256 || '') });
+            }
+        }
+        return { files: map, memoryPresent: inner?.memoryPresent === true };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Manifest diff result. `skip` = agent-data file names the VM already has
+ * byte-identical (so the push can omit them). `memoryPresent` = whether the VM
+ * holds a non-empty memory.db (drives full vs incremental memory export).
+ * Returns null when the manifest can't be fetched (VM unreachable / still
+ * booting) — callers then ship all files (a normal full).
+ */
+async function computeManifestSkipSet(
+    token: string,
+    apiBase: string,
+    agentDir: string,
+): Promise<{ skip: Set<string>; memoryPresent: boolean } | null> {
+    const manifest = await fetchVmAgentDataManifest(token, apiBase);
+    if (!manifest) return null;
+    const skip = new Set<string>();
+    for (const group of MANIFEST_GROUPS) {
+        let identical = true;
+        for (const name of group) {
+            const local = path.join(agentDir, name);
+            const localExists = fs.existsSync(local);
+            const vmEntry = manifest.files.get(name);
+            if (!localExists && !vmEntry) continue;                       // neither side has it
+            if (!localExists || !vmEntry) { identical = false; break; }   // one-sided → differs
+            const st = fs.statSync(local);
+            if (st.size !== vmEntry.size || fileSha256(local) !== vmEntry.sha256) {
+                identical = false;
+                break;
+            }
+        }
+        if (identical) for (const name of group) skip.add(name);
+    }
+    return { skip, memoryPresent: manifest.memoryPresent };
+}
+
+// ── Row-level memory sync cursor ─────────────────────────────────────────────
+// memory.db is exported as a decrypted plaintext copy the VM row-merges. Rather
+// than re-export/ship the whole DB every push, we ask the Python agent for only
+// the rows changed since this cursor (the newest content timestamp we last
+// confirmed synced). Persisted next to memory.db so it survives desktop
+// restarts. Reset/empty cursor → full export re-establishes the baseline.
+const MEMORY_CURSOR_FILE = '.memory-sync-cursor';
+// Force a full (non-incremental) memory export every Nth export as a safety
+// net: covers a silently-reset VM and any timestamp edge (e.g. a DST offset
+// flip) that a string-compared `since` could miss. ~5 min at the fast cadence.
+const MEMORY_FULL_EVERY = 20;
+let _memoryExportCount = 0;
+// Whether we've confirmed the current VM holds a full memory.db this session.
+// Incremental (partial) exports are only safe once a full baseline exists on
+// the VM — otherwise the VM would adopt a partial export as its whole history.
+// Reconciled from the manifest's memoryPresent and set after a full upload;
+// in-memory, so a desktop restart re-establishes a full baseline first.
+let _vmMemoryConfirmedPresent = false;
+
+function readMemorySyncCursor(agentDir: string): string | null {
+    try {
+        const raw = fs.readFileSync(path.join(agentDir, MEMORY_CURSOR_FILE), 'utf8').trim();
+        return raw || null;
+    } catch {
+        return null;
+    }
+}
+
+function writeMemorySyncCursor(agentDir: string, cursor: string): void {
+    try {
+        fs.writeFileSync(path.join(agentDir, MEMORY_CURSOR_FILE), cursor, 'utf8');
+    } catch (e: any) {
+        logger.warn(`[cloud-webhooks] could not persist memory sync cursor: ${e?.message}`);
+    }
+}
 
 function getChangedDesktopAgentDataFiles(agentDir: string): Set<string> {
     const filesToWatch = [
@@ -414,6 +558,20 @@ async function performDesktopAgentDataPushToVM(
         }
     }
 
+    // Manifest diff: when the VM is reachable, skip re-shipping DB files it
+    // already has byte-identical (esp. an unchanged file_index.db on a warm
+    // restart). null = couldn't reach the VM → ship everything (full).
+    const manifest = mode === 'manifest'
+        ? await computeManifestSkipSet(token, apiBase, agentDir)
+        : null;
+    const manifestSkip = manifest?.skip ?? null;
+    // Only force a full memory export off the manifest when we actually reached
+    // the VM and it reported no memory.db (fresh/reset). `undefined` = manifest
+    // not fetched (delta) or VM unreachable → don't force; trust the cursor.
+    const vmMemoryPresent: boolean | undefined = manifest ? manifest.memoryPresent : undefined;
+    // Manifest pushes are partial archives the VM merge-copies, like a delta.
+    const partialArchive = mode === 'delta' || mode === 'manifest';
+
     const tmpDir = app.getPath('temp');
     const stageDir = path.join(tmpDir, `agent-data-stage-${Date.now()}`);
     const stageAgentDir = path.join(stageDir, 'agent');
@@ -430,7 +588,9 @@ async function performDesktopAgentDataPushToVM(
         const entries = await fsp.readdir(agentDir, { withFileTypes: true });
         await Promise.all(entries.map(async (ent) => {
             if (!ent.isFile()) return;
+            if (ent.name === MEMORY_CURSOR_FILE) return; // desktop-local sync bookkeeping, never ship
             if (mode === 'delta' && !changedNames.has(ent.name)) return;
+            if (manifestSkip && manifestSkip.has(ent.name)) return; // VM already has identical copy
             if (MEMORY_DB_FILES.has(ent.name)) return;
             const src = path.join(agentDir, ent.name);
             const dest = path.join(stageAgentDir, ent.name);
@@ -445,8 +605,31 @@ async function performDesktopAgentDataPushToVM(
         // columns decrypted and tagged as plaintext. The VM reads these rows
         // directly without needing the desktop's device key.
         const exportPath = path.join(stageAgentDir, 'memory.db');
-        const shouldExportMemory = mode === 'full' || [...MEMORY_DB_FILES].some((name) => changedNames.has(name));
+        const shouldExportMemory = mode === 'full' || mode === 'manifest' || [...MEMORY_DB_FILES].some((name) => changedNames.has(name));
+
+        // Row-level decision: export only memory.db rows changed since the
+        // cursor, except when a full baseline must be (re)established — explicit
+        // full, no cursor yet, the periodic safety net, a deploy/start push the
+        // VM didn't confirm already holds memory.db, or a periodic push before
+        // the baseline is confirmed for this VM. A partial export into a VM with
+        // no baseline would be adopted as its whole history, so gate carefully.
+        const cursor = readMemorySyncCursor(agentDir);
+        if (mode === 'manifest') _vmMemoryConfirmedPresent = vmMemoryPresent === true;
+        const forceFullMemory =
+            mode === 'full'
+            || !cursor
+            || (_memoryExportCount % MEMORY_FULL_EVERY === 0)
+            || (mode === 'manifest' && vmMemoryPresent !== true)
+            || (mode === 'delta' && !_vmMemoryConfirmedPresent);
+        const memorySince = (shouldExportMemory && !forceFullMemory) ? cursor : null;
+
+        // Persisted/applied only after the upload succeeds, so a failed push
+        // re-syncs the same rows next time instead of skipping them.
+        let nextMemoryCursor: string | null = null;
+        let exportedFullMemory = false;
+
         if (shouldExportMemory) {
+            _memoryExportCount++;
             try {
                 const agentHttp = String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
                 const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
@@ -454,7 +637,9 @@ async function performDesktopAgentDataPushToVM(
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         tool: 'memory_export_plaintext',
-                        args: { output_path: exportPath },
+                        args: memorySince
+                            ? { output_path: exportPath, since: memorySince }
+                            : { output_path: exportPath },
                     }),
                     signal: AbortSignal.timeout(120_000),
                 });
@@ -469,7 +654,11 @@ async function performDesktopAgentDataPushToVM(
                         const src = path.join(agentDir, 'memory.db');
                         if (await pathExists(src)) await fsp.copyFile(src, exportPath);
                     } else {
-                        logger.info(`[cloud-webhooks] memory.db exported plaintext: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
+                        if (typeof result.max_updated_at === 'string' && result.max_updated_at) {
+                            nextMemoryCursor = result.max_updated_at;
+                        }
+                        exportedFullMemory = !memorySince;
+                        logger.info(`[cloud-webhooks] memory.db exported ${memorySince ? 'incremental' : 'full'}: ${result.bytes || '?'} bytes, ${result.conversations || 0} convs, ${result.messages || 0} msgs`);
                     }
                 }
                 // Force a fresh mtime so the VM's merge-copy treats it as newer
@@ -496,7 +685,11 @@ async function performDesktopAgentDataPushToVM(
 
         if (!urlResp.ok) return { ok: false, error: `agent_data_url_http_${urlResp.status}` };
         const urlData = await urlResp.json() as any;
-        const uploadUrl = mode === 'delta' ? (urlData.deltaUploadUrl || urlData.uploadUrl) : urlData.uploadUrl;
+        // Upload to the delta object only if one is available; otherwise fall
+        // back to the full object AND notify 'full' so the two stay consistent
+        // (a 'delta' notify against a full-object upload would desync the VM).
+        const useDelta = partialArchive && !!urlData.deltaUploadUrl;
+        const uploadUrl = useDelta ? urlData.deltaUploadUrl : urlData.uploadUrl;
         if (!uploadUrl) return { ok: false, error: 'agent_data_url_missing' };
 
         const uploadResp = await fetch(uploadUrl, {
@@ -530,7 +723,7 @@ async function performDesktopAgentDataPushToVM(
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({ mode }),
+                body: JSON.stringify({ mode: useDelta ? 'delta' : 'full' }),
                 signal: AbortSignal.timeout(15_000),
             }).catch((e: any) => {
                 logger.warn(`[cloud-webhooks] push-agent-data notify failed: ${e?.message}`);
@@ -547,6 +740,11 @@ async function performDesktopAgentDataPushToVM(
         }
 
         _lastPushSucceededAt = Date.now();
+        // Advance the row-level cursor only now that the export is safely in
+        // cloud storage. A successful full export means the VM will hold a
+        // complete memory.db, so subsequent pushes may go incremental.
+        if (nextMemoryCursor) writeMemorySyncCursor(agentDir, nextMemoryCursor);
+        if (exportedFullMemory) _vmMemoryConfirmedPresent = true;
         logger.info(`[cloud-webhooks] Desktop agent data ${mode} ${pushOutcome}`);
         return { ok: true, bytes: stats.size };
     } catch (e: any) {
@@ -561,7 +759,9 @@ async function performDesktopAgentDataPushToVM(
 export async function pushDesktopAgentDataToVM(opts: AgentDataPushOptions = {}): Promise<AgentDataPushResult> {
     let result: AgentDataPushResult = { ok: false, error: 'not_started' };
     await enqueueSync('desktop-agent-data-push', async () => {
-        result = await performDesktopAgentDataPushToVM('full', opts);
+        // 'manifest' = ship only DB files the VM doesn't already have identical
+        // (falls back to a full ship if the VM can't be reached yet).
+        result = await performDesktopAgentDataPushToVM('manifest', opts);
         if (result.ok && !result.skipped) snapshotDesktopMtimes();
     });
     return result;

@@ -28,7 +28,7 @@
  */
 
 import http from 'http';
-import { randomUUID, randomBytes } from 'crypto';
+import { randomUUID, randomBytes, createHash } from 'crypto';
 import { createHmac, timingSafeEqual } from 'crypto';
 import fs from 'fs';
 import { Readable } from 'stream';
@@ -442,6 +442,10 @@ async function handleCommand(command: string, args: any): Promise<any> {
       }
       return await syncAgentData(args);
     }
+
+    // Per-file content manifest so the desktop pushes only what differs.
+    case 'agent_data_manifest':
+      return agentDataManifest();
 
     // ── OAuth Token Storage ──────────────────────────────────────────────
     case 'store_oauth_tokens':
@@ -1300,6 +1304,63 @@ const DB_FILES_TO_WATCH = [
 const _lastSyncMtimes = new Map<string, number>();
 let _syncInFlight = false;
 
+// ── Agent-data manifest (for desktop→VM push diffing) ────────────────────────
+// The desktop fetches this before a push so it can ship ONLY the DB files whose
+// content the VM doesn't already have — instead of re-uploading the whole
+// archive on every start. memory.db is intentionally excluded: it's row-merged
+// from a decrypted plaintext export, so its bytes never match the desktop's
+// copy and it's reconciled via mergeMemoryDb / chat_sync instead.
+const MANIFEST_DB_FILES = [
+  'knowledge.db', 'knowledge.db-wal', 'knowledge.db-shm',
+  'file_index.db', 'file_index.db-wal', 'file_index.db-shm',
+  'workflow.db', 'workflow.db-wal', 'workflow.db-shm',
+];
+
+/** Stream-hash a file in 1 MB chunks so large DBs (file_index.db) don't OOM. */
+function fileSha256(filePath: string): string | null {
+  try {
+    const hash = createHash('sha256');
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(1 << 20);
+      let pos = 0;
+      let bytesRead = 0;
+      while ((bytesRead = fs.readSync(fd, buf, 0, buf.length, pos)) > 0) {
+        hash.update(buf.subarray(0, bytesRead));
+        pos += bytesRead;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    return hash.digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function agentDataManifest(): { ok: true; files: Array<{ name: string; size: number; sha256: string }>; memoryPresent: boolean } {
+  const files: Array<{ name: string; size: number; sha256: string }> = [];
+  for (const name of MANIFEST_DB_FILES) {
+    const filePath = `${AGENT_DATA_DIR}/${name}`;
+    try {
+      const st = fs.statSync(filePath);
+      if (!st.isFile()) continue;
+      const sha256 = fileSha256(filePath);
+      if (sha256) files.push({ name, size: st.size, sha256 });
+    } catch { /* file absent — omit */ }
+  }
+  // Whether the VM already holds a non-empty memory.db. The desktop uses this
+  // to force a full (non-incremental) memory export when the VM has nothing to
+  // merge into — a row-level `since` push would otherwise leave a fresh/reset
+  // VM missing all history older than the cursor.
+  let memoryPresent = false;
+  try {
+    const st = fs.statSync(`${AGENT_DATA_DIR}/memory.db`);
+    memoryPresent = st.isFile() && st.size > 0;
+  } catch { /* absent → false */ }
+  return { ok: true, files, memoryPresent };
+}
+
 type SqliteDb = Database.Database;
 type SqliteRow = Record<string, any>;
 
@@ -1317,6 +1378,23 @@ function tableExists(db: SqliteDb, table: string): boolean {
     .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table);
   return Boolean(row);
+}
+
+/**
+ * Create `table` on `dest` from the incoming copy's schema when `dest` doesn't
+ * have it yet. Needed for newer tables (memories, projects, journal_entries) so
+ * a VM whose memory.db predates them can still receive their rows instead of
+ * silently skipping the merge (mergeEntityTable no-ops when the dest table is
+ * absent because commonColumns returns []).
+ */
+function ensureTableExists(src: SqliteDb, dest: SqliteDb, table: string): void {
+  if (tableExists(dest, table) || !tableExists(src, table)) return;
+  const row = src
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as { sql?: string } | undefined;
+  if (row?.sql) {
+    try { dest.exec(row.sql); } catch { /* best-effort — merge will skip if it failed */ }
+  }
 }
 
 function getColumns(db: SqliteDb, table: string): string[] {
@@ -1438,6 +1516,9 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
       spaces: { inserted: 0, updated: 0, skipped: 0 },
       spaceItems: { inserted: 0, updated: 0, skipped: 0 },
       collections: { inserted: 0, updated: 0, skipped: 0 },
+      memories: { inserted: 0, updated: 0, skipped: 0 },
+      projects: { inserted: 0, updated: 0, skipped: 0 },
+      journal: { inserted: 0, updated: 0, skipped: 0 },
       links: 0,
     };
 
@@ -1493,6 +1574,17 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
       stats.spaces = mergeEntityTable(src!, dest!, 'spaces', 'id', ['name_enc', 'description_enc']);
       stats.spaceItems = mergeEntityTable(src!, dest!, 'space_items', 'id', ['title_enc', 'content_enc', 'metadata_enc']);
       stats.collections = mergeEntityTable(src!, dest!, 'collection_summaries', 'topic', [], 'updated_at');
+
+      // Project Mode tables — create on the dest first so a VM with an older
+      // memory.db (pre-memories/projects) still receives them. memories holds
+      // the user's atomic facts/notes; projects scope conversations; journal
+      // rows are timestamped project events (created_at is their only time col).
+      ensureTableExists(src!, dest!, 'projects');
+      ensureTableExists(src!, dest!, 'memories');
+      ensureTableExists(src!, dest!, 'journal_entries');
+      stats.projects = mergeEntityTable(src!, dest!, 'projects', 'id', ['name_enc', 'description_enc', 'goals_enc', 'instructions_enc', 'digest_enc']);
+      stats.memories = mergeEntityTable(src!, dest!, 'memories', 'id', ['title_enc', 'content_enc', 'metadata_enc', 'url_enc']);
+      stats.journal = mergeEntityTable(src!, dest!, 'journal_entries', 'id', ['title_enc', 'body_enc', 'source_ref_enc'], 'created_at');
 
       const linkColumns = commonColumns(src!, dest!, 'space_conversations');
       if (linkColumns.length > 0) {

@@ -108,7 +108,8 @@ export function buildExecutionGroupStep(
 function mapToolCallStatusToTrace(status: ToolCall['status'], parentStatus: TraceStatus): TraceStatus {
   if (status === 'error') return 'error';
   if (parentStatus === 'complete' || parentStatus === 'error') {
-    return status === 'error' ? 'error' : 'complete';
+    // `status` is already narrowed to non-'error' by the early return above.
+    return 'complete';
   }
   if (status === 'running') return 'active';
   if (status === 'called') return 'pending';

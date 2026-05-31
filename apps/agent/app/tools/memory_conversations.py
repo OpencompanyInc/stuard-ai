@@ -1397,9 +1397,20 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         output_path (str): Absolute path to write the plaintext copy to.
                            Any existing file at this path is replaced.
+        since (str, optional): ISO timestamp cursor. When provided, only rows
+                           changed at-or-after it are exported (row-level
+                           incremental sync): conversations with updated_at >=
+                           since plus their messages/segments/links, and
+                           collection_summaries / memories / projects / spaces /
+                           space_items by updated_at, journal_entries by
+                           created_at. The VM row-merges the partial export, so
+                           a smaller file syncs the same state.
 
     Returns:
-        { ok, output_path, conversations, messages, bytes }
+        { ok, output_path, conversations, messages, bytes, max_updated_at, mode }
+        `max_updated_at` is the newest content timestamp in the export; the
+        caller persists it as the next `since`. The newest row is always
+        included (its timestamp is >= any `since`), so this is exact.
     """
     import os as _os
     import shutil as _shutil
@@ -1412,20 +1423,60 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
     if not output_path or not isinstance(output_path, str):
         return {"ok": False, "error": "missing output_path"}
 
+    since = args.get("since")
+    if since is not None and not isinstance(since, str):
+        since = str(since)
+    if isinstance(since, str) and not since.strip():
+        since = None
+
     db = get_memory_db()
     crypto = db._crypto  # type: ignore[attr-defined]
     src_path = db._db_path  # type: ignore[attr-defined]
+
+    # Highest content timestamp across the tables we sync — the desktop's next
+    # incremental cursor. ISO strings compare chronologically, so a plain MAX()
+    # is correct.
+    def _max_updated_at(conn) -> Optional[str]:
+        best: Optional[str] = None
+        for table, col in (
+            ("conversations", "updated_at"),
+            ("conversation_segments", "updated_at"),
+            ("collection_summaries", "updated_at"),
+            ("memories", "updated_at"),
+            ("projects", "updated_at"),
+            ("spaces", "updated_at"),
+            ("space_items", "updated_at"),
+            ("journal_entries", "created_at"),
+        ):
+            try:
+                r = conn.execute(f"SELECT MAX({col}) FROM {table}").fetchone()
+                v = r[0] if r else None
+                if v and (best is None or str(v) > best):
+                    best = str(v)
+            except Exception:
+                continue
+        return best
 
     # Can't re-encode rows we can't decrypt. The desktop Python agent runs
     # with the device key so this should only fire in an operator-error case
     # (calling export from an already-plaintext runtime).
     if getattr(crypto, "plaintext_mode", False):
-        # Even so, just copy the DB — it's already plaintext-tagged.
+        # Even so, just copy the DB — it's already plaintext-tagged. This path
+        # can't do an incremental slice, so it always ships the whole file.
         try:
             _os.makedirs(_os.path.dirname(output_path) or ".", exist_ok=True)
             _shutil.copyfile(src_path, output_path)
             size = _os.path.getsize(output_path)
-            return {"ok": True, "output_path": output_path, "bytes": size, "mode": "copy"}
+            mx: Optional[str] = None
+            try:
+                _c = _sqlite3.connect(output_path)
+                try:
+                    mx = _max_updated_at(_c)
+                finally:
+                    _c.close()
+            except Exception:
+                pass
+            return {"ok": True, "output_path": output_path, "bytes": size, "mode": "copy", "max_updated_at": mx}
         except Exception as e:
             logger.exception("memory_export_plaintext copy failed")
             return {"ok": False, "error": str(e)}
@@ -1434,17 +1485,93 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
     # plaintext. This preserves all schema, indices, and non-content state.
     try:
         _os.makedirs(_os.path.dirname(output_path) or ".", exist_ok=True)
-        # Use SQLite's backup API so we get a consistent snapshot even if
-        # the desktop agent is mid-write.
-        src_conn = _sqlite3.connect(src_path)
+        # Drop any stale destination so a previous (possibly larger) export
+        # can't leave behind rows we didn't mean to ship this time.
         try:
-            dst_conn = _sqlite3.connect(output_path)
+            if _os.path.exists(output_path):
+                _os.unlink(output_path)
+        except Exception:
+            pass
+
+        if since is None:
+            # FULL: consistent snapshot of the whole DB via the backup API,
+            # even if the desktop agent is mid-write.
+            src_conn = _sqlite3.connect(src_path)
             try:
-                src_conn.backup(dst_conn)
+                dst_conn = _sqlite3.connect(output_path)
+                try:
+                    src_conn.backup(dst_conn)
+                finally:
+                    dst_conn.close()
             finally:
-                dst_conn.close()
-        finally:
-            src_conn.close()
+                src_conn.close()
+        else:
+            # INCREMENTAL: clone the schema, then copy only rows changed at/after
+            # `since`. The result is a normal (just smaller) memory.db the VM
+            # row-merges. FKs are off so child rows insert without ordering.
+            src_conn = _sqlite3.connect(src_path)
+            src_conn.row_factory = _sqlite3.Row
+            try:
+                dst_inc = _sqlite3.connect(output_path)
+                dst_inc.execute("PRAGMA foreign_keys=OFF")
+                try:
+                    schema = src_conn.execute(
+                        "SELECT sql FROM sqlite_master "
+                        "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+                    ).fetchall()
+                    for srow in schema:
+                        try:
+                            dst_inc.execute(srow[0])
+                        except Exception:
+                            pass
+
+                    def _copy_where(table: str, where_sql: str, params: tuple) -> int:
+                        cols = [r[1] for r in src_conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                        if not cols:
+                            return 0
+                        rows = src_conn.execute(
+                            f"SELECT * FROM {table} WHERE {where_sql}", params
+                        ).fetchall()
+                        if not rows:
+                            return 0
+                        collist = ", ".join(cols)
+                        placeholders = ", ".join(["?"] * len(cols))
+                        dst_inc.executemany(
+                            f"INSERT OR REPLACE INTO {table} ({collist}) VALUES ({placeholders})",
+                            [tuple(row[c] for c in cols) for row in rows],
+                        )
+                        return len(rows)
+
+                    # Changed conversations + every child row keyed off them.
+                    # add_message bumps conversations.updated_at, so a changed
+                    # conversation always carries its new messages.
+                    changed_conv_ids = [
+                        r[0] for r in src_conn.execute(
+                            "SELECT id FROM conversations WHERE updated_at >= ?", (since,)
+                        ).fetchall()
+                    ]
+                    _copy_where("conversations", "updated_at >= ?", (since,))
+                    for cid in changed_conv_ids:
+                        _copy_where("messages", "conversation_id = ?", (cid,))
+                        _copy_where("conversation_segments", "conversation_id = ?", (cid,))
+                        try:
+                            _copy_where("space_conversations", "conversation_id = ?", (cid,))
+                        except Exception:
+                            pass
+                    for _t in ("collection_summaries", "memories", "projects", "spaces", "space_items"):
+                        try:
+                            _copy_where(_t, "updated_at >= ?", (since,))
+                        except Exception:
+                            pass
+                    try:
+                        _copy_where("journal_entries", "created_at >= ?", (since,))
+                    except Exception:
+                        pass
+                    dst_inc.commit()
+                finally:
+                    dst_inc.close()
+            finally:
+                src_conn.close()
 
         # Re-encode encrypted columns in the destination copy.
         dst = _sqlite3.connect(output_path)
@@ -1495,6 +1622,22 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                 "id",
                 ["content_enc", "tool_calls_enc", "tool_results_enc", "attachments_enc", "metadata_enc"],
             )
+
+            # Project Mode content — memories (the user's atomic facts/notes),
+            # projects, and journal entries. These weren't recoded before, so
+            # they reached the VM unreadable (encrypted) or not at all.
+            try:
+                _recode("memories", "id", ["title_enc", "content_enc", "metadata_enc", "url_enc"])
+            except Exception:
+                pass
+            try:
+                _recode("projects", "id", ["name_enc", "description_enc", "goals_enc", "instructions_enc", "digest_enc"])
+            except Exception:
+                pass
+            try:
+                _recode("journal_entries", "id", ["title_enc", "body_enc", "source_ref_enc"])
+            except Exception:
+                pass
 
             # Synthesize titles for conversations that ended up with NULL or
             # missing title_enc after the recode (e.g. row was created before
@@ -1565,6 +1708,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                 pass
 
             dst.commit()
+            max_updated_at = _max_updated_at(dst)
         finally:
             dst.close()
 
@@ -1575,7 +1719,8 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             "bytes": size,
             "conversations": conv_count,
             "messages": msg_count,
-            "mode": "recoded",
+            "max_updated_at": max_updated_at,
+            "mode": "incremental" if since is not None else "recoded",
         }
     except Exception as e:
         logger.exception("memory_export_plaintext failed")

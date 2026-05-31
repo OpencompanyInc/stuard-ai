@@ -97,6 +97,42 @@ export function VmChat({
 
   const isRunning = engine?.status === 'running';
 
+  // ── VM agent readiness ──────────────────────────────────────────────────
+  // engine.status === 'running' only means the instance booted — the agent's
+  // HTTP server on :7400 may still be coming up while desktop data finishes
+  // syncing. When the platform can probe readiness, gate sending on it so a
+  // message isn't fired into a half-started VM, and surface a clear "finishing
+  // startup" state. Send unlocks the instant the agent answers. Fail-open after
+  // a grace window so a missing/slow status endpoint can never lock the input.
+  const hasReadyProbe = typeof platform.checkReady === 'function';
+  const [agentReady, setAgentReady] = useState(false);
+  const [readyNonce, setReadyNonce] = useState(0);
+  const vmReady = isRunning && (hasReadyProbe ? agentReady : true);
+  const vmStarting = isRunning && hasReadyProbe && !agentReady;
+
+  useEffect(() => {
+    if (!isRunning || !hasReadyProbe) {
+      setAgentReady(false);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+    const probe = async () => {
+      if (cancelled) return;
+      let ok = false;
+      try { ok = await platform.checkReady!(); } catch { ok = false; }
+      if (cancelled) return;
+      // Ready when the agent answers, or fail-open after 30s so the user is
+      // never permanently blocked (the send path handles a stray vm_starting).
+      if (ok || Date.now() - startedAt > 30_000) { setAgentReady(true); return; }
+      timer = setTimeout(probe, 2_500);
+    };
+    setAgentReady(false);
+    probe();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [isRunning, hasReadyProbe, platform, readyNonce]);
+
   const selectedModelMeta = useMemo(() => {
     if (selectedModel === 'auto') return null;
     return models.find((m) => m.id === selectedModel) || null;
@@ -262,7 +298,7 @@ export function VmChat({
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || loading || !isRunning) return;
+    if (!text || loading || !vmReady) return;
     if (pendingAttachments.some(a => a.uploading)) return;
 
     const readyAttachments = pendingAttachments.filter(a => !a.error && !a.uploading);
@@ -584,6 +620,9 @@ export function VmChat({
         // Non-streaming fallback (JSON response) — also covers fast-fail
         // statuses like 503 vm_starting, where `message` is user-friendly.
         const data = await resp.json() as any;
+        // If we raced the VM still booting, resume the readiness probe so the
+        // composer flips back to "starting" and re-enables the instant it's up.
+        if (data?.error === 'vm_starting') setReadyNonce((n) => n + 1);
         const replyText = String(data?.text || data?.result?.text || data?.message || data?.error || 'No response').trim();
         if (data?.conversationId) conversationIdRef.current = data.conversationId;
         setMessages((prev) => [
@@ -1053,7 +1092,7 @@ export function VmChat({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask, run, or build anything..."
+        placeholder={vmStarting ? 'Starting up your VM agent…' : 'Ask, run, or build anything...'}
         rows={1}
         className="w-full resize-none outline-none bg-transparent text-[13px] text-theme-fg placeholder:text-theme-muted/50 px-4 pt-3 pb-1 min-h-[38px] max-h-[120px] overflow-y-auto scrollbar-none disabled:opacity-60"
         style={{ scrollbarWidth: 'none' }}
@@ -1073,7 +1112,10 @@ export function VmChat({
           </button>
           {modelSelector}
           {historyButton}
-          <span className={clsx('h-1.5 w-1.5 rounded-full ml-1', loading ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
+          <span
+            className={clsx('h-1.5 w-1.5 rounded-full ml-1', (loading || vmStarting) ? 'bg-amber-500 animate-pulse' : 'bg-green-500')}
+            title={vmStarting ? 'VM agent is finishing startup…' : undefined}
+          />
           {messages.length > 0 && (
             <button type="button" onClick={handleClear} className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors ml-1" title="Clear">
               <Trash2 className="w-3 h-3" />
@@ -1094,10 +1136,10 @@ export function VmChat({
           <button
             type="button"
             onClick={sendMessage}
-            disabled={!input.trim() || loading || isUploadingAny}
+            disabled={!input.trim() || loading || isUploadingAny || !vmReady}
             className={clsx(
               'rounded-lg p-1.5 transition-colors',
-              input.trim() && !loading && !isUploadingAny
+              input.trim() && !loading && !isUploadingAny && vmReady
                 ? 'bg-primary text-primary-fg hover:opacity-90'
                 : 'text-theme-muted/30',
             )}
@@ -1116,7 +1158,7 @@ export function VmChat({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Type a message to the VM agent..."
+        placeholder={vmStarting ? 'Starting up your VM agent…' : 'Type a message to the VM agent...'}
         rows={1}
         className="w-full resize-none outline-none max-h-32 bg-theme-hover/40 rounded-xl px-4 py-2.5 text-sm text-theme-fg placeholder-theme-muted/50 overflow-y-auto scrollbar-none disabled:opacity-60"
         style={{ minHeight: '40px', scrollbarWidth: 'none' }}
@@ -1137,8 +1179,8 @@ export function VmChat({
           {modelSelector}
           {historyButton}
           <div className="dashboard-pill flex items-center gap-2 px-2.5 py-1.5 text-xs text-theme-muted">
-            <span className={clsx('h-2 w-2 rounded-full', loading ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
-            {loading ? (streamText ? 'Streaming' : 'Thinking') : 'Agent ready'}
+            <span className={clsx('h-2 w-2 rounded-full', (loading || vmStarting) ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
+            {loading ? (streamText ? 'Streaming' : 'Thinking') : vmStarting ? 'Starting up…' : 'Agent ready'}
           </div>
           {messages.length > 0 && (
             <button type="button" onClick={handleClear} className="dashboard-refresh-button inline-flex items-center gap-2 px-2.5 py-1.5 text-xs !rounded-xl">
@@ -1160,10 +1202,10 @@ export function VmChat({
           <button
             type="button"
             onClick={sendMessage}
-            disabled={!input.trim() || loading || isUploadingAny}
+            disabled={!input.trim() || loading || isUploadingAny || !vmReady}
             className={clsx(
               'inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm transition-colors',
-              input.trim() && !loading && !isUploadingAny ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
+              input.trim() && !loading && !isUploadingAny && vmReady ? 'bg-primary text-primary-fg hover:opacity-90' : 'bg-theme-hover/40 text-theme-muted/40',
             )}
             title={isUploadingAny ? 'Uploading attachments...' : 'Send'}
           >
@@ -1176,11 +1218,17 @@ export function VmChat({
   );
 
   if (!isRunning) {
+    const st = String(engine?.status || '').toLowerCase();
+    const starting = st === 'provisioning' || st === 'starting' || st === 'staging' || st === 'booting' || st === 'pending';
     return (
       <div className={clsx('flex flex-col items-center justify-center text-theme-muted/50 gap-3', className)}>
-        <WifiOff className="w-10 h-10" />
-        <p className="text-sm font-semibold">Engine is not running</p>
-        <p className="text-xs">Start your Cloud Engine to chat with the VM agent.</p>
+        {starting ? <Loader2 className="w-10 h-10 animate-spin" /> : <WifiOff className="w-10 h-10" />}
+        <p className="text-sm font-semibold">{starting ? 'Starting up your VM…' : 'Engine is not running'}</p>
+        <p className="text-xs">
+          {starting
+            ? 'Syncing your chats & memory and booting the agent — this takes a moment.'
+            : 'Start your Cloud Engine to chat with the VM agent.'}
+        </p>
       </div>
     );
   }
