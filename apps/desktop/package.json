@@ -183,7 +183,7 @@
       ]
     },
     "linux": {
-      "icon": "../website/src/app/icon.png",
+      "icon": "icons/icon-source.png",
       "target": [
         "AppImage"
       ],
