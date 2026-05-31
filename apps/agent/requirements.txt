@@ -14,8 +14,10 @@ pyarrow>=21.0.0
 numpy>=1.26.0
 sounddevice
 soundfile
-# WASAPI loopback for system audio capture (Windows)
-PyAudioWPatch>=0.0.7  # Temporarily disabled - not compatible with Python 3.14 yet
+# WASAPI loopback for system audio capture — Windows only (import is guarded in
+# screen_capture.py). The marker keeps `pip install -r requirements.txt` from
+# failing on macOS/Linux, where this package has no distribution.
+PyAudioWPatch>=0.0.7 ; sys_platform == "win32"
 # Audio/Video muxing (bundles FFmpeg libs, no system install needed)
 av>=12.0.0
 pytest==8.3.4
