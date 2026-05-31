@@ -71,6 +71,8 @@ export interface CloudClient {
 
   vmRelay(options: VmRelayOptions): Promise<CloudJsonResponse>;
   sendVmCommand(command: string, args?: any, timeoutMs?: number): Promise<CloudJsonResponse>;
+  /** Quick reachability check of the user's VM agent (GET /v1/vm/status). */
+  getVMStatus(): Promise<CloudJsonResponse & { reachable?: boolean; agentVersion?: string | null; uptime?: number | null }>;
 
   getCloudVmIntegrations(): Promise<CloudJsonResponse>;
   getCloudSyncPreferences(): Promise<CloudJsonResponse>;
@@ -261,6 +263,7 @@ export function createCloudClient(options: {
     getCloudConversations: (limit = 30) => api(`/v1/memory/conversations?limit=${limit}&status=active`),
     getCloudConversationMessages: (conversationId, limit = 100) =>
       api(`/v1/memory/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`),
+    getVMStatus: () => api('/v1/vm/status', { timeoutMs: 8_000 }),
     sendVmToolResult: async (toolId, result) => {
       const token = await getAccessToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };

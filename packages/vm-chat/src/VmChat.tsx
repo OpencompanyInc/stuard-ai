@@ -540,9 +540,29 @@ export function VmChat({
                 }
                 break;
               case 'final': {
-                const finalText = event.text || event.data?.text || accText;
+                // The VM sends its answer as { type:'final', ok, result:{ text } }
+                // (vm-agent.ts spreads `...result`), so the text can live at
+                // event.result.text / event.result.result.text — not just
+                // event.text/event.data.text. Reading only the latter showed a
+                // blank "No response" whenever the answer arrived in the final
+                // frame instead of as streamed deltas.
+                const finalText = event.text
+                  || event.data?.text
+                  || event.result?.text
+                  || event.result?.result?.text
+                  || accText;
                 if (finalText) accText = finalText;
                 if (event.conversationId) conversationIdRef.current = event.conversationId;
+                break;
+              }
+              case 'error': {
+                // A streamed error (vm-agent.ts writes { type:'error', error })
+                // was previously ignored, so the turn committed a bare
+                // "No response". Surface it, keeping any text already streamed.
+                const errText = String(
+                  event.error || event.data?.error || event.message || 'The VM agent hit an error.',
+                ).trim();
+                if (!accText) accText = `⚠️ ${errText}`;
                 break;
               }
             }
@@ -561,9 +581,10 @@ export function VmChat({
           },
         ]);
       } else {
-        // Non-streaming fallback (JSON response)
+        // Non-streaming fallback (JSON response) — also covers fast-fail
+        // statuses like 503 vm_starting, where `message` is user-friendly.
         const data = await resp.json() as any;
-        const replyText = String(data?.text || data?.result?.text || data?.error || 'No response').trim();
+        const replyText = String(data?.text || data?.result?.text || data?.message || data?.error || 'No response').trim();
         if (data?.conversationId) conversationIdRef.current = data.conversationId;
         setMessages((prev) => [
           ...prev,

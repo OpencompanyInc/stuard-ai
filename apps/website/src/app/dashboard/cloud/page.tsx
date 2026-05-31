@@ -59,6 +59,20 @@ export default function CloudDashboardPage() {
     return () => abortRef.current?.abort();
   }, []);
 
+  const isVmWorkspace =
+    engine?.status === 'running' &&
+    engine?.healthStatus !== 'unreachable' &&
+    engine?.healthStatus !== 'unknown';
+
+  useEffect(() => {
+    if (isVmWorkspace) {
+      document.body.classList.add('dashboard-cloud-workspace');
+    } else {
+      document.body.classList.remove('dashboard-cloud-workspace');
+    }
+    return () => document.body.classList.remove('dashboard-cloud-workspace');
+  }, [isVmWorkspace]);
+
   // Poll status — faster during transitional states, slower when stable
   useEffect(() => {
     if (authLoading || !user) return;
@@ -259,10 +273,10 @@ export default function CloudDashboardPage() {
     );
   }
 
-  // When engine is running + healthy → full-bleed IDE (breaks out of max-w wrapper)
-  if (engine.status === 'running') {
+  // When engine is running + healthy → VM workspace (fills dashboard main pane, like desktop)
+  if (isVmWorkspace) {
     return (
-      <div className="fixed inset-0 lg:left-56" style={{ top: '2.5rem' }}>
+      <div className="flex flex-1 min-h-0 h-full">
         <CloudIDELayout engine={engine} onRefresh={loadStatus} />
       </div>
     );

@@ -28,7 +28,10 @@ import {
   type CloudRuntimeView,
   type CloudRuntimeMode,
 } from './shell/constants';
-import { CloudRuntimeActivityBar } from './shell/CloudRuntimeActivityBar';
+import {
+  CloudRuntimeActivityBar,
+  type CloudRuntimeActivityBarVariant,
+} from './shell/CloudRuntimeActivityBar';
 
 export type { CloudRuntimeView, CloudRuntimeMode } from './shell/constants';
 export type SyncState = 'synced' | 'out_of_sync' | 'syncing' | 'unknown';
@@ -75,6 +78,8 @@ interface CloudRuntimeWorkspaceProps {
   serveUrlBuilder?: ServeUrlBuilder | null;
   /** Mints a localhost-port preview session in the VM (Next.js, Vite, etc.). */
   previewUrlBuilder?: PreviewUrlBuilder | null;
+  /** Activity bar styling — website hosts should use `desktop` to match the Electron dashboard. */
+  activityBarVariant?: CloudRuntimeActivityBarVariant;
 }
 
 export function CloudRuntimeWorkspace(props: CloudRuntimeWorkspaceProps) {
@@ -100,6 +105,7 @@ function CloudRuntimeWorkspaceInner({
   explorer,
   terminal,
   views,
+  activityBarVariant = 'desktop',
 }: CloudRuntimeWorkspaceProps) {
   const [mode, setModeState] = useState<CloudRuntimeMode>(() => {
     if (typeof window === 'undefined') return 'normal';
@@ -187,6 +193,7 @@ function CloudRuntimeWorkspaceInner({
         explorerOpen={explorerOpen}
         terminalOpen={terminalOpen}
         engineStatus={engine.status}
+        variant={activityBarVariant}
         onActivate={(item) => {
           if (item.toggle === 'explorer') { setExplorerOpen(v => !v); return; }
           if (item.toggle === 'terminal') { setTerminalOpen(v => !v); return; }

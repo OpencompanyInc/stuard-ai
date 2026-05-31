@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { clsx } from 'clsx';
+import { Cpu, HardDrive, Loader2, MemoryStick, Wifi } from 'lucide-react';
 import { getMetricsHistory } from '@/lib/cloudApi';
 
 interface CloudMonitoringProps {
@@ -24,6 +26,24 @@ const TIME_RANGES = [
   { label: '24h', hours: 24 },
   { label: '7d', hours: 168 },
 ] as const;
+
+function fmt(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1073741824).toFixed(1)} GB`;
+}
+
+function ProgressBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-theme-hover/50">
+      <div
+        className={clsx('h-full rounded-full transition-all duration-500', color)}
+        style={{ width: `${Math.min(pct, 100)}%` }}
+      />
+    </div>
+  );
+}
 
 export function CloudMonitoring({ engine }: CloudMonitoringProps) {
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
@@ -54,7 +74,6 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
     return () => { abortRef.current?.abort(); };
   }, [engine.status, range, load]);
 
-  // Auto-refresh every 60s
   useEffect(() => {
     if (engine.status !== 'running') return;
     const iv = setInterval(() => load(range), 60_000);
@@ -64,130 +83,171 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
   if (engine.status !== 'running') {
     const isBooting = engine.status === 'provisioning' || engine.status === 'starting';
     return (
-      <div className="flex flex-col items-center justify-center h-64 bg-gray-50 rounded-2xl border border-gray-200 gap-3">
+      <div className="dashboard-card flex h-64 flex-col items-center justify-center gap-3 p-8 text-center">
         {isBooting ? (
           <>
-            <svg className="w-6 h-6 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
-              <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            </svg>
-            <p className="text-gray-600 font-medium text-sm">Your engine is starting up...</p>
-            <p className="text-gray-400 text-xs">Metrics will appear once the VM is fully ready. This may take 1-2 minutes.</p>
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <p className="text-sm font-medium text-theme-fg">Your engine is starting up...</p>
+            <p className="text-xs text-theme-muted">
+              Metrics will appear once the VM is fully ready. This may take 1-2 minutes.
+            </p>
           </>
         ) : (
-          <p className="text-gray-500">Start your engine to view monitoring data.</p>
+          <p className="text-sm text-theme-muted">Start your engine to view monitoring data.</p>
         )}
       </div>
     );
   }
 
   const latest = metrics.length > 0 ? metrics[metrics.length - 1] : null;
-
-  const cpuPct = latest ? latest.cpu.toFixed(1) : '—';
-  const ramPct = latest && latest.ram_total > 0
-    ? ((latest.ram_used / latest.ram_total) * 100).toFixed(1)
-    : '—';
-  const diskPct = latest && latest.disk_total > 0
-    ? ((latest.disk_used / latest.disk_total) * 100).toFixed(1)
-    : '—';
-  const netRx = latest ? formatBytes(latest.net_rx) : '—';
-  const netTx = latest ? formatBytes(latest.net_tx) : '—';
+  const ramPct = latest && latest.ram_total > 0 ? (latest.ram_used / latest.ram_total) * 100 : 0;
+  const diskPct = latest && latest.disk_total > 0 ? (latest.disk_used / latest.disk_total) * 100 : 0;
 
   return (
-    <div className="space-y-6">
-      {/* Time range selector */}
-      <div className="flex gap-2">
-        {TIME_RANGES.map(r => (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Resource monitoring</h2>
+        <p className="mt-1 text-sm text-theme-muted">Live CPU, memory, disk, and network for your cloud engine.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {TIME_RANGES.map((r) => (
           <button
             key={r.hours}
+            type="button"
             onClick={() => setRange(r.hours)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+            className={clsx(
+              'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
               range === r.hours
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+                ? 'bg-primary/15 text-primary'
+                : 'bg-theme-hover/60 text-theme-muted hover:text-theme-fg',
+            )}
           >
             {r.label}
           </button>
         ))}
       </div>
 
-      {/* Current stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="CPU" value={`${cpuPct}%`} color="blue" />
-        <StatCard label="RAM" value={`${ramPct}%`} sub={latest ? `${formatBytes(latest.ram_used)} / ${formatBytes(latest.ram_total)}` : ''} color="purple" />
-        <StatCard label="Disk" value={`${diskPct}%`} sub={latest ? `${formatBytes(latest.disk_used)} / ${formatBytes(latest.disk_total)}` : ''} color="amber" />
-        <StatCard label="Network" value={`↓${netRx}`} sub={`↑${netTx}`} color="green" />
-      </div>
+      {latest ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <WorkspaceMetricCard
+            icon={Cpu}
+            label="CPU Load"
+            value={`${latest.cpu.toFixed(1)}%`}
+            detail="Processor usage"
+            pct={latest.cpu}
+            color="bg-blue-500"
+            iconColor="text-blue-400"
+          />
+          <WorkspaceMetricCard
+            icon={MemoryStick}
+            label="Memory"
+            value={`${fmt(latest.ram_used)} / ${fmt(latest.ram_total)}`}
+            detail={`${ramPct.toFixed(0)}% allocated`}
+            pct={ramPct}
+            color="bg-violet-500"
+            iconColor="text-violet-400"
+          />
+          <WorkspaceMetricCard
+            icon={HardDrive}
+            label="Storage"
+            value={`${fmt(latest.disk_used)} / ${fmt(latest.disk_total)}`}
+            detail={`${diskPct.toFixed(0)}% used`}
+            pct={diskPct}
+            color="bg-amber-500"
+            iconColor="text-amber-400"
+          />
+          <WorkspaceMetricCard
+            icon={Wifi}
+            label="Network"
+            value={`↓ ${fmt(latest.net_rx)}`}
+            detail={`↑ ${fmt(latest.net_tx)}`}
+            pct={0}
+            color="bg-emerald-500"
+            iconColor="text-emerald-400"
+            hideBar
+          />
+        </div>
+      ) : null}
 
-      {/* Mini charts */}
       {loading && metrics.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <svg className="w-5 h-5 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
-            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-          </svg>
-          <p className="text-gray-500 text-sm">Collecting metrics...</p>
+        <div className="dashboard-card flex flex-col items-center gap-2 py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          <p className="text-sm text-theme-muted">Collecting metrics...</p>
         </div>
       ) : metrics.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <p className="text-gray-500 text-sm">No metrics data available yet.</p>
-          <p className="text-gray-400 text-xs">Metrics typically appear within a few minutes after your VM starts running.</p>
+        <div className="dashboard-card py-12 text-center">
+          <p className="text-sm text-theme-muted">No metrics data available yet.</p>
+          <p className="mt-1 text-xs text-theme-muted/80">
+            Metrics typically appear within a few minutes after your VM starts running.
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <MiniChart title="CPU %" data={metrics} extract={(m) => m.cpu} color="#3b82f6" max={100} />
           <MiniChart
             title="RAM %"
             data={metrics}
-            extract={(m) => m.ram_total > 0 ? (m.ram_used / m.ram_total) * 100 : 0}
+            extract={(m) => (m.ram_total > 0 ? (m.ram_used / m.ram_total) * 100 : 0)}
             color="#8b5cf6"
             max={100}
           />
           <MiniChart
             title="Disk %"
             data={metrics}
-            extract={(m) => m.disk_total > 0 ? (m.disk_used / m.disk_total) * 100 : 0}
+            extract={(m) => (m.disk_total > 0 ? (m.disk_used / m.disk_total) * 100 : 0)}
             color="#f59e0b"
             max={100}
           />
-          <MiniChart
-            title="Network RX (bytes/s)"
-            data={metrics}
-            extract={(m) => m.net_rx}
-            color="#10b981"
-          />
+          <MiniChart title="Network RX (bytes/s)" data={metrics} extract={(m) => m.net_rx} color="#10b981" />
         </div>
       )}
     </div>
   );
 }
 
-function StatCard({
-  label, value, sub, color,
+function WorkspaceMetricCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  pct,
+  color,
+  iconColor,
+  hideBar,
 }: {
-  label: string; value: string; sub?: string; color: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  detail: string;
+  pct: number;
+  color: string;
+  iconColor: string;
+  hideBar?: boolean;
 }) {
-  const colorClasses: Record<string, string> = {
-    blue: 'border-blue-200 bg-blue-50',
-    purple: 'border-purple-200 bg-purple-50',
-    amber: 'border-amber-200 bg-amber-50',
-    green: 'border-green-200 bg-green-50',
-  };
   return (
-    <div className={`rounded-xl border p-4 ${colorClasses[color] || 'border-gray-200 bg-gray-50'}`}>
-      <div className="text-xs text-gray-500 font-medium">{label}</div>
-      <div className="text-xl font-bold mt-1">{value}</div>
-      {sub && <div className="text-xs text-gray-500 mt-0.5">{sub}</div>}
+    <div className="dashboard-card space-y-4 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-theme-muted">{label}</div>
+          <div className="mt-2 text-xl font-semibold text-theme-fg">{value}</div>
+          <div className="mt-1 text-xs text-theme-muted">{detail}</div>
+        </div>
+        <div className="rounded-xl border border-theme/10 bg-theme-card/40 p-2.5">
+          <Icon className={clsx('h-4 w-4', iconColor)} />
+        </div>
+      </div>
+      {!hideBar && <ProgressBar pct={pct} color={color} />}
     </div>
   );
 }
 
-/**
- * Lightweight SVG sparkline chart — no external dependency needed.
- */
 function MiniChart({
-  title, data, extract, color, max,
+  title,
+  data,
+  extract,
+  color,
+  max,
 }: {
   title: string;
   data: MetricPoint[];
@@ -208,19 +268,12 @@ function MiniChart({
   const areaPoints = `0,${H} ${polyline} ${W},${H}`;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4">
-      <div className="text-xs text-gray-500 font-medium mb-2">{title}</div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-24">
-        <polygon points={areaPoints} fill={color} fillOpacity={0.1} />
+    <div className="dashboard-card p-4">
+      <div className="mb-2 text-xs font-medium text-theme-muted">{title}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-24 w-full">
+        <polygon points={areaPoints} fill={color} fillOpacity={0.12} />
         <polyline points={polyline} fill="none" stroke={color} strokeWidth={2} />
       </svg>
     </div>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

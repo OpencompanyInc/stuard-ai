@@ -97,7 +97,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
 
     return (
-        <div className="min-h-screen bg-[#0A0A0A] text-white">
+        <div className="dashboard-shell-layout min-h-screen bg-[#0A0A0A] text-white">
             {/* Mobile Top Bar */}
             <div className="lg:hidden sticky top-0 z-40 bg-[#0A0A0A]/95 backdrop-blur border-b border-neutral-800 h-14 flex items-center justify-between px-4">
                 <Link href="/" className="flex items-center gap-2">
@@ -124,7 +124,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             )}
 
             {/* Desktop layout: sticky sidebar + main */}
-            <div className="lg:flex lg:items-start lg:gap-3 lg:p-3">
+            <div className="dashboard-shell-row lg:flex lg:items-start lg:gap-3 lg:p-3 flex-1 min-h-0">
                 {/* Sticky Sidebar (uses sticky so it works inside the motion.div containing block) */}
                 <aside className="hidden lg:block w-[220px] flex-shrink-0 sticky top-3 self-start" style={{ height: 'calc(100vh - 1.5rem)' }}>
                     <div className="dash-sidebar h-full overflow-hidden flex flex-col">
@@ -133,9 +133,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </aside>
 
                 {/* Main Content */}
-                <main className="flex-1 min-w-0">
-                    {/* Top bar (page title + user) */}
-                    <div className="flex items-center justify-between px-3 lg:px-1 h-10 mb-1 lg:mb-2">
+                <main className="flex-1 min-w-0 flex flex-col min-h-0">
+                    {/* Top bar (page title + user) — hidden while VM workspace is active */}
+                    <div className="dashboard-main-chrome flex items-center justify-between px-3 lg:px-1 h-10 mb-1 lg:mb-2 shrink-0">
                         <p className="text-[13px] text-neutral-400">{activeItem?.name ?? 'Overview'}</p>
                         <div className="flex items-center gap-2 rounded-full bg-neutral-900/70 border border-neutral-800 pl-1 pr-2.5 py-0.5">
                             <div className="h-6 w-6 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 flex items-center justify-center text-[11px] font-semibold text-neutral-900">
@@ -153,7 +153,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         </div>
                     </div>
 
-                    <div className="px-3 lg:px-1 pb-6">
+                    <div className="dashboard-main-content flex-1 min-h-0 px-3 lg:px-1 pb-6">
                         {children}
                     </div>
                 </main>

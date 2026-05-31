@@ -61,6 +61,14 @@ export interface IVmChatPlatform {
     limit?: number,
   ): Promise<{ messages: ChatMessage[]; error?: string }>;
   getDisplayName?(): Promise<string>;
+  /**
+   * Optional: returns true once the VM agent is actually reachable (its HTTP
+   * server on :7400 is answering), not merely that the engine reports
+   * "running". When provided, VmChat waits for this before enabling send, so
+   * the user can't fire a message into a VM that's still booting. When omitted,
+   * VmChat treats engine.status === 'running' as ready (legacy behavior).
+   */
+  checkReady?(): Promise<boolean>;
 }
 
 export interface VmChatProps {

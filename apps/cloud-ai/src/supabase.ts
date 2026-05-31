@@ -133,6 +133,30 @@ const ACCOUNT_COLS = [
   'key_version',
 ].join(', ');
 
+// A token that won't decrypt means TOKEN_ENCRYPTION_PEPPER no longer matches
+// the value these rows were encrypted with (e.g. the secret rotated, or a
+// backfill ran with a different pepper). That state doesn't change between
+// reads, so logging it on every poll (calendar refreshes every ~30s) just
+// floods the logs. Warn once per account/field with an actionable message and
+// suppress the rest until the process restarts.
+const _decryptWarned = new Set<string>();
+function warnDecryptFailure(
+  provider: string,
+  profileLabel: string,
+  field: 'access_token' | 'refresh_token',
+  err: any,
+): void {
+  const key = `${provider}/${profileLabel}/${field}`;
+  if (_decryptWarned.has(key)) return;
+  _decryptWarned.add(key);
+  console.warn(
+    `[supabase] ${field} for ${provider}/${profileLabel} is undecryptable with the current ` +
+    `TOKEN_ENCRYPTION_PEPPER (${err?.message || err}). The pepper no longer matches the value ` +
+    `these tokens were encrypted with — pin the deploy to the original secret version, or have ` +
+    `the user reconnect ${provider}. Suppressing further warnings for this account until restart.`,
+  );
+}
+
 function decryptRow(row: ExternalAccountRow): ExternalAccount {
   const keyVersion = row.key_version ?? 1;
   let accessToken: string | null = null;
@@ -145,7 +169,7 @@ function decryptRow(row: ExternalAccountRow): ExternalAccount {
         key_version: keyVersion,
       });
     } catch (e: any) {
-      console.error(`[supabase] decrypt access_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
+      warnDecryptFailure(row.provider, row.profile_label, 'access_token', e);
     }
   }
 
@@ -159,7 +183,7 @@ function decryptRow(row: ExternalAccountRow): ExternalAccount {
         key_version: keyVersion,
       });
     } catch (e: any) {
-      console.error(`[supabase] decrypt refresh_token failed for ${row.provider}/${row.profile_label}:`, e?.message || e);
+      warnDecryptFailure(row.provider, row.profile_label, 'refresh_token', e);
     }
   }
 

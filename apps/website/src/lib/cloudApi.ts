@@ -93,6 +93,7 @@ export const deleteSnapshot = cloudClient.deleteSnapshot;
 export const getComputeUsage = cloudClient.getComputeUsage;
 export const sendVMAgentChat = cloudClient.sendVMAgentChat;
 export const openVMAgentChatStream = cloudClient.openVMAgentChatStream;
+export const getVMStatus = cloudClient.getVMStatus;
 export const getCloudConversations = cloudClient.getCloudConversations;
 export const getCloudConversationMessages = cloudClient.getCloudConversationMessages;
 export const sendVmToolResult = cloudClient.sendVmToolResult;

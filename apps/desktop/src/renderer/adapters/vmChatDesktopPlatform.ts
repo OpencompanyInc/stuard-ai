@@ -47,6 +47,15 @@ export function createDesktopVmChatPlatform(client: CloudClient): IVmChatPlatfor
 
     uploadFileToVm: (targetPath, file) => client.uploadFileToVm(targetPath, file),
 
+    async checkReady() {
+      try {
+        const res = await client.getVMStatus();
+        return !!(res?.ok && (res as { reachable?: boolean }).reachable);
+      } catch {
+        return false;
+      }
+    },
+
     openChatStream: (options) => client.openVMAgentChatStream(options),
 
     async sendToolResult(toolId, result) {

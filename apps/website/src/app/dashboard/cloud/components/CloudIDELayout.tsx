@@ -91,8 +91,12 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             <div className="grid grid-cols-2 gap-3">
               <StatusPillSmall
                 label="AI Agent"
-                connected={engine?.health_status === 'healthy'}
-                detail={engine?.health_status === 'healthy' ? 'Connected and ready' : 'Not connected'}
+                connected={(engine as any)?.health_status === 'healthy' || (engine as any)?.healthStatus === 'healthy'}
+                detail={
+                  (engine as any)?.health_status === 'healthy' || (engine as any)?.healthStatus === 'healthy'
+                    ? 'Connected and ready'
+                    : 'Not connected'
+                }
               />
               <StatusPillSmall
                 label="Heartbeat"

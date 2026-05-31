@@ -20,7 +20,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken } from '../supabase';
-import { resolveVMBaseUrl, resolveVMSecret, pingVMAgent, resolveVMAddress, VM_AGENT_PORT } from '../services/vm-command';
+import { resolveVMBaseUrl, resolveVMSecret, pingVMAgent, resolveVMAddress, isVMAgentReachableCached, VM_AGENT_PORT } from '../services/vm-command';
 import { mintVMToken } from '../services/vm-tokens';
 
 // ── Security: allowed VM agent paths (strict allowlist) ─────────────────────
@@ -130,6 +130,10 @@ function getCorsOrigin(req: IncomingMessage): string {
 }
 
 const MAX_RELAY_BODY_BYTES = 5 * 1024 * 1024; // 5 MB max relay body
+
+// How long clients should wait before retrying a relay that fast-failed because
+// the VM agent is still booting (matches the negative-health cache window).
+const HEALTH_FAIL_RETRY_MS = 3_000;
 
 function json(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage) {
   const headers: Record<string, string> = {
@@ -263,6 +267,22 @@ export async function handleVMRelayRoutes(
     if (!base) {
       json(res, 502, { error: 'vm_not_reachable' }, req);
       return true;
+    }
+
+    // ── Fast-fail while the VM agent is still booting ──
+    // The engine can be "running"/"starting" before the agent's HTTP server on
+    // :7400 is up. Without this, the forward below hangs until `timeoutMs`
+    // (30s–180s) and returns a slow 504 — and each hung relay holds a client
+    // connection open, starving the connection pool (the chat SSE then shows
+    // "no response" until the VM finishes booting). The cached probe lets us
+    // return immediately so the client can back off and retry. /health itself
+    // is always allowed through so status checks still work during boot.
+    if (vmPath !== '/health') {
+      const reachable = await isVMAgentReachableCached(user.userId);
+      if (!reachable) {
+        json(res, 503, { error: 'vm_starting', retryAfterMs: HEALTH_FAIL_RETRY_MS }, req);
+        return true;
+      }
     }
 
     const url = `${base}${vmPath}`;

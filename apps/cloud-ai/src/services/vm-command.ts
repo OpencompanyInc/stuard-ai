@@ -39,6 +39,48 @@ const IP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 const secretCache = new Map<string, { secret: string; ts: number }>();
 const SECRET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
 
+// ── VM agent reachability cache ─────────────────────────────────────────────
+// During VM startup the instance is "running"/"starting" but the agent's HTTP
+// server on :7400 isn't answering yet. Without a gate, every relay/command
+// fetch hangs until its (multi-second) timeout and returns a slow 504 — and
+// because each holds an HTTP connection to cloud-ai open the whole time, a
+// burst of startup polls (status/permissions/bots/conversations) saturates the
+// client's per-host connection pool and starves the chat SSE ("no response,
+// then works later"). A short cached health probe lets callers fast-fail.
+//
+// Positive results are trusted briefly (steady-state calls skip the probe);
+// negative results are cached even more briefly so a boot-time pile-up backs
+// off instead of each request re-probing a dead port.
+const healthCache = new Map<string, { ok: boolean; ts: number }>();
+const HEALTH_OK_TTL_MS = 10_000;  // trust a healthy agent for 10s
+const HEALTH_FAIL_TTL_MS = 3_000; // back off doomed probes for 3s
+const HEALTH_PROBE_TIMEOUT_MS = 2_500;
+
+/**
+ * Returns true when the user's VM agent is answering on :7400, using a short
+ * cache so we neither re-probe on every call nor stampede a booting VM. Lets
+ * relay/command callers return a fast `vm_starting` instead of a slow timeout.
+ */
+export async function isVMAgentReachableCached(userId: string): Promise<boolean> {
+  if (DEV_VM_URL) return true; // dev tunnel is assumed up
+
+  const now = Date.now();
+  const cached = healthCache.get(userId);
+  if (cached) {
+    const ttl = cached.ok ? HEALTH_OK_TTL_MS : HEALTH_FAIL_TTL_MS;
+    if (now - cached.ts < ttl) return cached.ok;
+  }
+
+  const ip = await resolveVMAddress(userId);
+  if (!ip) {
+    healthCache.set(userId, { ok: false, ts: now });
+    return false;
+  }
+  const ping = await pingVMAgent(ip, HEALTH_PROBE_TIMEOUT_MS);
+  healthCache.set(userId, { ok: ping.ok, ts: now });
+  return ping.ok;
+}
+
 /**
  * Resolve the base URL for a user's VM agent.
  *
@@ -108,6 +150,7 @@ export async function resolveVMSecret(userId: string): Promise<string> {
 export function invalidateVMIPCache(userId: string): void {
   ipCache.delete(userId);
   secretCache.delete(userId);
+  healthCache.delete(userId);
 }
 
 /**

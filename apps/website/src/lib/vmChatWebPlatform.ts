@@ -4,6 +4,7 @@ import { displayConversationTitle } from '@stuardai/chat-ui';
 import {
   getCloudConversationMessages,
   getCloudConversations,
+  getVMStatus,
   openVMAgentChatStream,
   sendVmToolResult,
   uploadFileToVm,
@@ -16,6 +17,15 @@ export function createWebVmChatPlatform(): IVmChatPlatform {
     },
 
     uploadFileToVm: (targetPath, file) => uploadFileToVm(targetPath, file),
+
+    async checkReady() {
+      try {
+        const res = await getVMStatus();
+        return !!(res?.ok && (res as { reachable?: boolean }).reachable);
+      } catch {
+        return false;
+      }
+    },
 
     openChatStream: (options) =>
       openVMAgentChatStream({

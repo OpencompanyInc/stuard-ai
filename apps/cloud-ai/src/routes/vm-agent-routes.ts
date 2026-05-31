@@ -14,7 +14,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getCloudEngine } from '../supabase';
-import { sendVMCommand, resolveVMBaseUrl, resolveVMSecret } from '../services/vm-command';
+import { sendVMCommand, resolveVMBaseUrl, resolveVMSecret, isVMAgentReachableCached } from '../services/vm-command';
 import { mintVMToken } from '../services/vm-tokens';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +113,19 @@ export async function handleVMAgentRoutes(
       const base = await resolveVMBaseUrl(user.userId);
       if (!base) {
         json(res, 502, { ok: false, error: 'vm_not_reachable' });
+        return true;
+      }
+
+      // The engine can report "running" before the agent's HTTP server on :7400
+      // accepts connections. The stream fetch below has no hard timeout (it
+      // relies on client disconnect), so a chat sent during boot would hang for
+      // minutes. Fast-fail with a friendly, retryable message instead.
+      if (!await isVMAgentReachableCached(user.userId)) {
+        json(res, 503, {
+          ok: false,
+          error: 'vm_starting',
+          message: 'The VM is still starting up — try again in a few seconds.',
+        });
         return true;
       }
 
