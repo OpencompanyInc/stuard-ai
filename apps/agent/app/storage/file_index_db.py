@@ -1450,7 +1450,7 @@ def search_fts(query: str, limit: int = 50, kind: Optional[FileKind] = None,
     return results
 
 
-def search_vector(query_vector: List[float], limit: int = 20, threshold: float = 0.65,
+def search_vector(query_vector: List[float], limit: int = 20, threshold: float = 0.4,
                   kind: Optional[FileKind] = None, root_id: Optional[str] = None,
                   path_scopes: Optional[List[str]] = None) -> List[Tuple[IndexedFile, float]]:
     """Vector similarity search using cosine similarity."""

@@ -5,7 +5,13 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 import SectionReveal from '@/components/layout/SectionReveal';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 
 type IntegrationCategory =
   | 'Communication'
@@ -68,13 +74,15 @@ const INTEGRATIONS: Integration[] = [
     category: 'Productivity',
     logo: '/integrations/GoogleTasks.svg',
   },
-  {
-    slug: 'outlook',
-    name: 'Outlook',
-    description: 'Connect Microsoft Outlook via PKCE to read your mail.',
-    category: 'Communication',
-    logo: '/integrations/Outlook.png',
-  },
+  ...(OUTLOOK_INTEGRATION_ENABLED
+    ? [{
+        slug: 'outlook',
+        name: 'Outlook',
+        description: 'Connect Microsoft Outlook via PKCE to read your mail.',
+        category: 'Communication' as IntegrationCategory,
+        logo: '/integrations/Outlook.png',
+      }]
+    : []),
   {
     slug: 'github',
     name: 'GitHub',
@@ -82,20 +90,24 @@ const INTEGRATIONS: Integration[] = [
     category: 'Development',
     logo: '/integrations/GitHub.svg',
   },
-  {
-    slug: 'discord',
-    name: 'Discord',
-    description: 'Read and send messages, list servers and DMs.',
-    category: 'Communication',
-    logo: '/integrations/Discord.svg',
-  },
-  {
-    slug: 'reddit',
-    name: 'Reddit',
-    description: 'Browse, search, post, and comment on Reddit.',
-    category: 'Communication',
-    logo: '/integrations/Reddit.svg',
-  },
+  ...(DISCORD_INTEGRATION_ENABLED
+    ? [{
+        slug: 'discord',
+        name: 'Discord',
+        description: 'Read and send messages, list servers and DMs.',
+        category: 'Communication' as IntegrationCategory,
+        logo: '/integrations/Discord.svg',
+      }]
+    : []),
+  ...(REDDIT_INTEGRATION_ENABLED
+    ? [{
+        slug: 'reddit',
+        name: 'Reddit',
+        description: 'Browse, search, post, and comment on Reddit.',
+        category: 'Communication' as IntegrationCategory,
+        logo: '/integrations/Reddit.svg',
+      }]
+    : []),
   {
     slug: 'x',
     name: 'X (Twitter)',
@@ -103,27 +115,32 @@ const INTEGRATIONS: Integration[] = [
     category: 'Communication',
     logo: '/integrations/X.svg',
   },
-  {
-    slug: 'facebook',
-    name: 'Facebook',
-    description: 'Sign in with OAuth for social automations and account access.',
-    category: 'Communication',
-    logo: '/integrations/Facebook.svg',
-  },
-  {
-    slug: 'instagram',
-    name: 'Instagram',
-    description: 'OAuth + secure token storage for account-based features.',
-    category: 'Communication',
-    logo: '/integrations/Instagram.svg',
-  },
-  {
-    slug: 'threads',
-    name: 'Threads',
-    description: 'Connect Threads for identity and future publishing workflows.',
-    category: 'Communication',
-    logo: '/integrations/Threads.svg',
-  },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  ...(META_INTEGRATION_ENABLED
+    ? [
+        {
+          slug: 'facebook',
+          name: 'Facebook',
+          description: 'Sign in with OAuth for social automations and account access.',
+          category: 'Communication',
+          logo: '/integrations/Facebook.svg',
+        },
+        {
+          slug: 'instagram',
+          name: 'Instagram',
+          description: 'OAuth + secure token storage for account-based features.',
+          category: 'Communication',
+          logo: '/integrations/Instagram.svg',
+        },
+        {
+          slug: 'threads',
+          name: 'Threads',
+          description: 'Connect Threads for identity and future publishing workflows.',
+          category: 'Communication',
+          logo: '/integrations/Threads.svg',
+        },
+      ]
+    : []),
   ...(WHATSAPP_INTEGRATION_ENABLED
     ? [{
         slug: 'whatsapp',

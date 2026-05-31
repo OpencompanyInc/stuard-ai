@@ -1,4 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 import { clsx } from 'clsx';
 import {
   AlertCircle,
@@ -100,13 +106,24 @@ const CLOUD_PROVIDERS: CloudProviderEntry[] = [
   { slug: 'google-calendar', provider: 'google',    name: 'Google Calendar', description: 'Manage events and reminders.',              category: 'Productivity',  icon: Globe, connectPath: '/integrations/google/connect?target=calendar' },
   { slug: 'google-drive',    provider: 'google',    name: 'Google Drive',    description: 'Browse and search files.',                  category: 'Files',         icon: HardDrive, connectPath: '/integrations/google/connect?target=drive' },
   { slug: 'github',          provider: 'github',    name: 'GitHub',          description: 'Read repositories and issues.',             category: 'Development',   icon: Github },
-  { slug: 'outlook',         provider: 'outlook',   name: 'Outlook',         description: 'Microsoft Outlook for mail.',               category: 'Communication', icon: Mail },
-  { slug: 'discord',         provider: 'discord',   name: 'Discord',         description: 'Read and send messages, list servers.',     category: 'Communication', icon: Users },
-  { slug: 'reddit',          provider: 'reddit',    name: 'Reddit',          description: 'Browse, search, post, and comment.',        category: 'Communication', icon: MessageSquare },
+  ...(OUTLOOK_INTEGRATION_ENABLED
+    ? [{ slug: 'outlook', provider: 'outlook', name: 'Outlook', description: 'Microsoft Outlook for mail.', category: 'Communication' as const, icon: Mail }]
+    : []),
+  ...(DISCORD_INTEGRATION_ENABLED
+    ? [{ slug: 'discord', provider: 'discord', name: 'Discord', description: 'Read and send messages, list servers.', category: 'Communication' as const, icon: Users }]
+    : []),
+  ...(REDDIT_INTEGRATION_ENABLED
+    ? [{ slug: 'reddit', provider: 'reddit', name: 'Reddit', description: 'Browse, search, post, and comment.', category: 'Communication' as const, icon: MessageSquare }]
+    : []),
   { slug: 'x',               provider: 'x',         name: 'X (Twitter)',     description: 'Post tweets, read timelines, send DMs.',    category: 'Communication', icon: MessageSquare },
-  { slug: 'instagram',       provider: 'instagram', name: 'Instagram',       description: 'Connect Instagram for account features.',   category: 'Communication', icon: MessageSquare },
-  { slug: 'facebook',        provider: 'facebook',  name: 'Facebook',        description: 'Connect Facebook with OAuth.',              category: 'Communication', icon: Globe },
-  { slug: 'threads',         provider: 'threads',   name: 'Threads',         description: 'Connect Threads for identity & posting.',   category: 'Communication', icon: Users },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  ...(META_INTEGRATION_ENABLED
+    ? [
+        { slug: 'instagram', provider: 'instagram', name: 'Instagram', description: 'Connect Instagram for account features.', category: 'Communication' as const, icon: MessageSquare },
+        { slug: 'facebook', provider: 'facebook', name: 'Facebook', description: 'Connect Facebook with OAuth.', category: 'Communication' as const, icon: Globe },
+        { slug: 'threads', provider: 'threads', name: 'Threads', description: 'Connect Threads for identity & posting.', category: 'Communication' as const, icon: Users },
+      ]
+    : []),
 ];
 
 /* ─── Catalog of VM-local tools (background services on the engine) ───── */

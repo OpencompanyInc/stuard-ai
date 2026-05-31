@@ -4,7 +4,7 @@ import { useRef, useEffect, useState } from 'react';
 import Link from 'next/link';
 
 import WorkflowBuilderDemo from './WorkflowBuilderDemo';
-import AutomationDemo from './AutomationDemo';
+import CompactDemo from './CompactDemo';
 import MemoryDemo from './MemoryDemo';
 
 const features = [
@@ -152,7 +152,7 @@ const FeatureScrollSection = () => {
                    ) : feature.id === "build-tools" ? (
                      <WorkflowBuilderDemo />
                    ) : feature.id === "real-automation" ? (
-                     <AutomationDemo />
+                     <CompactDemo />
                    ) : feature.id === "sticky-memory" ? (
                      <MemoryDemo />
                    ) : (

@@ -167,3 +167,22 @@ export type VoiceLabelState = keyof typeof STATE_COPY;
 export function friendlyVoiceState(state: VoiceLabelState): string {
   return STATE_COPY[state] ?? '';
 }
+
+/** Brand-red audio halo — matches compact thinking glow / launcher accent. */
+export function voiceStateHaloShadow(
+  state: VoiceLabelState,
+  audioLevel = 0,
+): string {
+  const level = Math.min(1, Math.max(0, audioLevel));
+  const near = 24 + level * 32;
+  const far = 48 + level * 28;
+
+  if (state === 'listening' || state === 'speaking') {
+    const alpha = state === 'speaking' ? 0.26 : 0.22;
+    return `0 0 ${near}px rgba(255, 56, 60, ${alpha}), 0 0 ${far}px rgba(255, 56, 60, ${alpha * 0.72})`;
+  }
+  if (state === 'thinking' || state === 'connecting') {
+    return '0 0 28px rgba(255, 56, 60, 0.18), 0 0 56px rgba(255, 56, 60, 0.12)';
+  }
+  return '0 0 20px rgba(255, 56, 60, 0.1), 0 0 40px rgba(255, 56, 60, 0.07)';
+}

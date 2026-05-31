@@ -42,10 +42,10 @@ export function VoiceScreenFrame({ audioLevel = 0, state = 'idle' }: VoiceScreen
         transition={{ duration: 4.2, ease: 'easeInOut', repeat: Infinity }}
         style={{
           background: `
-            linear-gradient(to bottom, rgba(255, 96, 110, 0.20) 0%, rgba(255, 96, 110, 0) 10vh),
-            linear-gradient(to top,    rgba(255, 70, 90, 0.22) 0%, rgba(255, 70, 90, 0) 11vh),
-            linear-gradient(to right,  rgba(255, 90, 105, 0.16) 0%, rgba(255, 90, 105, 0) 7vw),
-            linear-gradient(to left,   rgba(255, 90, 105, 0.16) 0%, rgba(255, 90, 105, 0) 7vw)
+            linear-gradient(to bottom, rgba(255, 56, 60, 0.18) 0%, rgba(255, 56, 60, 0) 10vh),
+            linear-gradient(to top,    rgba(255, 56, 60, 0.20) 0%, rgba(255, 56, 60, 0) 11vh),
+            linear-gradient(to right,  rgba(255, 56, 60, 0.14) 0%, rgba(255, 56, 60, 0) 7vw),
+            linear-gradient(to left,   rgba(255, 56, 60, 0.14) 0%, rgba(255, 56, 60, 0) 7vw)
           `,
         }}
       />
@@ -59,10 +59,10 @@ export function VoiceScreenFrame({ audioLevel = 0, state = 'idle' }: VoiceScreen
         transition={{ duration: 6.0, ease: 'easeInOut', repeat: Infinity, delay: 0.8 }}
         style={{
           background: `
-            radial-gradient(28% 22% at 0% 100%, rgba(255, 70, 90, 0.32) 0%, rgba(255, 70, 90, 0) 70%),
-            radial-gradient(28% 22% at 100% 100%, rgba(255, 70, 90, 0.28) 0%, rgba(255, 70, 90, 0) 70%),
-            radial-gradient(26% 20% at 0% 0%, rgba(255, 90, 105, 0.20) 0%, rgba(255, 90, 105, 0) 70%),
-            radial-gradient(26% 20% at 100% 0%, rgba(255, 90, 105, 0.20) 0%, rgba(255, 90, 105, 0) 70%)
+            radial-gradient(28% 22% at 0% 100%, rgba(255, 56, 60, 0.28) 0%, rgba(255, 56, 60, 0) 70%),
+            radial-gradient(28% 22% at 100% 100%, rgba(255, 56, 60, 0.24) 0%, rgba(255, 56, 60, 0) 70%),
+            radial-gradient(26% 20% at 0% 0%, rgba(255, 56, 60, 0.16) 0%, rgba(255, 56, 60, 0) 70%),
+            radial-gradient(26% 20% at 100% 0%, rgba(255, 56, 60, 0.16) 0%, rgba(255, 56, 60, 0) 70%)
           `,
         }}
       />
@@ -75,7 +75,7 @@ export function VoiceScreenFrame({ audioLevel = 0, state = 'idle' }: VoiceScreen
         animate={{ opacity: 0.05 + intensity * 0.22 }}
         transition={{ duration: 0.25, ease: 'easeOut' }}
         style={{
-          background: `radial-gradient(36% 16% at 50% 100%, rgba(255, 90, 105, 0.30) 0%, rgba(255, 90, 105, 0) 75%)`,
+          background: `radial-gradient(36% 16% at 50% 100%, rgba(255, 56, 60, 0.24) 0%, rgba(255, 56, 60, 0) 75%)`,
         }}
       />
 
@@ -95,7 +95,7 @@ export function VoiceScreenFrame({ audioLevel = 0, state = 'idle' }: VoiceScreen
           }}
           style={{
             background:
-              'radial-gradient(36% 18% at 50% 100%, rgba(255, 110, 125, 0.22) 0%, rgba(255, 110, 125, 0) 70%)',
+              'radial-gradient(36% 18% at 50% 100%, rgba(255, 56, 60, 0.18) 0%, rgba(255, 56, 60, 0) 70%)',
             backgroundRepeat: 'no-repeat',
             backgroundSize: '60% 100%',
             opacity: 0.55,
@@ -110,9 +110,9 @@ export function VoiceScreenFrame({ audioLevel = 0, state = 'idle' }: VoiceScreen
         className="fixed inset-0 pointer-events-none"
         animate={{
           boxShadow: [
-            'inset 0 0 12px rgba(255, 96, 110, 0.14), inset 0 0 50px rgba(255, 70, 90, 0.06)',
-            'inset 0 0 18px rgba(255, 96, 110, 0.20), inset 0 0 75px rgba(255, 70, 90, 0.10)',
-            'inset 0 0 12px rgba(255, 96, 110, 0.14), inset 0 0 50px rgba(255, 70, 90, 0.06)',
+            'inset 0 0 12px rgba(255, 56, 60, 0.12), inset 0 0 50px rgba(255, 56, 60, 0.05)',
+            'inset 0 0 18px rgba(255, 56, 60, 0.18), inset 0 0 75px rgba(255, 56, 60, 0.08)',
+            'inset 0 0 12px rgba(255, 56, 60, 0.12), inset 0 0 50px rgba(255, 56, 60, 0.05)',
           ],
         }}
         transition={{ duration: 4.2, ease: 'easeInOut', repeat: Infinity }}

@@ -69,7 +69,7 @@ export function VoiceModeOverlay({
 
           {/* Compact pill at bottom center */}
           <motion.div
-            className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[9999]"
+            className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[9999] max-w-[420px] w-[92%]"
             initial={{ opacity: 0, scale: 0.85, y: 24 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.85, y: 24, transition: { duration: 0.2 } }}

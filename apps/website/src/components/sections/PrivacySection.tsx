@@ -1,5 +1,4 @@
 import SectionReveal from '@/components/layout/SectionReveal';
-import PrivacyBoundaryDiagram from '@/components/sections/PrivacyBoundaryDiagram';
 
 const PrivacySection = () => {
   return (
@@ -24,10 +23,6 @@ const PrivacySection = () => {
         </SectionReveal>
 
         <SectionReveal delay={0.1}>
-          <PrivacyBoundaryDiagram />
-        </SectionReveal>
-
-        <SectionReveal delay={0.15}>
           <p className="text-center text-[15px] sm:text-[16px] font-medium text-white">
             Local where it matters. Cloud where it has to be. Encrypted either way.
           </p>

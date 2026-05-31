@@ -325,25 +325,26 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'tasks_list', label: 'Tasks: List', args: { maxResults: 10 } },
 
   // ── Outlook ───────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'outlook_send_mail', label: 'Outlook: Send Email', args: { to: [], subject: '', body: '', contentType: 'Text' } },
-  { k: 'cloud.tool', t: 'outlook_list_messages', label: 'Outlook: List Messages', args: { folder: 'Inbox', top: 10 } },
-  { k: 'cloud.tool', t: 'outlook_search_messages', label: 'Outlook: Search Messages', args: { query: '', top: 10 } },
-  { k: 'cloud.tool', t: 'outlook_get_message', label: 'Outlook: Get Message', args: { id: '' } },
-  { k: 'cloud.tool', t: 'outlook_list_recent_brief', label: 'Outlook: Recent Messages', args: { maxResults: 5 } },
-  { k: 'cloud.tool', t: 'outlook_list_folders', label: 'Outlook: List Folders', args: {} },
-  { k: 'cloud.tool', t: 'outlook_reply_message', label: 'Outlook: Reply', args: { id: '', comment: '' } },
-  { k: 'cloud.tool', t: 'outlook_forward_message', label: 'Outlook: Forward', args: { id: '', to: [] } },
-  { k: 'cloud.tool', t: 'outlook_create_draft', label: 'Outlook: Create Draft', args: { to: [], subject: '', body: '' } },
-  { k: 'cloud.tool', t: 'outlook_mark_as_read', label: 'Outlook: Mark Read', args: { id: '' } },
-  { k: 'cloud.tool', t: 'outlook_archive_message', label: 'Outlook: Archive', args: { id: '' } },
-  { k: 'cloud.tool', t: 'outlook_move_message', label: 'Outlook: Move Message', args: { id: '', destinationId: '' } },
-  { k: 'cloud.tool', t: 'outlook_delete_message', label: 'Outlook: Delete Message', args: { id: '' } },
-  { k: 'cloud.tool', t: 'outlook_download_attachment', label: 'Outlook: Download Attachment', args: { messageId: '', attachmentId: '', path: '' } },
-  { k: 'cloud.tool', t: 'outlook_get_me', label: 'Outlook: Get Profile', args: {} },
-  { k: 'cloud.tool', t: 'outlook_calendar_list_events', label: 'Outlook: List Events', args: {} },
-  { k: 'cloud.tool', t: 'outlook_calendar_create_event', label: 'Outlook: Create Event', args: { subject: '', start: '', end: '' } },
-  { k: 'cloud.tool', t: 'outlook_calendar_update_event', label: 'Outlook: Update Event', args: { eventId: '' } },
-  { k: 'cloud.tool', t: 'outlook_calendar_delete_event', label: 'Outlook: Delete Event', args: { eventId: '' } },
+  // Disabled — Outlook integration temporarily hidden (see shared/integration-flags.ts)
+  // { k: 'cloud.tool', t: 'outlook_send_mail', label: 'Outlook: Send Email', args: { to: [], subject: '', body: '', contentType: 'Text' } },
+  // { k: 'cloud.tool', t: 'outlook_list_messages', label: 'Outlook: List Messages', args: { folder: 'Inbox', top: 10 } },
+  // { k: 'cloud.tool', t: 'outlook_search_messages', label: 'Outlook: Search Messages', args: { query: '', top: 10 } },
+  // { k: 'cloud.tool', t: 'outlook_get_message', label: 'Outlook: Get Message', args: { id: '' } },
+  // { k: 'cloud.tool', t: 'outlook_list_recent_brief', label: 'Outlook: Recent Messages', args: { maxResults: 5 } },
+  // { k: 'cloud.tool', t: 'outlook_list_folders', label: 'Outlook: List Folders', args: {} },
+  // { k: 'cloud.tool', t: 'outlook_reply_message', label: 'Outlook: Reply', args: { id: '', comment: '' } },
+  // { k: 'cloud.tool', t: 'outlook_forward_message', label: 'Outlook: Forward', args: { id: '', to: [] } },
+  // { k: 'cloud.tool', t: 'outlook_create_draft', label: 'Outlook: Create Draft', args: { to: [], subject: '', body: '' } },
+  // { k: 'cloud.tool', t: 'outlook_mark_as_read', label: 'Outlook: Mark Read', args: { id: '' } },
+  // { k: 'cloud.tool', t: 'outlook_archive_message', label: 'Outlook: Archive', args: { id: '' } },
+  // { k: 'cloud.tool', t: 'outlook_move_message', label: 'Outlook: Move Message', args: { id: '', destinationId: '' } },
+  // { k: 'cloud.tool', t: 'outlook_delete_message', label: 'Outlook: Delete Message', args: { id: '' } },
+  // { k: 'cloud.tool', t: 'outlook_download_attachment', label: 'Outlook: Download Attachment', args: { messageId: '', attachmentId: '', path: '' } },
+  // { k: 'cloud.tool', t: 'outlook_get_me', label: 'Outlook: Get Profile', args: {} },
+  // { k: 'cloud.tool', t: 'outlook_calendar_list_events', label: 'Outlook: List Events', args: {} },
+  // { k: 'cloud.tool', t: 'outlook_calendar_create_event', label: 'Outlook: Create Event', args: { subject: '', start: '', end: '' } },
+  // { k: 'cloud.tool', t: 'outlook_calendar_update_event', label: 'Outlook: Update Event', args: { eventId: '' } },
+  // { k: 'cloud.tool', t: 'outlook_calendar_delete_event', label: 'Outlook: Delete Event', args: { eventId: '' } },
 
   // ── GitHub ────────────────────────────────────────────────────────────────
   { k: 'cloud.tool', t: 'github_get_me', label: 'GitHub: Get Profile', args: {} },
@@ -352,20 +353,21 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'github_create_issue', label: 'GitHub: Create Issue', args: { owner: '', repo: '', title: '', body: '' } },
 
   // ── Facebook ──────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'facebook_get_me', label: 'Facebook: Get Profile', args: {} },
-  { k: 'cloud.tool', t: 'facebook_list_pages', label: 'Facebook: List Pages', args: {} },
-  { k: 'cloud.tool', t: 'facebook_list_page_posts', label: 'Facebook: List Page Posts', args: { page_id: '', limit: 10 } },
-  { k: 'cloud.tool', t: 'facebook_create_page_post', label: 'Facebook: Create Page Post', args: { page_id: '', message: '', link: '', published: true } },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  // { k: 'cloud.tool', t: 'facebook_get_me', label: 'Facebook: Get Profile', args: {} },
+  // { k: 'cloud.tool', t: 'facebook_list_pages', label: 'Facebook: List Pages', args: {} },
+  // { k: 'cloud.tool', t: 'facebook_list_page_posts', label: 'Facebook: List Page Posts', args: { page_id: '', limit: 10 } },
+  // { k: 'cloud.tool', t: 'facebook_create_page_post', label: 'Facebook: Create Page Post', args: { page_id: '', message: '', link: '', published: true } },
 
   // ── Instagram ─────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'instagram_get_me', label: 'Instagram: Get Profile', args: {} },
-  { k: 'cloud.tool', t: 'instagram_list_media', label: 'Instagram: List Media', args: { limit: 10 } },
-  { k: 'cloud.tool', t: 'instagram_publish_media', label: 'Instagram: Publish Media', args: { media_type: 'IMAGE', image_url: '', caption: '' } },
+  // { k: 'cloud.tool', t: 'instagram_get_me', label: 'Instagram: Get Profile', args: {} },
+  // { k: 'cloud.tool', t: 'instagram_list_media', label: 'Instagram: List Media', args: { limit: 10 } },
+  // { k: 'cloud.tool', t: 'instagram_publish_media', label: 'Instagram: Publish Media', args: { media_type: 'IMAGE', image_url: '', caption: '' } },
 
   // ── Threads ───────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'threads_get_me', label: 'Threads: Get Profile', args: {} },
-  { k: 'cloud.tool', t: 'threads_list_posts', label: 'Threads: List Posts', args: { limit: 10 } },
-  { k: 'cloud.tool', t: 'threads_publish_post', label: 'Threads: Publish Post', args: { text: '', reply_control: 'everyone' } },
+  // { k: 'cloud.tool', t: 'threads_get_me', label: 'Threads: Get Profile', args: {} },
+  // { k: 'cloud.tool', t: 'threads_list_posts', label: 'Threads: List Posts', args: { limit: 10 } },
+  // { k: 'cloud.tool', t: 'threads_publish_post', label: 'Threads: Publish Post', args: { text: '', reply_control: 'everyone' } },
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
@@ -398,14 +400,16 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'x_list_following', label: 'X: List Following', args: { username: '', max_results: 100 } },
 
   // ── Discord ───────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'discord_list_guilds', label: 'Discord: List Servers', args: {} },
-  { k: 'cloud.tool', t: 'discord_read_messages', label: 'Discord: Read Messages', args: { channel_id: '' } },
-  { k: 'cloud.tool', t: 'discord_send_dm', label: 'Discord: Send DM', args: { channel_id: '', content: '' } },
+  // Disabled — Discord integration temporarily hidden (see shared/integration-flags.ts)
+  // { k: 'cloud.tool', t: 'discord_list_guilds', label: 'Discord: List Servers', args: {} },
+  // { k: 'cloud.tool', t: 'discord_read_messages', label: 'Discord: Read Messages', args: { channel_id: '' } },
+  // { k: 'cloud.tool', t: 'discord_send_dm', label: 'Discord: Send DM', args: { channel_id: '', content: '' } },
 
   // ── Reddit ────────────────────────────────────────────────────────────────
-  { k: 'cloud.tool', t: 'reddit_search', label: 'Reddit: Search Posts', args: { query: '', sort: 'relevance', time: 'all', limit: 25 } },
-  { k: 'cloud.tool', t: 'reddit_view_subreddit', label: 'Reddit: View Subreddit', args: { subreddit: '', sort: 'hot', limit: 25 } },
-  { k: 'cloud.tool', t: 'reddit_view_comments', label: 'Reddit: View Comments', args: { subreddit: '', post_id: '' } },
-  { k: 'cloud.tool', t: 'reddit_create_post', label: 'Reddit: Create Post', args: { subreddit: '', title: '', kind: 'self', text: '' } },
-  { k: 'cloud.tool', t: 'reddit_comment', label: 'Reddit: Comment / Reply', args: { thing_id: '', text: '' } },
+  // Disabled — Reddit integration temporarily hidden (see shared/integration-flags.ts)
+  // { k: 'cloud.tool', t: 'reddit_search', label: 'Reddit: Search Posts', args: { query: '', sort: 'relevance', time: 'all', limit: 25 } },
+  // { k: 'cloud.tool', t: 'reddit_view_subreddit', label: 'Reddit: View Subreddit', args: { subreddit: '', sort: 'hot', limit: 25 } },
+  // { k: 'cloud.tool', t: 'reddit_view_comments', label: 'Reddit: View Comments', args: { subreddit: '', post_id: '' } },
+  // { k: 'cloud.tool', t: 'reddit_create_post', label: 'Reddit: Create Post', args: { subreddit: '', title: '', kind: 'self', text: '' } },
+  // { k: 'cloud.tool', t: 'reddit_comment', label: 'Reddit: Comment / Reply', args: { thing_id: '', text: '' } },
 ];

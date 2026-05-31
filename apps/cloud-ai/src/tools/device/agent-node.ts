@@ -16,6 +16,11 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { getHeadlessAgent } from '../../agents/headless-agent';
 import { getExternalAccount } from '../../supabase';
+import {
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 import { getBridgeSecrets, getBridgeWs, hasClientBridge, withClientBridge, safeToolWrite, execLocalTool } from '../bridge';
 import { writeLog } from '../../utils/logger';
 import { getDefaultModelForCategory } from '../../pricing';
@@ -121,7 +126,7 @@ Examples:
       // Prepare integrations
       const enabledIntegrations: string[] = [];
       if (userId) {
-        const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', 'whatsapp'];
+        const providers = ['github', 'google', ...(OUTLOOK_INTEGRATION_ENABLED ? ['outlook'] : []), ...(META_INTEGRATION_ENABLED ? ['facebook', 'instagram', 'threads'] : []), ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : [])];
         const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
         providers.forEach((p, i) => { if (checks[i]) enabledIntegrations.push(p); });
       }

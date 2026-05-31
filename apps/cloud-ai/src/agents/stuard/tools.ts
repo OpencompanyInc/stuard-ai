@@ -17,7 +17,13 @@ import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
 import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
 import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_call_control, telnyx_phone_status, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_get_media_url, whatsapp_download_media, whatsapp_status, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_voice_call, whatsapp_make_call, whatsapp_send_template } from '../../tools/whatsapp-tools';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 import * as xTools from '../../tools/x-tools';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { data_analysis_status, data_analysis_setup, data_analysis_uninstall, data_load, describe_data, correlate_data, plot_line, plot_bar, plot_scatter, plot_hist, plot_pie, plot_heatmap, plot_box, run_data_python } from '../../tools/device-tools';
@@ -57,11 +63,13 @@ const RAW_ALL_TOOLS = {
   agent_node,
   agent_decision,
   agent_extract,
+  ...(OUTLOOK_INTEGRATION_ENABLED ? {
   // Outlook / Microsoft Graph (cloud-only, requires accessToken argument)
   outlook_get_me,
   outlook_list_messages,
   outlook_search_messages,
   outlook_send_mail,
+  } : {}),
   // Google Workspace — only sensitive scopes (no Google CASA verification).
   // Gmail read/manage and full-Drive tools are removed until CASA is paid for.
   google_get_userinfo,
@@ -508,7 +516,7 @@ export function getTools(
       }
     }
   }
-  if (enabledIntegrations.includes('outlook')) {
+  if (OUTLOOK_INTEGRATION_ENABLED && enabledIntegrations.includes('outlook')) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('outlook_')) tools[name] = tool;
     }
@@ -585,10 +593,13 @@ export async function getToolsForQuery(
   // ── 4. Integration tools (only if user has the integration connected) ──
   const integrationPrefixes: Record<string, string[]> = {
     google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
-    outlook: ['outlook_'],
+    ...(OUTLOOK_INTEGRATION_ENABLED ? { outlook: ['outlook_'] } : {}),
     github: ['github_'],
     telnyx: ['telnyx_'],
+    ...(META_INTEGRATION_ENABLED ? { meta: ['facebook_', 'instagram_', 'threads_'] } : {}),
     ...(WHATSAPP_INTEGRATION_ENABLED ? { whatsapp: ['whatsapp_'] } : {}),
+    ...(REDDIT_INTEGRATION_ENABLED ? { reddit: ['reddit_'] } : {}),
+    ...(DISCORD_INTEGRATION_ENABLED ? { discord: ['discord_'] } : {}),
     x: ['x_'],
     notion: ['notion_'],
     linear: ['linear_'],

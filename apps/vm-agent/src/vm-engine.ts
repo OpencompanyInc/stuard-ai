@@ -143,8 +143,8 @@ const CLOUD_TOOLS = new Set([
   'send_email', 'read_email',
   'google_calendar_list', 'google_calendar_create', 'google_calendar_update', 'google_calendar_delete',
 
-  // Outlook integrations
-  'outlook_get_me', 'outlook_send_mail', 'outlook_list_messages', 'outlook_search_messages',
+  // Disabled — Outlook integration temporarily hidden (see shared/integration-flags.ts)
+  // 'outlook_get_me', 'outlook_send_mail', 'outlook_list_messages', 'outlook_search_messages',
 
   // GitHub integrations
   'github_get_me', 'github_list_repos', 'github_get_repo',
@@ -167,19 +167,19 @@ const CLOUD_TOOLS = new Set([
   'youtube_search', 'youtube_transcript',
   'youtube_get_video', 'youtube_get_channel', 'youtube_get_playlist',
 
-  // Discord integrations
-  'discord_send', 'discord_read',
-  'discord_list_guilds', 'discord_list_channels', 'discord_list_dms',
-  'discord_read_messages', 'discord_send_dm', 'discord_add_reaction',
+  // Disabled — Discord integration temporarily hidden (see shared/integration-flags.ts)
+  // 'discord_send', 'discord_read',
+  // 'discord_list_guilds', 'discord_list_channels', 'discord_list_dms',
+  // 'discord_read_messages', 'discord_send_dm', 'discord_add_reaction',
 
-  // Reddit integrations
-  'reddit_search', 'reddit_post',
-  'reddit_view_subreddit', 'reddit_view_comments', 'reddit_create_post', 'reddit_comment',
+  // Disabled — Reddit integration temporarily hidden (see shared/integration-flags.ts)
+  // 'reddit_search', 'reddit_post',
+  // 'reddit_view_subreddit', 'reddit_view_comments', 'reddit_create_post', 'reddit_comment',
 
-  // Facebook / Instagram / Threads (Meta)
-  'facebook_get_me', 'facebook_list_pages', 'facebook_list_page_posts', 'facebook_create_page_post',
-  'instagram_get_me', 'instagram_list_media', 'instagram_publish_media',
-  'threads_get_me', 'threads_list_posts', 'threads_publish_post',
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  // 'facebook_get_me', 'facebook_list_pages', 'facebook_list_page_posts', 'facebook_create_page_post',
+  // 'instagram_get_me', 'instagram_list_media', 'instagram_publish_media',
+  // 'threads_get_me', 'threads_list_posts', 'threads_publish_post',
 
   // X / Twitter
   'x_search_tweets', 'x_get_user_timeline', 'x_get_tweet',

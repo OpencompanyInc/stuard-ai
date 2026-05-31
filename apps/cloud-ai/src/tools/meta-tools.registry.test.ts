@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { get_tool_schema, initToolRegistry, sanitizeToolResultForModel } from './meta-tools';
 import { getToolRegistry } from './tool-registry';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import { META_INTEGRATION_ENABLED, WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
 
 describe('meta-tools registry', () => {
   it('registers cloud tool families exposed through /tools routes', () => {
@@ -11,7 +11,7 @@ describe('meta-tools registry', () => {
     const expectedTools = [
       'telnyx_send_mms',
       ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp_send_message'] : []),
-      'facebook_get_me',
+      ...(META_INTEGRATION_ENABLED ? ['facebook_get_me'] : []),
       'x_post_tweet',
       'x_search_tweets',
       'cloud_storage_upload',

@@ -2,60 +2,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
 import { clsx } from 'clsx';
 import { getCloudAiHttp } from '../utils/cloud';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
-
-// Brand integration logos (Simple Icons SVG + favicons).
-import discordLogo from '../assets/integrations/Discord.svg';
-import elevenLabsLogo from '../assets/integrations/ElevenLabs.svg';
-import ffmpegLogo from '../assets/integrations/FFmpeg.svg';
-import facebookLogo from '../assets/integrations/Facebook.svg';
-import githubBrandLogo from '../assets/integrations/GitHub.svg';
-import gmailLogo from '../assets/integrations/Gmail.svg';
-import googleCalendarLogo from '../assets/integrations/GoogleCalendar.svg';
-import googleDocsLogo from '../assets/integrations/GoogleDocs.svg';
-import googleDriveLogo from '../assets/integrations/GoogleDrive.svg';
-import googleSheetsLogo from '../assets/integrations/GoogleSheets.svg';
-import googleTasksLogo from '../assets/integrations/GoogleTasks.svg';
-import instagramLogo from '../assets/integrations/Instagram.svg';
-import ollamaLogo from '../assets/integrations/Ollama.svg';
-import outlookLogo from '../assets/integrations/Outlook.png';
-import pythonLogo from '../assets/integrations/Python.svg';
-import redditLogo from '../assets/integrations/Reddit.svg';
-import supabaseLogo from '../assets/integrations/Supabase.svg';
-import telnyxLogo from '../assets/integrations/Telnyx.png';
-import threadsLogo from '../assets/integrations/Threads.svg';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 import whatsappLogo from '../assets/integrations/WhatsApp.svg';
-import xLogo from '../assets/integrations/X.svg';
-import youtubeLogo from '../assets/integrations/YouTube.svg';
-
-const BRAND_LOGOS: Record<string, string> = {
-  python: pythonLogo,
-  ffmpeg: ffmpegLogo,
-  ollama: ollamaLogo,
-  outlook: outlookLogo,
-  github: githubBrandLogo,
-  discord: discordLogo,
-  reddit: redditLogo,
-  x: xLogo,
-  facebook: facebookLogo,
-  instagram: instagramLogo,
-  threads: threadsLogo,
-  telnyx: telnyxLogo,
-  whatsapp: whatsappLogo,
-  youtube: youtubeLogo,
-  supabase: supabaseLogo,
-  elevenlabs: elevenLabsLogo,
-  gmail: gmailLogo,
-  'google-drive': googleDriveLogo,
-  'google-calendar': googleCalendarLogo,
-  'google-docs': googleDocsLogo,
-  'google-sheets': googleSheetsLogo,
-  'google-tasks': googleTasksLogo,
-};
-
-function hasBrandLogo(slug: string): boolean {
-  return slug in BRAND_LOGOS;
-}
+import { getIntegrationIcon, hasBrandLogo } from './integrationIcons';
 
 interface IntegrationProfile {
   provider: string;
@@ -159,13 +114,15 @@ interface IntegrationsViewProps {
 /** Map integration slug → backend provider name */
 function slugToProvider(slug: string): string | null {
   if (slug === "github") return "github";
-  if (slug === "outlook") return "outlook";
-  if (slug === "discord") return "discord";
-  if (slug === "reddit") return "reddit";
+  if (OUTLOOK_INTEGRATION_ENABLED && slug === "outlook") return "outlook";
+  if (DISCORD_INTEGRATION_ENABLED && slug === "discord") return "discord";
+  if (REDDIT_INTEGRATION_ENABLED && slug === "reddit") return "reddit";
   if (slug === "x") return "x";
-  if (slug === "facebook") return "facebook";
-  if (slug === "instagram") return "instagram";
-  if (slug === "threads") return "threads";
+  if (META_INTEGRATION_ENABLED) {
+    if (slug === "facebook") return "facebook";
+    if (slug === "instagram") return "instagram";
+    if (slug === "threads") return "threads";
+  }
   if (slug.startsWith("google-") || slug === "gmail") return "google";
   return null;
 }
@@ -179,22 +136,6 @@ function isGoogleSlug(slug: string): boolean {
 }
 
 const GOOGLE_SLUGS = ['google-drive', 'google-calendar', 'gmail', 'google-sheets', 'google-docs'];
-
-function getIntegrationIcon(slug: string, size = "w-5 h-5") {
-  const brandLogo = BRAND_LOGOS[slug];
-  if (brandLogo) {
-    return <img src={brandLogo} alt="" className={clsx(size, "object-contain select-none")} draggable={false} />;
-  }
-  switch (slug) {
-    case 'mediapipe': return <ScanFace className={size} />;
-    case 'data-analysis': return <Table className={size} />;
-    case 'agent-cli': return <Terminal className={size} />;
-    case 'browser': return <Globe className={size} />;
-    case 'browser-use': return <Globe className={size} />;
-    case 'webhooks': return <Webhook className={size} />;
-    default: return <Box className={size} />;
-  }
-}
 
 function getCategoryIcon(category: string, size = "w-4 h-4") {
   switch (category) {
@@ -310,7 +251,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card group/google relative flex h-full min-h-[250px] flex-col overflow-hidden transition-all duration-300",
+      "dashboard-card integrations-app-card group/google relative flex h-full min-h-[250px] flex-col overflow-hidden transition-colors duration-200",
       anyConnected && "border-primary/30"
     )}>
       {/* Brand top-stripe (subtle) */}
@@ -1258,7 +1199,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
 
   return (
     <div className={clsx(
-      "dashboard-card group relative flex h-full min-h-[250px] flex-col p-5 transition-all duration-300",
+      "dashboard-card integrations-app-card group relative flex h-full min-h-[250px] flex-col p-5 transition-colors duration-200",
       isConnected && "border-primary/30"
     )}>
       {/* Header */}
@@ -2197,11 +2138,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     mpUpdating,
     updateMediapipe,
   } = props;
-
-  // Load profiles on mount
-  useEffect(() => {
-    refreshProfiles();
-  }, [refreshProfiles]);
 
   // Separate Google products from everything else
   const googleProducts = useMemo(

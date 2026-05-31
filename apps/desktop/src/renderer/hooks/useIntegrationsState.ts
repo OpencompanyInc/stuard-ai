@@ -1,6 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
+import { preloadIntegrationBrandLogos } from "../components/integrationIcons";
+
+function deferUntilPaint(cb: () => void, timeoutMs = 180): () => void {
+  let cancelled = false;
+  const run = () => {
+    if (!cancelled) cb();
+  };
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(run, { timeout: timeoutMs });
+    return () => {
+      cancelled = true;
+      cancelIdleCallback(id);
+    };
+  }
+  const id = window.setTimeout(run, 32);
+  return () => {
+    cancelled = true;
+    clearTimeout(id);
+  };
+}
 import type { Session } from "@supabase/supabase-js";
-import { WHATSAPP_INTEGRATION_ENABLED } from "../../../../../shared/integration-flags";
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from "../../../../../shared/integration-flags";
 
 /** Google product slugs whose connection state is resolved from the local OAuth store. */
 const GOOGLE_INTEGRATION_SLUGS = [
@@ -187,15 +213,25 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
 
       await Promise.all([
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook"),
+        ...(OUTLOOK_INTEGRATION_ENABLED
+          ? [fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook")]
+          : []),
         // Google status is resolved from the local encrypted store below — skip
         // server polls so stale Supabase/empty-VM responses can't override truth.
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit"),
+        ...(DISCORD_INTEGRATION_ENABLED
+          ? [fetchStatus(`${CLOUD_AI_HTTP}/integrations/discord/status`, "discord")]
+          : []),
+        ...(REDDIT_INTEGRATION_ENABLED
+          ? [fetchStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status`, "reddit")]
+          : []),
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/x/status`, "x"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status`, "facebook"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status`, "instagram"),
-        fetchStatus(`${CLOUD_AI_HTTP}/integrations/threads/status`, "threads"),
+        ...(META_INTEGRATION_ENABLED
+          ? [
+              fetchStatus(`${CLOUD_AI_HTTP}/integrations/facebook/status`, "facebook"),
+              fetchStatus(`${CLOUD_AI_HTTP}/integrations/instagram/status`, "instagram"),
+              fetchStatus(`${CLOUD_AI_HTTP}/integrations/threads/status`, "threads"),
+            ]
+          : []),
         (async () => {
           try {
             const resp = await fetch(`${CLOUD_AI_HTTP}/integrations/telnyx/status`, { headers });
@@ -231,7 +267,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         }
       }
 
-      setConnectedMap((prev) => {
+      startTransition(() => setConnectedMap((prev) => {
         const next: Record<string, boolean> = {};
         // Preserve local-only integration states
         if (prev.python) next.python = true;
@@ -281,12 +317,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         } catch {}
         emitConnectedChanged();
         return next;
-      });
+      }));
     } catch {}
   }, [session?.access_token, CLOUD_AI_HTTP, AGENT_HTTP]);
 
   useEffect(() => {
     if (!statusChecksEnabled) return;
+    preloadIntegrationBrandLogos();
     (async () => {
       try {
         await syncConnectedFromServer();
@@ -304,14 +341,26 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
       { slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true },
       { slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true },
-      { slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true },
+      // Disabled — Outlook/Discord/Reddit integrations temporarily hidden (see shared/integration-flags.ts)
+      ...(OUTLOOK_INTEGRATION_ENABLED
+        ? [{ slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true }]
+        : []),
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
-      { slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true },
-      { slug: "reddit", name: "Reddit", description: "Browse, search, post, and comment on Reddit.", category: "Communication", homepage: "https://reddit.com/", available: true },
+      ...(DISCORD_INTEGRATION_ENABLED
+        ? [{ slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true }]
+        : []),
+      ...(REDDIT_INTEGRATION_ENABLED
+        ? [{ slug: "reddit", name: "Reddit", description: "Browse, search, post, and comment on Reddit.", category: "Communication", homepage: "https://reddit.com/", available: true }]
+        : []),
       { slug: "x", name: "X (Twitter)", description: "Read timelines, post tweets, send DMs, and look up users. Pay-as-you-go API usage is deducted from your Stuard credits.", category: "Communication", homepage: "https://x.com/", available: true },
-      { slug: "facebook", name: "Facebook", description: "Connect your Facebook account with OAuth for social automations and account access.", category: "Communication", homepage: "https://www.facebook.com/", available: true },
-      { slug: "instagram", name: "Instagram", description: "Connect Instagram with OAuth and securely store access tokens for account-based features.", category: "Communication", homepage: "https://www.instagram.com/", available: true },
-      { slug: "threads", name: "Threads", description: "Connect your Threads account with OAuth for identity and future publishing workflows.", category: "Communication", homepage: "https://www.threads.net/", available: true },
+      // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+      ...(META_INTEGRATION_ENABLED
+        ? [
+            { slug: "facebook", name: "Facebook", description: "Connect your Facebook account with OAuth for social automations and account access.", category: "Communication", homepage: "https://www.facebook.com/", available: true },
+            { slug: "instagram", name: "Instagram", description: "Connect Instagram with OAuth and securely store access tokens for account-based features.", category: "Communication", homepage: "https://www.instagram.com/", available: true },
+            { slug: "threads", name: "Threads", description: "Connect your Threads account with OAuth for identity and future publishing workflows.", category: "Communication", homepage: "https://www.threads.net/", available: true },
+          ]
+        : []),
       { slug: "google-drive", name: "Google Drive", description: "Access and search files.", category: "Files", homepage: "https://drive.google.com/", available: true },
       { slug: "webhooks", name: "Webhooks", description: "Trigger custom workflows via HTTP callbacks.", category: "Automation", homepage: "https://webhook.site/", available: true },
       { slug: "google-calendar", name: "Google Calendar", description: "Manage events and reminders.", category: "Productivity", homepage: "https://calendar.google.com/", available: true },
@@ -413,15 +462,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       });
     } catch {}
   };
-
-  useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshFfmpegStatus();
-      } catch {}
-    })();
-  }, [statusChecksEnabled]);
 
   const refreshMediapipeStatus = async () => {
     try {
@@ -537,24 +577,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     }
   };
 
-  useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshMediapipeStatus();
-      } catch {}
-    })();
-  }, [statusChecksEnabled]);
-
-  useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshDataAnalysisStatus();
-      } catch {}
-    })();
-  }, [statusChecksEnabled]);
-
   const refreshOllamaStatus = async () => {
     setOllamaChecking(true);
     try {
@@ -590,15 +612,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     }
   };
 
-  useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshOllamaStatus();
-      } catch {}
-    })();
-  }, [statusChecksEnabled]);
-
   const refreshCliAgentStatus = async () => {
     setCliAgentChecking(true);
     try {
@@ -619,15 +632,6 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       setCliAgentChecking(false);
     }
   };
-
-  useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshCliAgentStatus();
-      } catch {}
-    })();
-  }, [statusChecksEnabled]);
 
   const refreshBrowserUseStatus = async () => {
     setBrowserUseChecking(true);
@@ -766,13 +770,26 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     }
   };
 
+  const localStatusSweepStarted = useRef(false);
+
   useEffect(() => {
-    if (!statusChecksEnabled) return;
-    (async () => {
-      try {
-        await refreshBrowserUseStatus();
-      } catch {}
-    })();
+    if (!statusChecksEnabled) {
+      localStatusSweepStarted.current = false;
+      return;
+    }
+    if (localStatusSweepStarted.current) return;
+    localStatusSweepStarted.current = true;
+
+    return deferUntilPaint(() => {
+      void Promise.allSettled([
+        refreshFfmpegStatus(),
+        refreshMediapipeStatus(),
+        refreshDataAnalysisStatus(),
+        refreshOllamaStatus(),
+        refreshCliAgentStatus(),
+        refreshBrowserUseStatus(),
+      ]);
+    });
   }, [statusChecksEnabled]);
 
   const setupFfmpeg = async () => {
@@ -944,13 +961,15 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   /** Map UI slug → provider string used by the backend */
   const slugToProvider = (slug: string): string | null => {
     if (slug === "github") return "github";
-    if (slug === "outlook") return "outlook";
-    if (slug === "discord") return "discord";
-    if (slug === "reddit") return "reddit";
+    if (OUTLOOK_INTEGRATION_ENABLED && slug === "outlook") return "outlook";
+    if (DISCORD_INTEGRATION_ENABLED && slug === "discord") return "discord";
+    if (REDDIT_INTEGRATION_ENABLED && slug === "reddit") return "reddit";
     if (slug === "x") return "x";
-    if (slug === "facebook") return "facebook";
-    if (slug === "instagram") return "instagram";
-    if (slug === "threads") return "threads";
+    if (META_INTEGRATION_ENABLED) {
+      if (slug === "facebook") return "facebook";
+      if (slug === "instagram") return "instagram";
+      if (slug === "threads") return "threads";
+    }
     if (slug.startsWith("google-") || slug === "gmail") return "google";
     return null;
   };
@@ -998,11 +1017,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       const j = await resp.json().catch(() => null);
       const serverProfiles = j && Array.isArray(j.profiles) ? mapServerProfiles(j.profiles) : [];
 
-      if (provider) {
-        setProfiles(serverProfiles);
-      } else {
-        setProfiles([...localGoogleProfiles, ...serverProfiles]);
-      }
+      startTransition(() => {
+        if (provider) {
+          setProfiles(serverProfiles);
+        } else {
+          setProfiles([...localGoogleProfiles, ...serverProfiles]);
+        }
+      });
     } catch {} finally {
       setProfilesLoading(false);
     }
@@ -1448,7 +1469,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return false;
     };
 
-    if (slug === "outlook") {
+    if (OUTLOOK_INTEGRATION_ENABLED && slug === "outlook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/outlook/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -1470,7 +1491,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
-    if (slug === "discord") {
+    if (DISCORD_INTEGRATION_ENABLED && slug === "discord") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/discord/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -1481,7 +1502,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
-    if (slug === "reddit") {
+    if (REDDIT_INTEGRATION_ENABLED && slug === "reddit") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/reddit/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -1503,7 +1524,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
-    if (slug === "facebook") {
+    if (META_INTEGRATION_ENABLED && slug === "facebook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/facebook/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -1514,7 +1535,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
-    if (slug === "instagram") {
+    if (META_INTEGRATION_ENABLED && slug === "instagram") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/instagram/connect?token=${encodeURIComponent(token)}${profileParam}`;
@@ -1525,7 +1546,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
-    if (slug === "threads") {
+    if (META_INTEGRATION_ENABLED && slug === "threads") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/threads/connect?token=${encodeURIComponent(token)}${profileParam}`;

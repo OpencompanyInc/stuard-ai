@@ -78,15 +78,6 @@ interface IndexedRoot {
   created_at: string;
 }
 
-interface IndexStats {
-  roots: number;
-  total_files: number;
-  indexed_files: number;
-  pending_files: number;
-  folders: number;
-  files_by_kind: Record<string, number>;
-}
-
 interface IndexingStatus {
   status: "idle" | "scanning" | "complete" | "error";
   totalRoots?: number;
@@ -117,7 +108,6 @@ const formatTime = (iso: string | null): string => {
 
 export const FileIndexSettings: React.FC = () => {
   const [roots, setRoots] = useState<IndexedRoot[]>([]);
-  const [stats, setStats] = useState<IndexStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState<string | null>(null);
   const [addingFolder, setAddingFolder] = useState(false);
@@ -137,12 +127,13 @@ export const FileIndexSettings: React.FC = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const [rootsRes, statsRes] = await Promise.all([
-        api?.fileIndexListRoots?.(),
-        api?.fileIndexGetStats?.(),
-      ]);
+      // Only the per-root list is rendered (folder rows + the embedded/folder
+      // summary, both derived from `roots`). We intentionally do NOT fetch the
+      // global index stats here: `getStats` runs five full-table COUNT scans +
+      // a GROUP BY over the entire (multi-GB) index, and nothing in this view
+      // displays it — it was pure latency on every load and every refresh.
+      const rootsRes = await api?.fileIndexListRoots?.();
       if (rootsRes?.ok) setRoots(rootsRes.roots || []);
-      if (statsRes?.ok) setStats(statsRes.stats || null);
     } catch (e) {
       console.error("[FileIndexSettings] Load error:", e);
     } finally {

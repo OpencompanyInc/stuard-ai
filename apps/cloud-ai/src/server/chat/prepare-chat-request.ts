@@ -15,7 +15,7 @@ import type {
 } from '../../agents/stuard/prompts';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { routeModel, type ModelChoice } from '../../router/model-router';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
+import { OUTLOOK_INTEGRATION_ENABLED, WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 import {
   createConversation,
   addUserMessage,
@@ -493,7 +493,7 @@ function resolveChosenModelId(msg: any, routedTier: ModelChoice) {
 }
 
 async function loadIntegrations(userId: string) {
-  const providers = ['github', 'google', 'outlook', 'telnyx', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
+  const providers = ['github', 'google', ...(OUTLOOK_INTEGRATION_ENABLED ? ['outlook'] : []), 'telnyx', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
   let enabledIntegrations: string[] = [];
   let mcpTools: Record<string, any> = {};
   // Deployed custom integrations. Compiled to tools but kept OUT of the lean

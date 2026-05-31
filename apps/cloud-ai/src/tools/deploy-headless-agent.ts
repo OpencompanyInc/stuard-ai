@@ -6,7 +6,13 @@ import { getBridgeSecrets, getBridgeWs, withClientBridge, execLocalTool } from '
 import { writeLog } from '../utils/logger';
 import { randomUUID } from 'crypto';
 import { createInterjectionUserMessage } from '../server/chat/interjections';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 
 const MAX_LOG_ENTRIES = 200;
 const LOG_FLUSH_MS = 750;
@@ -390,7 +396,7 @@ async function runHeadlessTask(
     };
 
     // 1. Prepare integrations and MCP tools
-    const providers = ['github', 'google', 'outlook', 'facebook', 'instagram', 'threads', ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
+    const providers = ['github', 'google', ...(OUTLOOK_INTEGRATION_ENABLED ? ['outlook'] : []), ...(META_INTEGRATION_ENABLED ? ['facebook', 'instagram', 'threads'] : []), ...(WHATSAPP_INTEGRATION_ENABLED ? ['whatsapp'] : []), 'x'];
     const checks = await Promise.all(providers.map(p => getExternalAccount(userId, p)));
     const enabledIntegrations = providers.filter((_, i) => !!checks[i]);
 

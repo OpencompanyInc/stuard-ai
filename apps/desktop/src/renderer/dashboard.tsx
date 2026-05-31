@@ -35,7 +35,6 @@ import {
   HardDrive,
   Image as ImageIcon,
 } from "lucide-react";
-import stuardLogo from "./assets/stuard-logo.png";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
@@ -204,20 +203,26 @@ class ErrorBoundary extends React.Component<any, { hasError: boolean, error: any
   }
 }
 
+function SidebarDivider() {
+  return <div className="dashboard-sidebar-divider" role="separator" />;
+}
+
 function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; label: string; icon: any; current: string; onClick: (id: string) => void }) {
   const active = current === id;
   return (
     <button
+      type="button"
       className={clsx(
-        "dashboard-sidebar-item w-full flex items-center gap-3 px-3.5 py-3 text-[13px] font-semibold transition-all duration-200 group relative",
+        "dashboard-sidebar-item w-full flex items-center gap-2 px-2.5 py-2.5 h-10 text-[14px] font-medium leading-5",
         active && "is-active"
       )}
       onClick={() => onClick(id)}
     >
-      <Icon className={clsx("w-4 h-4 transition-all duration-200",
-        active ? "text-theme-fg" : "text-theme-muted group-hover:text-theme-fg")}
+      <Icon
+        className="w-5 h-5 shrink-0 text-current"
+        strokeWidth={1.25}
       />
-      <span className="flex-1 text-left leading-none">
+      <span className="flex-1 text-left truncate">
         {label}
       </span>
     </button>
@@ -639,25 +644,26 @@ function DashboardApp() {
       ]);
 
       const byId = new Map<string, any>();
-      const ingest = (list: any[], defaultOrigin: 'desktop' | 'cloud_vm') => {
+      const ingest = (list: any[]) => {
         for (const raw of list) {
           if (!raw) continue;
           if (!isMainChatConversation(raw)) continue;
           const id = raw.id || raw.conversation_id;
           if (!id) continue;
-          // Origin is decided by the conversation's authoritative `source`, not by
+          // Origin is decided by the conversation's authoritative `source`, never by
           // which endpoint returned the row. Desktop conversations are mirrored to
           // the cloud and come back through the cloud-ai endpoint, so keying off the
-          // endpoint (defaultOrigin) mislabels them as VM. Only source==='vm' is VM.
+          // endpoint mislabels them as VM. The Cloud Engine agent persists its chats
+          // with source==='agent'; desktop chats use 'stuard'. Anything not positively
+          // identified as a VM conversation is treated as Desktop.
           const src = String(raw.source || '').trim().toLowerCase();
+          const isVmSource = src === 'agent' || src === 'vm';
           const origin: 'desktop' | 'cloud_vm' =
             raw.origin === 'cloud_vm' || raw.origin === 'desktop'
               ? raw.origin
-              : src === 'vm'
+              : isVmSource
                 ? 'cloud_vm'
-                : src === 'desktop'
-                  ? 'desktop'
-                  : defaultOrigin;
+                : 'desktop';
           const incoming = {
             ...raw,
             id,
@@ -687,13 +693,13 @@ function DashboardApp() {
       };
 
       if (localJson?.ok && Array.isArray(localJson.conversations)) {
-        ingest(localJson.conversations, 'desktop');
+        ingest(localJson.conversations);
       }
       if (cloudJson?.ok && Array.isArray(cloudJson.conversations)) {
-        ingest(cloudJson.conversations, 'cloud_vm');
+        ingest(cloudJson.conversations);
       }
       if (Array.isArray(supaData)) {
-        ingest(supaData, 'desktop');
+        ingest(supaData);
       }
 
       if (byId.size > 0 || localJson?.ok || cloudJson?.ok || supaData) {
@@ -1371,31 +1377,35 @@ function DashboardApp() {
 
   const sidebarSections = [
     {
-      key: 'primary',
+      key: 'tracking',
+      label: 'Dashboard & Tracking',
       items: [
         { id: 'overview', label: 'Overview', icon: LayoutDashboard },
         { id: 'history', label: 'History', icon: Clock },
+      ],
+    },
+    {
+      key: 'productivity',
+      label: 'Productivity',
+      items: [
         { id: 'planner', label: 'Planner', icon: Calendar },
         { id: 'tasks', label: 'Tasks', icon: ListTodo },
       ],
     },
     {
-      key: 'intelligence',
+      key: 'files',
+      label: 'Files & Content',
       items: [
         { id: 'memories', label: 'Memories', icon: Archive },
-      ],
-    },
-    {
-      key: 'cloud',
-      items: [
-        { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
         { id: 'media', label: 'Media', icon: ImageIcon },
         { id: 'storage', label: 'Storage', icon: HardDrive },
       ],
     },
     {
       key: 'system',
+      label: 'System & Infrastructure',
       items: [
+        { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
         { id: 'integrations', label: 'Connected Apps', icon: Link },
         { id: 'settings', label: 'Settings', icon: Settings },
       ],
@@ -1467,66 +1477,81 @@ function DashboardApp() {
         <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
         <div className="flex h-full gap-3 p-3 pt-5">
         {/* Sidebar */}
-        <aside className="dashboard-sidebar w-[228px] shrink-0 flex flex-col px-2.5 py-3 relative z-20 transition-all duration-300">
-          <div className="dashboard-sidebar-section dashboard-sidebar-brand px-5 py-4 select-none overflow-hidden mb-4">
-            <div className="min-w-0 relative z-10">
-              <div className="text-[18px] font-semibold text-theme-fg tracking-tight leading-none">Stuard Dashboard</div>
-              <div className="mt-2 text-[11px] text-theme-muted font-medium">
+        <aside className="dashboard-sidebar shrink-0 flex flex-col gap-7 relative z-20">
+          <div className="dashboard-sidebar-brand shrink-0 select-none">
+            <div className="dashboard-sidebar-brand-glow" aria-hidden="true" />
+            <div className="min-w-0 relative z-[1] flex flex-col gap-2">
+              <div className="text-[18px] font-medium text-theme-fg leading-6 tracking-tight">
+                Stuard Dashboard
+              </div>
+              <div className="text-[12px] font-medium text-theme-muted leading-5">
                 Beta V {appVersion}
               </div>
             </div>
           </div>
 
-          <nav className="flex-1 min-h-0 px-1 pr-2 space-y-3 overflow-y-auto custom-scrollbar" data-onboarding="sidebar-nav">
-            {sidebarSections.map((section) => (
-              <div key={section.key} className="dashboard-sidebar-section p-2">
-                {section.items.map((item) => (
-                  <SidebarItem
-                    key={item.id}
-                    id={item.id}
-                    label={item.label}
-                    icon={item.icon}
-                    current={tab}
-                    onClick={setTab}
-                  />
-                ))}
-              </div>
-            ))}
-          </nav>
+          <div className="dashboard-sidebar-panel flex flex-1 min-h-0 flex-col">
+            <nav
+              className="dashboard-sidebar-nav flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+              data-onboarding="sidebar-nav"
+            >
+              {sidebarSections.map((section, sectionIndex) => (
+                <React.Fragment key={section.key}>
+                  {sectionIndex > 0 && <SidebarDivider />}
+                  <div className="dashboard-sidebar-nav-group" role="group" aria-label={section.label}>
+                    {section.items.map((item) => (
+                      <SidebarItem
+                        key={item.id}
+                        id={item.id}
+                        label={item.label}
+                        icon={item.icon}
+                        current={tab}
+                        onClick={setTab}
+                      />
+                    ))}
+                  </div>
+                </React.Fragment>
+              ))}
+            </nav>
 
-          <div className="p-1 pt-3 mt-auto">
-            {userEmail ? (
-              <div className="dashboard-sidebar-section flex items-center gap-3 p-3 cursor-default group">
-                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-black text-primary shadow-inner">
-                  {userEmail[0].toUpperCase()}
+            <div className="dashboard-sidebar-footer shrink-0">
+              {userEmail ? (
+                <div className="dashboard-sidebar-account flex items-center gap-3 px-3 py-2.5">
+                  <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">
+                    {userEmail[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-theme-fg truncate leading-5">
+                      {userEmail.split('@')[0]}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={signOut}
+                      className="text-[11px] text-theme-muted hover:text-red-500 font-medium flex items-center gap-1.5 transition-colors mt-0.5"
+                    >
+                      <LogOut className="w-3 h-3" />
+                      Sign out
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-bold text-theme-fg truncate">{userEmail.split('@')[0]}</div>
-                  <button
-                    onClick={signOut}
-                    className="text-[10px] text-theme-muted hover:text-red-500 font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors mt-0.5"
-                  >
-                    <LogOut className="w-3 h-3" />
-                    Secure Logout
-                  </button>
+              ) : sessionLoaded ? (
+                <button
+                  type="button"
+                  onClick={signInViaBrowser}
+                  className="dashboard-button-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-95 transition-all"
+                >
+                  Sign in to Stuard
+                </button>
+              ) : (
+                <div className="dashboard-sidebar-account flex items-center gap-3 px-3 py-2.5 opacity-60">
+                  <div className="h-9 w-9 rounded-xl bg-theme-card/40 border border-theme animate-pulse shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="h-3 w-20 rounded bg-theme-card/40 animate-pulse" />
+                    <div className="h-2.5 w-14 rounded bg-theme-card/30 mt-1.5 animate-pulse" />
+                  </div>
                 </div>
-              </div>
-            ) : sessionLoaded ? (
-              <button
-                onClick={signInViaBrowser}
-                className="dashboard-button-primary w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold hover:opacity-95 transition-all"
-              >
-                Sign in to Stuard
-              </button>
-            ) : (
-              <div className="dashboard-sidebar-section flex items-center gap-3 p-3 opacity-60">
-                <div className="h-9 w-9 rounded-xl bg-theme-card/40 border border-theme animate-pulse" />
-                <div className="flex-1 min-w-0">
-                  <div className="h-3 w-20 rounded bg-theme-card/40 animate-pulse" />
-                  <div className="h-2.5 w-14 rounded bg-theme-card/30 mt-1.5 animate-pulse" />
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </aside>
 
@@ -1539,8 +1564,6 @@ function DashboardApp() {
           <header className="dashboard-topbar shrink-0">
             {/* Left: brand mark → breadcrumb → status pill */}
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <img src={stuardLogo} alt="Stuard" className="h-7 w-7 rounded-[9px] object-cover shrink-0" />
-              <span className="text-[15px] font-semibold text-theme-fg tracking-tight leading-none">Stuard</span>
               <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-theme-hover/40 text-theme-fg shrink-0">
                 <CurrentTabIcon className="w-[15px] h-[15px]" />
               </div>

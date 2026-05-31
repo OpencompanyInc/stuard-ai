@@ -538,6 +538,8 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
   },
 
   // ── Integrations: Microsoft + Dev + Comms + Social ────────────────────────
+  // Disabled — Outlook integration temporarily hidden (see shared/integration-flags.ts)
+  /*
   {
     id: 'outlook',
     label: 'Outlook',
@@ -565,6 +567,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'outlook_calendar_delete_event', label: 'Delete Event', icon: Trash2, args: { eventId: '' } },
     ],
   },
+  */
   {
     id: 'github',
     label: 'GitHub',
@@ -603,6 +606,8 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'telnyx_phone_status', label: 'Check Phone Status', icon: Phone, args: {} },
     ],
   },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  /*
   {
     id: 'facebook',
     label: 'Facebook',
@@ -637,6 +642,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'threads_publish_post', label: 'Publish Post', icon: Send, args: { text: '', reply_control: 'everyone' } },
     ],
   },
+  */
   {
     id: 'x',
     label: 'X',
@@ -659,6 +665,8 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'x_list_following', label: 'List Following', icon: List, args: { username: '', max_results: 100 } },
     ],
   },
+  // Disabled — Reddit integration temporarily hidden (see shared/integration-flags.ts)
+  /*
   {
     id: 'reddit',
     label: 'Reddit',
@@ -672,6 +680,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'reddit_comment', label: 'Comment / Reply', icon: MessageSquare, args: { thing_id: '', text: '' } },
     ],
   },
+  */
 ];
 
 /**
@@ -686,7 +695,7 @@ export const PALETTE_GROUPS: { id: string; label: string; categoryIds: string[] 
   { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use'] },
   { id: 'media_ai', label: 'Media Tooling & Local AI', categoryIds: ['ffmpeg', 'mediapipe', 'ollama', 'tts'] },
   { id: 'google', label: 'Google', categoryIds: ['gmail', 'google_drive', 'google_calendar', 'google_sheets', 'google_docs', 'google_tasks'] },
-  { id: 'integrations', label: 'Integrations', categoryIds: ['outlook', 'github', 'telnyx', 'facebook', 'instagram', 'threads', 'x', 'reddit'] },
+  { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'telnyx', 'x'] },
 ];
 
 /** Lookup: category id → group id. Used by the palette to render dividers. */

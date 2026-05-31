@@ -57,7 +57,10 @@
   --dashboard-panel-solid: #ffffff;
   --dashboard-panel-border: rgba(148, 163, 184, 0.22);
   --dashboard-sidebar-item: rgba(15, 23, 42, 0.05);
-  --dashboard-sidebar-item-active: rgba(15, 23, 42, 0.09);
+  --dashboard-sidebar-item-active: #f5f5f5;
+  --dashboard-sidebar-item-hover: #eeeeee;
+  --dashboard-sidebar-surface: rgba(255, 255, 255, 0.72);
+  --dashboard-sidebar-divider: #e5e5e5;
   --dashboard-hover: rgba(15, 23, 42, 0.045);
   --dashboard-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
   --dashboard-shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.05);
@@ -115,7 +118,10 @@
   --dashboard-panel-solid: #1b1b1b;
   --dashboard-panel-border: #3e3e3e;
   --dashboard-sidebar-item: rgba(255, 255, 255, 0.06);
-  --dashboard-sidebar-item-active: rgba(255, 255, 255, 0.13);
+  --dashboard-sidebar-item-active: #262626;
+  --dashboard-sidebar-item-hover: #262626;
+  --dashboard-sidebar-surface: rgba(23, 23, 23, 0.5);
+  --dashboard-sidebar-divider: #404040;
   --dashboard-hover: rgba(255, 255, 255, 0.075);
   --dashboard-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
   --dashboard-shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.28);
@@ -739,6 +745,153 @@ button.input-status-float:not(:disabled) {
   }
 }
 
+/* Voice mode UI — border overlay + VoiceModeOverlay. Surfaces borrow the
+   compact pill palette so voice reads as an extension of compact / launcher. */
+.voice-mode-pill-wrap {
+  position: relative;
+  isolation: isolate;
+  font-family: 'General Sans', 'Inter', 'Figtree', sans-serif;
+}
+
+.voice-mode-pill {
+  min-height: 56px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 26px;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow: var(--compact-pill-shadow);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  color: rgb(var(--compact-pill-fg));
+}
+
+[data-theme='light'] .voice-mode-pill {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    var(--compact-pill-shadow);
+}
+
+.voice-mode-pill__status {
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+  white-space: nowrap;
+}
+
+.voice-mode-pill__btn {
+  height: 36px;
+  width: 36px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgb(var(--compact-pill-fg-muted) / 1);
+  background: transparent;
+  border: none;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.voice-mode-pill__btn:hover {
+  color: rgb(var(--compact-pill-fg));
+  background: rgb(var(--compact-pill-fg) / 0.08);
+}
+
+.voice-mode-pill__btn:active {
+  transform: scale(0.95);
+}
+
+.voice-mode-pill__btn--danger {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.12);
+}
+
+.voice-mode-pill__btn--danger:hover {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.2);
+}
+
+.voice-mode-pill__btn--active {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.14);
+}
+
+.voice-mode-pill__btn--active:hover {
+  background: rgba(255, 56, 60, 0.22);
+}
+
+.voice-mode-transcript {
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: rgb(var(--compact-pill-bg));
+  border: 1px solid rgb(var(--compact-pill-fg) / 0.12);
+  box-shadow: var(--compact-pill-shadow);
+  color: rgb(var(--compact-pill-fg));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+[data-theme='light'] .voice-mode-transcript {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme='dark'] .voice-mode-transcript {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.voice-mode-transcript__text {
+  font-size: 14px;
+  line-height: 1.45;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.voice-mode-transcript__text--user {
+  font-weight: 500;
+  color: rgb(var(--compact-pill-fg));
+}
+
+.voice-mode-transcript__text--assistant {
+  font-style: italic;
+  color: rgb(var(--compact-pill-fg) / 0.78);
+}
+
+.voice-mode-transcript__text--partial {
+  opacity: 0.85;
+}
+
+.voice-mode-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9999px;
+  border: 1px solid rgb(var(--compact-pill-fg) / 0.12);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 55%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 4px 10px;
+  box-shadow: var(--compact-pill-shadow);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+}
+
+[data-theme='dark'] .voice-mode-tool-chip {
+  background: color-mix(in srgb, var(--compact-pill-hover) 72%, rgb(var(--compact-pill-bg)) 28%);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
 /* Custom Theme - Uses custom gradient colors set via JS */
 :root[style*="--custom-gradient-start"] {
   --background: var(--custom-gradient-start);
@@ -763,6 +916,9 @@ button.input-status-float:not(:disabled) {
   --dashboard-panel-border: color-mix(in srgb, var(--custom-gradient-end) 28%, transparent);
   --dashboard-sidebar-item: color-mix(in srgb, var(--custom-gradient-end) 18%, transparent);
   --dashboard-sidebar-item-active: color-mix(in srgb, var(--custom-gradient-end) 28%, transparent);
+  --dashboard-sidebar-surface: color-mix(in srgb, var(--custom-gradient-start) 72%, transparent);
+  --dashboard-sidebar-divider: color-mix(in srgb, var(--custom-gradient-end) 32%, transparent);
+  --dashboard-sidebar-item-hover: color-mix(in srgb, var(--custom-gradient-end) 22%, transparent);
   --dashboard-hover: color-mix(in srgb, var(--custom-gradient-end) 14%, transparent);
   --dashboard-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
   --dashboard-shadow-soft: 0 14px 36px rgba(15, 23, 42, 0.1);
@@ -973,10 +1129,12 @@ button.input-status-float:not(:disabled) {
 }
 
 .dashboard-root {
+  --dashboard-sidebar-width: 220px;
   background: var(--dashboard-shell-bg);
 }
 
 .dashboard-sidebar {
+  width: var(--dashboard-sidebar-width);
   background: transparent;
   border: none;
   border-radius: 0;
@@ -984,59 +1142,150 @@ button.input-status-float:not(:disabled) {
   backdrop-filter: none;
 }
 
-.dashboard-sidebar-section {
-  background: color-mix(in srgb, var(--dashboard-panel-solid) 74%, transparent);
-  border: 1px solid var(--dashboard-panel-border);
-  border-radius: 24px;
-  box-shadow: none;
-}
-
+/* Figma Frame 112 — brand card with top-left red glow */
 .dashboard-sidebar-brand {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
-  border-radius: 26px;
+  box-sizing: border-box;
+  padding: 14px 10px 16px;
+  min-height: 74px;
+  border-radius: 24px;
   background:
-    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--primary) 34%, transparent) 0%, transparent 30%),
-    linear-gradient(180deg, color-mix(in srgb, var(--dashboard-panel-solid) 78%, transparent) 0%, color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent) 100%);
+    radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 42%, transparent) 0%, transparent 38%),
+    radial-gradient(circle at 28% 0%, color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 48%),
+    var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  backdrop-filter: blur(2px);
 }
 
-.dashboard-sidebar-brand::before {
-  content: "";
+.dashboard-sidebar-brand-glow {
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  top: -48px;
+  left: -28px;
+  width: 140px;
+  height: 88px;
+  opacity: 0.55;
   pointer-events: none;
+  z-index: 0;
   background:
-    repeating-linear-gradient(0deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 4px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 5px);
-  opacity: 0.35;
+    radial-gradient(ellipse 68% 58% at 35% 55%, color-mix(in srgb, var(--primary) 75%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 52% 48% at 62% 35%, color-mix(in srgb, var(--primary) 48%, transparent) 0%, transparent 72%),
+    radial-gradient(ellipse 40% 36% at 18% 28%, color-mix(in srgb, var(--primary) 36%, transparent) 0%, transparent 75%);
+  filter: blur(36px);
+}
+
+[data-theme='dark'] .dashboard-sidebar-brand-glow {
+  opacity: 0.62;
+}
+
+/* Figma Frame 109 — main nav column */
+.dashboard-sidebar-panel {
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  border-radius: 24px 24px 0 0;
+  background: var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  backdrop-filter: blur(2px);
+}
+
+.dashboard-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px 12px;
+}
+
+.dashboard-sidebar-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-sidebar-divider {
+  flex: none;
+  align-self: stretch;
+  height: 1px;
+  margin: 8px 8px;
+  background: var(--dashboard-sidebar-divider);
+  border: none;
+}
+
+.dashboard-sidebar-footer {
+  padding: 12px 10px 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--dashboard-sidebar-divider);
 }
 
 .dashboard-sidebar-item {
+  flex: none;
+  align-self: stretch;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   color: var(--foreground-muted);
-  border-radius: 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
 }
 
 .dashboard-sidebar-item:hover {
-  background: var(--dashboard-hover);
+  background: var(--dashboard-sidebar-item-hover);
+  color: var(--foreground);
+}
+
+.dashboard-sidebar-item:hover svg {
   color: var(--foreground);
 }
 
 .dashboard-sidebar-item.is-active {
-  background: var(--dashboard-sidebar-item-active);
-  border-color: transparent;
+  background: transparent;
   color: var(--foreground);
+  font-weight: 600;
+}
+
+.dashboard-sidebar-item.is-active:hover {
+  background: var(--dashboard-sidebar-item-hover);
+}
+
+.dashboard-sidebar-account {
+  border-radius: 12px;
+}
+
+.dashboard-sidebar-account:hover {
+  background: var(--dashboard-sidebar-item-hover);
+}
+
+/* Connected Apps — skip off-screen card paint until scrolled into view */
+.integrations-app-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 250px;
+}
+
+/* Legacy — settings / other views may still use section cards */
+.dashboard-sidebar-section {
+  background: var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  border-radius: 24px;
   box-shadow: none;
+  backdrop-filter: blur(2px);
 }
 
 [data-theme='dark'] .dashboard-sidebar-section {
-  border-color: var(--border);
+  border-color: var(--dashboard-sidebar-divider);
 }
 
-[data-theme='dark'] .dashboard-sidebar-item.is-active {
-  border-color: var(--border);
+[data-theme='light'] .dashboard-sidebar-brand-glow {
+  opacity: 0.4;
+}
+
+[data-theme='dark'] .dashboard-sidebar-brand {
+  background:
+    radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 50%, transparent) 0%, transparent 36%),
+    radial-gradient(circle at 28% 0%, color-mix(in srgb, var(--primary) 28%, transparent) 0%, transparent 46%),
+    var(--dashboard-sidebar-surface);
 }
 
 .dashboard-main-surface {
@@ -1411,15 +1660,22 @@ button.input-status-float:not(:disabled) {
 [data-theme='dark'] .dashboard-card-muted,
 [data-theme='dark'] .dashboard-button-secondary,
 [data-theme='dark'] .dashboard-refresh-button,
-[data-theme='dark'] .dashboard-pill,
-[data-theme='dark'] .dashboard-sidebar-section {
+[data-theme='dark'] .dashboard-pill {
   background: color-mix(in srgb, #171717 94%, transparent);
 }
 
-[data-theme='dark'] .dashboard-sidebar-brand {
-  background:
-    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--primary) 46%, transparent) 0%, transparent 30%),
-    linear-gradient(180deg, color-mix(in srgb, #161616 96%, transparent) 0%, color-mix(in srgb, #111111 94%, transparent) 100%);
+:root:not([style*="--custom-gradient-start"])[data-theme='dark'] .dashboard-root {
+  --dashboard-sidebar-item-active: #262626;
+  --dashboard-sidebar-item-hover: #262626;
+  --dashboard-sidebar-surface: rgba(23, 23, 23, 0.5);
+  --dashboard-sidebar-divider: #404040;
+}
+
+:root:not([style*="--custom-gradient-start"])[data-theme='light'] .dashboard-root {
+  --dashboard-sidebar-item-active: #f5f5f5;
+  --dashboard-sidebar-item-hover: #eeeeee;
+  --dashboard-sidebar-surface: rgba(255, 255, 255, 0.82);
+  --dashboard-sidebar-divider: #e5e5e5;
 }
 
 .font-stuard {

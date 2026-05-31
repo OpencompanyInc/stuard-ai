@@ -497,10 +497,28 @@ export async function isIndexerAvailable(): Promise<boolean> {
 
 export async function listRoots(): Promise<IndexedRoot[]> {
   await ensureInitialized();
+  // list-roots overlays per-root semantic counts (a path-range scan over the
+  // index). On the very first call after launch the page cache is cold, so 5s
+  // was too tight and routinely tripped the spawn fallback. Give it real
+  // headroom — the covering index keeps the warm case well under 100ms.
   try {
-    const res = await daemon.call<{ ok: boolean; roots: IndexedRoot[] }>("list-roots", {}, 5000);
+    const res = await daemon.call<{ ok: boolean; roots: IndexedRoot[] }>("list-roots", {}, 12_000);
     return res?.roots || [];
   } catch (err) {
+    // If the daemon is alive but was just slow, a fresh one-shot spawn re-pays
+    // the ~800ms Windows cold-start tax AND re-runs the same scan — the user
+    // ends up waiting twice. The first (timed-out) call has already warmed the
+    // OS file cache, so a second daemon call is the fast path. Only fall back
+    // to spawn when the daemon is genuinely dead.
+    if (daemon.isAlive()) {
+      logger.warn("[rust-file-indexer] list-roots slow on live daemon; retrying on daemon:", err);
+      try {
+        const res = await daemon.call<{ ok: boolean; roots: IndexedRoot[] }>("list-roots", {}, 20_000);
+        return res?.roots || [];
+      } catch (err2) {
+        logger.warn("[rust-file-indexer] list-roots daemon retry failed:", err2);
+      }
+    }
     logger.warn("[rust-file-indexer] list-roots via daemon failed, falling back to spawn:", err);
     const res = await runIndexer<{ ok: boolean; roots: IndexedRoot[] }>("list-roots", {});
     return res?.roots || [];

@@ -6,7 +6,13 @@
  */
 
 import type { CapabilityPack, SubagentKind } from './types';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 import {
   WORKFLOW_SYSTEM_PROMPT,
   WORKFLOW_DELEGATE_ADDENDUM,
@@ -731,13 +737,13 @@ export const AGENT_PACK: CapabilityPack = {
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
   google: ['google_', 'gmail_', 'calendar_', 'drive_', 'sheets_', 'docs_', 'tasks_'],
-  outlook: ['outlook_'],
+  ...(OUTLOOK_INTEGRATION_ENABLED ? { outlook: ['outlook_'] } : {}),
   github: ['github_'],
-  meta: ['facebook_', 'instagram_', 'threads_'],
+  ...(META_INTEGRATION_ENABLED ? { meta: ['facebook_', 'instagram_', 'threads_'] } : {}),
   ...(WHATSAPP_INTEGRATION_ENABLED ? { whatsapp: ['whatsapp_'] } : {}),
   telnyx: ['telnyx_'],
-  reddit: ['reddit_'],
-  discord: ['discord_'],
+  ...(REDDIT_INTEGRATION_ENABLED ? { reddit: ['reddit_'] } : {}),
+  ...(DISCORD_INTEGRATION_ENABLED ? { discord: ['discord_'] } : {}),
   x: ['x_'],
 };
 

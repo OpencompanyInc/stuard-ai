@@ -530,6 +530,18 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_files_mtime ON indexed_files(mtime_ms);
         CREATE INDEX IF NOT EXISTS idx_files_status ON indexed_files(status);
 
+        -- Covering index for the per-root semantic counts in do_list_roots:
+        --   WHERE kind IN ('image','document','code') AND path >= ? AND path < ?
+        -- summed by status. With (kind, path, status) all in the index, SQLite
+        -- does 3 covering range scans (one per kind) and reads status straight
+        -- from the index — no per-row main-table lookups. Counting a large
+        -- "searchable" folder then stays fast even on a cold page cache (the
+        -- first Files-settings load after launch), instead of blowing the 5s
+        -- daemon timeout and forcing a slower cold respawn that re-runs the
+        -- same scan. The leading `kind` also skips the non-counted files
+        -- entirely rather than scanning the whole path range.
+        CREATE INDEX IF NOT EXISTS idx_files_kind_path_status ON indexed_files(kind, path, status);
+
         -- Full-text search over filename/path/summary/keywords. This is what makes
         -- `search` instantaneous instead of a full table scan.
         CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
@@ -718,20 +730,32 @@ fn do_list_roots(conn: &Connection) -> Result<ListRootsOut, Box<dyn std::error::
     // folder's count reflects everything physically inside it even when a nested
     // parent/child root owns the rows. Each query is an indexed range scan over
     // the UNIQUE path column. Tolerant of failure — counts stay 0 on error.
-    if let Ok(mut cnt_stmt) = conn.prepare(
-        "SELECT
-            COALESCE(SUM(CASE WHEN status = 'indexed' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status IN ('pending','stale') THEN 1 ELSE 0 END), 0)
-         FROM indexed_files
-         WHERE kind IN ('image','document','code') AND path >= ? AND path < ?",
-    ) {
-        for root in roots.iter_mut() {
-            let (lo, hi) = path_prefix_range(&root.path);
-            if let Ok((idx, pend)) = cnt_stmt.query_row(params![lo, hi], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-            }) {
-                root.indexed_files = idx;
-                root.pending_files = pend;
+    //
+    // IMPORTANT: only do this for SEMANTIC roots. Those are the handful of
+    // folders the user opted into "Search by Meaning", and the only roots whose
+    // counts the UI ever renders. The non-semantic roots are the broad
+    // name-search index (whole home dir, AppData, Program Files, …) holding
+    // millions of rows each — counting them here scanned the entire index per
+    // root and blew the 5s daemon timeout, forcing a slow cold-spawn fallback.
+    if roots.iter().any(|r| r.semantic) {
+        if let Ok(mut cnt_stmt) = conn.prepare(
+            "SELECT
+                COALESCE(SUM(CASE WHEN status = 'indexed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status IN ('pending','stale') THEN 1 ELSE 0 END), 0)
+             FROM indexed_files
+             WHERE kind IN ('image','document','code') AND path >= ? AND path < ?",
+        ) {
+            for root in roots.iter_mut() {
+                if !root.semantic {
+                    continue;
+                }
+                let (lo, hi) = path_prefix_range(&root.path);
+                if let Ok((idx, pend)) = cnt_stmt.query_row(params![lo, hi], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                }) {
+                    root.indexed_files = idx;
+                    root.pending_files = pend;
+                }
             }
         }
     }
@@ -1790,6 +1814,10 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
+/// Minimum cosine similarity for vector-only semantic hits. Matches below this
+/// are dropped so hybrid/semantic search does not surface unrelated files.
+const SEMANTIC_SIMILARITY_MIN: f64 = 0.4;
+
 /// Brute-force vector search over the embedded subset. Cheap in practice
 /// because embedding is opt-in + credit-capped, so only a bounded number of
 /// rows carry a vector. `MAX_SCAN` is a hard ceiling so a pathological index
@@ -1827,7 +1855,9 @@ fn vector_collect(
     )?;
     let mut out: Vec<FileResult> = Vec::new();
     for r in rows.flatten() {
-        out.push(r);
+        if r.score >= SEMANTIC_SIMILARITY_MIN {
+            out.push(r);
+        }
     }
     out.sort_by(|a, b| {
         b.score
@@ -2743,6 +2773,66 @@ mod tests {
         let ids: Vec<String> = out.results.iter().map(|r| r.id.clone()).collect();
         assert!(ids.contains(&"fa".to_string()), "older folder missing: {:?}", ids);
         assert!(ids.contains(&"fb".to_string()), "newer folder missing: {:?}", ids);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn semantic_search_drops_vector_hits_below_similarity_cutoff() {
+        let dir = std::env::temp_dir().join(format!("sfi-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("idx.db").to_string_lossy().to_string();
+        let conn = open_db(&db_path).unwrap();
+        init_schema(&conn).unwrap();
+        ensure_root_columns(&conn).unwrap();
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO indexed_roots (id, path, enabled, schedule, last_scan_id, created_at, semantic)
+             VALUES ('r1','C:\\docs',1,'daily',0,?,1)",
+            params![now],
+        )
+        .unwrap();
+        for (id, vec) in [
+            ("strong", [0.95f32, 0.05, 0.0]),
+            ("weak", [0.39f32, 0.92, 0.0]),
+        ] {
+            conn.execute(
+                "INSERT INTO indexed_files
+                   (id, root_id, path, filename, extension, kind, size, mtime_ms, status, last_seen_scan_id, created_at, vector)
+                 VALUES (?,?,?,?,?,?,?,?,'indexed',0,?,?)",
+                params![
+                    id,
+                    "r1",
+                    format!("C:\\docs\\{id}.txt"),
+                    format!("{id}.txt"),
+                    ".txt",
+                    "document",
+                    10i64,
+                    0i64,
+                    now,
+                    pack_vector(&vec),
+                ],
+            )
+            .unwrap();
+        }
+
+        let out = do_search_ext(
+            &conn,
+            "",
+            10,
+            None,
+            None,
+            Some(&[1.0, 0.0, 0.0]),
+            "semantic",
+        )
+        .unwrap();
+        let ids: Vec<String> = out.results.iter().map(|r| r.id.clone()).collect();
+        assert!(ids.contains(&"strong".to_string()), "strong match missing: {:?}", ids);
+        assert!(
+            !ids.contains(&"weak".to_string()),
+            "weak match should be filtered: {:?}",
+            ids
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

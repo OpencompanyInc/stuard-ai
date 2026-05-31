@@ -18,7 +18,13 @@ import { KNOWN_SUBAGENT_NAMES, type SubagentName } from './capability-packs';
 import type { DelegationResult, SubagentQuestion, SubagentAnswer } from './types';
 import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge } from '../tools/bridge';
 import { buildSkillContextSection, findSkillInContext, getSkillsFromContext } from '../tools/skill-tools';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 
 // ─── Background subagent coordination ────────────────────────────────────────
 
@@ -734,13 +740,13 @@ export const delegate = createTool({
     '  bot         — legacy proactive bot status/ask workflows by bot id or name\n' +
     '  agent       — proactive agent status/ask workflows by agent id or name\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
-    '  outlook     — Outlook mail & calendar\n' +
+    (OUTLOOK_INTEGRATION_ENABLED ? '  outlook     — Outlook mail & calendar\n' : '') +
     '  github      — repos, issues, PRs, branches, actions\n' +
-    '  meta        — Facebook, Instagram, Threads\n' +
+    (META_INTEGRATION_ENABLED ? '  meta        — Facebook, Instagram, Threads\n' : '') +
     (WHATSAPP_INTEGRATION_ENABLED ? '  whatsapp    — WhatsApp messaging\n' : '') +
     '  telnyx      — SMS, voice calls\n' +
-    '  reddit      — subreddits, posts, comments\n' +
-    '  discord     — Discord bot operations\n' +
+    (REDDIT_INTEGRATION_ENABLED ? '  reddit      — subreddits, posts, comments\n' : '') +
+    (DISCORD_INTEGRATION_ENABLED ? '  discord     — Discord bot operations\n' : '') +
     '  x           — X/Twitter tweets, timelines, users, DMs\n\n' +
     'A subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
     'this tool returns with the question and a questionId. If the user must decide or confirm, ' +

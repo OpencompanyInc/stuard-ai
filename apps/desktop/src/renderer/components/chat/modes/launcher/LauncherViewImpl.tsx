@@ -40,7 +40,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { VoiceOrb, type VoiceState } from "../../../voice/VoiceOrb";
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../../../../hooks/useVoiceMode";
-import { describeTool, friendlyVoiceState } from "../../../voice/voiceLabels";
+import { describeTool, friendlyVoiceState, voiceStateHaloShadow } from "../../../voice/voiceLabels";
 import type {
   UsePlannerDataResult,
   NextUpItem,
@@ -73,6 +73,7 @@ import { FileNavigatorOverlay } from "../window/parts/FileNavigatorOverlay";
 import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 import { CreditsLimitNotice } from "../../shared/CreditsLimitNotice";
 import { AttachmentBar } from "../../shared/input/AttachmentBar";
+import { IntegrationSuggestionChip } from "../../shared/input/suggestions/IntegrationSuggestionChip";
 
 interface LauncherViewProps {
   query: string;
@@ -1362,7 +1363,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 ) : voiceActive ? (
                   <span
                     className={clsx(
-                      "rounded-full shrink-0 bg-emerald-500 animate-pulse",
+                      "rounded-full shrink-0 bg-[#ff383c] animate-pulse",
                       isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
                     )}
                   />
@@ -1429,25 +1430,19 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                   {/* Audio-reactive halo behind the strip */}
                   <motion.div
                     aria-hidden
-                    className="pointer-events-none absolute inset-0 -z-10 rounded-[30px]"
+                    className="pointer-events-none absolute inset-0 -z-10 rounded-[26px]"
                     animate={{
-                      boxShadow: voiceState === "listening"
-                        ? `0 0 ${24 + voiceAudioLevel * 32}px rgba(56,189,248,0.22), 0 0 ${48 + voiceAudioLevel * 28}px rgba(56,189,248,0.18)`
-                        : voiceState === "speaking"
-                          ? `0 0 ${28 + voiceAudioLevel * 32}px rgba(167,139,250,0.24), 0 0 ${56 + voiceAudioLevel * 28}px rgba(167,139,250,0.18)`
-                          : voiceState === "thinking"
-                            ? "0 0 28px rgba(251,191,36,0.22), 0 0 56px rgba(251,191,36,0.18)"
-                            : "0 0 24px rgba(99,102,241,0.18), 0 0 48px rgba(99,102,241,0.14)",
+                      boxShadow: voiceStateHaloShadow(voiceState, voiceAudioLevel),
                     }}
                     transition={{ duration: 0.4, ease: "easeOut" }}
                   />
                   <motion.div
                     layout
                     className={clsx(
-                      "flex items-center gap-2 transition-colors duration-300 backdrop-blur-xl",
+                      "flex items-center gap-2 transition-colors duration-300",
                       isCompact
                         ? "bg-theme-hover/50 rounded-xl px-2 py-1 border border-theme/15"
-                        : "bg-theme-hover/55 rounded-[14px] p-1.5 pr-2 border border-theme/10",
+                        : "launcher-input-surface rounded-[14px] p-1.5 pr-2 border border-theme/10 bg-theme-input",
                     )}
                   >
                     <motion.div
@@ -1625,6 +1620,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       })}
                     </div>
                   )}
+                <IntegrationSuggestionChip
+                  query={query}
+                  accessToken={accessToken}
+                  enabled={!showFileNav}
+                  compact={isCompact}
+                />
                 <div
                   className={clsx(
                     "flex flex-col transition-all",

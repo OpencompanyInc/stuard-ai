@@ -17,7 +17,13 @@ import * as webhookTools from './webhook-tools';
 import * as httpTools from './http-tools';
 import * as telnyxTools from './telnyx-tools';
 import * as whatsappTools from './whatsapp-tools';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 import * as metaSocialTools from './meta-social-tools';
 import * as cloudStorageTools from './cloud-storage-tools';
 import * as vmTools from './vm-tools';
@@ -542,16 +548,22 @@ if (googleTools.gmail_send_message) {
     if (t) getToolRegistry().set('gmail_send', t);
 }
 
+if (OUTLOOK_INTEGRATION_ENABLED) {
 Object.values(outlookTools).forEach(t => registerTool(t, 'Outlook'));
 // Backward compatibility alias
 if (outlookTools.outlook_send_mail) {
     const t = outlookTools.outlook_send_mail;
     if (t) getToolRegistry().set('outlook_send', t);
 }
+}
 
 Object.values(githubTools).forEach(t => registerTool(t, 'GitHub'));
+if (DISCORD_INTEGRATION_ENABLED) {
 Object.values(discordTools).forEach(t => registerTool(t, 'Discord'));
+}
+if (REDDIT_INTEGRATION_ENABLED) {
 Object.values(redditTools).forEach(t => registerTool(t, 'Reddit'));
+}
 Object.values(xTools).forEach(t => registerTool(t, 'X'));
 Object.values(youtubeTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'YouTube');
@@ -579,9 +591,11 @@ Object.values(whatsappTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'WhatsApp');
 });
 }
+if (META_INTEGRATION_ENABLED) {
 Object.values(metaSocialTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'MetaSocial');
 });
+}
 Object.values(cloudStorageTools).forEach(t => {
     if (typeof (t as any)?.execute === 'function') registerTool(t, 'CloudStorage');
 });

@@ -2,7 +2,13 @@ import os from 'node:os';
 import { getToolRegistry, getToolCategories } from '../../tools/tool-registry';
 import { initToolRegistry } from '../../tools/meta-tools';
 import { buildAvailableSkillsPromptSection, type SkillSummary } from '../../tools/skill-tools';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../../shared/integration-flags';
 
 // Ensure the tool registry is populated
 initToolRegistry();
@@ -436,7 +442,7 @@ For heavyweight execution, hand off via \`delegate\` (tasks array — multiple e
 | reminders | (Skip — use \`task_reminders\` directly) |
 | ffmpeg | Audio/video processing |
 | vm | Cloud VM operations |
-| google / outlook / github / meta${WHATSAPP_INTEGRATION_ENABLED ? ' / whatsapp' : ''} / telnyx / reddit / discord / x | Connected integrations |
+| google${OUTLOOK_INTEGRATION_ENABLED ? ' / outlook' : ''} / github${META_INTEGRATION_ENABLED ? ' / meta' : ''}${WHATSAPP_INTEGRATION_ENABLED ? ' / whatsapp' : ''} / telnyx${REDDIT_INTEGRATION_ENABLED ? ' / reddit' : ''}${DISCORD_INTEGRATION_ENABLED ? ' / discord' : ''} / x | Connected integrations |
 
 Default is **act yourself with the native tools above**. Delegate only when the task genuinely needs a specialist subagent's tool universe.
 

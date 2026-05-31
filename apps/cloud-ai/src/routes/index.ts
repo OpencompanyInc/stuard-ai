@@ -12,7 +12,13 @@ import { handleXRoutes } from './integrations/x';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 import { handleProfileRoutes } from './integrations/profiles';
 import { handleCalendarRoutes } from './calendar';
 import { handleInferenceRoutes } from './inference';
@@ -62,12 +68,12 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleOAuthClaimRoute(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
-  if (await handleOutlookRoutes(req, res, parsedUrl)) return true;
-  if (await handleDiscordRoutes(req, res, parsedUrl)) return true;
-  if (await handleRedditRoutes(req, res, parsedUrl)) return true;
+  if (OUTLOOK_INTEGRATION_ENABLED && await handleOutlookRoutes(req, res, parsedUrl)) return true;
+  if (DISCORD_INTEGRATION_ENABLED && await handleDiscordRoutes(req, res, parsedUrl)) return true;
+  if (REDDIT_INTEGRATION_ENABLED && await handleRedditRoutes(req, res, parsedUrl)) return true;
   if (await handleXRoutes(req, res, parsedUrl)) return true;
   if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
-  if (await handleMetaRoutes(req, res, parsedUrl)) return true;
+  if (META_INTEGRATION_ENABLED && await handleMetaRoutes(req, res, parsedUrl)) return true;
   if (WHATSAPP_INTEGRATION_ENABLED && await handleWhatsAppRoutes(req, res, parsedUrl)) return true;
   if (await handleProfileRoutes(req, res, parsedUrl)) return true;
   if (await handleCalendarRoutes(req, res, parsedUrl)) return true;

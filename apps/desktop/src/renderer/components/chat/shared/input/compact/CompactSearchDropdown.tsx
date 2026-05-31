@@ -59,6 +59,9 @@ interface CompactSearchDropdownProps {
   maxHeight: number;
   scrollHeight: number;
 
+  /** Optional integration-suggestion chip, rendered at the top of the scroll area. */
+  suggestionSlot?: React.ReactNode;
+
   /** Query + selection. */
   query: string;
   setQuery: (q: string) => void;
@@ -109,6 +112,7 @@ export const CompactSearchDropdown: React.FC<CompactSearchDropdownProps> = ({
   inputBarHeight,
   maxHeight,
   scrollHeight,
+  suggestionSlot,
   query,
   setQuery,
   selectedIndex,
@@ -154,6 +158,8 @@ export const CompactSearchDropdown: React.FC<CompactSearchDropdownProps> = ({
           className="flex flex-col overflow-y-auto custom-scrollbar min-h-0 flex-1"
           style={{ padding: 16, gap: 12, maxHeight: scrollHeight }}
         >
+          {suggestionSlot}
+
           {/* QUICK ACTIONS */}
           <div className="flex flex-col" style={{ gap: 8 }}>
             <div

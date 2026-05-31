@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { AnimatePresence, motion } from "framer-motion";
-import { clsx } from "clsx";
+import { motion } from "framer-motion";
 import { VoiceScreenFrame } from "./components/voice/VoiceScreenFrame";
 import { VoicePill } from "./components/voice/VoicePill";
-import { VoiceMarkdownText } from "./components/voice/VoiceMarkdownText";
+import { VoiceTranscriptBox } from "./components/voice/VoiceTranscriptBox";
+import { usePreferences } from "./hooks/usePreferences";
 import type { VoiceState } from "./components/voice/VoiceOrb";
 import type { TranscriptLine, VoiceModeState } from "./hooks/useVoiceMode";
 import "./styles.css";
@@ -24,18 +24,50 @@ interface BorderPayload {
   transcripts?: TranscriptLine[];
 }
 
+function useVoiceBorderTheme() {
+  const { themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (themeMode === "dark" || themeMode === "custom") {
+      root.setAttribute("data-theme", "dark");
+      root.classList.add("dark");
+    } else {
+      root.setAttribute("data-theme", "light");
+      root.classList.remove("dark");
+    }
+
+    if (themeMode === "custom") {
+      root.style.setProperty("--custom-gradient-start", themeDarkShade);
+      root.style.setProperty("--custom-gradient-end", themeLightShade);
+      root.style.setProperty("--custom-text-color", themeText === "white" ? "#ffffff" : "#000000");
+    } else {
+      root.style.removeProperty("--custom-gradient-start");
+      root.style.removeProperty("--custom-gradient-end");
+      root.style.removeProperty("--custom-text-color");
+    }
+  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
+
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onThemeUpdated?.(() => {
+      // usePreferences picks up localStorage changes from the main window broadcast.
+    });
+    return () => { try { (typeof unsub === "function") && unsub(); } catch { } };
+  }, []);
+}
+
 /**
  * Full-screen voice border window. Renders:
- *   â€¢ VoiceScreenFrame  â€” pulsing red ambient halo at the screen edge.
- *   â€¢ Top caption overlay â€” translucent translucent rectangle that fades
- *     in whenever a transcript line is active. Lives near the top so it
- *     doesn't compete with the pill.
- *   â€¢ Pill â€” mute / share screen / close, dead-center along the bottom.
+ *   • VoiceScreenFrame  — pulsing red ambient halo at the screen edge.
+ *   • Transcript card   — compact-pill surface above the pill.
+ *   • VoicePill         — mute / share screen / close, bottom center.
  *
  * The window is click-through by default; only the pill area toggles
  * pointer events on while the cursor is over it.
  */
 function VoiceBorderApp() {
+  useVoiceBorderTheme();
+
   const [state, setState] = useState<VoiceModeState>("idle");
   const [audioLevel, setAudioLevel] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -78,60 +110,15 @@ function VoiceBorderApp() {
     <div style={{ position: "fixed", inset: 0, pointerEvents: "none" }}>
       <VoiceScreenFrame audioLevel={audioLevel} state={orbState} />
 
-      {/* Caption overlay â€” translucent rectangle sitting directly above the
-          pill, fades in only when there is real transcript text.
-          KEY: keyed by role only, NOT by transcript id, so streamed partials
-          from the same role update text in place instead of remounting the
-          motion.div (which caused the caption to fly in from off-screen on
-          every delta). A new line for the *other* role re-keys, giving us a
-          natural cross-fade between speaker turns. */}
       <div
         className="fixed left-0 right-0 flex justify-center px-6"
         style={{ bottom: 96, pointerEvents: "none", zIndex: 15 }}
       >
-        <AnimatePresence mode="wait">
-          {latestTranscript?.text && (
-            <motion.div
-              key={`cap-${latestTranscript.role}`}
-              initial={{ opacity: 0, y: 8, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.985 }}
-              transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-              className="px-6 py-3.5 rounded-2xl backdrop-blur-xl max-w-[760px]"
-              style={{
-                background: "rgba(19, 18, 16, 0.55)",
-                border: "1px solid rgba(255, 39, 56, 0.16)",
-                boxShadow:
-                  "0 14px 50px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 4, 22, 0.05) inset",
-              }}
-            >
-              <div
-                className={clsx(
-                  "text-[15px] leading-relaxed text-center",
-                  latestTranscript.role === "user"
-                    ? "text-white font-medium"
-                    : "text-white/85",
-                  !latestTranscript.isFinal && "opacity-85",
-                )}
-              >
-                {latestTranscript.role === "assistant" ? (
-                  <VoiceMarkdownText text={latestTranscript.text} />
-                ) : (
-                  latestTranscript.text
-                )}
-                {!latestTranscript.isFinal && (
-                  <span className="inline-block w-[1.5px] h-[0.85em] bg-white/70 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div className="pointer-events-auto w-full max-w-[760px]">
+          <VoiceTranscriptBox transcript={latestTranscript} centered />
+        </div>
       </div>
 
-      {/* Pill â€” centered along the bottom of the monitor.
-          Wrapper handles centering (left:0 right:0 + flex) so framer-motion
-          transforms on the inner motion.div don't fight Tailwind's
-          -translate-x-1/2. */}
       <div
         className="fixed bottom-8 left-0 right-0 flex justify-center"
         style={{ pointerEvents: "none", zIndex: 20 }}

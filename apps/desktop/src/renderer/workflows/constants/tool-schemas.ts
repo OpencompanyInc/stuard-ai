@@ -265,16 +265,17 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '', profile: '' }, outputSchema: { document: 'object' } },
   { id: 'docs_write_text', category: 'integrations', kind: 'cloud', description: 'Write text to a Google Doc', argsTemplate: { documentId: '', text: '', profile: '' }, outputSchema: { result: 'object' } },
   { id: 'tasks_list', category: 'integrations', kind: 'cloud', description: 'List Google Tasks', argsTemplate: { tasklist: '', maxResults: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
-  { id: 'facebook_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Facebook profile and managed Pages', argsTemplate: { profile: '' }, outputSchema: { me: 'object', pages: 'any[]', count: 'number' } },
-  { id: 'facebook_list_pages', category: 'integrations', kind: 'cloud', description: 'List Facebook Pages the connected user can manage', argsTemplate: { profile: '' }, outputSchema: { pages: 'any[]', count: 'number' } },
-  { id: 'facebook_list_page_posts', category: 'integrations', kind: 'cloud', description: 'List posts from a Facebook Page', argsTemplate: { page_id: '', limit: 10, profile: '' }, outputSchema: { page: 'object', posts: 'any[]', count: 'number', paging: 'object' } },
-  { id: 'facebook_create_page_post', category: 'integrations', kind: 'cloud', description: 'Create a post on a Facebook Page', argsTemplate: { page_id: '', message: '', link: '', published: true, profile: '' }, outputSchema: { ok: 'boolean', id: 'string', page: 'object', permalink_url: 'string' } },
-  { id: 'instagram_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Instagram professional account profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
-  { id: 'instagram_list_media', category: 'integrations', kind: 'cloud', description: 'List media from the connected Instagram professional account', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
-  { id: 'instagram_publish_media', category: 'integrations', kind: 'cloud', description: 'Publish IMAGE, VIDEO, or REELS media to Instagram from a public URL', argsTemplate: { media_type: 'IMAGE', image_url: '', video_url: '', caption: '', alt_text: '', thumb_offset: 0, profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', media_type: 'string' } },
-  { id: 'threads_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Threads profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
-  { id: 'threads_list_posts', category: 'integrations', kind: 'cloud', description: 'List recent posts from the connected Threads profile', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
-  { id: 'threads_publish_post', category: 'integrations', kind: 'cloud', description: 'Publish a text post to Threads', argsTemplate: { text: '', reply_control: 'everyone', profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', text: 'string' } },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  // { id: 'facebook_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Facebook profile and managed Pages', argsTemplate: { profile: '' }, outputSchema: { me: 'object', pages: 'any[]', count: 'number' } },
+  // { id: 'facebook_list_pages', category: 'integrations', kind: 'cloud', description: 'List Facebook Pages the connected user can manage', argsTemplate: { profile: '' }, outputSchema: { pages: 'any[]', count: 'number' } },
+  // { id: 'facebook_list_page_posts', category: 'integrations', kind: 'cloud', description: 'List posts from a Facebook Page', argsTemplate: { page_id: '', limit: 10, profile: '' }, outputSchema: { page: 'object', posts: 'any[]', count: 'number', paging: 'object' } },
+  // { id: 'facebook_create_page_post', category: 'integrations', kind: 'cloud', description: 'Create a post on a Facebook Page', argsTemplate: { page_id: '', message: '', link: '', published: true, profile: '' }, outputSchema: { ok: 'boolean', id: 'string', page: 'object', permalink_url: 'string' } },
+  // { id: 'instagram_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Instagram professional account profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
+  // { id: 'instagram_list_media', category: 'integrations', kind: 'cloud', description: 'List media from the connected Instagram professional account', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
+  // { id: 'instagram_publish_media', category: 'integrations', kind: 'cloud', description: 'Publish IMAGE, VIDEO, or REELS media to Instagram from a public URL', argsTemplate: { media_type: 'IMAGE', image_url: '', video_url: '', caption: '', alt_text: '', thumb_offset: 0, profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', media_type: 'string' } },
+  // { id: 'threads_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Threads profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object', userId: 'string' } },
+  // { id: 'threads_list_posts', category: 'integrations', kind: 'cloud', description: 'List recent posts from the connected Threads profile', argsTemplate: { limit: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', paging: 'object' } },
+  // { id: 'threads_publish_post', category: 'integrations', kind: 'cloud', description: 'Publish a text post to Threads', argsTemplate: { text: '', reply_control: 'everyone', profile: '' }, outputSchema: { ok: 'boolean', creation_id: 'string', id: 'string', text: 'string' } },
   // X / Twitter
   { id: 'x_search_tweets', category: 'integrations', kind: 'cloud', description: 'Search recent tweets/posts on X/Twitter matching a query', argsTemplate: { query: '', max_results: 20, profile: '' }, outputSchema: { items: 'any[]', count: 'number', next_token: 'string' } },
   { id: 'x_get_user_timeline', category: 'integrations', kind: 'cloud', description: 'Fetch recent tweets/posts from a specific X/Twitter user timeline by username or user_id', argsTemplate: { username: '', user_id: '', max_results: 20, exclude_replies: false, exclude_retweets: false, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
@@ -314,19 +315,19 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   // { id: 'whatsapp_send_template', category: 'integrations', kind: 'cloud', description: 'Send a pre-approved WhatsApp template message', argsTemplate: { template_name: '', language_code: 'en_US' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   // { id: 'whatsapp_voice_call', category: 'integrations', kind: 'cloud', description: 'Make a real-time AI voice call to the WhatsApp phone number with provider selection', argsTemplate: { provider: 'auto', agent_id: '', voice_id: '', initial_message: '', system_prompt: '' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', provider: 'string', error: 'string' } },
   // { id: 'whatsapp_make_call', category: 'integrations', kind: 'cloud', description: 'Call the WhatsApp phone number and speak a message via basic TTS', argsTemplate: { message: '', voice: 'female' }, outputSchema: { ok: 'boolean', callControlId: 'string', to: 'string', error: 'string' } },
-  // Discord
-  { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
-  { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
-  { id: 'discord_list_dms', category: 'integrations', kind: 'cloud', description: 'List Discord DM conversations', argsTemplate: {}, outputSchema: { dms: 'any[]', count: 'number' } },
-  { id: 'discord_read_messages', category: 'integrations', kind: 'cloud', description: 'Read messages from a Discord channel or DM', argsTemplate: { channel_id: '', limit: 25 }, outputSchema: { messages: 'any[]', count: 'number' } },
-  { id: 'discord_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message on Discord', argsTemplate: { channel_id: '', content: '' }, outputSchema: { sent: 'boolean', id: 'string', content: 'string' } },
-  { id: 'discord_add_reaction', category: 'integrations', kind: 'cloud', description: 'React to a Discord message with an emoji', argsTemplate: { channel_id: '', message_id: '', emoji: '👍' }, outputSchema: { success: 'boolean' } },
-  // Reddit
-  { id: 'reddit_search', category: 'integrations', kind: 'cloud', description: 'Search Reddit for posts globally or within a specific subreddit', argsTemplate: { query: '', subreddit: '', sort: 'relevance', time: 'all', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
-  { id: 'reddit_view_subreddit', category: 'integrations', kind: 'cloud', description: 'Browse posts from a subreddit sorted by hot, new, top, or rising', argsTemplate: { subreddit: '', sort: 'hot', time: 'day', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
-  { id: 'reddit_view_comments', category: 'integrations', kind: 'cloud', description: 'View comments on a Reddit post with sorting options', argsTemplate: { subreddit: '', post_id: '', sort: 'confidence', limit: 25, profile: '' }, outputSchema: { post: 'object', comments: 'any[]' } },
-  { id: 'reddit_create_post', category: 'integrations', kind: 'cloud', description: 'Create a text or link post on a subreddit', argsTemplate: { subreddit: '', title: '', kind: 'self', text: '', url: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', url: 'string', errors: 'any[]' } },
-  { id: 'reddit_comment', category: 'integrations', kind: 'cloud', description: 'Comment on a Reddit post or reply to a comment (use t3_id for posts, t1_id for comments)', argsTemplate: { thing_id: '', text: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', errors: 'any[]' } },
+  // Disabled — Discord integration temporarily hidden (see shared/integration-flags.ts)
+  // { id: 'discord_list_guilds', category: 'integrations', kind: 'cloud', description: 'List Discord servers the user is in', argsTemplate: {}, outputSchema: { guilds: 'any[]', count: 'number' } },
+  // { id: 'discord_list_channels', category: 'integrations', kind: 'cloud', description: 'List text channels in a Discord server', argsTemplate: { guild_id: '' }, outputSchema: { channels: 'any[]', count: 'number' } },
+  // { id: 'discord_list_dms', category: 'integrations', kind: 'cloud', description: 'List Discord DM conversations', argsTemplate: {}, outputSchema: { dms: 'any[]', count: 'number' } },
+  // { id: 'discord_read_messages', category: 'integrations', kind: 'cloud', description: 'Read messages from a Discord channel or DM', argsTemplate: { channel_id: '', limit: 25 }, outputSchema: { messages: 'any[]', count: 'number' } },
+  // { id: 'discord_send_dm', category: 'integrations', kind: 'cloud', description: 'Send a direct message on Discord', argsTemplate: { channel_id: '', content: '' }, outputSchema: { sent: 'boolean', id: 'string', content: 'string' } },
+  // { id: 'discord_add_reaction', category: 'integrations', kind: 'cloud', description: 'React to a Discord message with an emoji', argsTemplate: { channel_id: '', message_id: '', emoji: '👍' }, outputSchema: { success: 'boolean' } },
+  // Disabled — Reddit integration temporarily hidden (see shared/integration-flags.ts)
+  // { id: 'reddit_search', category: 'integrations', kind: 'cloud', description: 'Search Reddit for posts globally or within a specific subreddit', argsTemplate: { query: '', subreddit: '', sort: 'relevance', time: 'all', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  // { id: 'reddit_view_subreddit', category: 'integrations', kind: 'cloud', description: 'Browse posts from a subreddit sorted by hot, new, top, or rising', argsTemplate: { subreddit: '', sort: 'hot', time: 'day', limit: 25, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  // { id: 'reddit_view_comments', category: 'integrations', kind: 'cloud', description: 'View comments on a Reddit post with sorting options', argsTemplate: { subreddit: '', post_id: '', sort: 'confidence', limit: 25, profile: '' }, outputSchema: { post: 'object', comments: 'any[]' } },
+  // { id: 'reddit_create_post', category: 'integrations', kind: 'cloud', description: 'Create a text or link post on a subreddit', argsTemplate: { subreddit: '', title: '', kind: 'self', text: '', url: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', url: 'string', errors: 'any[]' } },
+  // { id: 'reddit_comment', category: 'integrations', kind: 'cloud', description: 'Comment on a Reddit post or reply to a comment (use t3_id for posts, t1_id for comments)', argsTemplate: { thing_id: '', text: '', profile: '' }, outputSchema: { success: 'boolean', id: 'string', errors: 'any[]' } },
   // YouTube
   { id: 'youtube_get_video', category: 'integrations', kind: 'cloud', description: 'Get detailed information about a YouTube video', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', video: 'object', error: 'string' } },
   { id: 'youtube_get_channel', category: 'integrations', kind: 'cloud', description: 'Get information about a YouTube channel', argsTemplate: { url: '' }, outputSchema: { ok: 'boolean', channel: 'object', error: 'string' } },
@@ -1369,6 +1370,8 @@ if (TOOL_SCHEMAS['gmail_send_message']) {
   };
 }
 
+/*
+// Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
 if (TOOL_SCHEMAS['facebook_get_me']) {
   TOOL_SCHEMAS['facebook_get_me'].args = {
     profile: {
@@ -1583,6 +1586,7 @@ if (TOOL_SCHEMAS['threads_publish_post']) {
     },
   };
 }
+*/
 
 // ── Reddit smart args ──
 
@@ -1624,6 +1628,8 @@ const REDDIT_POST_KIND_OPTIONS = [
   { value: 'link', label: 'Link Post', description: 'A post linking to an external URL' },
 ];
 
+/*
+// Disabled — Reddit integration temporarily hidden (see shared/integration-flags.ts)
 if (TOOL_SCHEMAS['reddit_search']) {
   TOOL_SCHEMAS['reddit_search'].args = {
     query: {
@@ -1815,6 +1821,7 @@ if (TOOL_SCHEMAS['reddit_comment']) {
     },
   };
 }
+*/
 
 if (TOOL_SCHEMAS['whatsapp_send_message']) {
   TOOL_SCHEMAS['whatsapp_send_message'].args = {

@@ -13,7 +13,13 @@ import { agent_todo, search_local_workflows, run_workflow } from '../tools/devic
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
 import { runWithSecrets, withClientBridge } from '../tools/bridge';
 import { sendVMCommand } from '../services/vm-command';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 import { search_past_conversations, get_conversation_context } from '../tools/device/memory';
 import {
   getConversationMessages,
@@ -190,7 +196,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
   makeFunctionTool(
     'delegate',
-    `Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx, reddit, discord, x. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.`,
+    `Delegate one or more tasks to specialized subagents — same delegation surface as the orchestrator. Pass a single task for sequential work or multiple tasks to run in parallel. Available subagents: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google${OUTLOOK_INTEGRATION_ENABLED ? ', outlook' : ''}, github${META_INTEGRATION_ENABLED ? ', meta' : ''}${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx${REDDIT_INTEGRATION_ENABLED ? ', reddit' : ''}${DISCORD_INTEGRATION_ENABLED ? ', discord' : ''}, x. The subagent can ask back via ask_orchestrator — when that happens this tool returns with a questionId, and you answer with reply_to_subagent.`,
     {
       type: 'object',
       properties: {
@@ -202,7 +208,7 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
             properties: {
               subagent: {
                 type: 'string',
-                description: `Subagent name: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google, outlook, github, meta${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx, reddit, discord, or x.`,
+                description: `Subagent name: browser, file_ops, cli_agent, workflow, reminders, ffmpeg, vm, agent, bot, google${OUTLOOK_INTEGRATION_ENABLED ? ', outlook' : ''}, github${META_INTEGRATION_ENABLED ? ', meta' : ''}${WHATSAPP_INTEGRATION_ENABLED ? ', whatsapp' : ''}, telnyx${REDDIT_INTEGRATION_ENABLED ? ', reddit' : ''}${DISCORD_INTEGRATION_ENABLED ? ', discord' : ''}, or x.`,
               },
               instruction: {
                 type: 'string',

@@ -26,7 +26,7 @@ describe('workflow palette categories', () => {
     expect(getToolColor('generate_image')).toBe('fuchsia');
   });
 
-  it('includes Meta integration categories in the toolbox', () => {
+  it.skip('includes Meta integration categories in the toolbox when enabled', () => {
     const facebookCategory = PALETTE_CATEGORIES.find((category) => category.id === 'facebook');
     const instagramCategory = PALETTE_CATEGORIES.find((category) => category.id === 'instagram');
     const threadsCategory = PALETTE_CATEGORIES.find((category) => category.id === 'threads');

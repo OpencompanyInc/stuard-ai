@@ -41,7 +41,13 @@ import { compactHistory, pruneToolOutputs } from '../memory/context-compactor';
 import type { ModelChoice } from '../router/model-router';
 import { ensureExecutionToolsRegistered } from './execution-tools-bootstrap';
 import { resolveExecutionTools } from './execution-tools-resolver';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 
 // Track running subagents so they can be aborted when the parent stream is cancelled.
 // The request/socket metadata keeps a stop from one chat turn from cancelling
@@ -1556,13 +1562,13 @@ function detectIntegrationGroup(text: string): string | null {
   const lower = text.toLowerCase();
   const groups: Array<[string, string[]]> = [
     ['google', ['gmail', 'google', 'calendar', 'drive', 'sheets', 'docs']],
-    ['outlook', ['outlook', 'microsoft', 'office 365']],
+    ...(OUTLOOK_INTEGRATION_ENABLED ? [['outlook', ['outlook', 'microsoft', 'office 365']] as [string, string[]]] : []),
     ['github', ['github', 'git repo', 'pull request', 'issue']],
-    ['meta', ['facebook', 'instagram', 'threads', 'meta']],
+    ...(META_INTEGRATION_ENABLED ? [['meta', ['facebook', 'instagram', 'threads', 'meta']] as [string, string[]]] : []),
     ...(WHATSAPP_INTEGRATION_ENABLED ? [['whatsapp', ['whatsapp', 'wa message']] as [string, string[]]] : []),
     ['telnyx', ['telnyx', 'sms', 'phone call']],
-    ['reddit', ['reddit', 'subreddit']],
-    ['discord', ['discord', 'discord bot']],
+    ...(REDDIT_INTEGRATION_ENABLED ? [['reddit', ['reddit', 'subreddit']] as [string, string[]]] : []),
+    ...(DISCORD_INTEGRATION_ENABLED ? [['discord', ['discord', 'discord bot']] as [string, string[]]] : []),
     ['x', ['twitter', 'tweet', 'tweets', 'x integration', 'integration group: x']],
   ];
 

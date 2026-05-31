@@ -21,7 +21,13 @@ import {
   type ProjectRetrievedContextPayload,
 } from '../agents/stuard/prompts';
 import type { ModelChoice } from '../router/model-router';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
 import { wrapToolWithBridge } from './subagent-runtime';
 
@@ -217,13 +223,9 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | agent       | Proactive agent status/ask workflows, including agent ids/names and manual wake-ups |
 | bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
-| outlook     | Outlook mail & calendar |
-| github      | Repos, issues, PRs, branches, actions |
-| meta        | Facebook, Instagram, Threads |
-${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
-| reddit      | Subreddits, posts, comments |
-| discord     | Discord bot operations |
-| x           | X/Twitter tweets, timelines, users, DMs |
+${OUTLOOK_INTEGRATION_ENABLED ? '| outlook     | Outlook mail & calendar |\n' : ''}| github      | Repos, issues, PRs, branches, actions |
+${META_INTEGRATION_ENABLED ? '| meta        | Facebook, Instagram, Threads |\n' : ''}${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
+${REDDIT_INTEGRATION_ENABLED ? '| reddit      | Subreddits, posts, comments |\n' : ''}${DISCORD_INTEGRATION_ENABLED ? '| discord     | Discord bot operations |\n' : ''}| x           | X/Twitter tweets, timelines, users, DMs |
 
 Each subagent can call **ask_orchestrator** when it needs information or a decision. When that happens, **delegate** returns early with the question and a **questionId**.
 

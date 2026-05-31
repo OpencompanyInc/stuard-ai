@@ -3,11 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
-import MediaAssetSlot from '@/components/sections/MediaAssetSlot';
-import PrivacyBoundaryDiagram from '@/components/sections/PrivacyBoundaryDiagram';
-
-/** Set when hero-loop.mp4 is in public/media */
-const HERO_LOOP_SRC = process.env.NEXT_PUBLIC_HERO_LOOP_SRC;
+import CompactDemo from '@/components/sections/CompactDemo';
 
 const HeroSection = () => {
   const { user } = useAuthContext();
@@ -38,7 +34,9 @@ const HeroSection = () => {
                   lg:text-[52px] lg:leading-[1.1]
                 "
               >
-                The AI that lives on your PC — not in a tab.
+                The AI that lives on your{' '}
+                <span className="font-bold text-white">PC</span>.{' '}
+                <span className="font-bold text-white">Not</span> in a tab.
               </h1>
 
               <p
@@ -51,7 +49,7 @@ const HeroSection = () => {
                   text-[#A3A3A3]
                 "
               >
-                Stuard knows your files, your apps, and your routines — and finishes the repetitive
+                Stuard knows your files, your apps, and your routines. It finishes the repetitive
                 work you keep redoing. Free. Local-first. No credit card.
               </p>
 
@@ -106,16 +104,14 @@ const HeroSection = () => {
         </div>
 
         <div className="mx-auto flex w-full max-w-[1100px] flex-col items-center gap-8 px-4 pb-20 sm:gap-10 sm:pb-24 lg:gap-12 lg:pb-28">
-          <MediaAssetSlot
-            className="w-full"
-            label="6s silent loop: overlay prompt → file card → Gmail draft + attachment → GenUI Send? → Sent ✓"
-            assetPath="/media/hero-loop.mp4"
-            videoSrc={HERO_LOOP_SRC}
-            imageAlt="Stuard finding a contract, composing email, and sending without app-switching"
-          />
+          <div
+            className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d0f] shadow-2xl"
+            style={{ aspectRatio: '16 / 10' }}
+          >
+            <CompactDemo />
+          </div>
 
-          <div className="flex w-full max-w-[480px] flex-col items-center gap-3">
-            <PrivacyBoundaryDiagram compact />
+          <div className="flex w-full max-w-[480px] flex-col items-center">
             <MacLinuxWaitlist />
           </div>
         </div>

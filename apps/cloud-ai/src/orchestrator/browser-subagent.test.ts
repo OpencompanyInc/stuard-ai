@@ -12,7 +12,7 @@
  *   5. End-to-end delegation with mock bridge WS
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { WebSocket } from 'ws';
 
@@ -105,7 +105,7 @@ describe('Bridge Context Propagation', () => {
 
 describe('Browser Pack Tool Resolution', () => {
   // stuard/tools pulls in the full execution universe; first import can exceed 60s on Windows CI runners.
-  let BROWSER_PACK: Awaited<ReturnType<typeof import('./capability-packs')>>['BROWSER_PACK'];
+  let BROWSER_PACK: Awaited<typeof import('./capability-packs')>['BROWSER_PACK'];
   let getExecutionTools: Awaited<typeof import('../agents/stuard/tools')>['getExecutionTools'];
 
   beforeAll(async () => {

@@ -31,7 +31,13 @@ import {
   VOICE_TOOL_DEFINITIONS,
   loadVoiceRuntimeMemorySummary,
 } from './voice-runtime-tools';
-import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../shared/integration-flags';
+import {
+  DISCORD_INTEGRATION_ENABLED,
+  META_INTEGRATION_ENABLED,
+  OUTLOOK_INTEGRATION_ENABLED,
+  REDDIT_INTEGRATION_ENABLED,
+  WHATSAPP_INTEGRATION_ENABLED,
+} from '../../../../shared/integration-flags';
 
 // ── Voice Tool Definitions ──────────────────────────────────────────────────
 // These are the voice-safe tools the model can call during a live call.
@@ -119,13 +125,13 @@ function buildVoiceSystemPrompt(opts: {
       '- ffmpeg      — audio/video processing (convert, trim, extract audio, frames)',
       '- bot         — proactive bot lookup/status/ask workflows by bot id or name',
       '- google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks',
-      '- outlook     — Outlook mail & calendar',
+      ...(OUTLOOK_INTEGRATION_ENABLED ? ['- outlook     — Outlook mail & calendar'] : []),
       '- github      — repos, issues, PRs, branches, actions',
-      '- meta        — Facebook, Instagram, Threads',
+      ...(META_INTEGRATION_ENABLED ? ['- meta        — Facebook, Instagram, Threads'] : []),
       ...(WHATSAPP_INTEGRATION_ENABLED ? ['- whatsapp    — WhatsApp messaging'] : []),
       '- telnyx      — SMS, voice calls',
-      '- reddit      — subreddits, posts, comments',
-      '- discord     — Discord bot operations',
+      ...(REDDIT_INTEGRATION_ENABLED ? ['- reddit      — subreddits, posts, comments'] : []),
+      ...(DISCORD_INTEGRATION_ENABLED ? ['- discord     — Discord bot operations'] : []),
       '- x           — X/Twitter tweets, timelines, users, DMs',
       '- Pass `tasks` array — one entry sequential, multiple entries in parallel.',
       '- A subagent can ask back via ask_orchestrator. When that happens delegate returns with a questionId — ask the caller verbally, then call reply_to_subagent.',

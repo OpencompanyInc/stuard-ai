@@ -145,6 +145,8 @@ import { HighlightMatch } from './HighlightMatch';
 import { getFileKindConfig } from './fileKind';
 import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_ROW_WITH_ICON, FIGMA_KBD } from './styles';
 import { AttachmentBar } from './AttachmentBar';
+import { IntegrationSuggestionView } from './suggestions/IntegrationSuggestionChip';
+import { useIntegrationSuggestion } from './suggestions/useIntegrationSuggestion';
 import { FolderPermissionsButton } from './FolderPermissionsButton';
 import { CompactSearchDropdown } from './compact/CompactSearchDropdown';
 import { qaError, qaLog, qaWarn } from './compact/compactQuickActionsDebug';
@@ -985,6 +987,14 @@ const InputArea = forwardRef(function InputArea(
   const fileNavDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep ref in sync for handleKeyDown
   useEffect(() => { showFileNavRef.current = showFileNav; }, [showFileNav]);
+
+  // Inline integration suggestion — one controller drives both the expanded chip
+  // and the compact search-dropdown row.
+  const integrationSuggestion = useIntegrationSuggestion({
+    query,
+    accessToken,
+    enabled: !showFileNav,
+  });
 
   const [fileNavOverlay, setFileNavOverlay] = useState<null | {
     left: number;
@@ -2109,6 +2119,7 @@ const InputArea = forwardRef(function InputArea(
             inputBarHeight={inputBarHeight}
             maxHeight={compactSearchDropdownMaxHeight}
             scrollHeight={compactSearchDropdownScrollHeight}
+            suggestionSlot={<IntegrationSuggestionView controller={integrationSuggestion} compact />}
             query={query}
             setQuery={setQuery}
             selectedIndex={selectedIndex}
@@ -2324,6 +2335,7 @@ const InputArea = forwardRef(function InputArea(
             onRemoveAttachment={onRemoveAttachment}
             onRemoveContext={removeContext}
           />
+          <IntegrationSuggestionView controller={integrationSuggestion} />
         </div>
 
         {/* Input & Tools Row */}
