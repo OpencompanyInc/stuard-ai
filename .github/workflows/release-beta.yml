@@ -73,6 +73,13 @@ jobs:
         run: pnpm turbo run typecheck --filter=stuard-ai-website
       - name: Build (Website)
         if: ${{ github.event.inputs.deploy_website == 'true' }}
+        env:
+          # NEXT_PUBLIC_* are inlined at build time and supabaseClient.ts throws if
+          # they're missing, which breaks static prerender. This is a throwaway
+          # validation build (the real deploy uses Vercel-managed env), so feed it
+          # harmless placeholders just so prerender can evaluate the module.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
         run: pnpm turbo run build --filter=stuard-ai-website
       - name: Unit Tests (Website)
         if: ${{ github.event.inputs.deploy_website == 'true' }}

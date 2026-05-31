@@ -55,6 +55,13 @@ jobs:
         run: pnpm turbo run lint
 
       - name: Build
+        env:
+          # The website's supabaseClient.ts throws at module load if these are
+          # missing, breaking `next build` static prerender. NEXT_PUBLIC_* are
+          # inlined at build time; CI only validates the build, so use harmless
+          # placeholders (real values come from Vercel env at deploy time).
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
         run: pnpm turbo run build
 
       - name: Test (JS/TS)
