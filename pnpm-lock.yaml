@@ -195,26 +195,26 @@ importers:
         specifier: ^1.3.6
         version: 1.3.6(@types/react-dom@18.2.7)(@types/react@18.2.21)(react-dom@18.2.0)(react@18.2.0)
       '@stuardai/bots-core':
-        specifier: workspace:*
-        version: link:../../packages/bots-core
+        specifier: file:../../packages/bots-core
+        version: file:packages/bots-core
       '@stuardai/bots-ui':
-        specifier: workspace:*
-        version: link:../../packages/bots-ui
+        specifier: file:../../packages/bots-ui
+        version: file:packages/bots-ui(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react-markdown@10.1.0)(react@18.2.0)(rehype-katex@7.0.1)(remark-gfm@4.0.1)(remark-math@6.0.0)
       '@stuardai/chat-ui':
-        specifier: workspace:*
-        version: link:../../packages/chat-ui
+        specifier: file:../../packages/chat-ui
+        version: file:packages/chat-ui(clsx@2.1.1)(framer-motion@12.23.24)(lucide-react@0.554.0)(react-dom@18.2.0)(react-markdown@10.1.0)(react@18.2.0)(rehype-katex@7.0.1)(remark-gfm@4.0.1)(remark-math@6.0.0)
       '@stuardai/cloud-client':
-        specifier: workspace:*
-        version: link:../../packages/cloud-client
+        specifier: file:../../packages/cloud-client
+        version: file:packages/cloud-client
       '@stuardai/cloud-runtime-ui':
-        specifier: workspace:*
-        version: link:../../packages/cloud-runtime-ui
+        specifier: file:../../packages/cloud-runtime-ui
+        version: file:packages/cloud-runtime-ui(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react@18.2.0)
       '@stuardai/vm-chat':
-        specifier: workspace:*
-        version: link:../../packages/vm-chat
+        specifier: file:../../packages/vm-chat
+        version: file:packages/vm-chat(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react@18.2.0)
       '@stuardai/workflow-core':
-        specifier: workspace:*
-        version: link:../../packages/workflow-core
+        specifier: file:../../packages/workflow-core
+        version: file:packages/workflow-core
       '@supabase/supabase-js':
         specifier: ^2.45.4
         version: 2.76.0
@@ -5248,7 +5248,7 @@ packages:
       '@vitest/spy': 4.0.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
-      vite: 7.2.2(@types/node@24.10.1)(tsx@4.20.6)
+      vite: 7.2.2(@types/node@20.19.22)(terser@5.46.0)
     dev: true
 
   /@vitest/pretty-format@4.0.10:
@@ -14896,6 +14896,105 @@ packages:
 
   /zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
+
+  file:packages/bots-core:
+    resolution: {directory: packages/bots-core, type: directory}
+    name: '@stuardai/bots-core'
+    dev: false
+
+  file:packages/bots-ui(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react-markdown@10.1.0)(react@18.2.0)(rehype-katex@7.0.1)(remark-gfm@4.0.1)(remark-math@6.0.0):
+    resolution: {directory: packages/bots-ui, type: directory}
+    id: file:packages/bots-ui
+    name: '@stuardai/bots-ui'
+    peerDependencies:
+      clsx: ^2.0.0
+      lucide-react: '>=0.500.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+      react-markdown: ^10.0.0
+      rehype-katex: ^7.0.0
+      remark-gfm: ^4.0.0
+      remark-math: ^6.0.0
+    dependencies:
+      clsx: 2.1.1
+      lucide-react: 0.554.0(react@18.2.0)
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
+      react-markdown: 10.1.0(@types/react@18.2.21)(react@18.2.0)
+      rehype-katex: 7.0.1
+      remark-gfm: 4.0.1
+      remark-math: 6.0.0
+    dev: false
+
+  file:packages/chat-ui(clsx@2.1.1)(framer-motion@12.23.24)(lucide-react@0.554.0)(react-dom@18.2.0)(react-markdown@10.1.0)(react@18.2.0)(rehype-katex@7.0.1)(remark-gfm@4.0.1)(remark-math@6.0.0):
+    resolution: {directory: packages/chat-ui, type: directory}
+    id: file:packages/chat-ui
+    name: '@stuardai/chat-ui'
+    peerDependencies:
+      clsx: ^2.0.0
+      framer-motion: ^12.0.0
+      lucide-react: '>=0.500.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+      react-markdown: ^10.0.0
+      rehype-katex: ^7.0.0
+      remark-gfm: ^4.0.0
+      remark-math: ^6.0.0
+    dependencies:
+      clsx: 2.1.1
+      framer-motion: 12.23.24(react-dom@18.2.0)(react@18.2.0)
+      lucide-react: 0.554.0(react@18.2.0)
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
+      react-markdown: 10.1.0(@types/react@18.2.21)(react@18.2.0)
+      rehype-katex: 7.0.1
+      remark-gfm: 4.0.1
+      remark-math: 6.0.0
+    dev: false
+
+  file:packages/cloud-client:
+    resolution: {directory: packages/cloud-client, type: directory}
+    name: '@stuardai/cloud-client'
+    dev: false
+
+  file:packages/cloud-runtime-ui(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react@18.2.0):
+    resolution: {directory: packages/cloud-runtime-ui, type: directory}
+    id: file:packages/cloud-runtime-ui
+    name: '@stuardai/cloud-runtime-ui'
+    peerDependencies:
+      clsx: ^2.0.0
+      lucide-react: '>=0.500.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+    dependencies:
+      clsx: 2.1.1
+      lucide-react: 0.554.0(react@18.2.0)
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
+    dev: false
+
+  file:packages/vm-chat(clsx@2.1.1)(lucide-react@0.554.0)(react-dom@18.2.0)(react@18.2.0):
+    resolution: {directory: packages/vm-chat, type: directory}
+    id: file:packages/vm-chat
+    name: '@stuardai/vm-chat'
+    peerDependencies:
+      clsx: ^2.0.0
+      lucide-react: '>=0.500.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+    dependencies:
+      '@stuardai/chat-ui': link:packages/chat-ui
+      '@stuardai/cloud-client': link:packages/cloud-client
+      clsx: 2.1.1
+      lucide-react: 0.554.0(react@18.2.0)
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
+    dev: false
+
+  file:packages/workflow-core:
+    resolution: {directory: packages/workflow-core, type: directory}
+    name: '@stuardai/workflow-core'
+    dev: false
 
   github.com/electron/node-gyp/06b29aafb7708acef8b3669835c8a7857ebc92d2:
     resolution: {tarball: https://codeload.github.com/electron/node-gyp/tar.gz/06b29aafb7708acef8b3669835c8a7857ebc92d2}
