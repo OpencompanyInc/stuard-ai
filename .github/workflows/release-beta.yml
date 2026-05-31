@@ -14,15 +14,15 @@ on:
       deploy_website:
         description: 'Deploy Website'
         type: boolean
-        default: true
+        default: false
       build_desktop:
         description: 'Build Desktop App'
         type: boolean
-        default: true
+        default: false
       deploy_vm:
         description: 'Build & upload VM agent bundles'
         type: boolean
-        default: false
+        default: true
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -64,6 +64,13 @@ jobs:
       - name: Unit Tests (Cloud)
         if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
         run: pnpm turbo run test --filter=@stuardai/cloud-ai
+
+      - name: Typecheck (VM Agent)
+        if: ${{ github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/vm-agent
+      - name: Build (VM Agent)
+        if: ${{ github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/vm-agent
 
       - name: Lint (Website)
         if: ${{ github.event.inputs.deploy_website == 'true' }}

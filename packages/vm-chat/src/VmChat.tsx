@@ -6,6 +6,7 @@ import {
   Paperclip, File as FileIcon, AlertCircle,
 } from 'lucide-react';
 import { mergeStreamingText } from '@stuardai/chat-ui/streamMerge';
+import { displayConversationTitle, isPlaceholderConversationTitle } from '@stuardai/chat-ui';
 import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
 import { appendReasoningChunk, appendTextChunk, applyToolCallUpdate } from '@stuardai/chat-ui/streamState';
 import type { Message as ChatMessage, StreamChunk, ToolCall as VmToolCall } from '@stuardai/chat-ui/types';
@@ -78,7 +79,7 @@ export function VmChat({
       const existing = prev.find((entry) => entry.id === conversation.id);
       const nextEntry: ConversationEntry = {
         id: conversation.id,
-        title: conversation.title || existing?.title || 'Untitled',
+        title: displayConversationTitle(conversation.title || existing?.title),
         updated_at: conversation.updated_at || new Date().toISOString(),
         message_count: conversation.message_count
           ?? Math.max(0, (existing?.message_count || 0) + (conversation.incrementMessageCountBy || 0)),
@@ -848,7 +849,7 @@ export function VmChat({
                         <MessageSquare className={clsx('w-3.5 h-3.5 mt-0.5 shrink-0', isActive ? 'text-primary' : 'text-theme-muted')} />
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-theme-fg truncate">{c.title}</div>
+                        <div className="text-xs font-medium text-theme-fg truncate">{displayConversationTitle(c.title)}</div>
                         <div className="text-[10px] text-theme-muted mt-0.5 flex items-center gap-1.5">
                           {c.message_count > 0 && <span>{c.message_count} msgs</span>}
                           {c.updated_at && <span>{formatTimeAgo(c.updated_at)}</span>}

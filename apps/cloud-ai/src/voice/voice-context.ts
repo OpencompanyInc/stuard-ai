@@ -25,6 +25,7 @@ import {
   getMessages as getLocalMessages,
   listConversations as listLocalConversations,
 } from '../memory/conversations';
+import { resolveConversationTitle } from '../utils/thread-title';
 import { getDesktopWs } from '../services/vm-bridge';
 import { withClientBridge } from '../tools/bridge';
 import {
@@ -308,11 +309,14 @@ async function loadRecentContextFromDesktop(userId: string, bridgeWs?: WebSocket
 
       const summaries = await Promise.all(
         conversations.slice(0, 3).map(async (conv) => {
-          const title = conv.title || 'Untitled conversation';
+          const msgs = await getLocalMessages(conv.id, { limit: 2 }).catch(() => []);
+          const firstUser = Array.isArray(msgs)
+            ? msgs.find((m) => m.role === 'user')?.content
+            : undefined;
+          const title = resolveConversationTitle(conv.title, firstUser);
           const date = new Date(conv.created_at).toLocaleDateString('en-US', {
             month: 'short', day: 'numeric',
           });
-          const msgs = await getLocalMessages(conv.id, { limit: 2 }).catch(() => []);
           if (!Array.isArray(msgs) || msgs.length === 0) {
             return `[${date}] ${title}`;
           }
@@ -441,8 +445,8 @@ async function loadRecentContextFromSupabase(userId: string): Promise<string> {
   if (!convs || convs.length === 0) return '';
 
   const summaries = await Promise.all(convs.map(async (conv) => {
-    const title = conv.title || 'Untitled conversation';
     const date = new Date(conv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const title = resolveConversationTitle(conv.title);
     try {
       const { data: msgs } = await supabase
         .from('messages')
@@ -450,12 +454,14 @@ async function loadRecentContextFromSupabase(userId: string): Promise<string> {
         .eq('conversation_id', conv.id)
         .order('created_at', { ascending: false })
         .limit(2);
-      if (!msgs || msgs.length === 0) return `[${date}] ${title}`;
+      const firstUser = msgs?.find((m: { role: string }) => m.role === 'user')?.content;
+      const resolvedTitle = resolveConversationTitle(conv.title, firstUser);
+      if (!msgs || msgs.length === 0) return `[${date}] ${resolvedTitle}`;
       const preview = msgs.reverse().map((m: any) => {
         const text = String(m.content || '').slice(0, 80);
         return `${m.role === 'user' ? 'User' : 'You'}: ${text}${String(m.content).length > 80 ? '...' : ''}`;
       }).join(' | ');
-      return `[${date}] ${title}: ${preview}`;
+      return `[${date}] ${resolvedTitle}: ${preview}`;
     } catch {
       return `[${date}] ${title}`;
     }

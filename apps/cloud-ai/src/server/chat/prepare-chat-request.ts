@@ -32,6 +32,7 @@ import { contentToText, normalizeMessages } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { writeLog } from '../../utils/logger';
 import { fallbackTitleFromMessage } from '../../utils/thread-title';
+import * as memoryService from '../../memory/conversations';
 import { ENABLE_ROUTING, REQUIRE_AUTH } from '../../utils/config';
 import { anonResources, anonThreads, conversations, wsConversations } from '../socket/state';
 import { buildInputMessages } from './message-context';
@@ -1180,6 +1181,7 @@ async function resolveConversation({
     send(ws, { type: 'conversation', conversationId }, requestId);
     if (fallbackTitle) {
       send(ws, { type: 'title', conversationId, title: fallbackTitle, provisional: true }, requestId);
+      memoryService.updateConversation(conversationId, { title: fallbackTitle }).catch(() => undefined);
     }
   }
 

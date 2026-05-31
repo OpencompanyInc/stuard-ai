@@ -227,6 +227,17 @@ async def _on_title(cdata: Dict[str, Any], ctx: _CloudEventCtx) -> None:
     cid = cdata.get("conversationId")
     title = cdata.get("title")
     if cid and title:
+        title_str = str(title).strip()
+        if title_str:
+            try:
+                from ..tools import memory_conversations as memory_tools
+
+                await memory_tools.conversation_update({
+                    "conversation_id": cid,
+                    "title": title_str,
+                })
+            except Exception:
+                logger.warning("title_persist_failed conversation_id=%s", cid)
         await ctx.session.send_json(
             {"type": "title", "conversationId": cid, "title": title},
             request_id=ctx.rid,

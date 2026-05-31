@@ -29,6 +29,7 @@ function mergeToolCall(existing: ToolCall, incoming: ToolCall): ToolCall {
     description: incoming.description ?? existing.description,
     subagentId: incoming.subagentId ?? existing.subagentId,
     nested: incoming.nested ?? existing.nested,
+    parentToolId: incoming.parentToolId ?? existing.parentToolId,
     liveOutput: incoming.liveOutput
       ? mergeStreamingText(existing.liveOutput || '', incoming.liveOutput)
       : existing.liveOutput,

@@ -7,6 +7,11 @@ import {
   type ChatAttachment,
 } from '../utils/attachments';
 import { mergeStreamingText } from '../utils/streamMerge';
+import {
+  displayConversationTitle,
+  fallbackTitleFromMessage,
+  isPlaceholderConversationTitle,
+} from '../utils/conversationTitle';
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
 const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
@@ -157,6 +162,11 @@ export interface ToolCall {
   liveOutput?: string;
   subagentId?: string;
   nested?: boolean;
+  // Id of the parent grouping tool (delegate / run_parallel / run_sequential /
+  // loop_executor) this step ran under, so the trace can rebuild the
+  // parent→children rectangle deterministically (order-independent, survives
+  // chat reopen). See [[project_parallel_trace_ui]].
+  parentToolId?: string;
 }
 
 export interface PendingMemory {
@@ -642,6 +652,8 @@ export function useAgent(options?: string | UseAgentOptions) {
 
   const wrapperSequentialQueueRef = useRef<Map<string, string[]>>(new Map());
   const wrapperSequentialCounterRef = useRef<Map<string, number>>(new Map());
+  /** Mastra tool-result omits args; keep steps from the initial tool-call. */
+  const wrapperArgsByParentRef = useRef<Map<string, any>>(new Map());
   // chat_ui: maps AI SDK tool call id → bridge pending id, so submitToolOutput resolves the bridge
   const chatUiLastTcIdRef = useRef<string | null>(null);
   const chatUiBridgeMapRef = useRef<Map<string, string>>(new Map());
@@ -1010,7 +1022,7 @@ export function useAgent(options?: string | UseAgentOptions) {
   const deleteConversation = useCallback(async (id: string) => {
     try {
       const target = customAgentUrl ? customAgentUrl.replace('/ws', '') : 'http://127.0.0.1:8765';
-      const resp = await fetch(`${target}/memory/conversations/${id}`, {
+      const resp = await fetch(`${target}/v1/memory/conversations/${id}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json'
@@ -2016,16 +2028,33 @@ export function useAgent(options?: string | UseAgentOptions) {
                 });
               };
 
-              const emitSyntheticTool = (toolName: string, syntheticId: string, status: ToolCall['status'], args?: any, result?: any, error?: any) => {
+              const emitSyntheticTool = (
+                toolName: string,
+                syntheticId: string,
+                status: ToolCall['status'],
+                args?: any,
+                result?: any,
+                error?: any,
+                // Wrapper-group linkage. `parentToolId` ties a child step to its
+                // run_parallel/run_sequential parent so the trace can rebuild the
+                // rectangle deterministically on reopen. `isParent` marks the
+                // wrapper's own synthetic tool (renders as the group card header).
+                grouping?: { parentToolId?: string; nested?: boolean; isParent?: boolean },
+              ) => {
                 updateStreamingTab(t => {
                   const existingIdx = t.currentToolCalls.findIndex(tc => tc.id === syntheticId);
                   const existing = existingIdx >= 0 ? t.currentToolCalls[existingIdx] : undefined;
-                  const nextCall = applyToolNesting(
-                    existing
-                      ? { ...existing, tool: toolName, status, args: typeof args !== 'undefined' ? args : existing.args, result: typeof result !== 'undefined' ? result : existing.result, error: typeof error !== 'undefined' ? error : existing.error }
-                      : { id: syntheticId, tool: toolName, status, args, result, error, timestamp: Date.now() },
-                    existing,
-                  );
+                  const base = existing
+                    ? { ...existing, tool: toolName, status, args: typeof args !== 'undefined' ? args : existing.args, result: typeof result !== 'undefined' ? result : existing.result, error: typeof error !== 'undefined' ? error : existing.error }
+                    : { id: syntheticId, tool: toolName, status, args, result, error, timestamp: Date.now() };
+                  // Wrapper parent stays top-level; wrapper children carry an
+                  // explicit parentToolId (and render nested). Everything else
+                  // falls back to the event-level subagent/nesting inference.
+                  const nextCall: ToolCall = grouping?.isParent
+                    ? base
+                    : grouping?.parentToolId
+                      ? { ...base, parentToolId: grouping.parentToolId, ...(grouping.nested ? { nested: true } : {}) }
+                      : applyToolNesting(base, existing);
 
                   const nextToolCalls = existingIdx >= 0
                     ? t.currentToolCalls.map(tc => tc.id === syntheticId ? nextCall : tc)
@@ -2043,45 +2072,176 @@ export function useAgent(options?: string | UseAgentOptions) {
                 }
               };
 
+              const resolveWrapperStepArgs = (wrapperArgs: any, step: any): any => {
+                if (step?.args && typeof step.args === 'object') return step.args;
+                const index = resolveWrapperStepIndex(wrapperArgs, step);
+                const steps = Array.isArray(wrapperArgs?.steps) ? wrapperArgs.steps : [];
+                if (typeof index === 'number' && steps[index]?.args) return steps[index].args;
+                return undefined;
+              };
+
+              const resolveWrapperStepIndex = (wrapperArgs: any, step: any, stepTool?: string): number | undefined => {
+                if (typeof step?.index === 'number') return step.index;
+                const toolName = stepTool || String(step?.tool || '').trim();
+                const steps = Array.isArray(wrapperArgs?.steps) ? wrapperArgs.steps : [];
+                if (!toolName || steps.length === 0) return undefined;
+                const idx = steps.findIndex((s: any) => String(s?.tool || '').trim() === toolName);
+                return idx >= 0 ? idx : undefined;
+              };
+
+              const wrapperChildSyntheticId = (parentId: string, wrapperArgs: any, step: any, stepTool: string): string => {
+                const index = resolveWrapperStepIndex(wrapperArgs, step, stepTool);
+                if (typeof index === 'number') return `${parentId}:${index}`;
+                const cur = wrapperSequentialCounterRef.current.get(`${parentId}:seq`) || 0;
+                wrapperSequentialCounterRef.current.set(`${parentId}:seq`, cur + 1);
+                const syntheticId = `${parentId}:${cur}`;
+                const q = wrapperSequentialQueueRef.current.get(`${parentId}:seq`) || [];
+                q.push(syntheticId);
+                wrapperSequentialQueueRef.current.set(`${parentId}:seq`, q);
+                return syntheticId;
+              };
+
+              /** When nested step events never reach the client, rebuild branch rows from args/result. */
+              const materializeWrapperChildren = (
+                parentId: string,
+                wrapperArgs: any,
+                wrapperResult: any | undefined,
+                mode: 'pending' | 'final',
+                wrapperToolName?: string,
+              ) => {
+                const steps = Array.isArray(wrapperArgs?.steps) ? wrapperArgs.steps : [];
+                steps.forEach((stepDef: any, index: number) => {
+                  const stepTool = String(stepDef?.tool || '').trim();
+                  if (!stepTool) return;
+                  const syntheticId = `${parentId}:${index}`;
+                  const resultEntry = wrapperResult?.results?.[index];
+                  if (mode === 'pending') {
+                    const initialStatus: ToolCall['status'] =
+                      wrapperToolName === 'run_parallel' ? 'running' : (index === 0 ? 'running' : 'called');
+                    emitSyntheticTool(
+                      stepTool,
+                      syntheticId,
+                      initialStatus,
+                      stepDef?.args,
+                      undefined,
+                      undefined,
+                      { parentToolId: parentId, nested: true },
+                    );
+                    return;
+                  }
+                  const ok = resultEntry?.ok ?? true;
+                  const st: ToolCall['status'] = (resultEntry?.error || ok === false) ? 'error' : 'completed';
+                  emitSyntheticTool(
+                    stepTool,
+                    syntheticId,
+                    st,
+                    stepDef?.args,
+                    resultEntry?.result ?? resultEntry,
+                    st === 'error' ? String(resultEntry?.error || 'failed') : undefined,
+                    { parentToolId: parentId, nested: true },
+                  );
+                });
+              };
+
               if (HIDDEN_WRAPPER_TOOL_NAMES.has(tool)) {
                 const step = evt.data?.step;
                 const stepTool = String(step?.tool || '').trim();
-                if (stepTool) {
-                  const isParallelIndex = typeof step?.index === 'number' ? step.index : undefined;
-                  const wrapperKey = `${requestIdKey}:${tool}`;
+                const wrapperKey = `${requestIdKey}:${tool}`;
+                // Stable parent id for this wrapper invocation. Children link to
+                // it via parentToolId so the whole run_parallel/run_sequential
+                // group renders as one rectangle (and survives chat reopen).
+                const parentId = `wrap-${wrapperKey}`;
+                // Keep the wrapper parent's own tool call in sync so the group
+                // card header reflects running/done/failed.
+                const resolveWrapperArgs = (): any => {
+                  if (evt.data?.args && Array.isArray(evt.data.args.steps)) return evt.data.args;
+                  const cached = wrapperArgsByParentRef.current.get(parentId);
+                  if (cached) return cached;
+                  return evt.data?.args;
+                };
+
+                const syncWrapperParent = (parentStatus: ToolCall['status'], parentResult?: any) => {
+                  const wrapperArgs = resolveWrapperArgs();
+                  if (wrapperArgs) wrapperArgsByParentRef.current.set(parentId, wrapperArgs);
+                  emitSyntheticTool(tool, parentId, parentStatus, wrapperArgs, parentResult, undefined, { isParent: true });
+                };
+
+                const isStepEvent =
+                  normalizedStatus === 'step_started' ||
+                  normalizedStatus === 'step_completed' ||
+                  normalizedStatus === 'step_error';
+                if (stepTool && isStepEvent) {
+                  const wrapperArgs = resolveWrapperArgs();
+                  const stepArgs = resolveWrapperStepArgs(wrapperArgs, step);
 
                   if (normalizedStatus === 'step_started') {
-                    let syntheticId: string;
-                    if (typeof isParallelIndex === 'number') {
-                      syntheticId = `wrap-${wrapperKey}:${isParallelIndex}`;
-                    } else {
-                      const cur = wrapperSequentialCounterRef.current.get(wrapperKey) || 0;
-                      wrapperSequentialCounterRef.current.set(wrapperKey, cur + 1);
-                      syntheticId = `wrap-${wrapperKey}:${cur}`;
-                      const q = wrapperSequentialQueueRef.current.get(wrapperKey) || [];
-                      q.push(syntheticId);
-                      wrapperSequentialQueueRef.current.set(wrapperKey, q);
-                    }
+                    // Make sure the parent exists/active before its first child.
+                    syncWrapperParent('running');
+                    const syntheticId = wrapperChildSyntheticId(parentId, wrapperArgs, step, stepTool);
 
-                    emitSyntheticTool(stepTool, syntheticId, 'called', evt.data?.args);
+                    emitSyntheticTool(stepTool, syntheticId, 'running', stepArgs, undefined, undefined, { parentToolId: parentId, nested: true });
                     setStreamingAI({ phase: 'tool', tool: stepTool, toolStatus: 'running', statusText: `🔧 ${humanizeToolName(stepTool)} running…` });
                     setState((s) => ({ ...s, status: `tool:running` }));
                   } else if (normalizedStatus === 'step_completed' || normalizedStatus === 'step_error') {
-                    const syntheticId = typeof isParallelIndex === 'number'
-                      ? `wrap-${wrapperKey}:${isParallelIndex}`
-                      : (() => {
-                        const q = wrapperSequentialQueueRef.current.get(wrapperKey) || [];
-                        const id = q.length > 0 ? q.shift()! : `wrap-${wrapperKey}:unknown`;
-                        wrapperSequentialQueueRef.current.set(wrapperKey, q);
-                        return id;
-                      })();
+                    const byIndex = resolveWrapperStepIndex(wrapperArgs, step, stepTool);
+                    let syntheticId: string;
+                    if (typeof byIndex === 'number') {
+                      syntheticId = `${parentId}:${byIndex}`;
+                    } else {
+                      const q = wrapperSequentialQueueRef.current.get(`${parentId}:seq`) || [];
+                      syntheticId = q.length > 0 ? q.shift()! : `${parentId}:unknown`;
+                      wrapperSequentialQueueRef.current.set(`${parentId}:seq`, q);
+                    }
 
                     const st: ToolCall['status'] = normalizedStatus === 'step_completed' ? 'completed' : 'error';
-                    emitSyntheticTool(stepTool, syntheticId, st, undefined, normalizedStatus === 'step_completed' ? evt.data?.result : undefined, normalizedStatus === 'step_completed' ? undefined : (evt.data?.error || 'failed'));
-                  } else if (normalizedStatus === 'completed') {
-                    wrapperSequentialQueueRef.current.delete(wrapperKey);
-                    wrapperSequentialCounterRef.current.delete(wrapperKey);
+                    emitSyntheticTool(stepTool, syntheticId, st, stepArgs, normalizedStatus === 'step_completed' ? evt.data?.result : undefined, normalizedStatus === 'step_completed' ? undefined : (evt.data?.error || 'failed'), { parentToolId: parentId, nested: true });
+
+                    // Sequential: kick off the next branch once the current one finishes.
+                    if (
+                      tool === 'run_sequential'
+                      && normalizedStatus === 'step_completed'
+                      && typeof byIndex === 'number'
+                    ) {
+                      const stepsArr = Array.isArray(wrapperArgs?.steps) ? wrapperArgs.steps : [];
+                      const next = stepsArr[byIndex + 1];
+                      const nextTool = String(next?.tool || '').trim();
+                      if (nextTool) {
+                        emitSyntheticTool(
+                          nextTool,
+                          `${parentId}:${byIndex + 1}`,
+                          'running',
+                          next?.args,
+                          undefined,
+                          undefined,
+                          { parentToolId: parentId, nested: true },
+                        );
+                      }
+                    }
                   }
+                  return;
+                }
+
+                // Wrapper-level lifecycle (no per-step payload): drive the parent
+                // card's overall status and clean up the sequential bookkeeping.
+                if (normalizedStatus === 'called' || normalizedStatus === 'started' || normalizedStatus === 'running') {
+                  syncWrapperParent('running');
+                  materializeWrapperChildren(parentId, resolveWrapperArgs(), undefined, 'pending', tool);
+                } else if (normalizedStatus === 'completed') {
+                  syncWrapperParent('completed', evt.data?.result);
+                  materializeWrapperChildren(parentId, resolveWrapperArgs(), evt.data?.result, 'final', tool);
+                  wrapperArgsByParentRef.current.delete(parentId);
+                  wrapperSequentialQueueRef.current.delete(wrapperKey);
+                  wrapperSequentialQueueRef.current.delete(`${parentId}:seq`);
+                  wrapperSequentialCounterRef.current.delete(wrapperKey);
+                  wrapperSequentialCounterRef.current.delete(`${parentId}:seq`);
+                } else if (normalizedStatus === 'error' || normalizedStatus === 'failed') {
+                  syncWrapperParent('error');
+                  materializeWrapperChildren(parentId, resolveWrapperArgs(), evt.data?.result, 'final', tool);
+                  wrapperArgsByParentRef.current.delete(parentId);
+                  wrapperSequentialQueueRef.current.delete(wrapperKey);
+                  wrapperSequentialQueueRef.current.delete(`${parentId}:seq`);
+                  wrapperSequentialCounterRef.current.delete(wrapperKey);
+                  wrapperSequentialCounterRef.current.delete(`${parentId}:seq`);
                 }
                 return;
               }
@@ -3325,6 +3485,7 @@ export function useAgent(options?: string | UseAgentOptions) {
         // Clear wrapper tracking maps
         wrapperSequentialQueueRef.current.clear();
         wrapperSequentialCounterRef.current.clear();
+        wrapperArgsByParentRef.current.clear();
         if (!reconnectTimerRef.current) {
           const attempt = (reconnectAttemptsRef.current || 0) + 1;
           reconnectAttemptsRef.current = attempt;
@@ -3420,9 +3581,17 @@ export function useAgent(options?: string | UseAgentOptions) {
       // The message will NOT be re-added on progress:start because it's already in the tab
       // Use setTabs directly with targetTabId to avoid issues if active tab changes
       if (!isTabRunning && !isSilent) {
-        setTabs(prev => prev.map(t =>
-          t.id === targetTabId ? { ...t, messages: [...t.messages, userMsg] } : t
-        ));
+        const provisionalTitle = fallbackTitleFromMessage(options.text);
+        setTabs(prev => prev.map(t => {
+          if (t.id !== targetTabId) return t;
+          return {
+            ...t,
+            messages: [...t.messages, userMsg],
+            title: isPlaceholderConversationTitle(t.title) && provisionalTitle
+              ? provisionalTitle
+              : t.title,
+          };
+        }));
       }
 
       // Use auth manager to get a fresh token (proactively refreshes if expiring soon)
@@ -3665,7 +3834,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     // Try local agent first (works offline, no auth required)
     try {
       console.log('[useAgent] Fetching messages from local agent for conversation:', id);
-      const resp = await fetch(`${target}/memory/conversations/${id}/messages?limit=200`);
+      const resp = await fetch(`${target}/v1/memory/conversations/${id}/messages?limit=200`);
       const json = await resp.json();
       if (json.ok && Array.isArray(json.messages) && json.messages.length > 0) {
         let lastModelLabel: string | undefined;
@@ -3697,7 +3866,18 @@ export function useAgent(options?: string | UseAgentOptions) {
           };
         });
         console.log('[useAgent] Loaded', hist.length, 'messages from local agent');
-        setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+        const derivedTitle = displayConversationTitle(
+          undefined,
+          hist.find((m) => m.role === 'user')?.text,
+        );
+        setTabs(prev => prev.map(t => t.id === openedTabId
+          ? {
+            ...t,
+            messages: hist,
+            title: isPlaceholderConversationTitle(t.title) ? derivedTitle : t.title,
+            aiState: { ...t.aiState, model: lastModelLabel },
+          }
+          : t));
         loaded = true;
       }
     } catch (e) {
@@ -3741,7 +3921,18 @@ export function useAgent(options?: string | UseAgentOptions) {
               };
             });
             console.log('[useAgent] Loaded', hist.length, 'messages from Supabase');
-            setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, messages: hist, aiState: { ...t.aiState, model: lastModelLabel } } : t));
+            const derivedTitle = displayConversationTitle(
+              undefined,
+              hist.find((m) => m.role === 'user')?.text,
+            );
+            setTabs(prev => prev.map(t => t.id === openedTabId
+              ? {
+                ...t,
+                messages: hist,
+                title: isPlaceholderConversationTitle(t.title) ? derivedTitle : t.title,
+                aiState: { ...t.aiState, model: lastModelLabel },
+              }
+              : t));
           }
         }
       } catch (e) {
@@ -3749,35 +3940,37 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
     }
 
-    // Load title — try local agent first, then Supabase
+    // Load title — try local agent first, then Supabase; always derive from first user message if needed
+    let storedTitle: string | undefined;
     try {
-      const convResp = await fetch(`${target}/memory/conversations/${id}`);
+      const convResp = await fetch(`${target}/v1/memory/conversations/${id}`);
       const convJson = await convResp.json();
       if (convJson.ok && convJson.conversation?.title) {
         const title = String(convJson.conversation.title).trim();
-        if (title) {
-          setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title } : t));
-          return; // Got title from local agent, done
-        }
+        if (title) storedTitle = title;
       }
     } catch { }
-    // Fallback title from Supabase
-    try {
-      const sessionToken = await getValidAccessToken();
-      if (sessionToken) {
-        const { data: conv } = await supabase
-          .from('conversations')
-          .select('title')
-          .eq('id', id)
-          .single();
-        const title = (conv as any)?.title;
-        if (typeof title === 'string' && title.trim()) {
-          setTabs(prev => prev.map(t => t.id === openedTabId ? { ...t, title: title.trim() } : t));
+    if (!storedTitle) {
+      try {
+        const sessionToken = await getValidAccessToken();
+        if (sessionToken) {
+          const { data: conv } = await supabase
+            .from('conversations')
+            .select('title')
+            .eq('id', id)
+            .single();
+          const title = (conv as any)?.title;
+          if (typeof title === 'string' && title.trim()) storedTitle = title.trim();
         }
+      } catch (e) {
+        console.error('[useAgent] Title fetch error:', e);
       }
-    } catch (e) {
-      console.error('[useAgent] Title fetch error:', e);
     }
+    setTabs(prev => prev.map(t => {
+      if (t.id !== openedTabId) return t;
+      const firstUser = t.messages.find((m) => m.role === 'user')?.text;
+      return { ...t, title: displayConversationTitle(storedTitle ?? t.title, firstUser) };
+    }));
   }, [addTab, customAgentUrl]);
 
   useEffect(() => {

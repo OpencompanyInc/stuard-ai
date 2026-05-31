@@ -5,6 +5,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ChevronDown, Clock, Plus } from 'lucide-react';
 
 import { clsx } from 'clsx';
+import { displayConversationTitle } from '../../../utils/conversationTitle';
 
 
 
@@ -356,7 +357,7 @@ export function TabHistoryMenu({
 
                       <span className="truncate min-w-0 flex-1 font-medium">
 
-                        {conversation.title?.trim() || 'Untitled chat'}
+                        {displayConversationTitle(conversation.title)}
 
                       </span>
 

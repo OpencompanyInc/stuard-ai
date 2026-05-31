@@ -29,6 +29,29 @@ from ..storage.crypto import hash_password, verify_password
 logger = logging.getLogger("agent")
 
 
+def _fallback_title_from_text(text: str, max_words: int = 6, max_len: int = 60) -> str:
+    """Derive a short title from the first user message (matches cloud-ai thread-title)."""
+    cleaned = " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+    if not cleaned:
+        return ""
+    words = cleaned.split(" ")
+    title = " ".join(words[:max_words])
+    if len(words) > max_words:
+        title += "…"
+    if len(title) > max_len:
+        title = title[: max_len - 1].rstrip() + "…"
+    return title.rstrip(".,!?;:")
+
+
+def _ensure_conversation_title_from_message(db: MemoryDB, conversation_id: str, content: str) -> None:
+    conv = db.get_conversation(conversation_id)
+    if not conv or (conv.title or "").strip():
+        return
+    title = _fallback_title_from_text(content)
+    if title:
+        db.update_conversation(conversation_id, title=title)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONVERSATION HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -52,6 +75,20 @@ async def conversation_create(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+def _resolve_conversation_title(db: MemoryDB, conversation: Conversation) -> Conversation:
+    """Ensure list/get responses never return a blank title when messages exist."""
+    if (conversation.title or "").strip():
+        return conversation
+    first = db.get_first_user_message_text(conversation.id)
+    if not first:
+        return conversation
+    title = _fallback_title_from_text(first)
+    if not title:
+        return conversation
+    updated = db.update_conversation(conversation.id, title=title)
+    return updated or conversation
+
+
 async def conversation_get(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get a conversation by ID."""
     try:
@@ -64,6 +101,8 @@ async def conversation_get(args: Dict[str, Any]) -> Dict[str, Any]:
 
         if not conv:
             return {"ok": False, "error": "not_found"}
+
+        conv = _resolve_conversation_title(db, conv)
 
         return {"ok": True, "conversation": conv.to_dict()}
     except Exception as e:
@@ -123,6 +162,7 @@ async def conversation_list(args: Dict[str, Any]) -> Dict[str, Any]:
             offset=offset,
             source=source if source else None
         )
+        conversations = [_resolve_conversation_title(db, c) for c in conversations]
         
         return {
             "ok": True,
@@ -242,6 +282,9 @@ async def message_add(args: Dict[str, Any]) -> Dict[str, Any]:
             metadata=args.get("metadata"),
             embedding=args.get("embedding")
         )
+
+        if role == "user":
+            _ensure_conversation_title_from_message(db, conversation_id, str(content or ""))
         
         return {"ok": True, "message": msg.to_dict()}
     except Exception as e:

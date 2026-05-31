@@ -14,7 +14,6 @@ import {
   addAssistantMessage,
   addUserMessage,
   finishRun,
-  setConversationTitle,
 } from '../../supabase';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import { getDesktopWs } from '../../services/vm-bridge';
@@ -858,7 +857,7 @@ function fireAndForgetConversationTitle(
       });
       const title = normalizeThreadTitle((result as any)?.text);
       if (title) {
-        await setConversationTitle(userId, conversationId, title);
+        await memoryService.updateConversation(conversationId, { title }).catch(() => undefined);
         send(ws, { type: 'title', conversationId, title, provisional: false }, requestId);
       }
     } catch { }

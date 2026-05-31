@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
 import { contentToText } from '../utils/messages';
-import { normalizeThreadTitle } from '../utils/thread-title';
+import { normalizeThreadTitle, fallbackTitleFromMessage } from '../utils/thread-title';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -333,9 +333,13 @@ export async function generateConversationTitle(
       temperature: 0.3,
     });
 
-    return normalizeThreadTitle(title);
+    const normalized = normalizeThreadTitle(title);
+    if (normalized) return normalized;
+    const firstUser = messages.find((m) => m.role === 'user');
+    return fallbackTitleFromMessage(firstUser ? normalizeConversationContent(firstUser.content) : '');
   } catch (error) {
-    return 'New Conversation';
+    const firstUser = messages.find((m) => m.role === 'user');
+    return fallbackTitleFromMessage(firstUser ? normalizeConversationContent(firstUser.content) : '') || 'New chat';
   }
 }
 

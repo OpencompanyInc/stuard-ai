@@ -9,6 +9,7 @@ import { getConversationMessages, getSupabaseService, verifyToken } from '../sup
 import { hasClientBridge } from '../tools/bridge';
 import * as memory from '../memory/conversations';
 import { relayChatEvent } from '../services/chat-sync';
+import { isPlaceholderConversationTitle, resolveConversationTitle } from '../utils/thread-title';
 
 function json(res: ServerResponse, data: unknown, status = 200) {
   res.writeHead(status, {
@@ -181,8 +182,10 @@ export async function handleMemoryRoutes(
       const loser = bTs > aTs ? existing : row;
       const merged = { ...loser, ...winner };
       // Prefer a non-empty title from either side
-      if (!merged.title || merged.title === 'Untitled') {
-        merged.title = winner.title || loser.title || merged.title;
+      if (isPlaceholderConversationTitle(merged.title)) {
+        merged.title = !isPlaceholderConversationTitle(winner.title)
+          ? winner.title
+          : (!isPlaceholderConversationTitle(loser.title) ? loser.title : merged.title);
       }
       // Prefer highest message_count observed (monotonic)
       merged.message_count = Math.max(

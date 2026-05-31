@@ -27,6 +27,7 @@ import {
   getSmsUserState,
   getSupabaseService,
 } from '../supabase';
+import { resolveConversationTitle } from '../utils/thread-title';
 import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID } from '../utils/config';
 import { getVoiceBridgeWs } from './voice-bridge-manager';
 import { getDesktopWs } from '../services/vm-bridge';
@@ -686,8 +687,9 @@ async function searchMemoryInCloud(userId: string, query: string, limit: number)
     const results = [];
     for (const conv of scored) {
       const messages = await getConversationMessages(userId, conv.id, 3);
+      const firstUser = messages.find((message) => message.role === 'user')?.content;
       results.push({
-        title: conv.title || 'Untitled',
+        title: resolveConversationTitle(conv.title, firstUser),
         date: conv.created_at,
         messages: messages.map((message) => ({
           role: message.role,

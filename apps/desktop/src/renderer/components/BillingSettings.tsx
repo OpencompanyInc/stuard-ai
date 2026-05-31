@@ -36,6 +36,7 @@ import {
   type ComputeBillingEventRow,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
+import { displayConversationTitle } from "../utils/conversationTitle";
 
 interface CreditSummary {
   plan?: string;
@@ -1193,7 +1194,7 @@ export const BillingSettings: React.FC = () => {
                           {formatModel(log.model)}
                         </td>
                         <td className="px-2 py-2 text-theme-muted max-w-[150px] truncate">
-                          {log.chatName || <span className="italic opacity-50">Untitled</span>}
+                          {displayConversationTitle(log.chatName)}
                         </td>
                         <td className="px-2 py-2 text-right font-bold text-theme-fg tabular-nums">
                           {log.credits.toFixed(2)}

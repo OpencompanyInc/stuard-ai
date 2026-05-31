@@ -17,8 +17,11 @@ import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '../constants';
 import {
   assignDelegationChildrenToTasks,
   buildDelegationTaskStep,
+  buildExecutionGroupFallbackChildren,
+  buildExecutionGroupStep,
   extractDelegationTasks,
   isDelegationToolCall,
+  isExecutionGroupToolCall,
 } from '../helpers/delegation';
 import { normalizeMarkdownSpacing } from '../helpers/markdown';
 import { formatDuration } from '../helpers/media';
@@ -34,6 +37,7 @@ import {
 import type { AssistantTraceStepData } from '../types';
 import { CollapsibleToolGroup } from './CollapsibleToolGroup';
 import { DelegationCard } from './DelegationCard';
+import { ExecutionGroupCard } from './ExecutionGroupCard';
 import { StatusTraceMeta } from './StatusTraceMeta';
 import { ToolTraceContent } from './ToolTraceContent';
 
@@ -168,10 +172,23 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
           type DisplayItem =
             | { type: 'step'; step: AssistantTraceStepData; idx: number; nested: boolean }
             | { type: 'tool-group'; toolName: string; steps: { step: AssistantTraceStepData; idx: number }[]; nested: boolean }
-            | { type: 'delegation'; step: AssistantTraceStepData; idx: number; children: AssistantTraceStepData[]; lastChildIdx: number };
+            | { type: 'delegation'; step: AssistantTraceStepData; idx: number; children: AssistantTraceStepData[]; lastChildIdx: number }
+            | { type: 'execution-group'; step: AssistantTraceStepData; idx: number; children: AssistantTraceStepData[]; lastChildIdx: number };
 
           const items: DisplayItem[] = [];
           const consumedNestedIndexes = new Set<number>();
+
+          // parentToolId → child indices (order-independent; survives interleaving).
+          const childIdxByParent = new Map<string, number[]>();
+          traceSteps.forEach((s, idx) => {
+            const pid = s.tool?.parentToolId;
+            if (pid) {
+              const arr = childIdxByParent.get(pid) || [];
+              arr.push(idx);
+              childIdxByParent.set(pid, arr);
+            }
+          });
+
           let i = 0;
           while (i < traceSteps.length) {
             if (consumedNestedIndexes.has(i)) {
@@ -180,6 +197,63 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
             }
             const step = traceSteps[i];
             const isNested = Boolean(step.nested);
+
+            // Top-level execution-group wrapper (run_parallel/run_sequential/
+            // loop_executor): absorb its child steps into one rectangle. Children
+            // are matched by several independent signals so the group survives
+            // even if one of them is lost across a commit/persistence round-trip:
+            //   1. explicit parentToolId === parent id
+            //   2. synthetic id prefix  (`${parentId}:<index>`) — survives even
+            //      when parentToolId is stripped, because the tool-call id is not
+            //   3. positional fallback  — the contiguous run of nested steps
+            //      right after the wrapper (covers legacy/untagged streams)
+            if (!isNested && step.kind === 'tool' && step.tool && isExecutionGroupToolCall(step.tool)) {
+              const parentId = step.tool.id;
+              const childPrefix = `${parentId}:`;
+              const childIdxs: number[] = [];
+              for (const ci of childIdxByParent.get(parentId) || []) {
+                if (ci !== i && !consumedNestedIndexes.has(ci)) childIdxs.push(ci);
+              }
+              if (childIdxs.length === 0) {
+                traceSteps.forEach((s, k) => {
+                  if (k === i || consumedNestedIndexes.has(k)) return;
+                  const tc = s.tool;
+                  if (!tc) return;
+                  const byParent = tc.parentToolId === parentId;
+                  const byIdPrefix = typeof tc.id === 'string' && tc.id.startsWith(childPrefix);
+                  if (byParent || byIdPrefix) childIdxs.push(k);
+                });
+              }
+              if (childIdxs.length === 0) {
+                let j = i + 1;
+                while (j < traceSteps.length) {
+                  if (consumedNestedIndexes.has(j)) { j++; continue; }
+                  const cand = traceSteps[j];
+                  if (!cand.nested) break;
+                  if (cand.kind === 'tool' && cand.tool && isExecutionGroupToolCall(cand.tool)) break;
+                  childIdxs.push(j);
+                  j++;
+                }
+              }
+              // Always render the rectangle (like delegation) so completed groups
+              // stay visible even when child linkage was partial or stripped.
+              childIdxs.forEach((ci) => consumedNestedIndexes.add(ci));
+              childIdxs.sort((a, b) => a - b);
+              let children = childIdxs.map((ci) => traceSteps[ci]);
+              if (children.length === 0 && step.tool) {
+                children = buildExecutionGroupFallbackChildren(step.tool, step.status);
+              }
+              const lastChildIdx = childIdxs.length > 0 ? childIdxs[childIdxs.length - 1] : i;
+              items.push({
+                type: 'execution-group',
+                step: buildExecutionGroupStep(step, children),
+                idx: i,
+                children,
+                lastChildIdx,
+              });
+              i++;
+              continue;
+            }
 
             // Top-level delegation tool: absorb later nested subagent steps as
             // children. Long tool calls can time out and let orchestrator
@@ -195,11 +269,13 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
                   !candidate.nested &&
                   candidate.kind === 'tool' &&
                   candidate.tool &&
-                  isDelegationToolCall(candidate.tool)
+                  (isDelegationToolCall(candidate.tool) || isExecutionGroupToolCall(candidate.tool))
                 ) {
                   break;
                 }
-                if (candidate.nested) {
+                // Skip steps that belong to a specific execution-group wrapper —
+                // they're owned by that parent's rectangle, not this delegation.
+                if (candidate.nested && !candidate.tool?.parentToolId) {
                   childEntries.push({ step: candidate, idx: j });
                   consumedNestedIndexes.add(j);
                   lastChildIdx = j;
@@ -238,6 +314,9 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
               const groupSteps: { step: AssistantTraceStepData; idx: number }[] = [{ step, idx: i }];
               let j = i + 1;
               while (j < traceSteps.length) {
+                // Never re-absorb a step already claimed by an execution-group
+                // rectangle (linked via parentToolId), or it would render twice.
+                if (consumedNestedIndexes.has(j)) break;
                 const next = traceSteps[j];
                 if (next.kind === 'tool' && next.tool?.tool === toolName && Boolean(next.nested) === isNested) {
                   groupSteps.push({ step: next, idx: j });
@@ -258,9 +337,10 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
             }
           }
 
-          // Group consecutive items by nested flag for indentation (delegation items render top-level)
+          // Group consecutive items by nested flag for indentation (rectangle
+          // cards — delegation + execution-group — always render top-level)
           const itemNested = (item: DisplayItem): boolean =>
-            item.type === 'delegation' ? false : item.nested;
+            item.type === 'delegation' || item.type === 'execution-group' ? false : item.nested;
           type NestGroup = { nested: boolean; items: DisplayItem[] };
           const nestGroups: NestGroup[] = [];
           for (const item of items) {
@@ -288,6 +368,17 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
               const lastTraceIdx = item.children.length > 0 ? item.lastChildIdx : item.idx;
               return (
                 <DelegationCard
+                  key={item.step.id}
+                  step={item.step}
+                  childSteps={item.children}
+                  isLast={lastTraceIdx === traceSteps.length - 1}
+                />
+              );
+            }
+            if (item.type === 'execution-group') {
+              const lastTraceIdx = item.children.length > 0 ? item.lastChildIdx : item.idx;
+              return (
+                <ExecutionGroupCard
                   key={item.step.id}
                   step={item.step}
                   childSteps={item.children}

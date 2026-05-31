@@ -18,6 +18,14 @@ export interface ToolCall {
   liveOutput?: string;
   subagentId?: string;
   nested?: boolean;
+  /**
+   * Id of the parent tool call this step ran under, when it is a child of a
+   * grouping tool (`delegate`, `run_parallel`, `run_sequential`, `loop_executor`).
+   * Lets the trace renderer reconstruct the parent→children rectangle
+   * deterministically — survives chat reopen because the link is explicit and
+   * order-independent, unlike positional absorption.
+   */
+  parentToolId?: string;
 }
 
 export type StreamChunk =

@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Archive, Check, ChevronRight, Copy } from 'lucide-react';
+import { Archive, Check, ChevronRight, Copy, ListOrdered, Loader2, Split, Users, XCircle } from 'lucide-react';
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '../ai-elements/ChainOfThought';
 import { Shimmer } from '../ai-elements/Shimmer';
 import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath } from '../helpers';
@@ -329,11 +329,37 @@ function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
   if (tool.status === 'completed') return 'complete';
   if (tool.status === 'error') return 'error';
   if (tool.status === 'running') return 'active';
+  if (tool.status === 'called') return 'pending';
   return isStreaming ? 'active' : 'pending';
 }
 
+// Grouping tools whose child steps render inside a single rectangle card.
+const DELEGATION_PARENT_TOOLS = new Set(['delegate']);
+const PARALLEL_PARENT_TOOLS = new Set(['run_parallel']);
+const SEQUENTIAL_PARENT_TOOLS = new Set(['run_sequential', 'loop_executor']);
+
+function isGroupingParentTool(tool?: ToolCall | null): boolean {
+  if (!tool) return false;
+  return (
+    DELEGATION_PARENT_TOOLS.has(tool.tool) ||
+    PARALLEL_PARENT_TOOLS.has(tool.tool) ||
+    SEQUENTIAL_PARENT_TOOLS.has(tool.tool)
+  );
+}
+
+type GroupKind = 'delegation' | 'parallel' | 'sequential';
+
+function getGroupKind(tool: ToolCall): GroupKind {
+  if (PARALLEL_PARENT_TOOLS.has(tool.tool)) return 'parallel';
+  if (SEQUENTIAL_PARENT_TOOLS.has(tool.tool)) return 'sequential';
+  return 'delegation';
+}
+
 function isDelegatedToolCall(tool: ToolCall): boolean {
+  // A grouping parent (delegate / run_parallel / …) is itself top-level, never nested.
+  if (isGroupingParentTool(tool)) return false;
   if (tool.nested) return true;
+  if (typeof tool.parentToolId === 'string' && tool.parentToolId.trim().length > 0) return true;
   if (typeof tool.subagentId === 'string' && tool.subagentId.trim().length > 0) return true;
   if (typeof tool.id !== 'string') return false;
   return (
@@ -341,6 +367,35 @@ function isDelegatedToolCall(tool: ToolCall): boolean {
     tool.id.startsWith('subagent-') ||
     tool.id.startsWith('sub-tc-')
   );
+}
+
+/** Pull delegate's task list (subagent names) from the parent tool args, if shaped like delegate. */
+function extractDelegationSubagents(tool: ToolCall): string[] {
+  const raw = tool.args;
+  let parsed: any = raw;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { return []; }
+  }
+  const tasks = parsed && typeof parsed === 'object' ? (parsed.tasks ?? parsed.task) : undefined;
+  const arr = Array.isArray(tasks) ? tasks : tasks ? [tasks] : [];
+  return arr
+    .map((t: any) => (typeof t?.subagent === 'string' ? t.subagent.trim() : ''))
+    .filter(Boolean);
+}
+
+function getGroupHeaderLabel(parent: ToolCall, kind: GroupKind, childToolCount: number): string {
+  if (kind === 'delegation') {
+    const subagents = extractDelegationSubagents(parent);
+    if (subagents.length === 1) return `${humanizeToolName(subagents[0])} agent`;
+    if (subagents.length > 1) return `${subagents.length} agents`;
+    return 'Delegated agent';
+  }
+  const n = childToolCount;
+  if (kind === 'parallel') {
+    return n > 0 ? `Running ${n} step${n === 1 ? '' : 's'} in parallel` : 'Running in parallel';
+  }
+  // sequential / loop
+  return n > 0 ? `Running ${n} step${n === 1 ? '' : 's'} in sequence` : 'Running in sequence';
 }
 
 function isTopLevelDuplicateOfNestedTool(tool: ToolCall, streamChunks?: StreamChunk[]): boolean {
@@ -1072,6 +1127,338 @@ function CollapsibleToolGroup({
   );
 }
 
+/** Compact, human hint pulled from a child tool's primary argument. */
+function getBranchArgHint(tool?: ToolCall): string {
+  if (!tool || !tool.args) return '';
+  let args: any = tool.args;
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args); } catch { return ''; }
+  }
+  if (!args || typeof args !== 'object') return '';
+  const keys = ['query', 'q', 'search_term', 'url', 'target', 'path', 'file_path', 'command', 'cmd', 'pattern', 'prompt', 'instruction', 'name', 'title'];
+  for (const k of keys) {
+    const v = args[k];
+    if (typeof v === 'string' && v.trim()) {
+      let s = v.trim();
+      if ((k === 'url' || k === 'target') && /^https?:\/\//i.test(s)) {
+        try { s = new URL(s).hostname.replace(/^www\./, ''); } catch {}
+      }
+      return truncatePreviewText(s, 64);
+    }
+  }
+  return '';
+}
+
+/** Animated node that sits on the timeline rail of an execution group. */
+function BranchStatusNode({ status }: { status: TraceStatus }) {
+  const base = 'relative z-10 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full';
+
+  if (status === 'active') {
+    return (
+      <span className={base} style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)' }}>
+        <span
+          className="absolute inline-flex h-full w-full rounded-full animate-ping"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 45%, transparent)' }}
+        />
+        <span className="relative h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--primary)' }} />
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className={base} style={{ backgroundColor: 'color-mix(in srgb, var(--destructive) 18%, transparent)' }}>
+        <XCircle className="h-3 w-3" style={{ color: 'var(--destructive)' }} />
+      </span>
+    );
+  }
+  if (status === 'complete') {
+    return (
+      <span className={base} style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)' }}>
+        <Check className="h-3 w-3" style={{ color: 'color-mix(in srgb, var(--primary) 95%, transparent)' }} />
+      </span>
+    );
+  }
+  return (
+    <span
+      className={clsx(base, 'border')}
+      style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 35%, transparent)' }}
+    >
+      <span className="h-1 w-1 rounded-full" style={{ backgroundColor: 'color-mix(in srgb, var(--foreground-muted) 45%, transparent)' }} />
+    </span>
+  );
+}
+
+/** Slim segmented progress: one segment per child step, colored by status. */
+function SegmentedProgress({ steps }: { steps: AssistantTraceStepData[] }) {
+  const tools = steps.filter((c) => c.kind === 'tool');
+  if (tools.length < 2) return null;
+  return (
+    <div className="mt-2 flex items-center gap-1">
+      {tools.map((c) => {
+        const bg =
+          c.status === 'error'
+            ? 'color-mix(in srgb, var(--destructive) 65%, transparent)'
+            : c.status === 'complete'
+              ? 'color-mix(in srgb, var(--primary) 55%, transparent)'
+              : c.status === 'active'
+                ? 'color-mix(in srgb, var(--primary) 30%, transparent)'
+                : 'color-mix(in srgb, var(--foreground-muted) 16%, transparent)';
+        return (
+          <span key={c.id} className="h-[3px] flex-1 overflow-hidden rounded-full" style={{ backgroundColor: bg }}>
+            {c.status === 'active' ? (
+              <span
+                className="block h-full w-1/2 animate-pulse rounded-full"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 85%, transparent)' }}
+              />
+            ) : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One branch row on the execution rail, with click-to-reveal detail. */
+function BranchLane({
+  child,
+  elapsedNow,
+}: {
+  child: AssistantTraceStepData;
+  elapsedNow: number;
+}) {
+  const tool = child.tool;
+  const isActive = child.status === 'active';
+  const argHint = tool ? getBranchArgHint(tool) : '';
+  const hasDetail =
+    (child.kind === 'tool' && tool && (tool.status === 'completed' || tool.status === 'error')) ||
+    ((child.kind === 'reasoning' || child.kind === 'text') && !!child.content);
+  const [open, setOpen] = useState(false);
+
+  const elapsed =
+    isActive && tool?.timestamp ? Math.max(0, (elapsedNow - tool.timestamp) / 1000) : 0;
+
+  return (
+    <div className="relative">
+      <div className="flex items-start gap-2.5 py-1">
+        <BranchStatusNode status={child.status} />
+        <button
+          type="button"
+          onClick={() => hasDetail && setOpen((v) => !v)}
+          className={clsx('group/lane min-w-0 flex-1 text-left', hasDetail ? 'cursor-pointer' : 'cursor-default')}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className="truncate text-[12px] font-medium"
+              style={{ color: 'color-mix(in srgb, var(--foreground) 82%, transparent)' }}
+            >
+              {isActive ? <Shimmer as="span" duration={2} spread={3}>{child.label}</Shimmer> : child.label}
+            </span>
+            {argHint ? (
+              <span
+                className="truncate text-[11px]"
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted) 80%, transparent)' }}
+              >
+                {argHint}
+              </span>
+            ) : null}
+            {hasDetail ? (
+              <ChevronRight
+                className={clsx(
+                  'h-3 w-3 shrink-0 opacity-0 transition-all duration-150 group-hover/lane:opacity-60',
+                  open && 'rotate-90 opacity-60',
+                )}
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)' }}
+              />
+            ) : null}
+          </div>
+        </button>
+        <span
+          className="shrink-0 pt-0.5 text-[10px] tabular-nums"
+          style={{ color: 'color-mix(in srgb, var(--foreground-muted) 80%, transparent)' }}
+        >
+          {isActive ? (elapsed > 0 ? formatSec(elapsed) : 'running…') : ''}
+        </span>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {open && hasDetail ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="ml-[28px] pb-1.5">
+              {(child.kind === 'reasoning' || child.kind === 'text') && child.content ? (
+                <div
+                  className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                  style={{
+                    backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
+                    color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
+                  }}
+                >
+                  {child.content}
+                </div>
+              ) : null}
+              {child.kind === 'tool' && tool ? <ToolTraceContent tool={tool} /> : null}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * Custom execution-group panel for delegate / run_parallel / run_sequential.
+ * Renders a fork→branches→join rail with animated status nodes, a segmented
+ * aggregate progress bar, live timers, and per-branch click-to-reveal detail.
+ */
+function GroupTraceCard({
+  parent,
+  childSteps,
+  isLast,
+}: {
+  parent: AssistantTraceStepData;
+  childSteps: AssistantTraceStepData[];
+  isLast: boolean;
+}) {
+  const tool = parent.tool!;
+  const kind = getGroupKind(tool);
+  const status = parent.status;
+  const isRunning = status === 'active';
+  const isError = status === 'error';
+  const isComplete = status === 'complete';
+
+  const toolChildren = childSteps.filter((c) => c.kind === 'tool');
+  const doneCount = toolChildren.filter((c) => c.status === 'complete' || c.status === 'error').length;
+  const headerLabel = getGroupHeaderLabel(tool, kind, toolChildren.length);
+
+  const [expanded, setExpanded] = useState(() => isRunning || isError || childSteps.length > 0);
+
+  // Single shared ticker drives every running branch's live timer.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [isRunning]);
+
+  const Icon = kind === 'delegation' ? Users : kind === 'parallel' ? Split : ListOrdered;
+
+  const accent = isError ? 'var(--destructive)' : 'var(--primary)';
+  const tintedAccent = (pct: number) => `color-mix(in srgb, ${accent} ${pct}%, transparent)`;
+  const isAccented = isRunning || isError;
+
+  const statusText = isError
+    ? 'Failed'
+    : isRunning
+      ? toolChildren.length > 0
+        ? `${doneCount}/${toolChildren.length}`
+        : 'Working…'
+      : `${toolChildren.length} step${toolChildren.length === 1 ? '' : 's'}`;
+
+  return (
+    <div className={clsx('w-full', isLast ? 'mb-0' : 'mb-3')}>
+      <div
+        className="overflow-hidden rounded-2xl border backdrop-blur-sm transition-colors"
+        style={{
+          background:
+            'linear-gradient(180deg, color-mix(in srgb, var(--sidebar-item-hover) 26%, transparent), color-mix(in srgb, var(--sidebar-item-hover) 12%, transparent))',
+          borderColor: isAccented ? tintedAccent(30) : 'color-mix(in srgb, var(--foreground-muted) 16%, transparent)',
+          boxShadow: isAccented ? `0 0 0 1px ${tintedAccent(8)}` : 'none',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full flex-col gap-0 px-3.5 pt-2.5 pb-2.5 text-left"
+        >
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg"
+              style={{
+                backgroundColor: isAccented ? tintedAccent(16) : 'color-mix(in srgb, var(--sidebar-item-hover) 70%, transparent)',
+                color: isAccented ? tintedAccent(95) : 'color-mix(in srgb, var(--foreground) 60%, transparent)',
+              }}
+            >
+              <Icon className={clsx('h-3.5 w-3.5', kind === 'parallel' && 'rotate-90')} />
+            </div>
+
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span
+                className="truncate text-[12.5px] font-semibold tracking-tight"
+                style={{ color: 'color-mix(in srgb, var(--foreground) 88%, transparent)' }}
+              >
+                {isRunning ? <Shimmer as="span" duration={2.4} spread={4}>{headerLabel}</Shimmer> : headerLabel}
+              </span>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums"
+                style={{
+                  backgroundColor: isError
+                    ? tintedAccent(14)
+                    : 'color-mix(in srgb, var(--sidebar-item-hover) 60%, transparent)',
+                  color: isError ? tintedAccent(95) : 'color-mix(in srgb, var(--foreground-muted) 95%, transparent)',
+                }}
+              >
+                {statusText}
+              </span>
+              {isRunning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: tintedAccent(90) }} />
+              ) : isComplete ? (
+                <Check className="h-3.5 w-3.5" style={{ color: 'color-mix(in srgb, var(--primary) 80%, transparent)' }} />
+              ) : isError ? (
+                <XCircle className="h-3.5 w-3.5" style={{ color: 'var(--destructive)' }} />
+              ) : null}
+              <ChevronRight
+                className={clsx('h-3.5 w-3.5 transition-transform duration-200', expanded && 'rotate-90')}
+                style={{ color: 'color-mix(in srgb, var(--foreground-muted) 55%, transparent)' }}
+              />
+            </div>
+          </div>
+
+          <SegmentedProgress steps={childSteps} />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {expanded && childSteps.length > 0 ? (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <div
+                className="border-t px-3.5 pb-2 pt-2"
+                style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 10%, transparent)' }}
+              >
+                {/* Timeline rail behind the status nodes */}
+                <div className="relative">
+                  <div
+                    className="pointer-events-none absolute left-[8.5px] top-3 bottom-3 w-px"
+                    style={{
+                      background:
+                        'linear-gradient(to bottom, transparent, color-mix(in srgb, var(--foreground-muted) 22%, transparent) 12%, color-mix(in srgb, var(--foreground-muted) 22%, transparent) 88%, transparent)',
+                    }}
+                  />
+                  {childSteps.map((child) => (
+                    <BranchLane key={child.id} child={child} elapsedNow={now} />
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
 function AssistantTracePanel({
   steps,
   isStreaming,
@@ -1140,13 +1527,81 @@ function AssistantTracePanel({
                   toolName: string;
                   steps: { step: AssistantTraceStepData; idx: number }[];
                   nested: boolean;
+                }
+              | {
+                  type: 'group';
+                  parent: AssistantTraceStepData;
+                  idx: number;
+                  children: AssistantTraceStepData[];
+                  lastChildIdx: number;
                 };
 
+            // Explicit parentToolId → child step indices, so a parent's children
+            // group into one rectangle regardless of interleaving or reload order.
+            const childIdxByParent = new Map<string, number[]>();
+            steps.forEach((s, idx) => {
+              const pid = s.tool?.parentToolId;
+              if (pid) {
+                const arr = childIdxByParent.get(pid) || [];
+                arr.push(idx);
+                childIdxByParent.set(pid, arr);
+              }
+            });
+
+            const consumed = new Set<number>();
             const items: DisplayItem[] = [];
             let i = 0;
             while (i < steps.length) {
+              if (consumed.has(i)) {
+                i++;
+                continue;
+              }
               const step = steps[i];
               const isNested = Boolean(step.nested);
+
+              // Grouping parent (delegate / run_parallel / run_sequential / loop_executor):
+              // absorb its children into a single rectangle card.
+              if (step.kind === 'tool' && step.tool && isGroupingParentTool(step.tool) && !isNested) {
+                const parentId = step.tool.id;
+                const childIdxs: number[] = [];
+                // 1) Explicit linkage via parentToolId (deterministic; survives reopen).
+                for (const ci of childIdxByParent.get(parentId) || []) {
+                  if (ci !== i && !consumed.has(ci)) {
+                    childIdxs.push(ci);
+                    consumed.add(ci);
+                  }
+                }
+                // 2) Positional fallback: absorb the run of nested steps right after
+                //    the parent (covers streaming/legacy data with only nested/subagentId).
+                if (childIdxs.length === 0) {
+                  let j = i + 1;
+                  while (j < steps.length) {
+                    const cand = steps[j];
+                    if (cand.kind === 'tool' && cand.tool && isGroupingParentTool(cand.tool) && !cand.nested) break;
+                    if (cand.nested) {
+                      childIdxs.push(j);
+                      consumed.add(j);
+                      j++;
+                    } else {
+                      break;
+                    }
+                  }
+                }
+                childIdxs.sort((a, b) => a - b);
+                // Execution groups (run_parallel/run_sequential/loop_executor)
+                // only fold into a rectangle when they actually own child steps,
+                // or are still running. A finished wrapper that never captured
+                // children falls through to a plain step rather than an empty
+                // box. Delegation always renders its rectangle (agent identity).
+                const isDelegation = DELEGATION_PARENT_TOOLS.has(step.tool.tool);
+                if (childIdxs.length > 0 || isDelegation || step.status === 'active') {
+                  const children = childIdxs.map((ci) => steps[ci]);
+                  const lastChildIdx = childIdxs.length > 0 ? childIdxs[childIdxs.length - 1] : i;
+                  items.push({ type: 'group', parent: step, idx: i, children, lastChildIdx });
+                  i++;
+                  continue;
+                }
+              }
 
               if (step.kind === 'tool' && step.tool) {
                 const toolName = step.tool.tool;
@@ -1155,11 +1610,13 @@ function AssistantTracePanel({
                 ];
                 let j = i + 1;
                 while (j < steps.length) {
+                  if (consumed.has(j)) break;
                   const next = steps[j];
                   if (
                     next.kind === 'tool' &&
                     next.tool?.tool === toolName &&
-                    Boolean(next.nested) === isNested
+                    Boolean(next.nested) === isNested &&
+                    !isGroupingParentTool(next.tool)
                   ) {
                     groupSteps.push({ step: next, idx: j });
                     j++;
@@ -1179,18 +1636,32 @@ function AssistantTracePanel({
               }
             }
 
+            // Rectangle 'group' items always render at top level; everything else
+            // groups by nesting flag for indentation.
+            const itemNested = (item: DisplayItem): boolean => (item.type === 'group' ? false : item.nested);
             type NestGroup = { nested: boolean; items: DisplayItem[] };
             const nestGroups: NestGroup[] = [];
             for (const item of items) {
+              const nested = itemNested(item);
               const last = nestGroups[nestGroups.length - 1];
-              if (last && last.nested === item.nested) {
+              if (last && last.nested === nested) {
                 last.items.push(item);
               } else {
-                nestGroups.push({ nested: item.nested, items: [item] });
+                nestGroups.push({ nested, items: [item] });
               }
             }
 
             const renderItem = (item: DisplayItem, key: string) => {
+              if (item.type === 'group') {
+                return (
+                  <GroupTraceCard
+                    key={item.parent.id}
+                    parent={item.parent}
+                    childSteps={item.children}
+                    isLast={item.lastChildIdx === steps.length - 1}
+                  />
+                );
+              }
               if (item.type === 'tool-group') {
                 return (
                   <CollapsibleToolGroup

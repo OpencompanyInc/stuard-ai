@@ -2,6 +2,8 @@
  * Chat History Storage for Workflow Assistant
  */
 
+import { fallbackTitleFromMessage } from '@stuardai/chat-ui';
+
 export type StoredStreamItem =
   | { type: 'text'; content: string }
   | { type: 'reasoning'; content: string }
@@ -231,7 +233,7 @@ export function saveSession(sessionId: string, messages: ChatMessage[]): void {
     if (!all[idx].title) {
       const firstUserMsg = messages.find(m => m.role === 'user');
       if (firstUserMsg) {
-        all[idx].title = firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? '...' : '');
+        all[idx].title = fallbackTitleFromMessage(firstUserMsg.content);
       }
     }
     

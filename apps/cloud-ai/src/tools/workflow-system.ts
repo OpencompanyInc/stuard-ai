@@ -215,10 +215,20 @@ function markWorkflowToolArgs(args: any): any {
   return { ...(args as Record<string, any>), __workflowToolCall: true };
 }
 
-async function runOne(step: any, writer?: WritableStreamDefaultWriter<any>, eventTool = 'run_sequential') {
+async function runOne(
+  step: any,
+  writer?: WritableStreamDefaultWriter<any>,
+  eventTool = 'run_sequential',
+  stepIndex?: number,
+) {
   const { tool, args, kind, timeoutMs } = step;
   const toolName = normalizeToolName(tool);
-  const startEvt = { type: 'tool_event', tool: eventTool, status: 'step_started', step: { tool, kind } };
+  const stepMeta = {
+    tool,
+    kind,
+    ...(typeof stepIndex === 'number' ? { index: stepIndex } : {}),
+  };
+  const startEvt = { type: 'tool_event', tool: eventTool, status: 'step_started', step: stepMeta };
   try { await safeToolWrite(writer as any, startEvt as any); } catch { }
 
   try {
@@ -237,11 +247,21 @@ async function runOne(step: any, writer?: WritableStreamDefaultWriter<any>, even
       );
     }
     const safe = sanitizeResult(result);
-    try { await safeToolWrite(writer as any, { type: 'tool_event', tool: eventTool, status: 'step_completed', step: { tool }, result: safe } as any); } catch { }
+    try {
+      await safeToolWrite(
+        writer as any,
+        { type: 'tool_event', tool: eventTool, status: 'step_completed', step: stepMeta, result: safe } as any,
+      );
+    } catch { }
     return { tool, ok: (result && typeof result.ok === 'boolean') ? !!result.ok : true, result: safe };
   } catch (e: any) {
     const msg = e?.message || 'failed';
-    try { await safeToolWrite(writer as any, { type: 'tool_event', tool: eventTool, status: 'step_error', step: { tool }, error: msg } as any); } catch { }
+    try {
+      await safeToolWrite(
+        writer as any,
+        { type: 'tool_event', tool: eventTool, status: 'step_error', step: stepMeta, error: msg } as any,
+      );
+    } catch { }
     return { tool, ok: false, error: msg };
   }
 }
@@ -259,8 +279,8 @@ export const runSequentialTool = createTool({
     let firstError: string | undefined;
 
     await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_sequential', status: 'started', count: steps.length });
-    for (const step of steps) {
-      const res = await runOne(step, writer as any);
+    for (let i = 0; i < steps.length; i++) {
+      const res = await runOne(steps[i], writer as any, 'run_sequential', i);
       results.push(res);
       if ((res.ok ?? true) !== true) {
         if (!firstError) firstError = String(res.error || 'error');

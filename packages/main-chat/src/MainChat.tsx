@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { PortableMessageBubble } from '@stuardai/chat-ui/ui';
+import { displayConversationTitle } from '@stuardai/chat-ui';
 import type { ChatAttachment } from '@stuardai/chat-ui/attachments';
 import type { ToolCall } from '@stuardai/chat-ui/types';
 import type { MainChatProps } from './types';
@@ -174,7 +175,7 @@ export function MainChat({
               >
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12px] text-neutral-200">{conv.title || 'Untitled'}</div>
+                  <div className="truncate text-[12px] text-neutral-200">{displayConversationTitle(conv.title)}</div>
                   <div className="text-[10px] text-neutral-500">{conv.message_count || 0} messages</div>
                 </div>
               </button>

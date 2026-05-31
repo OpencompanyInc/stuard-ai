@@ -1,6 +1,7 @@
 import type React from 'react';
 import type { ToolCall } from '../../../../../../hooks/useAgent';
 import type { AssistantTraceStepData, DelegationTask, TraceStatus } from '../types';
+import { getToolStepLabel } from './toolStepLabel';
 
 // Tool names that represent delegation to a subagent — rendered as a distinct rectangle card
 // so long-running delegated work is easy to track at a glance.
@@ -10,6 +11,13 @@ import type { AssistantTraceStepData, DelegationTask, TraceStatus } from '../typ
 // deploy_subagent) was a dead alias.
 export const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'route_to_workflow_agent']);
 
+// Workflow orchestration wrappers whose sub-steps stream in as nested children.
+// These render as an execution-group rectangle (fork→branches for parallel,
+// ordered timeline for sequential/loop) — distinct from subagent delegation.
+export const EXECUTION_GROUP_TOOL_NAMES = new Set(['run_parallel', 'run_sequential', 'loop_executor']);
+
+export type ExecutionGroupKind = 'parallel' | 'sequential';
+
 export function resolveToolName(tool: ToolCall): string {
   return tool.tool === 'execute_tool' && tool.args?.tool_name
     ? String(tool.args.tool_name)
@@ -18,6 +26,14 @@ export function resolveToolName(tool: ToolCall): string {
 
 export function isDelegationToolCall(tool: ToolCall): boolean {
   return DELEGATION_TOOL_NAMES.has(resolveToolName(tool));
+}
+
+export function isExecutionGroupToolCall(tool: ToolCall): boolean {
+  return EXECUTION_GROUP_TOOL_NAMES.has(resolveToolName(tool));
+}
+
+export function getExecutionGroupKind(tool: ToolCall): ExecutionGroupKind {
+  return resolveToolName(tool) === 'run_parallel' ? 'parallel' : 'sequential';
 }
 
 export function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
@@ -65,6 +81,116 @@ export function deriveDelegationStatus(parentStatus: TraceStatus, childSteps: As
   if (terminalLabel?.includes('finished')) return 'complete';
   if (childSteps.some((child) => child.status === 'active' || child.status === 'pending')) return 'active';
   return parentStatus;
+}
+
+/** Derive wrapper status from child branch steps (mirrors delegation cards). */
+export function deriveExecutionGroupStatus(parentStatus: TraceStatus, childSteps: AssistantTraceStepData[]): TraceStatus {
+  if (childSteps.some((child) => child.status === 'error')) return 'error';
+  if (parentStatus === 'complete') return 'complete';
+  if (parentStatus === 'error') return 'error';
+  if (childSteps.some((child) => child.status === 'active' || child.status === 'pending')) return 'active';
+  if (childSteps.length > 0 && childSteps.every((child) => child.status === 'complete' || child.status === 'error')) {
+    return 'complete';
+  }
+  return parentStatus;
+}
+
+export function buildExecutionGroupStep(
+  parentStep: AssistantTraceStepData,
+  childSteps: AssistantTraceStepData[],
+): AssistantTraceStepData {
+  return {
+    ...parentStep,
+    status: deriveExecutionGroupStatus(parentStep.status, childSteps),
+  };
+}
+
+function mapToolCallStatusToTrace(status: ToolCall['status'], parentStatus: TraceStatus): TraceStatus {
+  if (status === 'error') return 'error';
+  if (parentStatus === 'complete' || parentStatus === 'error') {
+    return status === 'error' ? 'error' : 'complete';
+  }
+  if (status === 'running') return 'active';
+  if (status === 'called') return 'pending';
+  if (status === 'completed') return 'complete';
+  return parentStatus;
+}
+
+/** When the wrapper finished, normalize stale pending/active branch rows for display. */
+export function normalizeExecutionGroupChildren(
+  children: AssistantTraceStepData[],
+  groupStatus: TraceStatus,
+): AssistantTraceStepData[] {
+  if (groupStatus !== 'complete' && groupStatus !== 'error') return children;
+  return children.map((child) => {
+    if (child.status !== 'pending' && child.status !== 'active') return child;
+    const nextTraceStatus: TraceStatus = groupStatus === 'error' ? 'error' : 'complete';
+    const nextToolStatus: ToolCall['status'] =
+      groupStatus === 'error' ? 'error' : 'completed';
+    return {
+      ...child,
+      status: nextTraceStatus,
+      tool: child.tool ? { ...child.tool, status: nextToolStatus } : child.tool,
+    };
+  });
+}
+
+/**
+ * Reconstruct branch rows from the wrapper's args.steps + result.results when
+ * per-step stream events never reached the client (common for orchestrator
+ * run_parallel/run_sequential where nested safeToolWrite has no writer).
+ */
+export function buildExecutionGroupFallbackChildren(
+  parentTool: ToolCall,
+  parentTraceStatus: TraceStatus,
+): AssistantTraceStepData[] {
+  const args = (parentTool.args || {}) as Record<string, any>;
+  const result = (parentTool.result || {}) as Record<string, any>;
+  const steps = Array.isArray(args.steps) ? args.steps : [];
+  if (steps.length === 0) return [];
+
+  const results = Array.isArray(result.results) ? result.results : [];
+  const parentId = parentTool.id || 'wrap-unknown';
+  const isSequential = resolveToolName(parentTool) !== 'run_parallel';
+
+  return steps.flatMap((stepDef: any, index: number) => {
+    const toolName = String(stepDef?.tool || '').trim();
+    if (!toolName) return [];
+
+    const resultEntry = results[index];
+    const ok = resultEntry?.ok ?? parentTool.status === 'completed';
+    const parentDone = parentTool.status === 'completed' || parentTraceStatus === 'complete';
+    const parentLive = parentTool.status === 'running' || parentTool.status === 'called';
+    const toolStatus: ToolCall['status'] =
+      resultEntry?.error || ok === false
+        ? 'error'
+        : parentDone
+          ? 'completed'
+          : parentLive
+            ? (isSequential && index > 0 ? 'called' : 'running')
+            : 'completed';
+
+    const tc: ToolCall = {
+      id: `${parentId}:${index}`,
+      tool: toolName,
+      status: toolStatus,
+      args: stepDef?.args,
+      result: resultEntry?.result ?? resultEntry,
+      error: resultEntry?.error,
+      timestamp: parentTool.timestamp,
+      parentToolId: parentId,
+      nested: true,
+    };
+
+    return [{
+      id: tc.id!,
+      kind: 'tool' as const,
+      label: getToolStepLabel(tc),
+      status: mapToolCallStatusToTrace(toolStatus, parentTraceStatus),
+      tool: tc,
+      nested: true,
+    }];
+  });
 }
 
 export function buildDelegationTaskStep(

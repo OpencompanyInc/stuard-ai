@@ -17,6 +17,7 @@ import {
 } from "../../../components/ai-elements/ChainOfThought";
 import type { Message, StreamItem, ToolEvent, WorkflowApprovalRequest } from "../../hooks/useWorkflowChat";
 import { prepareMarkdownForDisplay } from "../../../utils/text";
+import { displayConversationTitle } from "../../../utils/conversationTitle";
 
 // --- Helpers ---
 
@@ -1085,7 +1086,7 @@ export function ChatHistory({
             >
               <div className="flex-1 min-w-0">
                 <div className="text-[12px] font-medium wf-fg truncate mb-0.5">
-                  {session.title || 'Untitled conversation'}
+                  {displayConversationTitle(session.title, session.messages.find((m) => m.role === 'user')?.content)}
                 </div>
                 <div className="text-[10px] wf-fg-faint flex items-center gap-1.5">
                   <Clock className="w-3 h-3" />

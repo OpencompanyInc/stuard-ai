@@ -1,6 +1,7 @@
 import type { Message as ChatMessage } from '@stuardai/chat-ui/types';
 import type { CloudClient } from '@stuardai/cloud-client';
 import type { IVmChatPlatform, VmConversationEntry } from '@stuardai/vm-chat/types';
+import { displayConversationTitle, isPlaceholderConversationTitle } from '@stuardai/chat-ui';
 import { supabase } from '../lib/supabaseClient';
 
 const CLOUD_AI_HTTP = (
@@ -101,7 +102,7 @@ export function createDesktopVmChatPlatform(client: CloudClient): IVmChatPlatfor
           if (!id) continue;
           const entry: VmConversationEntry = {
             id,
-            title: String(c.title || 'Untitled'),
+            title: displayConversationTitle(c.title),
             updated_at: String(c.updated_at || c.created_at || ''),
             message_count: Number(c.message_count) || 0,
           };
@@ -112,7 +113,9 @@ export function createDesktopVmChatPlatform(client: CloudClient): IVmChatPlatfor
           }
           byId.set(id, {
             id,
-            title: existing.title && existing.title !== 'Untitled' ? existing.title : entry.title,
+            title: !isPlaceholderConversationTitle(entry.title)
+              ? entry.title
+              : displayConversationTitle(existing.title),
             updated_at:
               new Date(entry.updated_at || 0) > new Date(existing.updated_at || 0)
                 ? entry.updated_at

@@ -51,6 +51,7 @@ import {
 import { task_crud, task_reminders } from '../tools/device/productivity';
 import { ask_user } from '../tools/ask-user';
 import { waitTool } from '../tools/wait';
+import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
 import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { analyzeMediaTool } from '../tools/analyze-media';
@@ -245,10 +246,19 @@ When you have multiple independent tasks (e.g. "check my email AND look up the w
 ## When NOT to Delegate
 
 For quick, standalone operations that don't need a full subagent context:
+- Use \`run_sequential\` / \`run_parallel\` to batch multiple direct tool calls (see below)
 - Use search_tools + get_tool_schema + execute_tool to discover and run individual tools directly
 - Use web_search / scrape_url for quick research
 - Use ask_user when you need user input
 - Use search_past_conversations / get_conversation_context for memory
+
+## Tool Batching — run_sequential / run_parallel
+
+Run several **direct tool calls** without delegating to a subagent. Each step is \`{ tool, args, kind? }\` where \`kind\` is \`auto\` (default), \`cloud\`, or \`local\`.
+- \`run_sequential({ steps, continueOnError? })\` — run steps in order; stops on first error unless \`continueOnError: true\`
+- \`run_parallel({ steps, concurrency? })\` — run independent steps concurrently (e.g. read multiple files, fire parallel API calls)
+
+Use for predictable multi-step chains. For open-ended work that needs reasoning (browser automation, code edits, workflow authoring), delegate instead.
 
 ## ask_user — Interactive Input
 
@@ -320,6 +330,8 @@ function getOrchestratorActiveTools(
 
     // Core utilities always needed
     wait: waitTool,
+    run_sequential: runSequentialTool,
+    run_parallel: runParallelTool,
     web_search,
     scrape_url,
     analyze_media: analyzeMediaTool,

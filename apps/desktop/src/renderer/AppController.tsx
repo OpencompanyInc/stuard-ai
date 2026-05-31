@@ -27,6 +27,7 @@ import {
   shouldConvertPasteToDocumentAttachment,
   type ChatAttachment,
 } from './utils/attachments';
+import { displayConversationTitle } from './utils/conversationTitle';
 
 import { useSpeechToText } from './hooks/useSpeechToText';
 import { usePlannerData } from './hooks/usePlannerData';
@@ -837,7 +838,7 @@ export function useAppController() {
         if (!conversationId) { setConversationTitle(null); return; }
         // Try local agent first
         try {
-          const resp = await fetch(`http://127.0.0.1:8765/memory/conversations/${conversationId}`);
+          const resp = await fetch(`http://127.0.0.1:8765/v1/memory/conversations/${conversationId}`);
           const json = await resp.json();
           if (json.ok && json.conversation?.title) {
             setConversationTitle(String(json.conversation.title).trim() || null);
@@ -868,14 +869,14 @@ export function useAppController() {
     setLoadingConvs(true);
     try {
       // Primary: fetch from local agent which stores everything locally
-      const resp = await fetch('http://127.0.0.1:8765/memory/conversations?limit=20');
+      const resp = await fetch('http://127.0.0.1:8765/v1/memory/conversations?limit=20');
       const json = await resp.json();
       if (json.ok && Array.isArray(json.conversations)) {
         const convs = json.conversations
           .filter((c: any) => !['workflow', 'skill', 'proactive', 'bot'].includes(String(c.source || '').toLowerCase()))
           .map((c: any) => ({
             id: c.id || c.conversation_id,
-            title: c.title,
+            title: displayConversationTitle(c.title),
             created_at: c.created_at || c.updated_at,
             updated_at: c.updated_at || c.created_at,
           }))
@@ -909,7 +910,7 @@ export function useAppController() {
             .limit(20);
           data = (legacy.data || []).map((row: { id: string; title?: string; created_at: string; updated_at?: string }) => ({
             id: row.id,
-            title: row.title || 'Untitled',
+            title: displayConversationTitle(row.title),
             created_at: row.created_at,
             updated_at: row.updated_at ?? row.created_at,
           }));
@@ -924,7 +925,7 @@ export function useAppController() {
             .limit(20);
           data = (oldestSchema.data || []).map((row: { id: string; title?: string; created_at: string; updated_at?: string }) => ({
             id: row.id,
-            title: row.title || 'Untitled',
+            title: displayConversationTitle(row.title),
             created_at: row.created_at,
             updated_at: row.updated_at ?? row.created_at,
           }));
@@ -966,7 +967,7 @@ export function useAppController() {
   const handleSelectConversation = useCallback((id: string) => {
     try {
       const item = convList.find((c: any) => String(c.id) === String(id));
-      if (item && typeof item.title === 'string' && item.title.trim()) setConversationTitle(item.title.trim());
+      if (item) setConversationTitle(displayConversationTitle(item.title));
     } catch { }
     loadConversation(id);
     setChatMenuOpen(false);

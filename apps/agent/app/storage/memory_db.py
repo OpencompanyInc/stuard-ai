@@ -1318,6 +1318,22 @@ class MemoryDB:
             ))
         
         return result
+
+    def get_first_user_message_text(self, conversation_id: str) -> Optional[str]:
+        """Return the plaintext of the earliest user message, if any."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT content_enc FROM messages
+                WHERE conversation_id = ? AND role = 'user'
+                ORDER BY turn_index ASC, created_at ASC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        if not row or not row['content_enc']:
+            return None
+        return _decrypt_content(row['content_enc'], self._crypto)
     
     # ═══════════════════════════════════════════════════════════════════════════
     # CONVERSATION SEGMENTS

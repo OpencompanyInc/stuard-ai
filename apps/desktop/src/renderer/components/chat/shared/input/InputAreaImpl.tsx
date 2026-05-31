@@ -37,6 +37,7 @@ import {
   runDeployedWorkflow,
   type CompactStuardNavItem,
 } from '../../../../utils/compactStuardNav';
+import { displayConversationTitle } from '../../../../utils/conversationTitle';
 import { chooseDropdownPlacement } from '../../../../utils/dropdownPlacement';
 import { TabHistoryMenu, estimateCompactTabMenuHeight, type ConversationHistoryItem } from '../TabHistoryMenu';
 import { useChatTabs } from '../ChatTabsContext';
@@ -2013,8 +2014,8 @@ const InputArea = forwardRef(function InputArea(
   const showCompactTitleBar = false;
   const compactTitleBarOffset = showCompactTitleBar ? COMPACT_TITLE_BAR_HEIGHT : 0;
   const compactTitleText =
-    openTabs.find((tab) => tab.id === activeTabId)?.title?.trim()
-    || conversationTitle?.trim()
+    displayConversationTitle(openTabs.find((tab) => tab.id === activeTabId)?.title)
+    || displayConversationTitle(conversationTitle)
     || (isAiWorking ? 'Working…' : 'Chat');
   const baseInputBarHeight = (overlayMode === 'compact' ? 88 : 140) + compactTitleBarOffset;
   const inputBarHeight = baseInputBarHeight + extraInputHeight + inputBarGap + attachmentOffset + statusPillOffset;

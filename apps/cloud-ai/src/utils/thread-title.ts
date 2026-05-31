@@ -42,3 +42,31 @@ export function fallbackTitleFromMessage(message: unknown, maxWords = 6, maxLen 
   title = title.replace(/[\.\!?,;:]+(?=…?$)/, '').trim();
   return title;
 }
+
+const PLACEHOLDER_TITLES = new Set([
+  'untitled',
+  'untitled chat',
+  'untitled conversation',
+  'new chat',
+  'new conversation',
+  'chat',
+]);
+
+export function isPlaceholderConversationTitle(title: unknown): boolean {
+  const normalized = String(title ?? '').trim().toLowerCase();
+  return !normalized || PLACEHOLDER_TITLES.has(normalized);
+}
+
+/** Resolve display/storage title: prompt excerpt until LLM title arrives. */
+export function resolveConversationTitle(
+  title: unknown,
+  firstMessage?: unknown,
+  fallback = 'New chat',
+): string {
+  if (!isPlaceholderConversationTitle(title)) {
+    return String(title).trim();
+  }
+  const fromMessage = fallbackTitleFromMessage(firstMessage);
+  if (fromMessage) return fromMessage;
+  return fallback;
+}

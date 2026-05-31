@@ -10,6 +10,7 @@ import {
   Plus,
 } from 'lucide-react';
 import type { ConversationHistoryItem } from '../../../shared/TabHistoryMenu';
+import { displayConversationTitle } from '../../../../../utils/conversationTitle';
 
 interface ChatHeaderMenuProps {
   chatMenuOpen: boolean;
@@ -91,7 +92,7 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
                     )}
                   />
                   <span className="truncate min-w-0 flex-1 font-medium">
-                    {c.title?.trim() || 'Untitled chat'}
+                    {displayConversationTitle(c.title)}
                   </span>
                 </DropdownMenu.Item>
               );

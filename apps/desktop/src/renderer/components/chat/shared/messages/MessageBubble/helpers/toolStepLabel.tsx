@@ -76,6 +76,10 @@ export function getToolStepLabel(tool: ToolCall): React.ReactNode {
       const q = getQueryFromArgs(args);
       return q ? <span>Searched the web for <InlineCodeChip max={48}>{q}</InlineCodeChip></span> : 'Searched the web';
     }
+    case 'search_local_workflows': {
+      const q = getQueryFromArgs(args);
+      return q ? <span>Searched workflows for <InlineCodeChip max={48}>{q}</InlineCodeChip></span> : 'Searched local workflows';
+    }
     case 'scrape_url': {
       const url = typeof args.url === 'string' ? args.url : (typeof args.target === 'string' ? args.target : null);
       if (!url) break;

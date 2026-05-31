@@ -1,5 +1,6 @@
 import type { Message as ChatMessage } from '@stuardai/chat-ui/types';
 import type { IVmChatPlatform, VmConversationEntry } from '@stuardai/vm-chat/types';
+import { displayConversationTitle } from '@stuardai/chat-ui';
 import {
   getCloudConversationMessages,
   getCloudConversations,
@@ -36,7 +37,7 @@ export function createWebVmChatPlatform(): IVmChatPlatform {
         .filter((c) => c?.id)
         .map((c) => ({
           id: String(c.id),
-          title: String(c.title || 'Untitled'),
+          title: displayConversationTitle(c.title),
           updated_at: String(c.updated_at || c.created_at || ''),
           message_count: Number(c.message_count) || 0,
         }));

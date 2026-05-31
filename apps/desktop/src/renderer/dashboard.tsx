@@ -38,6 +38,7 @@ import {
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
+import { displayConversationTitle, isPlaceholderConversationTitle } from './utils/conversationTitle';
 import { computeBillingCredits, isNonBillableUsageEvent, type ComputeBillingEventRow } from './components/BillingSettings.utils';
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
@@ -670,7 +671,7 @@ function DashboardApp() {
             origin,
             created_at: raw.created_at || raw.updated_at || raw.updatedAt,
             updated_at: raw.updated_at || raw.updatedAt || raw.created_at,
-            title: raw.title || 'Untitled Conversation',
+            title: displayConversationTitle(raw.title),
           };
           const existing = byId.get(id);
           if (!existing) {
@@ -682,9 +683,9 @@ function DashboardApp() {
           byId.set(id, {
             ...existing,
             ...incoming,
-            title: (incoming.title && incoming.title !== 'Untitled Conversation')
+            title: !isPlaceholderConversationTitle(incoming.title)
               ? incoming.title
-              : (existing.title || incoming.title),
+              : displayConversationTitle(existing.title),
             origin: existing.origin === 'cloud_vm' ? 'cloud_vm' : incoming.origin,
             updated_at: incomingUpdated > existingUpdated ? incoming.updated_at : existing.updated_at,
             created_at: existing.created_at || incoming.created_at,

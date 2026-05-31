@@ -6,6 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { clsx } from 'clsx';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
+import { displayConversationTitle } from '../utils/conversationTitle';
 import { Search, Clock, Trash2, Loader2, Cloud, Monitor } from "lucide-react";
 
 function normalizeMarkdownSpacing(input: string): string {
@@ -98,7 +99,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
                       <div className={clsx("font-medium text-[13px] truncate transition-colors", isActive ? "text-theme-fg" : "text-theme-fg")}>
-                        {c.title || "Untitled Conversation"}
+                        {displayConversationTitle(c.title)}
                       </div>
                       <div className={clsx("text-[11px] mt-1 flex items-center gap-2 transition-colors", isActive ? "text-theme-muted" : "text-theme-muted")}>
                         <span className="inline-flex items-center gap-1">
@@ -151,7 +152,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             <div className="px-6 py-4 border-b border-theme bg-theme-card flex justify-between items-center">
               <div>
                 <h2 className="font-semibold text-theme-fg text-[15px]">
-                  {selectedConversation.title || "Untitled Conversation"}
+                  {displayConversationTitle(selectedConversation.title)}
                 </h2>
                 <div className="text-[12px] text-theme-muted mt-0.5">
                   {new Date(selectedConversation.created_at).toLocaleString()} • {convMessages.length} messages

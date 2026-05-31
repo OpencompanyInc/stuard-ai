@@ -73,6 +73,7 @@ export function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStat
   if (tool.status === 'completed') return 'complete';
   if (tool.status === 'error') return 'error';
   if (tool.status === 'running') return 'active';
+  if (tool.status === 'called') return 'pending';
   return isStreaming ? 'active' : 'pending';
 }
 

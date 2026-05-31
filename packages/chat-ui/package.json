@@ -15,6 +15,7 @@
     "./AskUserPrompt": "./AskUserPrompt.tsx",
     "./askUserPromptUtils": "./askUserPromptUtils.ts",
     "./helpers": "./helpers.ts",
+    "./conversationTitle": "./conversationTitle.ts",
     "./ai-elements": "./ai-elements/index.tsx"
   },
   "scripts": {
