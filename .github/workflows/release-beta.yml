@@ -461,6 +461,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOUD_PUBLIC_URL: "https://beta-api.stuard.ai"
+          # This desktop build uses `npm install` (flat node_modules), so the
+          # vite renderer build needs preserveSymlinks to resolve the symlinked
+          # @stuardai/* workspace packages' transitive imports. The pnpm-based
+          # gate/local builds must NOT set this (it breaks .pnpm-store resolution).
+          STUARD_DESKTOP_NPM_BUILD: "1"
           # PostHog analytics enabled for beta only
           VITE_PUBLIC_POSTHOG_KEY: ${{ secrets.POSTHOG_API_KEY }}
           VITE_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"

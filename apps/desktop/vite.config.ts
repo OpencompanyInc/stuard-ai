@@ -47,14 +47,17 @@ workflows: resolve(__dirname, "src/renderer/workflows.html"),
     },
   },
   resolve: {
-    // In CI the desktop is `npm install`ed in isolation, so the @stuardai/*
-    // workspace packages are symlinked into apps/desktop/node_modules. Without
-    // preserveSymlinks, Rollup canonicalises them to packages/<name> and then
-    // can't resolve their transitive @stuardai imports (e.g. vm-chat ->
-    // @stuardai/chat-ui/ui) because the real path only sees the empty root
-    // node_modules. Resolving from the symlink location finds the flat-installed
-    // deps. Build-only: dev relies on the root pnpm install and works as-is.
-    preserveSymlinks: command === "build",
+    // Only for the npm-based CI desktop build (release matrix), set via
+    // STUARD_DESKTOP_NPM_BUILD. There the @stuardai/* workspace packages are
+    // symlinked into a FLAT apps/desktop/node_modules; without preserveSymlinks
+    // Rollup canonicalises them to packages/<name> and can't resolve their
+    // transitive @stuardai imports (e.g. vm-chat -> @stuardai/chat-ui/ui)
+    // because the real path only sees the empty root node_modules.
+    // Under pnpm (the CI gate + local dev) preserveSymlinks does the OPPOSITE:
+    // it breaks resolution of deps that live co-located in the .pnpm store
+    // (e.g. framer-motion -> motion-utils), so it must stay off there.
+    preserveSymlinks:
+      command === "build" && process.env.STUARD_DESKTOP_NPM_BUILD === "1",
     alias: {
       "@": resolve(__dirname, "src/renderer"),
       "@website-assets": resolve(__dirname, "../website/assets"),
