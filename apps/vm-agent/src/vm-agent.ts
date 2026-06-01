@@ -2390,6 +2390,10 @@ const server = http.createServer(async (req, res) => {
       bots: getVMBotScheduler().getStatus().botCount,
       deploys: deployExecutor.list().length,
       pythonAgent: isAgentWsConnected() ? 'connected' : 'disconnected',
+      // Explicit boolean for readiness gates: the HTTP server answers /health
+      // before the Python agent (LLM brain) connects, so callers must check
+      // this — not just a 200 — before proxying a chat.
+      agentReady: isAgentWsConnected(),
     });
     return;
   }
@@ -2952,6 +2956,16 @@ export function startAgent(): void {
     getAgentWs().catch(() => {
       console.warn('[vm-agent] Python agent not yet available — will retry automatically');
     });
+
+    // Persistent reconnect ticker. The eager connect above only retries for
+    // ~60s and the close-handler reconnect only fires after a connection that
+    // had opened — so a Python agent that boots slowly (>60s) or whose first
+    // connect never opens would otherwise stay permanently disconnected. That
+    // now also blocks chats (cloud-ai gates on /health agentReady), so without
+    // this a slow agent boot would deadlock. Cheap no-op once connected.
+    setInterval(() => {
+      if (!isAgentWsConnected()) getAgentWs().catch(() => {});
+    }, 10_000).unref?.();
 
     // Restore deployments
     deployExecutor.restoreAll()

@@ -347,10 +347,16 @@ export async function handleVMRelayRoutes(
     }
 
     const ping = await pingVMAgent(ip);
+    // `reachable` = HTTP server up; `agentReady` = the Python agent (LLM brain)
+    // is also connected so the VM can answer a chat. The composer gates send on
+    // agentReady to avoid firing into a not-ready agent (→ "No response").
+    const agentReady = !!ping.ok
+      && (ping.result?.agentReady === true || ping.result?.pythonAgent === 'connected');
     // ── SECURITY: don't expose raw VM IP to client ──
     json(res, 200, {
       reachable: ping.ok,
-      agentVersion: ping.result?.version || null,
+      agentReady,
+      agentVersion: ping.result?.agentVersion || ping.result?.version || null,
       uptime: ping.result?.uptime || null,
     }, req);
     return true;

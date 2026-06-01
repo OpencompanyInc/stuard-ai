@@ -21,7 +21,12 @@ export function createWebVmChatPlatform(): IVmChatPlatform {
     async checkReady() {
       try {
         const res = await getVMStatus();
-        return !!(res?.ok && (res as { reachable?: boolean }).reachable);
+        // Ready means the Python agent (LLM brain) is connected, not just that
+        // the VM's HTTP server answers — otherwise a chat streams back empty
+        // ("No response"). Fall back to `reachable` for older backends.
+        const r = res as { reachable?: boolean; agentReady?: boolean };
+        const ready = r.agentReady ?? r.reachable;
+        return !!(res?.ok && ready);
       } catch {
         return false;
       }

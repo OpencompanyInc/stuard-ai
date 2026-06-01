@@ -14,7 +14,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, getCloudEngine } from '../supabase';
-import { sendVMCommand, resolveVMBaseUrl, resolveVMSecret, isVMAgentReachableCached } from '../services/vm-command';
+import { sendVMCommand, resolveVMBaseUrl, resolveVMSecret, isVMAgentReachableCached, isVMChatReadyCached } from '../services/vm-command';
 import { mintVMToken } from '../services/vm-tokens';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,15 +116,17 @@ export async function handleVMAgentRoutes(
         return true;
       }
 
-      // The engine can report "running" before the agent's HTTP server on :7400
-      // accepts connections. The stream fetch below has no hard timeout (it
-      // relies on client disconnect), so a chat sent during boot would hang for
-      // minutes. Fast-fail with a friendly, retryable message instead.
-      if (!await isVMAgentReachableCached(user.userId)) {
+      // The engine can report "running" — and the agent's HTTP server on :7400
+      // can answer /health — before the Python agent (the LLM brain) has
+      // connected. Proxying a chat in that window streams back empty, which the
+      // client commits as a bare "No response". Gate on chat-readiness (agent
+      // connected), not just HTTP reachability, and fast-fail with a friendly,
+      // retryable message instead.
+      if (!await isVMChatReadyCached(user.userId)) {
         json(res, 503, {
           ok: false,
           error: 'vm_starting',
-          message: 'The VM is still starting up — try again in a few seconds.',
+          message: 'The VM agent is still starting up — try again in a few seconds.',
         });
         return true;
       }

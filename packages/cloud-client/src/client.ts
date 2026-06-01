@@ -72,7 +72,7 @@ export interface CloudClient {
   vmRelay(options: VmRelayOptions): Promise<CloudJsonResponse>;
   sendVmCommand(command: string, args?: any, timeoutMs?: number): Promise<CloudJsonResponse>;
   /** Quick reachability check of the user's VM agent (GET /v1/vm/status). */
-  getVMStatus(): Promise<CloudJsonResponse & { reachable?: boolean; agentVersion?: string | null; uptime?: number | null }>;
+  getVMStatus(): Promise<CloudJsonResponse & { reachable?: boolean; agentReady?: boolean; agentVersion?: string | null; uptime?: number | null }>;
 
   getCloudVmIntegrations(): Promise<CloudJsonResponse>;
   getCloudSyncPreferences(): Promise<CloudJsonResponse>;

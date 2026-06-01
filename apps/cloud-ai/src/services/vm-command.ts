@@ -51,10 +51,37 @@ const SECRET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min
 // Positive results are trusted briefly (steady-state calls skip the probe);
 // negative results are cached even more briefly so a boot-time pile-up backs
 // off instead of each request re-probing a dead port.
-const healthCache = new Map<string, { ok: boolean; ts: number }>();
+// `ok` = HTTP server on :7400 answering. `agentReady` = the Python agent (the
+// LLM brain, WS on :8765) is also connected, i.e. the VM can actually answer a
+// chat. The HTTP server comes up well before the agent, so the two differ
+// during boot — chats sent in that window stream back empty ("No response").
+const healthCache = new Map<string, { ok: boolean; agentReady: boolean; ts: number }>();
 const HEALTH_OK_TTL_MS = 10_000;  // trust a healthy agent for 10s
 const HEALTH_FAIL_TTL_MS = 3_000; // back off doomed probes for 3s
 const HEALTH_PROBE_TIMEOUT_MS = 2_500;
+
+/** Single cached /health probe feeding both reachability and chat-readiness. */
+async function probeVMHealthCached(userId: string): Promise<{ ok: boolean; agentReady: boolean }> {
+  if (DEV_VM_URL) return { ok: true, agentReady: true }; // dev tunnel is assumed up
+
+  const now = Date.now();
+  const cached = healthCache.get(userId);
+  if (cached) {
+    const ttl = cached.ok ? HEALTH_OK_TTL_MS : HEALTH_FAIL_TTL_MS;
+    if (now - cached.ts < ttl) return { ok: cached.ok, agentReady: cached.agentReady };
+  }
+
+  const ip = await resolveVMAddress(userId);
+  if (!ip) {
+    healthCache.set(userId, { ok: false, agentReady: false, ts: now });
+    return { ok: false, agentReady: false };
+  }
+  const ping = await pingVMAgent(ip, HEALTH_PROBE_TIMEOUT_MS);
+  const agentReady = !!ping.ok
+    && (ping.result?.agentReady === true || ping.result?.pythonAgent === 'connected');
+  healthCache.set(userId, { ok: ping.ok, agentReady, ts: now });
+  return { ok: ping.ok, agentReady };
+}
 
 /**
  * Returns true when the user's VM agent is answering on :7400, using a short
@@ -62,23 +89,19 @@ const HEALTH_PROBE_TIMEOUT_MS = 2_500;
  * relay/command callers return a fast `vm_starting` instead of a slow timeout.
  */
 export async function isVMAgentReachableCached(userId: string): Promise<boolean> {
-  if (DEV_VM_URL) return true; // dev tunnel is assumed up
+  return (await probeVMHealthCached(userId)).ok;
+}
 
-  const now = Date.now();
-  const cached = healthCache.get(userId);
-  if (cached) {
-    const ttl = cached.ok ? HEALTH_OK_TTL_MS : HEALTH_FAIL_TTL_MS;
-    if (now - cached.ts < ttl) return cached.ok;
-  }
-
-  const ip = await resolveVMAddress(userId);
-  if (!ip) {
-    healthCache.set(userId, { ok: false, ts: now });
-    return false;
-  }
-  const ping = await pingVMAgent(ip, HEALTH_PROBE_TIMEOUT_MS);
-  healthCache.set(userId, { ok: ping.ok, ts: now });
-  return ping.ok;
+/**
+ * Like isVMAgentReachableCached, but also requires the Python agent (the LLM
+ * brain) to be connected — i.e. the VM can actually answer a chat. The HTTP
+ * server reports healthy before the agent connects, so gating chat on plain
+ * reachability proxies into a not-ready agent and streams back a bare
+ * "No response". Chat callers should gate on this and return `vm_starting`.
+ */
+export async function isVMChatReadyCached(userId: string): Promise<boolean> {
+  const r = await probeVMHealthCached(userId);
+  return r.ok && r.agentReady;
 }
 
 /**
