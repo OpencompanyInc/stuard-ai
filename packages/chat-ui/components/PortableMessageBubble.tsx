@@ -398,6 +398,73 @@ function getGroupHeaderLabel(parent: ToolCall, kind: GroupKind, childToolCount: 
   return n > 0 ? `Running ${n} step${n === 1 ? '' : 's'} in sequence` : 'Running in sequence';
 }
 
+/**
+ * Reconstruct branch rows for an execution-group wrapper (run_parallel /
+ * run_sequential / loop_executor) from its own `args.steps` + `result.results`.
+ *
+ * Orchestrator execution groups often finish without their per-step stream
+ * events ever reaching the client (the nested tool writes have no writer on the
+ * VM→cloud relay path), so the wrapper arrives childless. Without this the group
+ * collapsed to a bare pill on the website while the desktop renderer — which has
+ * the same fallback — showed the full fork→branches card. This brings the shared
+ * bubble (website + VM) to parity.
+ */
+function buildExecutionGroupFallbackChildren(parent: ToolCall): AssistantTraceStepData[] {
+  const args = (parent.args || {}) as Record<string, any>;
+  const result = (parent.result || {}) as Record<string, any>;
+  const steps = Array.isArray(args.steps) ? args.steps : [];
+  if (steps.length === 0) return [];
+
+  const results = Array.isArray(result.results) ? result.results : [];
+  const parentId = parent.id || 'wrap-unknown';
+  const isSequential = parent.tool !== 'run_parallel';
+  const parentDone = parent.status === 'completed';
+  const parentLive = parent.status === 'running' || parent.status === 'called';
+
+  return steps.flatMap((stepDef: any, index: number): AssistantTraceStepData[] => {
+    const toolName = String(stepDef?.tool || '').trim();
+    if (!toolName) return [];
+
+    const resultEntry = results[index];
+    const ok = resultEntry?.ok ?? parentDone;
+    const toolStatus: ToolCall['status'] =
+      resultEntry?.error || ok === false
+        ? 'error'
+        : parentDone
+          ? 'completed'
+          : parentLive
+            ? (isSequential && index > 0 ? 'called' : 'running')
+            : 'completed';
+
+    const tc: ToolCall = {
+      id: `${parentId}:${index}`,
+      tool: toolName,
+      status: toolStatus,
+      args: stepDef?.args,
+      result: resultEntry?.result ?? resultEntry,
+      error: resultEntry?.error,
+      timestamp: parent.timestamp,
+      parentToolId: parentId,
+      nested: true,
+    };
+
+    const traceStatus: AssistantTraceStepData['status'] =
+      toolStatus === 'error' ? 'error'
+        : toolStatus === 'completed' ? 'complete'
+          : toolStatus === 'running' ? 'active'
+            : 'pending';
+
+    return [{
+      id: tc.id as string,
+      kind: 'tool',
+      label: tc.description || humanizeToolName(toolName),
+      status: traceStatus,
+      tool: tc,
+      nested: true,
+    }];
+  });
+}
+
 function isTopLevelDuplicateOfNestedTool(tool: ToolCall, streamChunks?: StreamChunk[]): boolean {
   if (isDelegatedToolCall(tool) || !tool.id || !streamChunks?.length) return false;
   return streamChunks.some((chunk) => (
@@ -1594,8 +1661,14 @@ function AssistantTracePanel({
                 // children falls through to a plain step rather than an empty
                 // box. Delegation always renders its rectangle (agent identity).
                 const isDelegation = DELEGATION_PARENT_TOOLS.has(step.tool.tool);
-                if (childIdxs.length > 0 || isDelegation || step.status === 'active') {
-                  const children = childIdxs.map((ci) => steps[ci]);
+                let children = childIdxs.map((ci) => steps[ci]);
+                // No per-step events captured? Reconstruct the branch rows from
+                // the wrapper's args.steps/result.results so the group card still
+                // renders (parity with desktop's execution-group fallback).
+                if (children.length === 0 && !isDelegation) {
+                  children = buildExecutionGroupFallbackChildren(step.tool);
+                }
+                if (children.length > 0 || isDelegation || step.status === 'active') {
                   const lastChildIdx = childIdxs.length > 0 ? childIdxs[childIdxs.length - 1] : i;
                   items.push({ type: 'group', parent: step, idx: i, children, lastChildIdx });
                   i++;
