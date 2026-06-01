@@ -301,22 +301,34 @@ function CloudRuntimeWorkspaceInner({
             >
               {pauseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
             </button>
-            {mode === 'developer' && (
-              <button
-                type="button"
-                className="p-1.5 rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                onClick={onDelete}
-                title="Delete"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
+            {/* Delete is available in both Normal ("simple") and Developer
+                modes — it was previously hidden in Normal, leaving no way to
+                delete the engine without switching modes. */}
+            <button
+              type="button"
+              className="p-1.5 rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+              onClick={onDelete}
+              title="Delete engine"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </div>
         </header>
 
-        {/* Active view */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {(activeView as string) === 'files' ? explorer : views[activeView]}
+        {/* Active view.
+            Chat stays mounted (just hidden) when another view is active so the
+            VmChat conversation/stream state survives tab switches — previously
+            switching away unmounted it and wiped the message history. Other
+            views mount on demand to avoid every panel polling in the background. */}
+        <div className="relative flex-1 min-h-0 overflow-hidden">
+          <div className={clsx('absolute inset-0 min-h-0', activeView === 'chat' ? '' : 'hidden')}>
+            {views.chat}
+          </div>
+          {activeView !== 'chat' && (
+            <div className="absolute inset-0 min-h-0">
+              {(activeView as string) === 'files' ? explorer : views[activeView]}
+            </div>
+          )}
         </div>
 
         {/* Terminal dock (anchored under chat/main area) — developer mode only */}

@@ -837,12 +837,19 @@ export function CloudEngineDashboard() {
               <BotsView scope="vm" />
             </div>
           ),
+          // "Automations" renders the full, working DeploysTab (the old
+          // VmAutomationsTab was a broken duplicate; the separate "Deploys"
+          // nav entry has been removed in favor of this single view).
           automations: (
             <div className="custom-scrollbar h-full overflow-y-auto p-6">
-              <VmAutomationsTab
+              <DeploysTab
                 deployments={deployments}
+                engineRunning
+                createDeployment={createDeployment}
                 stopDeployment={stopDeployment}
                 restartDeployment={restartDeployment}
+                deleteDeployment={deleteDeployment}
+                getDeployLogs={getDeployLogs}
                 refreshDeployments={fetchDeployments}
               />
             </div>

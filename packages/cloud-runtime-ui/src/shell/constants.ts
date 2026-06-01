@@ -57,9 +57,10 @@ export function buildCloudRuntimeViewItems(icons: {
       { id: 'overview', icon: icons.overview, label: 'Overview' },
       { id: 'monitoring', icon: icons.monitoring, label: 'Monitoring' },
       { id: 'bots', icon: icons.bots, label: 'Agents' },
+      // Single "Automations" entry (the old separate "Deploys" item was a
+      // duplicate of the same deployment list — consolidated to one view).
       { id: 'automations', icon: icons.automations, label: 'Automations' },
       { id: 'integrations', icon: icons.integrations, label: 'Integrations' },
-      { id: 'deploys', icon: icons.deploys, label: 'Deploys' },
       { id: 'billing', icon: icons.billing, label: 'Billing' },
       { id: 'permissions', icon: icons.permissions, label: 'Permissions' },
       { id: 'settings', icon: icons.settings, label: 'Settings', footer: true },

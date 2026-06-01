@@ -14,7 +14,7 @@ import type { CloudRuntimeView } from '@stuardai/cloud-runtime-ui/shell';
 import { CloudMonitoring } from './CloudMonitoring';
 import { CloudBilling } from './CloudBilling';
 import { CloudVmIntegrations } from './CloudVmIntegrations';
-import { CloudVmDeploys, CloudVmAutomations } from './CloudVmDeploys';
+import { CloudVmDeploys } from './CloudVmDeploys';
 import { CloudVmPermissions } from './CloudVmPermissions';
 import { CloudVmBots } from './CloudVmBots';
 import { CloudIDERuntime } from './CloudIDERuntime';
@@ -133,7 +133,16 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     integrations: <CloudVmIntegrations engine={engine} />,
     permissions: <CloudVmPermissions engine={engine} />,
     bots: <div className="custom-scrollbar h-full overflow-y-auto p-6"><CloudVmBots engine={engine} /></div>,
-    automations: <CloudVmAutomations engine={engine} />,
+    // "Automations" renders the full, working deployment view (the old
+    // CloudVmAutomations card grid was a broken duplicate).
+    automations: (
+      <CloudVmDeploys
+        engine={engine}
+        title="Automations"
+        subtitle="Workflows, scripts, and projects running on this VM — independent of your laptop."
+        emptyHint="No automations on this VM yet"
+      />
+    ),
     settings: <CloudVmSettings engine={engine} onRefresh={onRefresh} />,
   };
 
