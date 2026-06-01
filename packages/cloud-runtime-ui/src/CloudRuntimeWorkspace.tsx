@@ -123,6 +123,18 @@ function CloudRuntimeWorkspaceInner({
   const [terminalHeight, setTerminalHeight] = useState(DEFAULT_TERMINAL_H);
   const [viewerWidth, setViewerWidth] = useState(DEFAULT_VIEWER_W);
 
+  // On narrow/mobile viewports the fixed-width side panes (file viewer, explorer)
+  // crush the main pane, so we collapse them into full-screen overlays instead.
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 768px)');
+    const update = () => setIsNarrow(mq.matches);
+    update();
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+
   const items = mode === 'normal' ? NORMAL_VIEW_ITEMS : DEVELOPER_VIEW_ITEMS;
 
   // If the active view doesn't exist in the current mode's nav, snap to chat.
@@ -203,7 +215,14 @@ function CloudRuntimeWorkspaceInner({
 
       {/* Explorer panel — developer mode only (Normal mode renders Files in the main pane) */}
       {mode === 'developer' && explorerOpen && (
-        <section className="w-[240px] shrink-0 border-r border-theme overflow-hidden bg-theme-card/10">
+        <section
+          className={clsx(
+            'overflow-hidden border-theme bg-theme-card/10',
+            isNarrow
+              ? 'fixed inset-y-0 left-[48px] right-0 z-40 border-l bg-theme-bg'
+              : 'w-[240px] shrink-0 border-r',
+          )}
+        >
           {explorer}
         </section>
       )}
@@ -211,7 +230,7 @@ function CloudRuntimeWorkspaceInner({
       {/* Main content */}
       <section className="flex-1 min-w-0 flex flex-col">
         {/* Compact top bar */}
-        <header className="h-[40px] flex items-center justify-between gap-3 px-4 border-b border-theme shrink-0">
+        <header className="h-[40px] flex items-center justify-between gap-2 px-2 sm:gap-3 sm:px-4 border-b border-theme shrink-0">
           <div className="flex items-center gap-2 min-w-0 text-[11px]">
             <span className="text-theme-muted truncate">{engine?.instance_name || 'Cloud Engine'}</span>
             <span className="text-theme-muted/30">/</span>
@@ -370,17 +389,25 @@ function CloudRuntimeWorkspaceInner({
         )}
       </section>
 
-      {/* Right-side File Viewer pane */}
+      {/* Right-side File Viewer pane — full-screen overlay on mobile so it
+          doesn't squeeze the chat/main pane to nothing. */}
       {viewerVisible && (
         <>
-          <div
-            className="w-[3px] cursor-ew-resize hover:bg-primary/30 transition-colors shrink-0"
-            onMouseDown={handleViewerResize}
-            title="Drag to resize viewer"
-          />
+          {!isNarrow && (
+            <div
+              className="w-[3px] cursor-ew-resize hover:bg-primary/30 transition-colors shrink-0"
+              onMouseDown={handleViewerResize}
+              title="Drag to resize viewer"
+            />
+          )}
           <aside
-            className="shrink-0 border-l border-theme bg-theme-card/10 overflow-hidden"
-            style={{ width: viewerWidth }}
+            className={clsx(
+              'overflow-hidden border-theme',
+              isNarrow
+                ? 'fixed inset-0 z-40 w-full bg-theme-bg'
+                : 'shrink-0 border-l bg-theme-card/10',
+            )}
+            style={isNarrow ? undefined : { width: viewerWidth }}
           >
             <FileViewerPane bare />
           </aside>
