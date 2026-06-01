@@ -141,13 +141,19 @@ export async function handleVMAgentRoutes(
       const controller = new AbortController();
       // If the client closes the SSE early (navigated away, refreshed, etc.)
       // propagate the cancellation upstream so the VM can stop work.
+      //
+      // Important: listen on the outgoing response, not the incoming request.
+      // In Node, `req.close` can fire once the POST body has been fully read on
+      // an otherwise healthy keep-alive request. Treating that as a disconnect
+      // aborts the VM stream immediately, so the browser commits an empty
+      // assistant turn as "No response" even while cloud-ai continues the run.
       let chatDone = false;
       const onClientClose = () => {
         if (chatDone) return;
         console.log(`[vm-agent-routes] chat: client disconnected mid-stream, aborting VM turn (user=${user.userId})`);
         try { controller.abort(); } catch {}
       };
-      try { req.on('close', onClientClose); } catch {}
+      try { res.on('close', onClientClose); } catch {}
 
       const vmResp = await fetch(`${base}/agent/chat/stream`, {
         method: 'POST',
@@ -220,7 +226,7 @@ export async function handleVMAgentRoutes(
       } finally {
         chatDone = true;
         try { clearInterval(keepAlive); } catch {}
-        try { req.off('close', onClientClose); } catch {}
+        try { res.off('close', onClientClose); } catch {}
         try { res.end(); } catch {}
       }
     } catch (e: any) {

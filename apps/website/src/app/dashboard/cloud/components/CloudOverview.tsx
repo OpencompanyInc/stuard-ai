@@ -12,19 +12,19 @@ const STATUS_BANNERS: Record<string, { message: string; detail: string; color: s
   provisioning: {
     message: 'Setting up your cloud engine...',
     detail: 'Creating VM, installing dependencies, and syncing your data. This usually takes 1\u20132 minutes.',
-    color: 'bg-blue-50 border-blue-200 text-blue-800',
+    color: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
     dotColor: 'bg-blue-500',
   },
   starting: {
     message: 'Starting your engine...',
     detail: 'Booting VM and restoring your data from cloud storage.',
-    color: 'bg-blue-50 border-blue-200 text-blue-800',
+    color: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
     dotColor: 'bg-blue-500',
   },
   stopping: {
     message: 'Stopping your engine...',
     detail: 'Syncing data to cloud storage before shutting down.',
-    color: 'bg-amber-50 border-amber-200 text-amber-800',
+    color: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
     dotColor: 'bg-amber-500',
   },
 };
@@ -87,24 +87,24 @@ export function CloudOverview({ engine, onRefresh }: CloudOverviewProps) {
       )}
 
       {/* Status Card */}
-      <div className="p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">VM Status</h3>
+      <div className="dash-card p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">VM Status</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <dt className="text-xs text-gray-500 uppercase tracking-wider">Status</dt>
-            <dd className="mt-1 text-sm font-semibold text-gray-900 capitalize">{engine.status}</dd>
+            <dt className="text-xs text-neutral-500 uppercase tracking-wider">Status</dt>
+            <dd className="mt-1 text-sm font-semibold text-white capitalize">{engine.status}</dd>
           </div>
           <div>
-            <dt className="text-xs text-gray-500 uppercase tracking-wider">Machine Type</dt>
-            <dd className="mt-1 text-sm font-semibold text-gray-900">{engine.machineType}</dd>
+            <dt className="text-xs text-neutral-500 uppercase tracking-wider">Machine Type</dt>
+            <dd className="mt-1 text-sm font-semibold text-white">{engine.machineType}</dd>
           </div>
           <div>
-            <dt className="text-xs text-gray-500 uppercase tracking-wider">Disk Size</dt>
-            <dd className="mt-1 text-sm font-semibold text-gray-900">{engine.diskSizeGb} GB</dd>
+            <dt className="text-xs text-neutral-500 uppercase tracking-wider">Disk Size</dt>
+            <dd className="mt-1 text-sm font-semibold text-white">{engine.diskSizeGb} GB</dd>
           </div>
           <div>
-            <dt className="text-xs text-gray-500 uppercase tracking-wider">Uptime</dt>
-            <dd className="mt-1 text-sm font-semibold text-gray-900">
+            <dt className="text-xs text-neutral-500 uppercase tracking-wider">Uptime</dt>
+            <dd className="mt-1 text-sm font-semibold text-white">
               {engine.status === 'running' ? `${uptime}m` : '—'}
             </dd>
           </div>
@@ -112,8 +112,8 @@ export function CloudOverview({ engine, onRefresh }: CloudOverviewProps) {
       </div>
 
       {/* Quick Actions */}
-      <div className="p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
+      <div className="dash-card p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">Quick Actions</h3>
         <div className="flex flex-wrap gap-3">
           {engine.status === 'stopped' && (
             <button
@@ -134,14 +134,14 @@ export function CloudOverview({ engine, onRefresh }: CloudOverviewProps) {
             </button>
           )}
           {isTransitional && (
-            <span className="px-6 py-2.5 text-sm text-gray-400 italic">
+            <span className="px-6 py-2.5 text-sm text-neutral-500 italic">
               Please wait...
             </span>
           )}
           <button
             onClick={() => handleAction('delete')}
             disabled={!!actionLoading || isTransitional}
-            className="px-6 py-2.5 bg-red-50 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-100 disabled:opacity-50 transition-all border border-red-200"
+            className="px-6 py-2.5 bg-red-500/10 text-red-300 rounded-xl text-sm font-semibold hover:bg-red-500/15 disabled:opacity-50 transition-all border border-red-500/30"
           >
             {actionLoading === 'delete' ? 'Deleting...' : 'Delete Engine'}
           </button>
@@ -149,31 +149,31 @@ export function CloudOverview({ engine, onRefresh }: CloudOverviewProps) {
       </div>
 
       {/* Resource Summary */}
-      <div className="p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Details</h3>
+      <div className="dash-card p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">Details</h3>
         <dl className="space-y-3 text-sm">
           <div className="flex justify-between">
-            <dt className="text-gray-500">Instance Name</dt>
-            <dd className="text-gray-900 font-mono text-xs">{engine.instanceName}</dd>
+            <dt className="text-neutral-500">Instance Name</dt>
+            <dd className="text-neutral-200 font-mono text-xs">{engine.instanceName}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500">Zone</dt>
-            <dd className="text-gray-900">{engine.zone}</dd>
+            <dt className="text-neutral-500">Zone</dt>
+            <dd className="text-neutral-200">{engine.zone}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500">Created</dt>
-            <dd className="text-gray-900">{new Date(engine.createdAt).toLocaleDateString()}</dd>
+            <dt className="text-neutral-500">Created</dt>
+            <dd className="text-neutral-200">{new Date(engine.createdAt).toLocaleDateString()}</dd>
           </div>
           {engine.startedAt && (
             <div className="flex justify-between">
-              <dt className="text-gray-500">Last Started</dt>
-              <dd className="text-gray-900">{new Date(engine.startedAt).toLocaleString()}</dd>
+              <dt className="text-neutral-500">Last Started</dt>
+              <dd className="text-neutral-200">{new Date(engine.startedAt).toLocaleString()}</dd>
             </div>
           )}
           {engine.stoppedAt && (
             <div className="flex justify-between">
-              <dt className="text-gray-500">Last Stopped</dt>
-              <dd className="text-gray-900">{new Date(engine.stoppedAt).toLocaleString()}</dd>
+              <dt className="text-neutral-500">Last Stopped</dt>
+              <dd className="text-neutral-200">{new Date(engine.stoppedAt).toLocaleString()}</dd>
             </div>
           )}
         </dl>

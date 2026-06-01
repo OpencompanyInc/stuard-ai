@@ -102,9 +102,9 @@ const PieTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.[0]) return null;
   const { name, value, payload: entry } = payload[0];
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg">
-      <p className="text-[12px] font-bold text-gray-900">{name}</p>
-      <p className="text-[11px] text-gray-500">
+    <div className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 shadow-lg">
+      <p className="text-[12px] font-bold text-white">{name}</p>
+      <p className="text-[11px] text-neutral-400">
         {Number(value).toFixed(2)} credits ({Number(entry.pct).toFixed(1)}%)
       </p>
     </div>
@@ -115,10 +115,10 @@ const ModelPieTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.[0]) return null;
   const { name, value, payload: entry } = payload[0];
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg max-w-[200px]">
-      <p className="text-[12px] font-bold text-gray-900 truncate">{name}</p>
-      <p className="text-[11px] text-gray-500">{Number(value).toFixed(2)} credits · {Number(entry.pct).toFixed(1)}%</p>
-      <p className="text-[11px] text-gray-400">{entry.count} calls · ${Number(entry.costUsd).toFixed(4)}</p>
+    <div className="max-w-[200px] rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 shadow-lg">
+      <p className="truncate text-[12px] font-bold text-white">{name}</p>
+      <p className="text-[11px] text-neutral-400">{Number(value).toFixed(2)} credits · {Number(entry.pct).toFixed(1)}%</p>
+      <p className="text-[11px] text-neutral-500">{entry.count} calls · ${Number(entry.costUsd).toFixed(4)}</p>
     </div>
   );
 };
@@ -613,8 +613,8 @@ export default function BillingPage() {
   return (
     <div className="space-y-6 max-w-5xl">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Billing & Credits</h1>
-        <p className="text-sm text-gray-500 mt-1">Manage your subscription, credits, usage, and auto-refill.</p>
+        <h1 className="dash-page-title">Billing & Credits</h1>
+        <p className="dash-page-subtitle">Manage your subscription, credits, usage, and auto-refill.</p>
       </div>
 
       {error && (
@@ -629,13 +629,13 @@ export default function BillingPage() {
 
       {/* Balance card */}
       {creditsLoading && !creditSummary ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 animate-pulse">
+        <div className="dash-card p-6 animate-pulse">
           <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
           <div className="h-8 w-32 bg-gray-200 rounded mb-1" />
           <div className="h-3 w-48 bg-gray-200 rounded" />
         </div>
       ) : creditSummary ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="dash-card p-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-lg bg-gray-900">
@@ -671,7 +671,7 @@ export default function BillingPage() {
             <button
               onClick={handleManagePortal}
               disabled={!user || isManaging || loading}
-              className="px-4 py-2.5 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="dash-card-button dash-card-button--ghost !flex-none px-4 py-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isManaging ? 'Loading...' : 'Manage in Polar'}
             </button>
@@ -727,7 +727,7 @@ export default function BillingPage() {
       ) : null}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit overflow-x-auto">
+      <div className="flex gap-1 bg-neutral-900/70 border border-neutral-800 rounded-lg p-1 w-fit overflow-x-auto">
         {([
           ['overview', 'Overview'],
           ['usage', 'Usage'],
@@ -738,7 +738,9 @@ export default function BillingPage() {
             key={id}
             onClick={() => setActiveTab(id)}
             className={`px-4 py-2 text-[13px] font-medium rounded-md transition-colors whitespace-nowrap ${
-              activeTab === id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              activeTab === id
+                ? 'bg-neutral-800 text-white shadow-sm border border-neutral-700'
+                : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
             {label}
@@ -751,7 +753,7 @@ export default function BillingPage() {
         <>
           {/* Usage snapshot (top 3 categories + mini pie) */}
           {(usageLoading || usageBreakdown.length > 0) && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="dash-card p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-[15px] font-semibold text-gray-900">Usage this period</h2>
@@ -830,7 +832,7 @@ export default function BillingPage() {
           )}
 
           {/* Subscription picker */}
-          <div id="plans" className="bg-white rounded-xl border border-gray-200 p-6">
+          <div id="plans" className="dash-card p-6">
             <div className="flex items-start justify-between mb-4">
               <div>
                 <div className="flex items-center gap-2 mb-0.5">
@@ -985,7 +987,7 @@ export default function BillingPage() {
                                 </button>
                                 <button
                                   onClick={() => setShowCancelConfirm(false)}
-                                  className="flex-1 py-1.5 text-[12px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                  className="dash-card-button dash-card-button--ghost flex-1 py-1.5 text-[12px]"
                                 >
                                   Never mind
                                 </button>
@@ -1020,7 +1022,7 @@ export default function BillingPage() {
           </div>
 
           {/* Add-on top-up */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="dash-card p-6">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h2 className="text-[15px] font-semibold text-gray-900">Top up credits</h2>
@@ -1051,7 +1053,7 @@ export default function BillingPage() {
 
       {/* ---------- Usage tab (pie + breakdown) ---------- */}
       {activeTab === 'usage' && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="dash-card p-6">
           <h2 className="text-[15px] font-semibold text-gray-900 mb-4">Usage this period</h2>
 
           {usageLoading ? (
@@ -1147,7 +1149,7 @@ export default function BillingPage() {
 
       {/* ---------- Model analytics (inside Usage tab, below category breakdown) ---------- */}
       {activeTab === 'usage' && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="dash-card p-6">
           <h2 className="text-[15px] font-semibold text-gray-900 mb-1">Model Breakdown</h2>
           <p className="text-[12px] text-gray-400 mb-4">Credit usage by model this billing period.</p>
 
@@ -1245,7 +1247,7 @@ export default function BillingPage() {
 
       {/* ---------- Logs tab ---------- */}
       {activeTab === 'logs' && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="dash-card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[15px] font-semibold text-gray-900">Credit usage logs</h2>
             <span className="text-[12px] text-gray-400">{logsTotal} events</span>
@@ -1338,13 +1340,13 @@ export default function BillingPage() {
       )}
 
       {activeTab === 'settings' && prefsLoading && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-center">
+        <div className="dash-card p-6 flex items-center justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
         </div>
       )}
 
       {activeTab === 'settings' && !prefsLoading && !prefs && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-sm text-gray-500">
+        <div className="dash-card p-6 text-center text-sm text-gray-500">
           Could not load settings. Please refresh the page.
         </div>
       )}
@@ -1352,7 +1354,7 @@ export default function BillingPage() {
       {/* ---------- Settings tab (auto-refill + limits) ---------- */}
       {activeTab === 'settings' && !prefsLoading && prefs && (
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="dash-card p-6">
             <div className="flex items-center gap-2 mb-4">
               <RefreshCw className="w-4 h-4 text-gray-900" />
               <h2 className="text-[15px] font-semibold text-gray-900">Auto-refill</h2>
@@ -1405,7 +1407,7 @@ export default function BillingPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="dash-card p-6">
             <div className="flex items-center gap-2 mb-4">
               <Sliders className="w-4 h-4 text-gray-900" />
               <h2 className="text-[15px] font-semibold text-gray-900">Budgets & limits</h2>
@@ -1456,7 +1458,7 @@ export default function BillingPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="dash-card p-6">
             <div className="flex items-center gap-2 mb-3">
               <ExternalLink className="w-4 h-4 text-gray-900" />
               <h2 className="text-[15px] font-semibold text-gray-900">Payment method & invoices</h2>
@@ -1465,7 +1467,7 @@ export default function BillingPage() {
             <button
               onClick={handleManagePortal}
               disabled={!user || isManaging}
-              className="px-4 py-2 text-[13px] font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              className="dash-card-button dash-card-button--ghost !flex-none px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               {isManaging ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
               Open Polar customer portal

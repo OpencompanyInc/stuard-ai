@@ -124,12 +124,12 @@ export default function SupportTicketDetailPage() {
   return (
     <div className="max-w-3xl space-y-6">
       <div>
-        <Link href="/dashboard/support" className="inline-flex items-center gap-1 text-[12px] text-gray-500 hover:text-gray-900 mb-3">
+        <Link href="/dashboard/support" className="inline-flex items-center gap-1 text-[12px] text-neutral-400 hover:text-white mb-3">
           <ChevronLeft className="w-3.5 h-3.5" /> Back to support
         </Link>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-gray-900">{ticket.subject}</h1>
+            <h1 className="dash-page-title">{ticket.subject}</h1>
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
               <span className={`inline-flex px-2 py-0.5 rounded-full border font-medium ${statusColor(ticket.status)}`}>
                 {STATUS_LABELS[ticket.status]}
@@ -162,14 +162,14 @@ export default function SupportTicketDetailPage() {
               <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold ${isStaff ? 'bg-blue-600' : 'bg-gray-900'}`}>
                 {isStaff ? 'S' : (m.author_name?.charAt(0).toUpperCase() || 'Y')}
               </div>
-              <div className={`flex-1 min-w-0 rounded-xl border p-4 ${isStaff ? 'bg-blue-50/40 border-blue-100' : 'bg-white border-gray-200'}`}>
+              <div className={`flex-1 min-w-0 rounded-xl border p-4 ${isStaff ? 'bg-blue-500/10 border-blue-500/30' : 'dash-card !rounded-xl'}`}>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[13px] font-semibold text-gray-900">
+                  <span className="text-[13px] font-semibold text-white">
                     {isStaff ? 'Stuard Support' : (m.author_name || 'You')}
                   </span>
                   <span className="text-[11px] text-gray-400">{formatRelative(m.created_at)}</span>
                 </div>
-                <div className="text-[13px] text-gray-700 whitespace-pre-wrap">{m.content}</div>
+                <div className="text-[13px] text-neutral-300 whitespace-pre-wrap">{m.content}</div>
                 <AttachmentList attachments={m.attachments} />
               </div>
             </div>
@@ -178,20 +178,20 @@ export default function SupportTicketDetailPage() {
       </div>
 
       {isClosed ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center text-sm text-gray-500">
+        <div className="dash-card p-4 text-center text-sm text-neutral-400">
           This ticket is {STATUS_LABELS[ticket.status].toLowerCase()}.{' '}
-          <Link href="/dashboard/support/new" className="text-gray-900 font-medium hover:underline">Open a new ticket</Link> if you need more help.
+          <Link href="/dashboard/support/new" className="text-white font-medium hover:underline">Open a new ticket</Link> if you need more help.
         </div>
       ) : (
-        <form onSubmit={onReply} className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-          <label className="block text-[13px] font-medium text-gray-700">Your reply</label>
+        <form onSubmit={onReply} className="dash-card p-4 space-y-3">
+          <label className="block text-[13px] font-medium text-neutral-300">Your reply</label>
           <textarea
             value={reply}
             onChange={e => setReply(e.target.value)}
             rows={5}
             maxLength={10000}
             placeholder="Write a reply…"
-            className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-900 resize-y"
+            className="dash-input resize-y"
           />
           <AttachmentPicker
             attachments={replyAttachments}
@@ -204,7 +204,7 @@ export default function SupportTicketDetailPage() {
             <button
               type="submit"
               disabled={submitting || uploading || !reply.trim()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+              className="dash-card-button dash-card-button--primary !flex-none px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? 'Sending…' : 'Send reply'}
             </button>

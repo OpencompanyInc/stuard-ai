@@ -86,7 +86,7 @@ export default function CloudDashboardPage() {
   if ((authLoading || loading) && !engine) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading cloud engine...</div>
+        <div className="text-neutral-400">Loading cloud engine...</div>
       </div>
     );
   }
@@ -95,8 +95,8 @@ export default function CloudDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center gap-4">
         <div>
-          <div className="text-sm font-semibold text-gray-900">Unable to load your cloud engine</div>
-          <div className="text-sm text-gray-500 mt-1">{error}</div>
+          <div className="text-sm font-semibold text-white">Unable to load your cloud engine</div>
+          <div className="text-sm text-neutral-400 mt-1">{error}</div>
         </div>
         <button
           type="button"
@@ -116,20 +116,20 @@ export default function CloudDashboardPage() {
   if (!engine) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] text-center gap-4">
-        <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto">
-          <svg className="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="w-14 h-14 rounded-2xl bg-neutral-800 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
           </svg>
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">No Cloud Engine Found</h2>
-          <p className="text-sm text-gray-500 mt-1 max-w-sm">
+          <h2 className="text-lg font-semibold text-white">No Cloud Engine Found</h2>
+          <p className="text-sm text-neutral-400 mt-1 max-w-sm">
             Deploying a Cloud Engine is only available in the Stuard desktop app. Once deployed, you can interact with it here.
           </p>
         </div>
         <a
           href="/download"
-          className="inline-flex items-center px-4 py-2 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors"
+          className="dash-card-button dash-card-button--primary !inline-flex px-4 py-2"
         >
           Download Desktop App
         </a>
@@ -158,23 +158,23 @@ export default function CloudDashboardPage() {
       <div className="flex flex-col items-center justify-center min-h-[50vh]">
         <div className="w-full max-w-lg">
           <div className="text-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
-              <svg className="w-7 h-7 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
             </div>
-            <h1 className="text-xl font-bold text-gray-900">Setting up your Cloud Engine</h1>
-            <p className="text-gray-500 text-sm mt-1">This usually takes 1-3 minutes.</p>
+            <h1 className="dash-page-title text-xl">Setting up your Cloud Engine</h1>
+            <p className="dash-page-subtitle">This usually takes 1-3 minutes.</p>
           </div>
 
           {/* Progress bar */}
           <div className="mb-6">
-            <div className="flex justify-between text-xs text-gray-400 font-medium mb-1.5">
+            <div className="flex justify-between text-xs text-neutral-500 font-medium mb-1.5">
               <span>Progress</span>
               <span>{Math.round(progress)}%</span>
             </div>
-            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-2 rounded-full bg-neutral-800 overflow-hidden">
               <div
                 className="h-full rounded-full bg-blue-600 transition-all duration-700 ease-out"
                 style={{ width: `${Math.max(5, progress)}%` }}
@@ -193,7 +193,7 @@ export default function CloudDashboardPage() {
                 <div
                   key={step.key}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg transition-all ${
-                    isActive ? 'bg-blue-50 ring-1 ring-blue-200' : ''
+                    isActive ? 'bg-blue-500/10 ring-1 ring-blue-500/30' : ''
                   } ${isDone ? 'opacity-50' : ''} ${isPending ? 'opacity-25' : ''}`}
                 >
                   <div className="shrink-0 w-4 h-4 flex items-center justify-center">
@@ -207,15 +207,15 @@ export default function CloudDashboardPage() {
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
                     ) : (
-                      <div className="w-2 h-2 rounded-full bg-gray-300" />
+                      <div className="w-2 h-2 rounded-full bg-neutral-600" />
                     )}
                   </div>
                   <div>
-                    <div className={`text-xs font-semibold ${isActive ? 'text-blue-700' : 'text-gray-700'}`}>
+                    <div className={`text-xs font-semibold ${isActive ? 'text-blue-300' : 'text-neutral-300'}`}>
                       {step.label}
                     </div>
                     {isActive && (
-                      <div className="text-[11px] text-gray-500 mt-0.5">{step.detail}</div>
+                      <div className="text-[11px] text-neutral-500 mt-0.5">{step.detail}</div>
                     )}
                   </div>
                 </div>
@@ -223,8 +223,8 @@ export default function CloudDashboardPage() {
             })}
           </div>
 
-          <div className="mt-6 p-3 rounded-lg bg-gray-50 text-center">
-            <p className="text-[11px] text-gray-400">
+          <div className="mt-6 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-center">
+            <p className="text-[11px] text-neutral-500">
               Your engine runs 24/7 once set up. Credits are only used while active.
             </p>
           </div>
@@ -238,34 +238,34 @@ export default function CloudDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh]">
         <div className="w-full max-w-md text-center">
-          <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center mx-auto mb-4">
-            <svg className="w-7 h-7 text-amber-500 animate-spin" fill="none" viewBox="0 0 24 24">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-amber-400 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
           </div>
-          <h1 className="text-xl font-bold text-gray-900">Your VM is still booting</h1>
-          <p className="text-gray-500 text-sm mt-2">
+          <h1 className="dash-page-title text-xl">Your VM is still booting</h1>
+          <p className="dash-page-subtitle">
             The machine is running but the AI agent is still installing packages and starting up.
             This can take a few minutes on smaller plans.
           </p>
-          <div className="mt-6 p-4 rounded-xl bg-gray-50 space-y-2 text-left">
+          <div className="mt-6 p-4 rounded-xl dash-card space-y-2 text-left">
             <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Status</span>
-              <span className="font-semibold text-amber-600">Agent starting...</span>
+              <span className="text-neutral-500">Status</span>
+              <span className="font-semibold text-amber-400">Agent starting...</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-gray-400">VM</span>
-              <span className="font-semibold text-green-600">Running</span>
+              <span className="text-neutral-500">VM</span>
+              <span className="font-semibold text-emerald-400">Running</span>
             </div>
             {engine.externalIp && (
               <div className="flex justify-between text-xs">
-                <span className="text-gray-400">IP Address</span>
-                <span className="font-mono text-gray-700">{engine.externalIp}</span>
+                <span className="text-neutral-500">IP Address</span>
+                <span className="font-mono text-neutral-300">{engine.externalIp}</span>
               </div>
             )}
           </div>
-          <p className="text-[11px] text-gray-400 mt-4">
+          <p className="text-[11px] text-neutral-500 mt-4">
             This page will refresh automatically once the agent comes online.
           </p>
         </div>
@@ -286,11 +286,11 @@ export default function CloudDashboardPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Cloud Engine</h1>
+        <h1 className="dash-page-title">Cloud Engine</h1>
         <div className="flex items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
-            engine.status === 'stopped' ? 'bg-gray-100 text-gray-600' :
-            'bg-yellow-100 text-yellow-800'
+            engine.status === 'stopped' ? 'bg-neutral-800 text-neutral-300 border border-neutral-700' :
+            'bg-amber-500/15 text-amber-300 border border-amber-500/30'
           }`}>
             <span className={`w-2 h-2 rounded-full ${
               engine.status === 'stopped' ? 'bg-gray-400' :

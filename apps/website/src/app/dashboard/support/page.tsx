@@ -42,8 +42,8 @@ export default function SupportPage() {
     <div className="space-y-6 max-w-5xl">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Support</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="dash-page-title">Support</h1>
+          <p className="dash-page-subtitle">
             {openCount > 0
               ? `You have ${openCount} active ticket${openCount === 1 ? '' : 's'}.`
               : 'Need a hand? Our team usually replies within 1 business day.'}
@@ -61,7 +61,7 @@ export default function SupportPage() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="dash-card overflow-hidden">
         {loading ? (
           <div className="p-10 flex items-center justify-center text-sm text-gray-400">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin mr-2" /> Loading tickets…
@@ -79,12 +79,12 @@ export default function SupportPage() {
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-neutral-800/70">
             {tickets.map(t => (
               <li key={t.id}>
                 <Link
                   href={`/dashboard/support/${t.id}`}
-                  className="flex items-start gap-4 px-5 py-4 hover:bg-gray-50 transition-colors"
+                  className="flex items-start gap-4 px-5 py-4 hover:bg-neutral-800/40 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">

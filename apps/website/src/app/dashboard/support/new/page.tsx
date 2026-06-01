@@ -79,37 +79,37 @@ export default function NewSupportTicketPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <Link href="/dashboard/support" className="inline-flex items-center gap-1 text-[12px] text-gray-500 hover:text-gray-900 mb-3">
+        <Link href="/dashboard/support" className="inline-flex items-center gap-1 text-[12px] text-neutral-400 hover:text-white mb-3">
           <ChevronLeft className="w-3.5 h-3.5" /> Back to support
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">New support ticket</h1>
-        <p className="text-sm text-gray-500 mt-1">Describe what&apos;s going on and our team will follow up.</p>
+        <h1 className="dash-page-title">New support ticket</h1>
+        <p className="dash-page-subtitle">Describe what&apos;s going on and our team will follow up.</p>
       </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
       )}
 
-      <form onSubmit={submit} className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+      <form onSubmit={submit} className="dash-card p-6 space-y-5">
         <div>
-          <label className="block text-[13px] font-medium text-gray-700 mb-1.5">Subject</label>
+          <label className="block text-[13px] font-medium text-neutral-300 mb-1.5">Subject</label>
           <input
             value={subject}
             onChange={e => setSubject(e.target.value)}
             maxLength={200}
             required
             placeholder="Short summary of the issue"
-            className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-900"
+            className="dash-input"
           />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">Category</label>
+            <label className="block text-[13px] font-medium text-neutral-300 mb-1.5">Category</label>
             <select
               value={category}
               onChange={e => setCategory(e.target.value as SupportTicketCategory)}
-              className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-900"
+              className="dash-input"
             >
               {CATEGORIES.map(c => (
                 <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
@@ -117,11 +117,11 @@ export default function NewSupportTicketPage() {
             </select>
           </div>
           <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">Priority</label>
+            <label className="block text-[13px] font-medium text-neutral-300 mb-1.5">Priority</label>
             <select
               value={priority}
               onChange={e => setPriority(e.target.value as SupportTicketPriority)}
-              className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-900"
+              className="dash-input"
             >
               {PRIORITIES.map(p => (
                 <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
@@ -131,7 +131,7 @@ export default function NewSupportTicketPage() {
         </div>
 
         <div>
-          <label className="block text-[13px] font-medium text-gray-700 mb-1.5">Message</label>
+          <label className="block text-[13px] font-medium text-neutral-300 mb-1.5">Message</label>
           <textarea
             value={message}
             onChange={e => setMessage(e.target.value)}
@@ -139,9 +139,9 @@ export default function NewSupportTicketPage() {
             maxLength={10000}
             required
             placeholder="Please include steps to reproduce, what you expected, and any error messages."
-            className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-900 resize-y"
+            className="dash-input resize-y"
           />
-          <p className="text-[11px] text-gray-400 mt-1">{message.length} / 10,000</p>
+          <p className="text-[11px] text-neutral-500 mt-1">{message.length} / 10,000</p>
         </div>
 
         <AttachmentPicker
@@ -152,14 +152,14 @@ export default function NewSupportTicketPage() {
           inputRef={fileInput}
         />
 
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
-          <Link href="/dashboard/support" className="px-4 py-2 text-[13px] font-medium text-gray-600 hover:bg-gray-50 rounded-lg">
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-800">
+          <Link href="/dashboard/support" className="dash-card-button dash-card-button--ghost !flex-none px-4 py-2">
             Cancel
           </Link>
           <button
             type="submit"
             disabled={submitting || uploading || !subject.trim() || !message.trim()}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+            className="dash-card-button dash-card-button--primary !flex-none px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? 'Submitting…' : 'Submit ticket'}
           </button>
