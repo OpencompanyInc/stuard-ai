@@ -16,6 +16,16 @@ import { z } from 'zod';
 import { writeLog } from '../utils/logger';
 import { KNOWN_SUBAGENT_NAMES, type SubagentName } from './capability-packs';
 import type { DelegationResult, SubagentQuestion, SubagentAnswer } from './types';
+import {
+  acquireQuestionTurn,
+  activeCoordinators,
+  coordinatorsBySubagent,
+  parallelGroupsByQuestion,
+  parallelQuestionItemsByQuestion,
+  releaseQuestionTurn,
+  wakeParallelGroup,
+  type SubagentCoordinator,
+} from './delegation-coordinator-registry';
 import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge } from '../tools/bridge';
 import { buildSkillContextSection, findSkillInContext, getSkillsFromContext } from '../tools/skill-tools';
 import {
@@ -27,16 +37,6 @@ import {
 } from '../../../../shared/integration-flags';
 
 // ─── Background subagent coordination ────────────────────────────────────────
-
-interface SubagentCoordinator {
-  subagentId: string;
-  resultPromise: Promise<DelegationResult>;
-  questionPromise: Promise<SubagentQuestion>;
-  questionResolve: (q: SubagentQuestion) => void;
-  answerResolvers: Map<string, { resolve: (answer: string) => void }>;
-  /** True while a question is pending and hasn't been answered yet */
-  questionPending: boolean;
-}
 
 type DelegateTaskStatus = 'running' | 'awaiting_reply' | 'completed' | 'failed';
 
@@ -68,13 +68,6 @@ interface ParallelGroup {
   waiters: Set<() => void>;
   finished: boolean;
 }
-
-const activeCoordinators = new Map<string, SubagentCoordinator>();
-
-/** Secondary index: subagentId → { questionId, coordinator } for fallback lookup */
-const coordinatorsBySubagent = new Map<string, { questionId: string; coordinator: SubagentCoordinator }>();
-const parallelGroupsByQuestion = new Map<string, ParallelGroup>();
-const parallelQuestionItemsByQuestion = new Map<string, ParallelQuestionItem>();
 
 /** Cache of recently answered questions — prevents double-reply errors when the LLM calls reply_to_subagent twice */
 const answeredCache = new Map<string, any>();
@@ -189,19 +182,19 @@ function buildParallelQuestionResponse(item: ParallelQuestionItem) {
   };
 }
 
-function wakeParallelGroup(group: ParallelGroup) {
-  const waiters = Array.from(group.waiters);
-  group.waiters.clear();
-  for (const wake of waiters) wake();
-}
-
 function allParallelTasksTerminal(group: ParallelGroup) {
   return group.tasks.every(t => t.status === 'completed' || t.status === 'failed');
 }
 
-function registerActiveQuestion(item: ParallelQuestionItem) {
+async function registerActiveQuestion(item: ParallelQuestionItem) {
   const { question, coordinator, group } = item;
+  await acquireQuestionTurn(coordinator.requestId, question.questionId);
   activeCoordinators.set(question.questionId, coordinator);
+  coordinator.pendingQuestion = {
+    questionId: question.questionId,
+    question: question.question,
+    choices: question.choices,
+  };
   coordinatorsBySubagent.set(coordinator.subagentId || question.subagentId, {
     questionId: question.questionId,
     coordinator,
@@ -212,19 +205,23 @@ function registerActiveQuestion(item: ParallelQuestionItem) {
 
 function unregisterActiveQuestion(questionId: string, coordinator: SubagentCoordinator) {
   activeCoordinators.delete(questionId);
+  if (coordinator.pendingQuestion?.questionId === questionId) {
+    coordinator.pendingQuestion = undefined;
+  }
   if (coordinator.subagentId) {
     coordinatorsBySubagent.delete(coordinator.subagentId);
   }
   parallelGroupsByQuestion.delete(questionId);
   parallelQuestionItemsByQuestion.delete(questionId);
+  releaseQuestionTurn(coordinator.requestId, questionId);
 }
 
-function surfaceNextParallelQuestion(group: ParallelGroup) {
+async function surfaceNextParallelQuestion(group: ParallelGroup) {
   if (group.activeQuestion || group.questionQueue.length === 0) return undefined;
   const next = group.questionQueue.shift();
   if (!next) return undefined;
   group.activeQuestion = next;
-  registerActiveQuestion(next);
+  await registerActiveQuestion(next);
   return next;
 }
 
@@ -242,12 +239,12 @@ function cleanupParallelGroup(group: ParallelGroup) {
   wakeParallelGroup(group);
 }
 
-function getParallelReadyResponse(group: ParallelGroup): any | undefined {
+async function getParallelReadyResponse(group: ParallelGroup): Promise<any | undefined> {
   if (group.activeQuestion) {
     return buildParallelQuestionResponse(group.activeQuestion);
   }
 
-  const queued = surfaceNextParallelQuestion(group);
+  const queued = await surfaceNextParallelQuestion(group);
   if (queued) {
     return buildParallelQuestionResponse(queued);
   }
@@ -263,9 +260,16 @@ function getParallelReadyResponse(group: ParallelGroup): any | undefined {
 
 async function waitForParallelGroupNext(group: ParallelGroup): Promise<any> {
   for (;;) {
-    const ready = getParallelReadyResponse(group);
+    const ready = await getParallelReadyResponse(group);
     if (ready) return ready;
-    await new Promise<void>(resolve => group.waiters.add(resolve));
+    await new Promise<void>(resolve => {
+      const wake = () => resolve();
+      group.waiters.add(wake);
+      // Re-check after registering: a sibling may have completed before we waited.
+      queueMicrotask(async () => {
+        if (await getParallelReadyResponse(group)) wake();
+      });
+    });
   }
 }
 
@@ -416,6 +420,8 @@ function startDelegateTask(
     questionResolve: sig.resolve,
     answerResolvers: new Map(),
     questionPending: false,
+    requestId: typeof (bridgeSecrets as any)?.__requestId === 'string' ? (bridgeSecrets as any).__requestId : undefined,
+    subagentName: name,
   };
   let invocationResolve!: () => void;
   const invocationPromise = new Promise<void>(resolve => { invocationResolve = resolve; });
@@ -551,9 +557,15 @@ async function runDelegateTask(
     return { index, subagent: name, ...buildCompletionResponse(race.result) };
   }
 
-  // Subagent asked a question — store the coordinator and return early
+  // Subagent asked a question — wait for this request's question turn, then surface
+  await acquireQuestionTurn(coordinator.requestId, race.question.questionId);
   resetQuestionSignal(coordinator);
   activeCoordinators.set(race.question.questionId, coordinator);
+  coordinator.pendingQuestion = {
+    questionId: race.question.questionId,
+    question: race.question.question,
+    choices: race.question.choices,
+  };
   coordinatorsBySubagent.set(coordinator.subagentId || race.question.subagentId, {
     questionId: race.question.questionId,
     coordinator,
@@ -592,7 +604,7 @@ function handleParallelQuestion(group: ParallelGroup, task: ParallelTaskState, q
     group.questionQueue.push(item);
   } else {
     group.activeQuestion = item;
-    registerActiveQuestion(item);
+    void registerActiveQuestion(item);
   }
 
   writeLog('delegate_parallel_question', {
@@ -915,17 +927,21 @@ export const replyToSubagent = createTool({
       };
     }
 
-    const parallelGroup = parallelGroupsByQuestion.get(effectiveQuestionId);
-    const parallelItem = parallelQuestionItemsByQuestion.get(effectiveQuestionId);
+    const parallelGroup = parallelGroupsByQuestion.get(effectiveQuestionId) as ParallelGroup | undefined;
+    const parallelItem = parallelQuestionItemsByQuestion.get(effectiveQuestionId) as ParallelQuestionItem | undefined;
     if (parallelGroup && parallelItem) {
       return replyToParallelQuestion(parallelGroup, parallelItem, effectiveQuestionId, questionId, answer);
     }
 
-    // Remove from lookup maps
+    // Remove from lookup maps and release this request's question turn
     activeCoordinators.delete(effectiveQuestionId);
+    if (coordinator.pendingQuestion?.questionId === effectiveQuestionId) {
+      coordinator.pendingQuestion = undefined;
+    }
     if (coordinator.subagentId) {
       coordinatorsBySubagent.delete(coordinator.subagentId);
     }
+    releaseQuestionTurn(coordinator.requestId, effectiveQuestionId);
 
     // Find the answer resolver — try exact match first, then any available
     let resolver = coordinator.answerResolvers.get(effectiveQuestionId);
@@ -961,9 +977,15 @@ export const replyToSubagent = createTool({
       console.log(`[delegation] ✅ SUBAGENT COMPLETED after reply | subagentId=${coordinator.subagentId} ok=${race.result.ok} durationMs=${race.result.durationMs} | result="${(race.result.result || race.result.error || '').slice(0, 120)}"`);
       result = buildCompletionResponse(race.result);
     } else {
-      // Another question from the subagent — store and return it
+      // Another question from the subagent — wait for turn, then surface
+      await acquireQuestionTurn(coordinator.requestId, race.question.questionId);
       resetQuestionSignal(coordinator);
       activeCoordinators.set(race.question.questionId, coordinator);
+      coordinator.pendingQuestion = {
+        questionId: race.question.questionId,
+        question: race.question.question,
+        choices: race.question.choices,
+      };
       if (coordinator.subagentId) {
         coordinatorsBySubagent.set(coordinator.subagentId, {
           questionId: race.question.questionId,
@@ -992,6 +1014,14 @@ export const replyToSubagent = createTool({
     return result;
   },
 });
+
+// Re-export turn-end guard helpers (implemented in delegation-coordinator-registry).
+export {
+  getPendingSubagentQuestions,
+  hasPendingSubagentQuestions,
+  resolvePendingSubagentQuestionsForRequest,
+  type PendingSubagentQuestion,
+} from './delegation-coordinator-registry';
 
 // ─── Export all orchestrator tools ───────────────────────────────────────────
 

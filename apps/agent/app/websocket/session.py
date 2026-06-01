@@ -11,6 +11,7 @@ class WebSocketSession:
         self.pending_approvals: Dict[str, asyncio.Future] = {}
         self.pending_client_tool_results: Dict[str, asyncio.Future] = {}
         self.active_chat_tasks: set[asyncio.Task] = set()
+        self.chat_tasks_by_request_id: Dict[str, asyncio.Task] = {}
         self.active_tool_tasks: set[asyncio.Task] = set()
         self.cloud_control_queues: Dict[str, asyncio.Queue] = {}
         self.folder_session_ids: set[str] = set()

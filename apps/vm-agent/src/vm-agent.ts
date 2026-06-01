@@ -583,6 +583,14 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
   const conversationId = args.conversationId || randomUUID();
   const model = args.model || 'balanced';
   const modelId = typeof args.modelId === 'string' && args.modelId.trim() ? args.modelId.trim() : undefined;
+  // Stable id for this turn so we can tell the Python agent to STOP it if the
+  // caller disconnects (abort / closed SSE). Without this the agent kept
+  // streaming a full answer into a dead response — burning inference and
+  // holding the cloud cws for the whole turn (~60s for a long reply), which
+  // starved the next message.
+  const reqId = randomUUID();
+  let settled = false;       // true once the turn finished normally
+  let clientGone = false;    // true once the caller disconnected mid-turn
   beginAgentOperation();
 
   // Set up NDJSON streaming response
@@ -593,10 +601,28 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
     'X-Content-Type-Options': 'nosniff',
   });
 
+  let linesWritten = 0;
   const writeLine = (obj: any) => {
-    try { if (!res.destroyed) res.write(JSON.stringify(obj) + '\n'); } catch {}
+    try { if (!res.destroyed) { res.write(JSON.stringify(obj) + '\n'); linesWritten++; } } catch {}
   };
 
+  // If the caller (cloud-ai proxy / app) disconnects before the turn finishes,
+  // tell the Python agent to abort it. The agent's stop handler cancels the
+  // chat task and forwards the stop to cloud-ai, freeing the inference cws.
+  const onClientGone = () => {
+    if (settled || clientGone) return;
+    clientGone = true;
+    console.log(`[vm-agent] chat client disconnected mid-turn — stopping agent conv=${conversationId} req=${reqId} (wrote ${linesWritten} lines)`);
+    getAgentWs()
+      .then((ws) => { try { ws.send(JSON.stringify({ type: 'stop', requestId: reqId })); } catch {} })
+      .catch(() => {});
+  };
+  // Only listen on the response — req 'close' can fire when the request body
+  // finishes on keep-alive connections, which falsely aborts the turn before
+  // cloud-ai returns the answer (second message showed "No response").
+  res.on('close', onClientGone);
+
+  console.log(`[vm-agent] chat stream START conv=${conversationId} req=${reqId}`);
   writeLine({ type: 'start', conversationId });
 
   try {
@@ -643,9 +669,11 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       ...priorHistory,
       { role: 'user' as const, content: message },
     ];
+    let streamedFinal = false;
     const result = await sendToAgentStreaming(
       {
         type: 'chat',
+        id: reqId,
         message,
         conversationId,
         model,
@@ -690,7 +718,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
             });
             return;
           }
-          writeLine({ type: 'progress', event: event.event || 'delta', data: event.data || { text: event.text } });
+          writeLine({ type: 'progress', event: event.event || 'delta', data: event.data || { text: event.text || event.delta } });
         } else if (t === 'routing') {
           writeLine({ type: 'routing', model: event.model, data: event.data });
         } else if (t === 'tool_event') {
@@ -699,6 +727,9 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
           writeLine({ type: 'tool_request', id: event.id, tool: event.tool, args: event.args });
         } else if (t === 'subagent_event') {
           writeLine({ type: 'subagent_event', subagentId: event.subagentId, event: event.event, data: event.data });
+        } else if (t === 'final') {
+          streamedFinal = true;
+          writeLine({ type: 'final', ok: true, conversationId, ...event });
         } else if (t === 'conversation') {
           writeLine({ type: 'conversation', conversationId: event.conversationId });
         } else if (t === 'title') {
@@ -761,14 +792,19 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       });
     }
 
-    // Write final event
-    writeLine({ type: 'final', ok: true, conversationId, ...result });
+    // Write final event if Python didn't already stream one through onEvent.
+    if (!streamedFinal) {
+      writeLine({ type: 'final', ok: true, conversationId, ...result });
+    }
 
     // Trigger immediate sync to desktop so conversations appear without waiting for periodic sync
     scheduleQuickSync();
   } catch (e: any) {
     writeLine({ type: 'error', error: String(e?.message || 'agent_chat_failed') });
   } finally {
+    settled = true;
+    try { res.off('close', onClientGone); } catch {}
+    console.log(`[vm-agent] chat stream END conv=${conversationId} req=${reqId} wrote=${linesWritten} clientGone=${clientGone}`);
     endAgentOperation();
     res.end();
   }

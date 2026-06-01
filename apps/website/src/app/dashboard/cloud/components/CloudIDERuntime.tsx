@@ -56,7 +56,7 @@ export function CloudIDERuntime({
   );
 
   return (
-    <div className="cloud-engine-dashboard cloud-ide h-full min-h-0">
+    <div className="cloud-engine-dashboard cloud-ide cloud-vm-shell h-full min-h-0 w-full flex-1">
       <CloudRuntimeWorkspace
         engine={engine}
         pauseLoading={pauseLoading || deleteLoading}
@@ -69,7 +69,7 @@ export function CloudIDERuntime({
         fileFetcher={fileFetcher}
         serveUrlBuilder={serveUrlBuilder}
         previewUrlBuilder={previewUrlBuilder}
-        activityBarVariant="desktop"
+        activityBarVariant="website"
       />
     </div>
   );

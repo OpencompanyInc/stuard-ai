@@ -89,9 +89,23 @@ HandlerFn = Callable[[Dict[str, Any], WebSocketSession], Awaitable[None]]
 
 
 async def _handle_chat(msg: Dict[str, Any], session: WebSocketSession) -> None:
+    request_id_raw = msg.get("requestId") or msg.get("id")
+    request_id = (
+        request_id_raw
+        if isinstance(request_id_raw, str) and request_id_raw.strip()
+        else None
+    )
     task = asyncio.create_task(handle_chat(msg, session))
     session.active_chat_tasks.add(task)
-    task.add_done_callback(lambda t: session.active_chat_tasks.discard(t))
+    if request_id:
+        session.chat_tasks_by_request_id[request_id] = task
+
+    def _cleanup(t: asyncio.Task) -> None:
+        session.active_chat_tasks.discard(t)
+        if request_id and session.chat_tasks_by_request_id.get(request_id) is t:
+            session.chat_tasks_by_request_id.pop(request_id, None)
+
+    task.add_done_callback(_cleanup)
 
 
 async def _handle_tool_exec(msg: Dict[str, Any], session: WebSocketSession) -> None:
@@ -184,12 +198,18 @@ async def _handle_stop(msg: Dict[str, Any], session: WebSocketSession) -> None:
     if forwarded:
         await asyncio.sleep(0)
 
-    # 2) Cancel local chat + tool tasks so any local work stops immediately.
+    # 2) Cancel the matching chat turn (or all turns if requestId omitted).
     cancelled_count = 0
-    for task in list(session.active_chat_tasks):
-        if not task.done():
-            task.cancel()
+    if rid_str:
+        matched = session.chat_tasks_by_request_id.get(rid_str)
+        if matched is not None and not matched.done():
+            matched.cancel()
             cancelled_count += 1
+    else:
+        for task in list(session.active_chat_tasks):
+            if not task.done():
+                task.cancel()
+                cancelled_count += 1
     for task in list(session.active_tool_tasks):
         if not task.done():
             task.cancel()

@@ -217,7 +217,7 @@ export function CloudIDEExplorer({ isRunning }: { isRunning: boolean }) {
   };
 
   return (
-    <>
+    <div className="ide-file-panel">
       <div className="ide-file-panel-header">
         <span className="ide-panel-title">Workspace</span>
         <div className="flex items-center gap-1">
@@ -263,7 +263,7 @@ export function CloudIDEExplorer({ isRunning }: { isRunning: boolean }) {
         className="hidden"
         onChange={handleFileUploadSelected}
       />
-    </>
+    </div>
   );
 }
 

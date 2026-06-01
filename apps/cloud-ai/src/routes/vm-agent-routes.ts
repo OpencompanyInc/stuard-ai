@@ -141,7 +141,12 @@ export async function handleVMAgentRoutes(
       const controller = new AbortController();
       // If the client closes the SSE early (navigated away, refreshed, etc.)
       // propagate the cancellation upstream so the VM can stop work.
-      const onClientClose = () => { try { controller.abort(); } catch {} };
+      let chatDone = false;
+      const onClientClose = () => {
+        if (chatDone) return;
+        console.log(`[vm-agent-routes] chat: client disconnected mid-stream, aborting VM turn (user=${user.userId})`);
+        try { controller.abort(); } catch {}
+      };
       try { req.on('close', onClientClose); } catch {}
 
       const vmResp = await fetch(`${base}/agent/chat/stream`, {
@@ -213,6 +218,7 @@ export async function handleVMAgentRoutes(
           try { res.write(`data: ${JSON.stringify({ type: 'error', error: 'stream_interrupted' })}\n\n`); } catch {}
         }
       } finally {
+        chatDone = true;
         try { clearInterval(keepAlive); } catch {}
         try { req.off('close', onClientClose); } catch {}
         try { res.end(); } catch {}

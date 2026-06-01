@@ -50,6 +50,7 @@ const INTERMEDIATE_STREAM_TYPES = new Set<string>([
   'tool_event', 'tool_request', 'tool_call',
   'subagent_event', 'subagent_question', 'subagent_answer', 'subagent_complete',
   'conversation', 'title', 'queued',
+  'stopped',
   'reasoning', 'reasoning_start', 'reasoning_end', 'reasoning_delta',
   'thinking', 'thinking_start', 'thinking_end', 'thinking_delta',
   'step_start', 'step_finish',

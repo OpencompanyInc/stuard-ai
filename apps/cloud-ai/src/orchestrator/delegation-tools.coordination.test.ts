@@ -500,6 +500,68 @@ describe('Delegation question coordination', () => {
     ]));
   });
 
+  it('serializes ask_orchestrator across two single-task delegate calls on the same request', async () => {
+    getBridgeSecretsMock.mockReturnValue({ __requestId: 'req-separate' });
+    const order: string[] = [];
+
+    runSubagentMock.mockImplementation(async ({ request, onQuestion }: any) => {
+      if (request.instruction.includes('first')) {
+        order.push('first-ask');
+        const answer = await onQuestion({
+          type: 'subagent_question',
+          questionId: 'q-sep-first',
+          subagentId: 'sa-first',
+          runId: 'run-first',
+          question: 'First separate delegate?',
+        });
+        expect(answer.answer).toBe('answer-one');
+        order.push('first-done');
+        return { ok: true, subagentId: 'sa-first', result: 'First finished.', durationMs: 1 };
+      }
+
+      order.push('second-ask');
+      const answer = await onQuestion({
+        type: 'subagent_question',
+        questionId: 'q-sep-second',
+        subagentId: 'sa-second',
+        runId: 'run-second',
+        question: 'Second separate delegate?',
+      });
+      expect(answer.answer).toBe('answer-two');
+      order.push('second-done');
+      return { ok: true, subagentId: 'sa-second', result: 'Second finished.', durationMs: 2 };
+    });
+
+    const { delegate, replyToSubagent } = await import('./delegation-tools');
+
+    const firstResult = await (delegate as any).execute({
+      tasks: [{ subagent: 'browser', instruction: 'first separate delegate' }],
+    });
+    expect(firstResult.awaitingReply).toBe(true);
+    expect(firstResult.questionId).toBe('q-sep-first');
+
+    const afterFirstReply = await (replyToSubagent as any).execute({
+      questionId: 'q-sep-first',
+      answer: 'answer-one',
+    });
+    expect(afterFirstReply.completed).toBe(true);
+    expect(afterFirstReply.result).toBe('First finished.');
+
+    const secondResult = await (delegate as any).execute({
+      tasks: [{ subagent: 'file_ops', instruction: 'second separate delegate' }],
+    });
+    expect(secondResult.awaitingReply).toBe(true);
+    expect(secondResult.questionId).toBe('q-sep-second');
+
+    const final = await (replyToSubagent as any).execute({
+      questionId: 'q-sep-second',
+      answer: 'answer-two',
+    });
+    expect(final.completed).toBe(true);
+    expect(final.result).toBe('Second finished.');
+    expect(order).toEqual(['first-ask', 'first-done', 'second-ask', 'second-done']);
+  });
+
   it('preserves the aggregate response when parallel tasks complete without questions', async () => {
     runSubagentMock.mockImplementation(async ({ request }: any) => ({
       ok: true,

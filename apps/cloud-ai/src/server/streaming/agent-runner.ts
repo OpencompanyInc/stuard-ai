@@ -19,7 +19,13 @@ import {
 } from '../../memory/context-compactor';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
 import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
-import { abortAllRunningSubagents } from '../../orchestrator/subagent-runtime';
+import { abortAllRunningSubagents, abortRunningSubagent } from '../../orchestrator/subagent-runtime';
+import {
+  getPendingSubagentQuestions,
+  hasPendingSubagentQuestions,
+  resolvePendingSubagentQuestionsForRequest,
+  type PendingSubagentQuestion,
+} from '../../orchestrator/delegation-coordinator-registry';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../../tools/proactive-task-tools';
 import {
@@ -29,6 +35,33 @@ import {
 
 /** Max retries when the model calls a bad/missing tool or sends invalid args */
 const MAX_TOOL_ERROR_RETRIES = 3;
+
+/**
+ * Max times we re-prompt the orchestrator to reply to a blocked subagent before
+ * force-resolving the stragglers. Prevents an unanswered ask_orchestrator from
+ * leaving the subagent hung and the UI stuck on "Using ask_orchestrator…".
+ */
+const MAX_SUBAGENT_GUARD_ROUNDS = 3;
+
+/** Build the system reminder that forces the orchestrator to answer blocked subagents. */
+function buildSubagentReplyReminder(pending: PendingSubagentQuestion[]): string {
+  const lines = pending
+    .map((q, i) => {
+      const who = q.subagent ? ` [${q.subagent}]` : '';
+      const choices = q.choices && q.choices.length ? `\n   Choices: ${q.choices.join(' | ')}` : '';
+      return `${i + 1}. questionId="${q.questionId}"${who}: ${q.question}${choices}`;
+    })
+    .join('\n');
+  return (
+    '[System] Do not end your turn yet. The following delegated subagent(s) are BLOCKED, ' +
+    'waiting on you via ask_orchestrator — they cannot finish until you reply:\n\n' +
+    `${lines}\n\n` +
+    'For EACH question: if you can answer from context or a safe default, call reply_to_subagent ' +
+    'with that exact questionId now. If it needs the user to decide, confirm, or provide input, call ' +
+    'ask_user first, then reply_to_subagent with the result. Only after every subagent has returned ' +
+    'control should you give the user your final answer.'
+  );
+}
 
 /**
  * Detect if an error is caused by the model calling a non-existent, invalid, or
@@ -1071,6 +1104,82 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         }
       }
 
+      // ── Subagent question guard ──
+      // The orchestrator sometimes ends its turn while a delegated subagent is
+      // still blocked on ask_orchestrator: `delegate` returned the question
+      // early, but the model produced a final answer instead of calling
+      // reply_to_subagent. Re-prompt it to resolve every dangling question
+      // before we finish; then force-resolve any stragglers so the subagent
+      // fails fast instead of hanging the UI on "Using ask_orchestrator…".
+      if (requestId && hasPendingSubagentQuestions(requestId)) {
+        let guardRound = 0;
+        while (
+          guardRound < MAX_SUBAGENT_GUARD_ROUNDS &&
+          !abortController.signal.aborted &&
+          hasPendingSubagentQuestions(requestId)
+        ) {
+          guardRound++;
+          const pending = getPendingSubagentQuestions(requestId);
+          writeLog('subagent_question_guard', { requestId, round: guardRound, pending: pending.length });
+          send(ws, { type: 'progress', event: 'subagent_guard', data: { round: guardRound, pending: pending.length } });
+
+          // Continue the conversation with the model's own (premature) turn plus
+          // a forcing reminder. The orchestrator already has its system prompt on
+          // the Agent, so we only replay history + this turn + the reminder.
+          const guardInput: any[] = [
+            ...effectiveHistory,
+            { role: 'user', content: userContent },
+            { role: 'assistant', content: fullText || '(working…)' },
+            { role: 'user', content: buildSubagentReplyReminder(pending) },
+          ];
+
+          // Use the main request abort signal, not a stale compaction one.
+          compactionAbort = null;
+          needsCompaction = false;
+          currentTurnStartIndex = guardInput.length;
+          midTurnCompacted = false;
+
+          try {
+            const guardOptions = buildStreamOptions();
+            const guardResult: any = await agent.stream(guardInput, guardOptions);
+            const guardStream = guardResult?.fullStream || guardResult;
+            if (guardStream && typeof guardStream[Symbol.asyncIterator] === 'function') {
+              for await (const chunk of guardStream) {
+                if (chunk?.type === 'finish') {
+                  const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                  if (finishUsage) {
+                    usage = normalizeUsage({
+                      ...finishUsage,
+                      providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                    });
+                  }
+                }
+                const delta = handleStreamChunk(ws, chunk, send);
+                if (delta) fullText += delta;
+              }
+            } else if (guardResult?.text) {
+              fullText += guardResult.text;
+              send(ws, { type: 'progress', event: 'delta', data: { text: guardResult.text } });
+              if (guardResult?.usage) usage = normalizeUsage(guardResult.usage);
+            }
+          } catch (guardError: any) {
+            if (guardError?.name === 'AbortError' || abortController.signal.aborted) break;
+            console.warn('[AgentRunner] Subagent question guard round failed:', guardError);
+            break;
+          }
+        }
+
+        // Anything still blocked after the guard rounds: unblock it and abort
+        // the subagent so it fails fast instead of hanging the UI forever.
+        const stranded = resolvePendingSubagentQuestionsForRequest(requestId, 'orchestrator_finished');
+        if (stranded.length > 0) {
+          console.warn(`[AgentRunner] Force-resolved ${stranded.length} dangling subagent question(s) after guard rounds`);
+          for (const id of stranded) {
+            try { abortRunningSubagent(id, 'orchestrator_finished'); } catch { }
+          }
+        }
+      }
+
       const billableSteps = finishedSteps.length > 0
         ? finishedSteps
         : usage
@@ -1257,6 +1366,17 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Clean up abort controller
       activeControllers.delete(ws);
       if (requestId) { try { delete (ws as any)[`__abort_${requestId}`]; } catch { } }
+      // Final safety net: never leave a delegated subagent hung on
+      // ask_orchestrator after the orchestrator turn ends. Covers the error and
+      // abort paths that skip the in-band guard above. Scoped to this request.
+      if (requestId) {
+        try {
+          const stranded = resolvePendingSubagentQuestionsForRequest(requestId, 'turn_ended');
+          for (const id of stranded) {
+            try { abortRunningSubagent(id, 'turn_ended'); } catch { }
+          }
+        } catch { }
+      }
     }
     // __chatWs is the primary response channel — the WS that streams text
     // deltas / tool events back to the end-user's UI. For desktop chats this

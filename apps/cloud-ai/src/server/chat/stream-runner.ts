@@ -17,6 +17,7 @@ import {
 } from '../../supabase';
 import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
 import { getDesktopWs } from '../../services/vm-bridge';
+import { resolvePendingSubagentQuestionsForRequest } from '../../orchestrator/delegation-coordinator-registry';
 import {
   addPendingApproval,
   registerRun,
@@ -778,6 +779,29 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       model: chosenModelId || routedTier,
       conversationId: conversationId || undefined,
     });
+  } finally {
+    // Safety net: never leave a delegated subagent hung on ask_orchestrator
+    // after the orchestrator turn ends. In the normal case the orchestrator
+    // replies first — reply_to_subagent blocks the stream until the subagent
+    // finishes, and the system prompt forbids ending with a question pending —
+    // so this only fires when the model stops anyway. It unblocks + aborts the
+    // stragglers so the UI never sticks on "Using ask_orchestrator…".
+    //
+    // Imported lazily: a static import would pull subagent-runtime's heavy
+    // dependency graph into this module's load and only matters for the
+    // orchestrator (stuard) path that actually delegates.
+    if (requestId && agentType === 'stuard') {
+      try {
+        const stranded = resolvePendingSubagentQuestionsForRequest(requestId, 'turn_ended');
+        if (stranded.length > 0) {
+          writeLog('subagent_questions_backstop', { requestId, count: stranded.length });
+          const { abortRunningSubagent } = await import('../../orchestrator/subagent-runtime');
+          for (const id of stranded) {
+            try { abortRunningSubagent(id, 'turn_ended'); } catch { }
+          }
+        }
+      } catch { }
+    }
   }
 }
 

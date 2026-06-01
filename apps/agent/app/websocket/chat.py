@@ -270,8 +270,11 @@ async def _on_final(cdata: Dict[str, Any], ctx: _CloudEventCtx) -> None:
     if model:
         out["model"] = model
     await ctx.session.send_json(out, request_id=ctx.rid)
-    if ctx.state.conversation_seen:
-        ctx.state.final_seen = True
+    # Always mark the turn complete. VM chats pass a client-supplied
+    # conversationId, so cloud-ai skips the `conversation` event — waiting
+    # for conversation_seen used to leave recv() blocked forever, leaking a
+    # cloud cws per turn and starving follow-up messages.
+    ctx.state.final_seen = True
 
 
 async def _on_tool_event(cdata: Dict[str, Any], ctx: _CloudEventCtx) -> None:

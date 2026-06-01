@@ -65,7 +65,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
   }, [onRefresh]);
 
   const overviewView = (
-    <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6">
+    <div className="custom-scrollbar h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl space-y-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Engine overview</h2>
@@ -73,7 +73,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
         </div>
 
         <div className="grid grid-cols-12 gap-4">
-          <div className="col-span-12 md:col-span-5 rounded-2xl border border-theme bg-theme-card p-5">
+          <div className="dashboard-card col-span-12 p-5 md:col-span-5">
             <h3 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-theme-muted">Machine</h3>
             <dl className="space-y-3 text-[13px]">
               <OverviewRow icon={Server} label="Name" value={engine?.instance_name || '—'} mono />
@@ -86,7 +86,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             </dl>
           </div>
 
-          <div className="col-span-12 md:col-span-7 rounded-2xl border border-theme bg-theme-card p-5">
+          <div className="dashboard-card col-span-12 p-5 md:col-span-7">
             <h3 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-theme-muted">Status</h3>
             <div className="grid grid-cols-2 gap-3">
               <StatusPillSmall
@@ -114,7 +114,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 detail={engine?.status || 'unknown'}
               />
             </div>
-            <div className="mt-5 rounded-xl bg-theme-hover/40 p-3 text-[11px] text-theme-muted">
+            <div className="mt-5 rounded-xl border border-theme/60 bg-theme-hover/20 p-3 text-[11px] text-theme-muted">
               Manage your engine from the top bar. Use the activity bar on the left to switch between chat,
               files, monitoring, and more. Some panels (deployments, integrations, permissions) are managed
               from the Stuard desktop app.
@@ -127,12 +127,12 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
   const viewMap: Omit<Record<CloudRuntimeView, React.ReactNode>, 'chat'> = {
     overview: overviewView,
-    monitoring: <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6"><CloudMonitoring engine={engine} /></div>,
-    billing: <div className="custom-scrollbar h-full overflow-y-auto px-6 py-6"><CloudBilling /></div>,
+    monitoring: <div className="custom-scrollbar h-full overflow-y-auto p-6"><CloudMonitoring engine={engine} /></div>,
+    billing: <div className="custom-scrollbar h-full overflow-y-auto p-6"><CloudBilling /></div>,
     deploys: <CloudVmDeploys engine={engine} />,
     integrations: <CloudVmIntegrations engine={engine} />,
     permissions: <CloudVmPermissions engine={engine} />,
-    bots: <CloudVmBots engine={engine} />,
+    bots: <div className="custom-scrollbar h-full overflow-y-auto p-6"><CloudVmBots engine={engine} /></div>,
     automations: <CloudVmAutomations engine={engine} />,
     settings: <CloudVmSettings engine={engine} onRefresh={onRefresh} />,
   };
@@ -192,7 +192,7 @@ function StatusPillSmall({
   detail?: string;
 }) {
   return (
-    <div className="rounded-xl border border-theme bg-theme-hover/30 p-3">
+    <div className="rounded-xl border border-theme/60 bg-theme-hover/20 p-3">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-theme-muted">
         <span
           className={clsx(

@@ -97,7 +97,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
 
     return (
-        <div className="dashboard-shell-layout min-h-screen bg-[#0A0A0A] text-white">
+        <div className="dashboard-shell-layout flex min-h-screen flex-col bg-[#0A0A0A] text-white">
             {/* Mobile Top Bar */}
             <div className="lg:hidden sticky top-0 z-40 bg-[#0A0A0A]/95 backdrop-blur border-b border-neutral-800 h-14 flex items-center justify-between px-4">
                 <Link href="/" className="flex items-center gap-2">

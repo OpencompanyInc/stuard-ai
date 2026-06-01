@@ -276,7 +276,7 @@ export default function CloudDashboardPage() {
   // When engine is running + healthy → VM workspace (fills dashboard main pane, like desktop)
   if (isVmWorkspace) {
     return (
-      <div className="flex flex-1 min-h-0 h-full">
+      <div className="flex h-full min-h-0 w-full flex-1 flex-col">
         <CloudIDELayout engine={engine} onRefresh={loadStatus} />
       </div>
     );

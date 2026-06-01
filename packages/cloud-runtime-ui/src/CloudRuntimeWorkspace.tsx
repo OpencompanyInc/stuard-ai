@@ -186,7 +186,7 @@ function CloudRuntimeWorkspaceInner({
   }, [terminalHeight]);
 
   return (
-    <div className="flex h-full no-drag">
+    <div className="flex h-full w-full min-w-0 no-drag">
       <CloudRuntimeActivityBar
         items={items}
         activeView={activeView}

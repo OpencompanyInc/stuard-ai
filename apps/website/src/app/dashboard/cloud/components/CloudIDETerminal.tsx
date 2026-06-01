@@ -27,11 +27,11 @@ export function CloudIDETerminal({ isRunning }: { isRunning: boolean }) {
           fontFamily: '"JetBrains Mono", "Fira Code", monospace',
           fontSize: 13,
           theme: {
-            background: '#0f172a',
-            foreground: '#e2e8f0',
-            cursor: '#e2e8f0',
-            cursorAccent: '#0f172a',
-            selectionBackground: 'rgba(0, 122, 255, 0.35)',
+            background: '#0A0A0A',
+            foreground: '#FAFAFA',
+            cursor: '#FAFAFA',
+            cursorAccent: '#0A0A0A',
+            selectionBackground: 'rgba(255, 56, 60, 0.25)',
           },
           cursorBlink: true,
         }) as typeof term;
