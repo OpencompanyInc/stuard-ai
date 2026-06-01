@@ -34,7 +34,16 @@ let _agentWsConnecting = false;
 const _agentPendingRequests = new Map<string, {
   resolve: (result: any) => void;
   timer: ReturnType<typeof setTimeout>;
+  // Streaming chat requests end ONLY on an explicit terminal frame
+  // (final/error). Non-streaming requests (tool_exec) resolve on the first
+  // non-intermediate reply. See the resolve logic in the WS message handler.
+  streaming?: boolean;
 }>();
+
+// Terminal frame types that end a streaming chat turn. Everything else the
+// cloud/Python agent emits mid-turn is an intermediate event already delivered
+// via the stream listener — including event types this VM build has never seen.
+const TERMINAL_CHAT_TYPES = new Set<string>(['final', 'error']);
 
 // Per-request stream listeners — registered by streamToAgent(), called for
 // every intermediate WS message (progress/delta/routing/tool_event).
@@ -123,11 +132,21 @@ function _connectAgentWs(connectTimeoutMs = 10_000): Promise<WebSocket> {
         }
 
         if (!pendingKey || !_agentPendingRequests.has(pendingKey)) return;
-        // Only resolve on terminal messages — skip every known streaming event
-        // type so they don't prematurely resolve the chat promise.
-        const t = String(msg.type || '').toLowerCase();
-        if (INTERMEDIATE_STREAM_TYPES.has(t)) return;
         const pending = _agentPendingRequests.get(pendingKey)!;
+        const t = String(msg.type || '').toLowerCase();
+        if (pending.streaming) {
+          // Chat stream: end ONLY on a terminal frame. Using a terminal
+          // allowlist (not an intermediate denylist) means a new/unknown cloud
+          // event type — e.g. `run_state_sync`, which cloud-ai emits on resumed
+          // conversations — can never prematurely resolve the turn. That bug
+          // committed an empty "No response" on every 2nd message while the
+          // real answer streamed into an already-closed response.
+          if (!TERMINAL_CHAT_TYPES.has(t)) return;
+        } else if (INTERMEDIATE_STREAM_TYPES.has(t)) {
+          // Non-streaming request (tool_exec, memory, etc.): the first
+          // non-intermediate reply is the result.
+          return;
+        }
         clearTimeout(pending.timer);
         _agentPendingRequests.delete(pendingKey);
         pending.resolve(msg);
@@ -248,6 +267,7 @@ export async function sendToAgentStreaming(
           resolve(result);
         },
         timer,
+        streaming: true,
       });
       ws.send(JSON.stringify({ ...msg, id, requestId: id }));
     });
