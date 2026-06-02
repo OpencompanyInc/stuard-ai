@@ -303,21 +303,35 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
       - name: Pull Vercel environment (preview)
-        # Run from repo root: the Vercel project's Root Directory is already
-        # apps/website (that's where vercel.json lives). cd-ing into apps/website
-        # here too made Vercel apply the root twice -> apps/website/apps/website.
+        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Neutralize pulled Root Directory
+        working-directory: apps/website
+        # `vercel build` runs here (so apps/website/vercel.json + the Next app are
+        # found), but it ALSO applies the project's dashboard Root Directory
+        # (apps/website) on top of this cwd -> it then looks for build output at
+        # apps/website/apps/website/.next and dies with ENOENT routes-manifest.json.
+        # Clearing rootDirectory from the pulled config stops the double-apply.
+        # The cat before/after surfaces the real pulled settings in the run log.
+        run: |
+          echo "---- .vercel/project.json (pulled) ----"
+          cat .vercel/project.json || true
+          node -e "const fs=require('fs');const p='.vercel/project.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));if(j.settings&&j.settings.rootDirectory){console.error('clearing rootDirectory:',j.settings.rootDirectory);j.settings.rootDirectory=null;}fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          echo "---- after ----"
+          cat .vercel/project.json || true
       - name: Build with Vercel (preview)
+        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
       - name: Deploy prebuilt to Vercel (preview)
+        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
