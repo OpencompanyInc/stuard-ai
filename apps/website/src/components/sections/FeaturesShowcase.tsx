@@ -68,17 +68,20 @@ const FeaturesShowcase = () => {
   ];
 
   return (
-    <section className="py-24 bg-gradient-to-br from-white via-gray-50 to-primary/10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section className="bg-[#0A0A0B] py-24">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         {/* Features Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+        <div className="mb-12 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
-            <div key={feature.id} className="p-6 rounded-2xl border-2 border-gray-200 bg-white hover:border-primary/50 hover:shadow-lg transition-all">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl mb-4 bg-gray-100 text-gray-600 group-hover:bg-primary/10 group-hover:text-primary">
+            <div
+              key={feature.id}
+              className="group rounded-2xl border border-white/10 bg-[#111111] p-6 transition-all hover:border-[#FF383C]/40"
+            >
+              <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-xl border border-[#FF383C]/20 bg-[#FF383C]/10 text-[#FF6B6E]">
                 {feature.icon}
               </div>
-              <h3 className="text-lg font-bold text-gray-900 mb-2">{feature.title}</h3>
-              <p className="text-sm text-gray-600">{feature.description}</p>
+              <h3 className="mb-2 text-lg font-bold text-white">{feature.title}</h3>
+              <p className="text-sm text-[#A3A3A3]">{feature.description}</p>
             </div>
           ))}
         </div>

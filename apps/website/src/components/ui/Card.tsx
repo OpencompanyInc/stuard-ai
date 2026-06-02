@@ -8,7 +8,7 @@ export const Card: React.FC<CardProps> = ({ as: Tag = "div", className = "", chi
   return (
     <Tag
       className={[
-        "bg-white rounded-2xl shadow-xl border border-gray-200", 
+        "bg-[#111111] rounded-2xl border border-white/10",
         className,
       ].join(" ")}
       {...props}
@@ -23,11 +23,11 @@ export const CardHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ cla
 );
 
 export const CardTitle: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = ({ className = "", ...props }) => (
-  <h3 className={["text-xl font-bold text-gray-900", className].join(" ")} {...props} />
+  <h3 className={["text-xl font-bold text-white", className].join(" ")} {...props} />
 );
 
 export const CardDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement>> = ({ className = "", ...props }) => (
-  <p className={["text-gray-600", className].join(" ")} {...props} />
+  <p className={["text-[#A3A3A3]", className].join(" ")} {...props} />
 );
 
 export const CardContent: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ className = "", ...props }) => (

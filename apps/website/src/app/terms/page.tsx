@@ -9,13 +9,14 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <div className="max-w-4xl mx-auto px-6 py-12 md:py-20">
-      <h1 className="text-4xl md:text-5xl font-serif font-medium mb-8">Terms of Use</h1>
-      <p className="text-gray-600 mb-12">Last updated: December 24, 2025</p>
+    <div className="bg-[#0A0A0B] text-[#D4D4D4]">
+    <div className="mx-auto max-w-4xl px-6 pb-20 pt-32">
+      <h1 className="mb-8 font-serif text-4xl font-medium text-white md:text-5xl">Terms of Use</h1>
+      <p className="mb-12 text-[#A3A3A3]">Last updated: December 24, 2025</p>
 
-      <div className="prose prose-lg prose-gray max-w-none space-y-12">
+      <div className="prose prose-lg prose-invert max-w-none space-y-12">
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">1. Acceptance of Terms</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">1. Acceptance of Terms</h2>
           <p>
             By accessing or using Stuard AI (&ldquo;the Service&rdquo;), you agree to be bound by these Terms of Use. 
             If you do not agree to these terms, please do not use the Service.
@@ -23,7 +24,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">2. Description of Service</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">2. Description of Service</h2>
           <p>
             Stuard AI is a desktop assistant application designed to help with computer tasks through automation and AI interaction. 
             The Service includes a desktop application that runs locally on your device and cloud-based services for synchronization, 
@@ -32,7 +33,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">3. Beta Access</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">3. Beta Access</h2>
           <p>
             The Service is currently in a Beta phase. You acknowledge that the Service may contain bugs, errors, and other problems 
             that could cause system or other failures and data loss. We may modify or discontinue features at any time without notice. 
@@ -41,7 +42,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">4. User Accounts and Security</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">4. User Accounts and Security</h2>
           <p>
             You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account. 
             You agree to notify us immediately of any unauthorized use of your account.
@@ -49,7 +50,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">5. Local-First Data and Privacy</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">5. Local-First Data and Privacy</h2>
           <p>
             Stuard AI is designed with a &ldquo;local-first&rdquo; philosophy. Much of your data, including local memory and task history, is stored locally on your device. 
             However, certain features require data to be processed in the cloud (e.g., AI model inference, syncing across devices, marketplace publishing). 
@@ -58,7 +59,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">6. Marketplace and User Content</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">6. Marketplace and User Content</h2>
           <p>
             Users may publish workflows, automations, or other content (&ldquo;User Content&rdquo;) to the Stuard Marketplace.
           </p>
@@ -70,7 +71,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">7. Acceptable Use</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">7. Acceptable Use</h2>
           <p>
             You agree not to use the Service to:
           </p>
@@ -84,7 +85,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">8. AI Limitations</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">8. AI Limitations</h2>
           <p>
             The Service utilizes Artificial Intelligence technologies. You acknowledge that:
           </p>
@@ -96,7 +97,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">9. Third-Party Services</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">9. Third-Party Services</h2>
           <p>
             The Service may integrate with third-party applications (e.g., Google, GitHub, Outlook). Use of these integrations is subject 
             to the terms and policies of those third parties. Stuard AI is not responsible for the availability or accuracy of third-party services.
@@ -104,7 +105,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">10. Disclaimer of Warranties</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">10. Disclaimer of Warranties</h2>
           <p>
             THE SERVICE IS PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
             INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
@@ -112,7 +113,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">11. Limitation of Liability</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">11. Limitation of Liability</h2>
           <p>
             IN NO EVENT SHALL STUARD AI BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, 
             INCLUDING WITHOUT LIMITATION, LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, RESULTING FROM 
@@ -121,7 +122,7 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">12. Changes to Terms</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">12. Changes to Terms</h2>
           <p>
             We reserve the right to modify these Terms at any time. We will provide notice of significant changes. 
             Your continued use of the Service after such changes constitutes your acceptance of the new Terms.
@@ -129,12 +130,13 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-2xl font-medium text-gray-900 mb-4">13. Contact Us</h2>
+          <h2 className="text-2xl font-medium text-white mb-4">13. Contact Us</h2>
           <p>
             If you have any questions about these Terms, please contact us at support@stuard.ai.
           </p>
         </section>
       </div>
+    </div>
     </div>
   );
 }

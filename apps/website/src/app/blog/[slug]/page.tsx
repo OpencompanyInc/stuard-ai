@@ -85,7 +85,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
         const text = trimmedLine.substring(2);
         const id = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
         return (
-          <h1 id={id} key={index} className="text-4xl font-bold text-gray-900 mb-6 mt-8 first:mt-0 scroll-mt-24">
+          <h1 id={id} key={index} className="text-4xl font-bold text-white mb-6 mt-8 first:mt-0 scroll-mt-24">
             {text}
           </h1>
         );
@@ -93,7 +93,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
         const text = trimmedLine.substring(3);
         const id = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
         return (
-          <h2 id={id} key={index} className="text-3xl font-bold text-gray-900 mb-4 mt-8 scroll-mt-24">
+          <h2 id={id} key={index} className="text-3xl font-bold text-white mb-4 mt-8 scroll-mt-24">
             {text}
           </h2>
         );
@@ -101,7 +101,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
         const text = trimmedLine.substring(4);
         const id = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
         return (
-          <h3 id={id} key={index} className="text-2xl font-semibold text-gray-900 mb-3 mt-6 scroll-mt-24">
+          <h3 id={id} key={index} className="text-2xl font-semibold text-white mb-3 mt-6 scroll-mt-24">
             {text}
           </h3>
         );
@@ -109,7 +109,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
         const text = trimmedLine.substring(5);
         const id = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
         return (
-          <h4 id={id} key={index} className="text-xl font-semibold text-gray-900 mb-3 mt-6 scroll-mt-24">
+          <h4 id={id} key={index} className="text-xl font-semibold text-white mb-3 mt-6 scroll-mt-24">
             {text}
           </h4>
         );
@@ -120,7 +120,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
         if (match) {
           return (
             <li key={index} className="mb-2">
-              <strong className="font-semibold text-gray-900">{match[1]}</strong>: {match[2]}
+              <strong className="font-semibold text-white">{match[1]}</strong>: {match[2]}
             </li>
           );
         }
@@ -143,8 +143,8 @@ export default async function BlogPostPage({ params }: RouteParams) {
         }
         
         return (
-          <pre key={index} className="bg-gray-100 p-4 rounded-lg overflow-x-auto mb-6 mt-4">
-            <code className="text-sm font-mono text-gray-800">
+          <pre key={index} className="bg-white/5 p-4 rounded-lg overflow-x-auto mb-6 mt-4 border border-white/10">
+            <code className="text-sm font-mono text-[#D4D4D4]">
               {nextLines.join('\n')}
             </code>
           </pre>
@@ -157,10 +157,10 @@ export default async function BlogPostPage({ params }: RouteParams) {
         
         return (
           <div key={index} className="overflow-x-auto mb-4">
-            <table className="min-w-full border border-gray-200">
+            <table className="min-w-full border border-white/10">
               <tr>
                 {cells.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="border border-gray-200 px-4 py-2 text-sm">
+                  <td key={cellIndex} className="border border-white/10 px-4 py-2 text-sm">
                     {cell}
                   </td>
                 ))}
@@ -172,7 +172,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
       // Handle regular paragraphs
       else if (trimmedLine.length > 0) {
         return (
-          <p key={index} className="mb-4 text-gray-700 leading-relaxed">
+          <p key={index} className="mb-4 text-[#D4D4D4] leading-relaxed">
             {trimmedLine}
           </p>
         );
@@ -185,24 +185,24 @@ export default async function BlogPostPage({ params }: RouteParams) {
   return (
     <>
       <ReadingProgress targetSelector="#article-root" />
-      <div className="min-h-screen bg-white">
+      <div className="min-h-screen bg-[#0A0A0B] text-white">
         {/* Breadcrumb */}
-        <div className="bg-gray-50 border-b border-border">
+        <div className="bg-[#0C0C0D] border-b border-white/10">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
             <nav className="flex items-center space-x-2 text-sm">
-              <Link href="/" className="text-gray-500 hover:text-primary transition-colors">
+              <Link href="/" className="text-[#737373] hover:text-[#FF6B6E] transition-colors">
                 Home
               </Link>
-              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-[#737373]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
-              <Link href="/blog" className="text-gray-500 hover:text-primary transition-colors">
+              <Link href="/blog" className="text-[#737373] hover:text-[#FF6B6E] transition-colors">
                 Blog
               </Link>
-              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-[#737373]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
-              <span className="text-gray-900 font-medium">{post.title}</span>
+              <span className="text-white font-medium">{post.title}</span>
             </nav>
           </div>
         </div>
@@ -211,25 +211,25 @@ export default async function BlogPostPage({ params }: RouteParams) {
         <article className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <header className="mb-12">
             <div className="flex items-center gap-2 mb-4">
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gradient-accent text-white">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-[#FF383C]/15 text-[#FF6B6E]">
                 {post.category}
               </span>
               {post.featured && (
-                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gradient-primary text-white">
+                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-[#FF383C] text-white">
                   Featured
                 </span>
               )}
             </div>
             
-            <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 mb-6 leading-tight">
+            <h1 className="text-4xl lg:text-5xl font-bold text-white mb-6 leading-tight">
               {post.title}
             </h1>
             
-            <p className="text-xl text-gray-600 mb-8 leading-relaxed">
+            <p className="text-xl text-[#A3A3A3] mb-8 leading-relaxed">
               {post.excerpt}
             </p>
             
-            <div className="flex items-center justify-between pb-8 border-b border-border">
+            <div className="flex items-center justify-between pb-8 border-b border-white/10">
               <div className="flex items-center space-x-4">
                 <div className="w-12 h-12 rounded-full bg-gradient-primary flex items-center justify-center">
                   <span className="text-white font-semibold">
@@ -237,18 +237,18 @@ export default async function BlogPostPage({ params }: RouteParams) {
                   </span>
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-900">{post.author.name}</p>
+                  <p className="font-semibold text-white">{post.author.name}</p>
                   {post.author.bio && (
-                    <p className="text-sm text-gray-600">{post.author.bio}</p>
+                    <p className="text-sm text-[#A3A3A3]">{post.author.bio}</p>
                   )}
                 </div>
               </div>
               
               <div className="text-right">
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-[#737373]">
                   Published {formatDate(post.publishedAt)}
                 </p>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-[#737373]">
                   {post.readingTime} min read
                 </p>
               </div>
@@ -257,7 +257,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
 
           {/* Article Content */}
           <div className="grid lg:grid-cols-[1fr_280px] gap-8">
-            <div id="article-root" className="prose prose-lg max-w-none">
+            <div id="article-root" className="prose prose-invert prose-lg max-w-none">
               {formatContent(post.content)}
             </div>
             <div>
@@ -266,14 +266,14 @@ export default async function BlogPostPage({ params }: RouteParams) {
           </div>
 
           {/* Tags */}
-          <div className="mt-12 pt-8 border-t border-border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Tags</h3>
+          <div className="mt-12 pt-8 border-t border-white/10">
+            <h3 className="text-lg font-semibold text-white mb-4">Tags</h3>
             <div className="flex flex-wrap gap-2">
               {post.tags.map((tag) => (
                 <Link
                   key={tag}
                   href={`/blog?tag=${encodeURIComponent(tag)}`}
-                  className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-700 hover:bg-primary hover:text-white transition-colors"
+                  className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-white/5 text-[#D4D4D4] hover:bg-[#FF383C] hover:text-white transition-colors"
                 >
                   {tag}
                 </Link>
@@ -282,8 +282,8 @@ export default async function BlogPostPage({ params }: RouteParams) {
           </div>
 
           {/* Share */}
-          <div className="mt-8 pt-8 border-t border-border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Share this article</h3>
+          <div className="mt-8 pt-8 border-t border-white/10">
+            <h3 className="text-lg font-semibold text-white mb-4">Share this article</h3>
             <div className="flex space-x-4">
               <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -297,7 +297,7 @@ export default async function BlogPostPage({ params }: RouteParams) {
                 </svg>
                 <span>LinkedIn</span>
               </button>
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+              <button className="flex items-center space-x-2 px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/15 transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
                 </svg>
@@ -309,9 +309,9 @@ export default async function BlogPostPage({ params }: RouteParams) {
 
         {/* Related Posts */}
         {relatedPosts.length > 0 && (
-          <section className="bg-gray-50 border-t border-border">
+          <section className="bg-[#0C0C0D] border-t border-white/10">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-              <h2 className="text-3xl font-bold text-gray-900 mb-8">Related Articles</h2>
+              <h2 className="text-3xl font-bold text-white mb-8">Related Articles</h2>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {relatedPosts.map((relatedPost) => (
                   <BlogCard key={relatedPost.slug} post={relatedPost} />
@@ -322,21 +322,21 @@ export default async function BlogPostPage({ params }: RouteParams) {
         )}
 
         {/* Newsletter CTA */}
-        <section className="bg-white border-t border-border">
+        <section className="bg-[#0A0A0B] border-t border-white/10">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+            <h2 className="text-3xl font-bold text-white mb-4">
               Enjoyed this article?
             </h2>
-            <p className="text-xl text-gray-600 mb-8">
+            <p className="text-xl text-[#A3A3A3] mb-8">
               Subscribe to get more insights on AI, privacy, and productivity delivered to your inbox.
             </p>
             <div className="max-w-md mx-auto flex flex-col sm:flex-row gap-4">
               <input
                 type="email"
                 placeholder="Enter your email"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="flex-1 px-4 py-3 border border-white/10 bg-[#111111] text-white placeholder-[#737373] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF383C]/40 focus:border-transparent"
               />
-              <button className="px-6 py-3 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 transition-colors">
+              <button className="px-6 py-3 bg-[#FF383C] text-white font-semibold rounded-lg hover:bg-[#E0202A] transition-colors">
                 Subscribe
               </button>
             </div>

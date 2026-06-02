@@ -131,9 +131,16 @@ export default function RootLayout({
     <html lang="en" className={`${fontPrimary.variable} ${fontSerif.variable}`}>
       <head>
         <meta name="referrer" content="no-referrer" />
+        {/* General Sans (hero display font) — Fontshare is its official free CDN */}
+        <link rel="preconnect" href="https://api.fontshare.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://cdn.fontshare.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap"
+        />
         <link rel="apple-touch-icon" href="/stuard-mark.png" />
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#F3F1EB" />
+        <meta name="theme-color" content="#0A0A0B" />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
         {/* SEO: Structured data for preferred site name */}
         <script
@@ -168,7 +175,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased min-h-screen text-gray-900 font-sans">
+      <body className="antialiased min-h-screen text-[#F5F5F5] font-sans">
         <AuthProvider>
           <div className="relative min-h-screen">
             <LayoutShell>

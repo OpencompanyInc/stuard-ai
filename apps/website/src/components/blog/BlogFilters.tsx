@@ -25,13 +25,13 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
   const hasActiveFilters = selectedCategory !== 'All' || selectedTags.length > 0;
 
   return (
-    <div className="bg-white rounded-xl shadow-md border border-border p-6 mb-8">
+    <div className="bg-[#111111] rounded-xl border border-white/10 p-6 mb-8">
       <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-gray-900">Filter Posts</h3>
+        <h3 className="text-lg font-semibold text-white">Filter Posts</h3>
         {hasActiveFilters && (
           <button
             onClick={onClearFilters}
-            className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+            className="text-sm text-[#FF6B6E] hover:text-[#FF383C] font-medium transition-colors"
           >
             Clear all filters
           </button>
@@ -40,14 +40,14 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
 
       {/* Categories */}
       <div className="mb-6">
-        <h4 className="text-sm font-medium text-gray-700 mb-3">Categories</h4>
+        <h4 className="text-sm font-medium text-[#D4D4D4] mb-3">Categories</h4>
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => onCategoryChange('All')}
             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               selectedCategory === 'All'
-                ? 'bg-primary text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-[#FF383C] text-white'
+                : 'bg-white/5 text-[#D4D4D4] hover:bg-white/10'
             }`}
           >
             All
@@ -58,8 +58,8 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
               onClick={() => onCategoryChange(category)}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 selectedCategory === category
-                  ? 'bg-primary text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-[#FF383C] text-white'
+                  : 'bg-white/5 text-[#D4D4D4] hover:bg-white/10'
               }`}
             >
               {category}
@@ -70,7 +70,7 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
 
       {/* Tags */}
       <div>
-        <h4 className="text-sm font-medium text-gray-700 mb-3">Tags</h4>
+        <h4 className="text-sm font-medium text-[#D4D4D4] mb-3">Tags</h4>
         <div className="flex flex-wrap gap-2 mb-3">
           {displayTags.map((tag) => (
             <button
@@ -78,8 +78,8 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
               onClick={() => onTagToggle(tag)}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 selectedTags.includes(tag)
-                  ? 'bg-accent text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-[#FF383C] text-white'
+                  : 'bg-white/5 text-[#D4D4D4] hover:bg-white/10'
               }`}
             >
               {tag}
@@ -95,7 +95,7 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
         {tags.length > 8 && (
           <button
             onClick={() => setShowAllTags(!showAllTags)}
-            className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+            className="text-sm text-[#FF6B6E] hover:text-[#FF383C] font-medium transition-colors"
           >
             {showAllTags ? 'Show less' : `Show ${tags.length - 8} more tags`}
           </button>
@@ -104,9 +104,9 @@ const BlogFilters: React.FC<BlogFiltersProps> = ({
 
       {/* Active filters summary */}
       {hasActiveFilters && (
-        <div className="mt-6 pt-4 border-t border-border">
+        <div className="mt-6 pt-4 border-t border-white/10">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">
+            <span className="text-sm text-[#A3A3A3]">
               Active filters: {selectedCategory !== 'All' ? 1 : 0} category, {selectedTags.length} tags
             </span>
           </div>

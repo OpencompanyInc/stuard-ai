@@ -1,30 +1,37 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
 
-/* Make Tailwind v4 scan the shared chat-ui package so its utility classes
-   (chevron rotate-90, padding/gap classes, group-hover, animate-pulse, etc.)
-   actually get generated for the cloud IDE. */
-@source "../../../packages/chat-ui";
-@source "../../../packages/cloud-runtime-ui";
-@source "../../../packages/vm-chat";
+/* Make Tailwind v4 scan the shared chat-ui packages so their utility classes
+   (arbitrary values like left-[8.5px]/h-[18px], opacity modifiers, group-hover,
+   animate-pulse, etc.) actually get generated for the cloud IDE.
+   NOTE: @source paths are relative to THIS css file (apps/website/src/app), so
+   reaching the repo-root packages/ dir takes four `../` — earlier these used
+   three and silently resolved to a non-existent apps/packages/, meaning none of
+   the shared-package classes were ever generated (broken rails, copy buttons
+   behind text, full-width cards). */
+@source "../../../../packages/chat-ui";
+@source "../../../../packages/cloud-runtime-ui";
+@source "../../../../packages/vm-chat";
 
 :root {
-  /* Force light mode regardless of system preference */
-  color-scheme: light;
-  
-  /* Background Colors - Light Theme */
-  --background: #F3F1EB;
-  --foreground: #111827;
+  /* Dark theme is the default site-wide (matches the landing page) */
+  color-scheme: dark;
+
+  /* Background Colors - Dark Theme */
+  --background: #0A0A0B;
+  --foreground: #F5F5F5;
 
   /* Brand Colors */
-  --primary: #007AFF;
-  --primary-hover: #0066CC;
-  
-  --muted: #6B7280;
-  --border: #E5E7EB;
+  --primary: #FF383C;
+  --primary-hover: #D31519;
+
+  --muted: #A3A3A3;
+  --border: rgba(255, 255, 255, 0.1);
 
   /* Primary body font (Inter via next/font) */
   --font-primary: var(--font-inter), system-ui, -apple-system, sans-serif;
+  /* Display font for the hero (General Sans via Fontshare CDN, loaded in layout head) */
+  --font-general-sans: 'General Sans', var(--font-inter), system-ui, sans-serif;
 }
 
 @theme inline {
@@ -33,17 +40,35 @@
   --color-primary: var(--primary);
   --color-muted: var(--muted);
   --color-border: var(--border);
-  
+
+  /* Shared chat-ui / vm-chat theme tokens. Registering these as Tailwind v4
+     colors is what makes the opacity variants the shared components rely on
+     (border-theme/10, bg-theme-card/30, text-theme-muted/50, bg-theme-hover/40,
+     placeholder:text-theme-muted/50, …) actually generate. Without them the
+     classes are dropped: borders fall back to currentColor (near-white, looks
+     "chipped"), card/hover backgrounds disappear and muted text renders solid.
+     Base vars resolve at use-site (they're defined on .cloud-ide). */
+  --color-theme: var(--border);
+  --color-theme-fg: var(--foreground);
+  --color-theme-muted: var(--foreground-muted);
+  --color-theme-bg: var(--background);
+  --color-theme-sidebar: var(--sidebar-bg);
+  --color-theme-card: var(--card-bg);
+  --color-theme-input: var(--input-bg);
+  --color-theme-hover: var(--sidebar-item-hover);
+  --color-theme-active: var(--sidebar-item-active);
+  --color-primary-fg: var(--primary-foreground);
+
   --font-family-serif: var(--font-serif);
 }
 
 html {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
-  background-color: #F3F1EB;
-  color: #111827;
+  background-color: #0A0A0B;
+  color: #F5F5F5;
   font-family: var(--font-primary);
   position: relative;
 }
@@ -473,7 +498,7 @@ body.show-grid::before {
   content: "";
   position: fixed;
   inset: 0;
-  background-color: #F3F1EB;
+  background-color: #0A0A0B;
   background-image:
     linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
@@ -488,7 +513,7 @@ body.show-grid::after {
   content: "";
   position: fixed;
   inset: 0;
-  background-color: #F3F1EB;
+  background-color: #0A0A0B;
   z-index: -1;
   pointer-events: none;
   opacity: 0;
@@ -731,6 +756,143 @@ body.grid-faded::after {
   z-index: 1;
 }
 
+/* ── Compact demo (mirrors desktop compact mode — solid pills, no glass) ── */
+
+.stuard-compact-demo {
+  --compact-pill-bg: 23 23 23;
+  --compact-pill-fg: 255 255 255;
+  --compact-pill-fg-muted: 166 166 166;
+  --compact-pill-hover: #262626;
+  --compact-pill-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+.stuard-compact-demo .compact-thinking-glow {
+  --compact-thinking-glow-red: #ff383c;
+  --compact-thinking-glow-red-soft: #ff6b6b;
+  --compact-thinking-glow-amber: #ff8a4c;
+  position: relative;
+  width: 100%;
+  border-radius: 26px;
+  isolation: isolate;
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 26px;
+  overflow: hidden;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--compact-pill-shadow);
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::before,
+.stuard-compact-demo .compact-thinking-glow__inner::after {
+  content: '';
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  background-repeat: no-repeat;
+  border-radius: 450px;
+  pointer-events: none;
+  z-index: 0;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity, background-position, background-size;
+  animation: compact-thinking-wave 5.8s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::before {
+  bottom: -12px;
+  height: 26px;
+  background-image:
+    radial-gradient(ellipse 52% 118% at 50% 100%, #ff383c 0%, rgba(255, 56, 60, 0.98) 22%, transparent 74%),
+    linear-gradient(to top, rgba(255, 44, 48, 0.82) 0%, transparent 100%);
+  background-size: 34% 52%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(9px) saturate(1.6);
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::after {
+  bottom: -10px;
+  height: 22px;
+  background-image:
+    radial-gradient(ellipse 58% 112% at 50% 100%, rgba(255, 110, 55, 0.96) 0%, transparent 74%),
+    linear-gradient(to top, rgba(255, 56, 60, 0.62) 0%, transparent 100%);
+  background-size: 38% 48%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(11px) saturate(1.5);
+  animation-delay: -2.9s;
+}
+
+@keyframes compact-thinking-wave {
+  0%, 100% {
+    background-position: -12% 100%, 0 100%;
+    background-size: 34% 48%, 100% 100%;
+    transform: translate3d(0, 4px, 0) scaleY(0.86);
+    opacity: 0.62;
+  }
+  44% {
+    background-position: 50% 100%, 0 100%;
+    background-size: 74% 92%, 100% 100%;
+    transform: translate3d(0, -4px, 0) scaleY(1.16);
+    opacity: 1;
+  }
+  88% {
+    background-position: 108% 100%, 0 100%;
+    background-size: 36% 50%, 100% 100%;
+    transform: translate3d(0, 3px, 0) scaleY(0.88);
+    opacity: 0.65;
+  }
+}
+
+.stuard-compact-demo .compact-voice-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: rgb(var(--compact-pill-fg) / 0.9);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.12);
+  background: #2a2a2a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: background-color 0.2s ease, transform 0.18s ease;
+}
+
+.stuard-compact-demo .compact-voice-btn:hover {
+  background: #333333;
+}
+
+.stuard-compact-demo .compact-voice-btn:active {
+  transform: scale(0.95);
+}
+
+.stuard-compact-demo .compact-voice-btn--active {
+  border-color: rgba(255, 56, 60, 0.35);
+  background: color-mix(in srgb, rgba(255, 56, 60, 0.22) 55%, #2a2a2a 45%);
+}
+
+.stuard-compact-demo .compact-voice-btn--thinking {
+  background: #323232;
+}
+
+@keyframes compactResponseDot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stuard-compact-demo .compact-thinking-glow__inner::before,
+  .stuard-compact-demo .compact-thinking-glow__inner::after {
+    animation: none;
+    opacity: 0.94;
+  }
+}
+
 /* Utilities */
 .glass-nav {
   background: rgba(243, 241, 235, 0.8);
@@ -783,6 +945,8 @@ body.grid-faded::after {
   --primary: #FF383C;
   --primary-hover: #D31519;
   --primary-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
   --border: rgba(64, 64, 64, 0.5);
   --color-primary: #FF383C;
   --dashboard-panel-solid: rgba(23, 23, 23, 0.85);
@@ -1012,6 +1176,11 @@ body.dashboard-cloud-workspace .dashboard-shell-row > aside {
 
 .border-theme { border-color: var(--border); }
 .border-theme-sidebar { border-color: var(--sidebar-border); }
+
+/* Elevation shadows used by chat-ui / vm-chat popovers (model + history menus).
+   Defined as desktop Tailwind extensions, absent from the website's v4 build. */
+.shadow-soft { box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18); }
+.shadow-elevate { box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35); }
 
 .input-field {
   border: 1px solid var(--input-border);

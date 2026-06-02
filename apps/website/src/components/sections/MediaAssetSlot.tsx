@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import type { ReactNode } from 'react';
+import LazyVideo from '@/components/sections/LazyVideo';
 
 type MediaAssetSlotProps = {
   /** Shown in the placeholder until a real asset is wired in */
@@ -17,6 +18,8 @@ type MediaAssetSlotProps = {
   loop?: boolean;
   muted?: boolean;
   autoPlay?: boolean;
+  /** Show native controls — use when the clip has narration / sound. */
+  controls?: boolean;
   children?: ReactNode;
 };
 
@@ -37,6 +40,7 @@ export function MediaAssetSlot({
   loop = true,
   muted = true,
   autoPlay = true,
+  controls = false,
   children,
 }: MediaAssetSlotProps) {
   const frameClass = `
@@ -50,15 +54,15 @@ export function MediaAssetSlot({
   if (videoSrc) {
     return (
       <div className={frameClass}>
-        <video
+        <LazyVideo
           className="absolute inset-0 h-full w-full object-cover"
           src={videoSrc}
           poster={posterSrc}
           autoPlay={autoPlay}
           muted={muted}
           loop={loop}
-          playsInline
-          aria-label={imageAlt ?? label}
+          controls={controls}
+          ariaLabel={imageAlt ?? label}
         />
         {caption ? (
           <p className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 text-[12px] sm:text-[13px] text-[#E5E5E5]">

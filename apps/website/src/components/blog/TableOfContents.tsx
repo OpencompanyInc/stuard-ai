@@ -53,15 +53,15 @@ export default function TableOfContents({ rootSelector = '#article-root' }: { ro
   if (items.length === 0) return null;
 
   return (
-    <nav className="hidden lg:block sticky top-28 max-h-[70vh] overflow-auto p-4 bg-white/60 backdrop-blur-sm rounded-xl border border-gray-200/60">
-      <div className="text-sm font-semibold text-gray-900 mb-3">On this page</div>
+    <nav className="hidden lg:block sticky top-28 max-h-[70vh] overflow-auto p-4 bg-[#111111] rounded-xl border border-white/10">
+      <div className="text-sm font-semibold text-white mb-3">On this page</div>
       <ul className="space-y-2">
         {items.map((item) => (
           <li key={item.id} className="truncate">
             <a
               href={`#${item.id}`}
-              className={`block text-sm transition-colors hover:text-primary ${
-                activeId === item.id ? 'text-primary' : 'text-gray-600'
+              className={`block text-sm transition-colors hover:text-[#FF6B6E] ${
+                activeId === item.id ? 'text-[#FF6B6E]' : 'text-[#A3A3A3]'
               }`}
               style={{ paddingLeft: `${(item.level - 1) * 12}px` }}
             >

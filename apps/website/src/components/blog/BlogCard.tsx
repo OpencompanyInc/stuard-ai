@@ -18,7 +18,7 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
 
   if (featured) {
     return (
-      <article className="group relative bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden border border-border">
+      <article className="group relative bg-[#111111] rounded-2xl border border-white/10 hover:border-[#FF383C]/40 transition-all duration-300 overflow-hidden">
         <Link href={`/blog/${post.slug}`}>
           <div className="aspect-[16/9] bg-gradient-primary relative overflow-hidden">
             {post.image ? (
@@ -46,17 +46,17 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
           
           <div className="p-6">
             <div className="flex items-center justify-between mb-3">
-              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gradient-accent text-white">
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[#FF383C]/15 text-[#FF6B6E]">
                 {post.category}
               </span>
-              <span className="text-sm text-gray-500">{formatDate(post.publishedAt)} • {post.readingTime} min</span>
+              <span className="text-sm text-[#737373]">{formatDate(post.publishedAt)} • {post.readingTime} min</span>
             </div>
             
-            <h2 className="text-xl font-bold text-gray-900 mb-3 group-hover:text-primary transition-colors line-clamp-2">
+            <h2 className="text-xl font-bold text-white mb-3 group-hover:text-[#FF6B6E] transition-colors line-clamp-2">
               {post.title}
             </h2>
             
-            <p className="text-gray-600 mb-4 line-clamp-3">
+            <p className="text-[#A3A3A3] mb-4 line-clamp-3">
               {post.excerpt}
             </p>
             
@@ -72,14 +72,14 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
                   </div>
                 )}
                 <div>
-                  <p className="text-sm font-medium text-gray-900">{post.author.name}</p>
-                  <p className="text-xs text-gray-500">{post.readingTime} min read</p>
+                  <p className="text-sm font-medium text-white">{post.author.name}</p>
+                  <p className="text-xs text-[#737373]">{post.readingTime} min read</p>
                 </div>
               </div>
               
               <div className="flex flex-wrap gap-1">
                 {post.tags.slice(0, 2).map((tag) => (
-                  <span key={tag} className="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-600">
+                  <span key={tag} className="inline-flex items-center px-2 py-1 rounded text-xs bg-white/5 text-[#A3A3A3]">
                     {tag}
                   </span>
                 ))}
@@ -92,7 +92,7 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
   }
 
   return (
-    <article className="group bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-border">
+    <article className="group bg-[#111111] rounded-xl border border-white/10 hover:border-[#FF383C]/40 transition-all duration-300 overflow-hidden">
       <Link href={`/blog/${post.slug}`}>
         <div className="aspect-[16/10] bg-gradient-primary relative overflow-hidden">
           {post.image ? (
@@ -115,17 +115,17 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
         
         <div className="p-5">
           <div className="flex items-center justify-between mb-3">
-            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-[#FF383C]/10 text-[#FF6B6E]">
               {post.category}
             </span>
-            <span className="text-xs text-gray-500">{formatDate(post.publishedAt)} • {post.readingTime} min</span>
+            <span className="text-xs text-[#737373]">{formatDate(post.publishedAt)} • {post.readingTime} min</span>
           </div>
           
-          <h3 className="text-lg font-semibold text-gray-900 mb-2 group-hover:text-primary transition-colors line-clamp-2">
+          <h3 className="text-lg font-semibold text-white mb-2 group-hover:text-[#FF6B6E] transition-colors line-clamp-2">
             {post.title}
           </h3>
           
-          <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+          <p className="text-[#A3A3A3] text-sm mb-4 line-clamp-2">
             {post.excerpt}
           </p>
           
@@ -141,12 +141,12 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, featured = false }) => {
                 </div>
               )}
               <div>
-                <p className="text-xs font-medium text-gray-900">{post.author.name}</p>
-                <p className="text-xs text-gray-500">{post.readingTime} min read</p>
+                <p className="text-xs font-medium text-white">{post.author.name}</p>
+                <p className="text-xs text-[#737373]">{post.readingTime} min read</p>
               </div>
             </div>
             
-            <div className="flex items-center text-primary group-hover:translate-x-1 transition-transform">
+            <div className="flex items-center text-[#FF6B6E] group-hover:translate-x-1 transition-transform">
               <span className="text-sm font-medium mr-1">Read more</span>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

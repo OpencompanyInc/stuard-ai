@@ -69,13 +69,13 @@ export default function DownloadPage() {
   ];
 
   return (
-    <>
+    <div className="bg-[#0A0A0B] text-white">
       <section className="pt-32 pb-16">
         <Container className="text-center">
-          <h1 className="text-4xl lg:text-6xl font-bold mb-6 text-gray-900">
+          <h1 className="mb-6 text-4xl font-bold text-white lg:text-6xl">
             Download Stuard AI
           </h1>
-          <p className="text-xl lg:text-2xl mb-8 text-gray-600 max-w-3xl mx-auto">
+          <p className="mx-auto mb-8 max-w-3xl text-xl text-[#A3A3A3] lg:text-2xl">
             Automation-first desktop assistant for Windows. Plans you can see, actions on your device, and memory that compounds.
           </p>
         </Container>
@@ -84,62 +84,62 @@ export default function DownloadPage() {
       <section className="pb-24">
         <Container>
           {/* Download CTA */}
-          <div className="max-w-3xl mx-auto mb-16">
-            <Card className="p-8 bg-white border border-gray-200 shadow-xl text-center">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-500/20">
-                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="mx-auto mb-16 max-w-3xl">
+            <Card className="p-8 text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FF383C] to-[#D31519] shadow-lg shadow-[#FF383C]/20">
+                <svg className="h-10 w-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
               </div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Stuard AI for Windows</h2>
-              <p className="text-gray-600 mb-6">
+              <h2 className="mb-2 text-2xl font-bold text-white">Stuard AI for Windows</h2>
+              <p className="mb-6 text-[#A3A3A3]">
                 Download the latest version and start automating in minutes.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <div className="flex flex-col justify-center gap-3 sm:flex-row">
                 <a
                   href="/api/download?platform=windows"
-                  className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-gray-900 text-white font-semibold rounded-xl hover:bg-black transition-colors shadow-lg"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-8 py-3.5 font-semibold text-[#0A0A0B] transition-colors hover:bg-white/90"
                 >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M3 3h8.5v8.5H3V3zm9.5 0H21v8.5h-8.5V3zM3 12.5h8.5V21H3v-8.5zm9.5 0H21V21h-8.5v-8.5z" />
                   </svg>
                   Download for Windows
                 </a>
-                <Link href="/signup" className="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white text-gray-700 font-semibold rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors">
+                <Link href="/signup" className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-8 py-3.5 font-semibold text-white transition-colors hover:bg-white/10">
                   Create Free Account
                 </Link>
               </div>
-              <p className="text-xs text-gray-400 mt-4">
+              <p className="mt-4 text-xs text-[#737373]">
                 v1.0 &middot; Windows 10+ (64-bit) &middot; ~120 MB
               </p>
             </Card>
           </div>
 
           {/* Features Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
+          <div className="mb-16 grid grid-cols-1 gap-8 md:grid-cols-3">
             {features.map((feature, index) => (
-              <Card key={index} className="p-6 text-center hover:shadow-lg transition-shadow">
-                <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary mx-auto mb-4">
+              <Card key={index} className="p-6 text-center transition-colors hover:border-[#FF383C]/40">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-[#FF383C]/20 bg-[#FF383C]/10 text-[#FF6B6E]">
                   {feature.icon}
                 </div>
-                <h3 className="font-semibold text-gray-900 mb-2">{feature.title}</h3>
-                <p className="text-sm text-gray-600">{feature.description}</p>
+                <h3 className="mb-2 font-semibold text-white">{feature.title}</h3>
+                <p className="text-sm text-[#A3A3A3]">{feature.description}</p>
               </Card>
             ))}
           </div>
 
           {/* System Requirements */}
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-3xl font-bold text-gray-900 mb-8 text-center">
+          <div className="mx-auto max-w-4xl">
+            <h2 className="mb-8 text-center text-3xl font-bold text-white">
               System Requirements
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
               <Card className="p-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Minimum</h3>
+                <h3 className="mb-4 text-xl font-semibold text-white">Minimum</h3>
                 <ul className="space-y-3">
                   {systemRequirements.minimum.map((req, index) => (
-                    <li key={index} className="flex items-center text-gray-700">
-                      <svg className="w-5 h-5 text-primary mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <li key={index} className="flex items-center text-[#D4D4D4]">
+                      <svg className="mr-3 h-5 w-5 flex-shrink-0 text-[#FF6B6E]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       <span>{req}</span>
@@ -148,15 +148,15 @@ export default function DownloadPage() {
                 </ul>
               </Card>
 
-              <Card className="p-6 border-2 border-primary">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xl font-semibold text-gray-900">Recommended</h3>
-                  <span className="text-xs font-semibold text-primary bg-primary/10 px-2 py-1 rounded">BEST</span>
+              <Card className="border-[#FF383C]/40 p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-white">Recommended</h3>
+                  <span className="rounded bg-[#FF383C]/10 px-2 py-1 text-xs font-semibold text-[#FF6B6E]">BEST</span>
                 </div>
                 <ul className="space-y-3">
                   {systemRequirements.recommended.map((req, index) => (
-                    <li key={index} className="flex items-center text-gray-700">
-                      <svg className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <li key={index} className="flex items-center text-[#D4D4D4]">
+                      <svg className="mr-3 h-5 w-5 flex-shrink-0 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       <span>{req}</span>
@@ -168,44 +168,32 @@ export default function DownloadPage() {
           </div>
 
           {/* Installation Steps */}
-          <div className="mt-16 max-w-3xl mx-auto">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">
+          <div className="mx-auto mt-16 max-w-3xl">
+            <h2 className="mb-6 text-center text-2xl font-bold text-white">
               Quick & Easy Installation
             </h2>
             <Card className="p-8">
               <ol className="space-y-4">
-                <li className="flex items-start">
-                  <div className="flex-shrink-0 w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center font-semibold mr-4">
-                    1
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-1">Download the installer</h4>
-                    <p className="text-gray-600 text-sm">Click the download button above to get the latest version</p>
-                  </div>
-                </li>
-                <li className="flex items-start">
-                  <div className="flex-shrink-0 w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center font-semibold mr-4">
-                    2
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-1">Run the installer</h4>
-                    <p className="text-gray-600 text-sm">Follow the simple setup wizard</p>
-                  </div>
-                </li>
-                <li className="flex items-start">
-                  <div className="flex-shrink-0 w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center font-semibold mr-4">
-                    3
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-1">Sign in and start</h4>
-                    <p className="text-gray-600 text-sm">Press Win+Space to activate your AI assistant</p>
-                  </div>
-                </li>
+                {[
+                  { n: 1, title: 'Download the installer', desc: 'Click the download button above to get the latest version' },
+                  { n: 2, title: 'Run the installer', desc: 'Follow the simple setup wizard' },
+                  { n: 3, title: 'Sign in and start', desc: 'Press Win+Space to activate your AI assistant' },
+                ].map((step) => (
+                  <li key={step.n} className="flex items-start">
+                    <div className="mr-4 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-[#FF383C]/20 bg-[#FF383C]/10 font-semibold text-[#FF6B6E]">
+                      {step.n}
+                    </div>
+                    <div>
+                      <h4 className="mb-1 font-semibold text-white">{step.title}</h4>
+                      <p className="text-sm text-[#A3A3A3]">{step.desc}</p>
+                    </div>
+                  </li>
+                ))}
               </ol>
             </Card>
           </div>
         </Container>
       </section>
-    </>
+    </div>
   );
 }
