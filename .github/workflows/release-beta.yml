@@ -303,35 +303,39 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
       - name: Pull Vercel environment (preview)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-      - name: Neutralize pulled Root Directory
-        working-directory: apps/website
-        # `vercel build` runs here (so apps/website/vercel.json + the Next app are
-        # found), but it ALSO applies the project's dashboard Root Directory
-        # (apps/website) on top of this cwd -> it then looks for build output at
-        # apps/website/apps/website/.next and dies with ENOENT routes-manifest.json.
-        # Clearing rootDirectory from the pulled config stops the double-apply.
-        # The cat before/after surfaces the real pulled settings in the run log.
+      - name: Pin Root Directory to apps/website
+        # The Vercel project's pulled rootDirectory is null (it treats the app as
+        # repo-root) but the Next app + its vercel.json actually live in
+        # apps/website. We run the Vercel CLI from the repo root (the real pnpm
+        # monorepo root) and point Vercel at the package via rootDirectory, so the
+        # @vercel/next builder resolves output to <repo-root>/apps/website/.next.
+        # Running the CLI *inside* apps/website made the builder treat that as the
+        # monorepo root and append the package path again ->
+        # apps/website/apps/website/.next (ENOENT routes-manifest.json). cat
+        # before/after keeps the real pulled settings visible in the run log.
         run: |
           echo "---- .vercel/project.json (pulled) ----"
           cat .vercel/project.json || true
-          node -e "const fs=require('fs');const p='.vercel/project.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));if(j.settings&&j.settings.rootDirectory){console.error('clearing rootDirectory:',j.settings.rootDirectory);j.settings.rootDirectory=null;}fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          node -e "const fs=require('fs');const p='.vercel/project.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.settings=j.settings||{};j.settings.rootDirectory='apps/website';fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "---- after ----"
           cat .vercel/project.json || true
       - name: Build with Vercel (preview)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel build --token=${{ secrets.VERCEL_TOKEN }} || {
+            echo "=== build failed; locating Next output to compare vs the path Vercel expected ==="
+            find . -name routes-manifest.json -not -path '*/node_modules/*' 2>/dev/null || true
+            exit 1
+          }
       - name: Deploy prebuilt to Vercel (preview)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
