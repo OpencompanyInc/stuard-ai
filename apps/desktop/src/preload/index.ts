@@ -219,7 +219,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
   customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
   // Transform JSX component code (for UI builder preview)
-  customUiTransformJsx: (code: string) => ipcRenderer.invoke('customUi:transformJsx', code),
+  customUiTransformJsx: (code: string, availableModules?: string[]) => ipcRenderer.invoke('customUi:transformJsx', code, availableModules),
+  // UI packages (install-once local packages for custom_ui)
+  customUiGetUiPackagesBundle: (setId: string) => ipcRenderer.invoke('customUi:getUiPackagesBundle', setId),
+  customUiEnsureUiPackages: (packages: string[]) => ipcRenderer.invoke('customUi:ensureUiPackages', packages),
+  uiPackagesInstall: (payload: { setId?: string; packages?: string[]; mode?: 'add' | 'set'; allowNpm?: boolean; force?: boolean }) => ipcRenderer.invoke('uiPackages:install', payload),
+  uiPackagesStatus: (setId: string) => ipcRenderer.invoke('uiPackages:status', setId),
+  uiPackagesList: () => ipcRenderer.invoke('uiPackages:list'),
+  uiPackagesRemove: (setId: string) => ipcRenderer.invoke('uiPackages:remove', setId),
 
   workflowsList: () => ipcRenderer.invoke('workflows:list'),
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),

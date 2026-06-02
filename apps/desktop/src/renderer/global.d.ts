@@ -147,7 +147,13 @@ declare global {
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
       customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
-      customUiTransformJsx: (code: string) => Promise<{ ok: boolean; code: string; syntax?: string; error?: string }>;
+      customUiTransformJsx: (code: string, availableModules?: string[]) => Promise<{ ok: boolean; code: string; syntax?: string; diagnostics?: Array<{ line: number; column?: number; severity: 'error' | 'warning'; message: string }>; error?: string }>;
+      customUiGetUiPackagesBundle: (setId: string) => Promise<{ ok: boolean; js?: string; css?: string; modules?: string[]; hash?: string; error?: string }>;
+      customUiEnsureUiPackages: (packages: string[]) => Promise<{ ok: boolean; js?: string; css?: string; modules?: string[]; hash?: string; error?: string }>;
+      uiPackagesInstall: (payload: { setId?: string; packages?: string[]; mode?: 'add' | 'set'; allowNpm?: boolean; force?: boolean }) => Promise<{ ok: boolean; status?: { id: string; built: boolean; modules: string[]; packages: string[]; failed?: Array<{ name: string; reason: string }>; jsBytes?: number; cssBytes?: number; hash?: string }; error?: string }>;
+      uiPackagesStatus: (setId: string) => Promise<{ ok: boolean; status?: { id: string; exists: boolean; built: boolean; modules: string[]; packages: string[]; failed?: Array<{ name: string; reason: string }> }; error?: string }>;
+      uiPackagesList: () => Promise<{ ok: boolean; sets?: Array<{ id: string; built: boolean; modules: string[]; packages: string[] }>; curated?: Array<{ name: string; description: string; builtin: boolean }>; error?: string }>;
+      uiPackagesRemove: (setId: string) => Promise<{ ok: boolean; set?: string }>;
 
       workflowsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; description?: string; updatedAt?: string; version?: string; marketplaceSlug?: string; locked?: boolean; triggers?: string[]; folder?: string; isWorkspace?: boolean }>; folders?: string[]; error?: string }>;
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;

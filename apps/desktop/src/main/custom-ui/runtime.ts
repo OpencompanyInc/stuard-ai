@@ -9,6 +9,7 @@ import { getPreloadPath } from './preload';
 import { generateEnhancedCustomUiHtml } from './html';
 import { setVariable, type VariableValue } from '../workflow-variables';
 import { getScreenCaptureInvisible } from '../windows/window';
+import { loadUiPackagesBundle, ensureInlineUiPackages, type UiPackagesBundle } from './ui-packages';
 
 // Temp directory for custom UI HTML files (allows file:// loading so local images work)
 const CUSTOM_UI_TMP_DIR = path.join(os.tmpdir(), 'stuard_custom_ui');
@@ -50,6 +51,10 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const component = typeof args?.component === 'string' ? args.component : undefined;
   const data = args?.data || {};
   const keepOpen = args?.keepOpen === true;
+  const uiPackageSet = typeof args?.uiPackageSet === 'string' ? args.uiPackageSet.trim() : '';
+  const uiPackages = Array.isArray(args?.uiPackages)
+    ? args.uiPackages.map((p: any) => String(p || '').trim()).filter(Boolean)
+    : [];
   const borderRadius = Number(windowCfg.borderRadius ?? windowCfg.radius ?? 0);
   const margin = Number(windowCfg.margin ?? 20);
   const frameless = windowCfg.frameless === true || windowCfg.frameless === 'true';
@@ -121,6 +126,8 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     'data',
     'pages',
     'startPage',
+    'uiPackageSet',
+    'uiPackages',
     '__flowSteps',
     '__stepId',
   ]);
@@ -314,6 +321,21 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     }
   }
 
+  // Resolve UI package bundle (install-once local packages), if requested.
+  let uiPackagesBundle: UiPackagesBundle | null = null;
+  try {
+    if (uiPackageSet) {
+      uiPackagesBundle = loadUiPackagesBundle(uiPackageSet);
+      if (!uiPackagesBundle) {
+        ctx.logFn(`custom_ui: uiPackageSet "${uiPackageSet}" not found or not built — run ui_packages_install first.`);
+      }
+    } else if (uiPackages.length > 0) {
+      uiPackagesBundle = await ensureInlineUiPackages(uiPackages, ctx.logFn);
+    }
+  } catch (e: any) {
+    ctx.logFn(`custom_ui: failed to load UI packages: ${e?.message || e}`);
+  }
+
   // Generate enhanced HTML
   const htmlContent = generateEnhancedCustomUiHtml({
     id,
@@ -329,6 +351,9 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     component,
     pages,
     startPage,
+    uiPackagesJs: uiPackagesBundle?.js,
+    uiPackagesCss: uiPackagesBundle?.css,
+    uiPackagesModules: uiPackagesBundle?.modules,
     backgroundType,
     backgroundColor,
     gradient,

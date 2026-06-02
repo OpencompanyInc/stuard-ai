@@ -1279,14 +1279,87 @@ export function setupIpc() {
   });
 
   // Transform JSX component code (for UI builder preview)
-  ipcMain.handle('customUi:transformJsx', async (_e, code: string) => {
+  ipcMain.handle('customUi:transformJsx', async (_e, code: string, availableModules?: string[]) => {
     try {
       const { prepareComponentCode } = require('../custom-ui/jsx-transform');
-      const result = prepareComponentCode(code);
-      return { ok: true, code: result.code, syntax: result.syntax };
+      const result = prepareComponentCode(code, { availableModules });
+      return { ok: true, code: result.code, syntax: result.syntax, diagnostics: result.diagnostics };
     } catch (e: any) {
       logger.error('[customUi:transformJsx] Failed:', e);
       return { ok: false, error: String(e?.message || e), code };
+    }
+  });
+
+  // Build (once, cached) a builtin-only package set from an inline package list
+  // and return its bundle. Mirrors the custom_ui uiPackages render path.
+  ipcMain.handle('customUi:ensureUiPackages', async (_e, packages: string[]) => {
+    try {
+      const { ensureInlineUiPackages } = require('../custom-ui/ui-packages');
+      const bundle = await ensureInlineUiPackages(Array.isArray(packages) ? packages : [], (m: string) => { try { logger.info(`[ui_packages] ${m}`); } catch { } });
+      if (!bundle) return { ok: false, error: 'ui_packages_build_failed' };
+      return { ok: true, js: bundle.js, css: bundle.css, modules: bundle.modules, hash: bundle.hash };
+    } catch (e: any) {
+      logger.error('[customUi:ensureUiPackages] Failed:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // Return a built UI package bundle for inline preview (UI builder on desktop).
+  ipcMain.handle('customUi:getUiPackagesBundle', async (_e, setId: string) => {
+    try {
+      const { loadUiPackagesBundle } = require('../custom-ui/ui-packages');
+      const bundle = loadUiPackagesBundle(String(setId || ''));
+      if (!bundle) return { ok: false, error: 'ui_packages_not_built' };
+      return { ok: true, js: bundle.js, css: bundle.css, modules: bundle.modules, hash: bundle.hash };
+    } catch (e: any) {
+      logger.error('[customUi:getUiPackagesBundle] Failed:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  // UI package set management (install-once local packages for custom_ui).
+  ipcMain.handle('uiPackages:install', async (_e, payload: { setId?: string; packages?: string[]; mode?: 'add' | 'set'; allowNpm?: boolean; force?: boolean }) => {
+    try {
+      const { installUiPackages } = require('../custom-ui/ui-packages');
+      const status = await installUiPackages({
+        setId: String(payload?.setId || 'default'),
+        packages: Array.isArray(payload?.packages) ? payload!.packages! : [],
+        mode: payload?.mode === 'set' ? 'set' : 'add',
+        allowNpm: payload?.allowNpm === true,
+        force: payload?.force === true,
+        logFn: (m: string) => { try { logger.info(`[ui_packages] ${m}`); } catch { } },
+      });
+      return { ok: true, status };
+    } catch (e: any) {
+      logger.error('[uiPackages:install] Failed:', e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('uiPackages:status', async (_e, setId: string) => {
+    try {
+      const { getUiPackagesStatus } = require('../custom-ui/ui-packages');
+      return { ok: true, status: getUiPackagesStatus(String(setId || 'default')) };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('uiPackages:list', async () => {
+    try {
+      const { listUiPackageSets, CURATED_UI_PACKAGES } = require('../custom-ui/ui-packages');
+      return { ok: true, sets: listUiPackageSets(), curated: CURATED_UI_PACKAGES };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  });
+
+  ipcMain.handle('uiPackages:remove', async (_e, setId: string) => {
+    try {
+      const { removeUiPackageSet } = require('../custom-ui/ui-packages');
+      return removeUiPackageSet(String(setId || ''));
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || e) };
     }
   });
 

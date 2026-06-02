@@ -101,6 +101,125 @@ const RUNTIME_GLOBALS = new Set([
 ]);
 
 /**
+ * Bare imports that must be mapped to existing runtime globals instead of the
+ * UI packages require shim. Bundling React again would break hooks.
+ */
+const GLOBAL_IMPORT_ALIASES: Record<string, string> = {
+  react: 'React',
+  'react-dom': 'ReactDOM',
+  'react-dom/client': 'ReactDOM',
+  'framer-motion': 'window.Motion',
+};
+
+interface ParsedImportClause {
+  def: string | null;
+  ns: string | null;
+  named: Array<{ name: string; alias: string }>;
+}
+
+function parseImportClause(clause: string): ParsedImportClause {
+  let rest = clause.trim();
+  let def: string | null = null;
+  let ns: string | null = null;
+  const named: Array<{ name: string; alias: string }> = [];
+
+  if (rest && rest[0] !== '{' && rest[0] !== '*') {
+    const defMatch = rest.match(/^([A-Za-z_$][\w$]*)\s*,?\s*/);
+    if (defMatch) {
+      def = defMatch[1];
+      rest = rest.slice(defMatch[0].length);
+    }
+  }
+
+  const nsMatch = rest.match(/^\*\s*as\s+([A-Za-z_$][\w$]*)\s*,?\s*/);
+  if (nsMatch) {
+    ns = nsMatch[1];
+    rest = rest.slice(nsMatch[0].length);
+  }
+
+  const namedMatch = rest.match(/\{([^}]*)\}/);
+  if (namedMatch) {
+    for (const tok of namedMatch[1].split(',')) {
+      const piece = tok.trim();
+      if (!piece) continue;
+      const parts = piece.split(/\s+as\s+/);
+      const name = parts[0].trim();
+      const alias = (parts[1] || parts[0]).trim();
+      if (name) named.push({ name, alias });
+    }
+  }
+
+  return { def, ns, named };
+}
+
+function bindingFor(source: string, clause: string): string {
+  const { def, ns, named } = parseImportClause(clause);
+  const parts: string[] = [];
+  const destructure = () =>
+    named.map((n) => (n.name === n.alias ? n.name : `${n.name}: ${n.alias}`)).join(', ');
+
+  const globalAlias = GLOBAL_IMPORT_ALIASES[source];
+  if (globalAlias) {
+    if (def) parts.push(`var ${def} = ${globalAlias};`);
+    if (ns) parts.push(`var ${ns} = ${globalAlias};`);
+    if (named.length) parts.push(`var { ${destructure()} } = ${globalAlias};`);
+    return parts.join(' ');
+  }
+
+  const src = JSON.stringify(source);
+  if (def) parts.push(`var ${def} = __stuardImportDefault(${src});`);
+  if (ns) parts.push(`var ${ns} = __stuardRequire(${src});`);
+  if (named.length) parts.push(`var { ${destructure()} } = __stuardRequire(${src});`);
+  return parts.join(' ');
+}
+
+/**
+ * Rewrite ESM `import` statements into runtime bindings so component code can
+ * use installed packages. React/ReactDOM/Framer map to globals; everything else
+ * resolves through the UI packages require shim (which throws a clear error if the
+ * package is not installed). Returns diagnostics for imports of modules not in
+ * the provided `availableModules` list.
+ */
+export function rewriteComponentImports(
+  code: string,
+  availableModules?: string[],
+): { code: string; diagnostics: ComponentDiagnostic[] } {
+  const diagnostics: ComponentDiagnostic[] = [];
+  if (!/\bimport\b/.test(code)) return { code, diagnostics };
+
+  const available = availableModules ? new Set(availableModules) : null;
+  const lineAt = (index: number) => code.slice(0, index).split('\n').length;
+
+  const flagUnknown = (source: string, index: number) => {
+    if (GLOBAL_IMPORT_ALIASES[source]) return;
+    if (available && !available.has(source)) {
+      diagnostics.push({
+        line: lineAt(index),
+        severity: 'error',
+        message: `Package "${source}" is not installed for this custom_ui. Install it with ui_packages_install (or pass it in uiPackages).`,
+      });
+    }
+  };
+
+  let out = code.replace(
+    /import\s+([^;'"]*?)\s+from\s*['"]([^'"]+)['"]\s*;?/g,
+    (_full, clause: string, source: string, index: number) => {
+      flagUnknown(source, index);
+      return bindingFor(source, clause);
+    },
+  );
+
+  // Side-effect-only imports: drop globals, route the rest through the shim.
+  out = out.replace(/import\s*['"]([^'"]+)['"]\s*;?/g, (_full, source: string, index: number) => {
+    if (GLOBAL_IMPORT_ALIASES[source]) return '';
+    flagUnknown(source, index);
+    return `__stuardRequire(${JSON.stringify(source)});`;
+  });
+
+  return { code: out, diagnostics };
+}
+
+/**
  * Validate component code for common issues before rendering.
  *
  * Performs lightweight static analysis:
@@ -176,10 +295,16 @@ export function validateComponentCode(code: string): ComponentDiagnostic[] {
  * - Detects JSX syntax and transforms to React.createElement calls
  *
  * @param code - Raw component code string
+ * @param options - Optional: availableModules lists packages installed in the
+ *                   selected package set, used to validate `import`s.
  * @returns Object with the processed code, detected syntax type, and diagnostics
  */
-export function prepareComponentCode(code: string): { code: string; syntax: 'jsx' | 'plain'; diagnostics?: ComponentDiagnostic[] } {
+export function prepareComponentCode(
+  code: string,
+  options?: { availableModules?: string[] },
+): { code: string; syntax: 'jsx' | 'plain'; diagnostics?: ComponentDiagnostic[] } {
   let processed = code;
+  const importDiagnostics: ComponentDiagnostic[] = [];
 
   // Step 0: Decode HTML entities (common when component code passes through HTML pipelines)
   if (processed.includes('&gt;') || processed.includes('&lt;') || processed.includes('&amp;') || processed.includes('&quot;') || processed.includes('&#039;') || processed.includes('&#39;')) {
@@ -257,8 +382,16 @@ export function prepareComponentCode(code: string): { code: string; syntax: 'jsx
     );
   }).join('\n');
 
+  // Step 3.5: Rewrite ESM imports into runtime bindings (globals + UI packages shim).
+  // Must run before validation/transform — the runtime IIFE cannot use `import`.
+  {
+    const rewritten = rewriteComponentImports(processed, options?.availableModules);
+    processed = rewritten.code;
+    importDiagnostics.push(...rewritten.diagnostics);
+  }
+
   // Step 4: Validate before transform (on the pre-transform source for accurate line numbers)
-  const diagnostics = validateComponentCode(processed);
+  const diagnostics = [...importDiagnostics, ...validateComponentCode(processed)];
   const errors = diagnostics.filter(d => d.severity === 'error');
 
   // If there are hard errors (like unknown hooks), log them but still attempt rendering

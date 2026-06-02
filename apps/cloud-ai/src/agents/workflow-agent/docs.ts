@@ -1373,6 +1373,7 @@ RULES:
 • blocking: true (default) → workflow WAITS for submit/close.
 • blocking: false → UI shown, workflow continues. For dashboards.
 • Use standard Tailwind classes. Arbitrary values (bg-[#abc]) may miss offline.
+• Need a real npm UI library (recharts, lucide-react, …)? See custom_ui_packages.
 
 CRITICAL:
 1. EVERY button MUST have onClick — no onClick = dead button = workflow blocks
@@ -1391,6 +1392,59 @@ updates state. Without id, a new window spawns each run (flash + lost state).
 
 TIP: For small popups, use frameless + borderRadius. For full dashboards, use
 framed window and a normal app icon.`,
+  },
+
+  {
+    id: 'custom_ui_packages',
+    title: 'Custom UI — Installable Packages (npm libraries, local install-once)',
+    keywords: [
+      'package', 'packages', 'npm', 'library', 'install', 'recharts', 'chart',
+      'lucide', 'icons', 'import', 'ui_packages_install', 'uiPackages', 'uiPackageSet',
+      'three', 'clsx', 'tailwind-merge', 'class-variance-authority',
+    ],
+    content: `custom_ui can use real npm UI libraries via local package sets — installed
+once, cached, and bundled offline. React,
+ReactDOM and Framer Motion are always available as globals, so never install
+those.
+
+TWO WAYS TO USE PACKAGES:
+
+1) INLINE (simplest) — list packages on the custom_ui call. Builtin curated
+   packages build automatically on first render and are cached after:
+   { tool: "custom_ui", args: {
+       id: "sales",
+       uiPackages: ["recharts"],
+       component: "import { LineChart, Line, XAxis } from 'recharts';\\nfunction App(){ const [d]=useVar('data',[]); return <LineChart width={360} height={200} data={d}><XAxis dataKey='name'/><Line dataKey='v'/></LineChart>; }",
+       data: { data: "{{prev.json.points}}" }
+   }}
+
+2) NAMED SET (reuse across workflows) — install once with the tool, then
+   reference it by name:
+   { tool: "ui_packages_install", args: { set: "charts", packages: ["recharts", "lucide-react"] } }
+   { tool: "custom_ui", args: { uiPackageSet: "charts", component: "import { Activity } from 'lucide-react'; function App(){ return <Activity/>; }" } }
+
+IMPORTS:
+• Use normal ESM imports — they are rewritten to the local bundle at render.
+  import { X } from 'pkg';  import Default from 'pkg';  import * as NS from 'pkg';
+• import from 'react' / 'react-dom' / 'framer-motion' maps to the existing
+  globals (no install needed).
+• Importing a package that isn't installed shows a clear error in the window.
+
+CURATED (offline, no npm needed):
+  lucide-react, recharts, clsx, tailwind-merge, class-variance-authority, three
+
+OTHER PACKAGES (require npm on the machine):
+  { tool: "ui_packages_install", args: { set: "ui", packages: ["@mantine/core"], allowNpm: true } }
+
+MANAGEMENT TOOLS:
+  ui_packages_install  { set, packages: [], mode?: 'add'|'set', allowNpm?, force? }
+  ui_packages_status   { set }      → installed modules, sizes, failures
+  ui_packages_list     {}           → all sets + curated catalog
+  ui_packages_remove   { set }      → delete a set
+
+TIP: Prefer Tailwind classes for styling; use packages when you need real
+widgets (charts, icon sets, component kits). Large libs like three bundle big —
+expect a one-time build delay, then it's cached.`,
   },
 
   {

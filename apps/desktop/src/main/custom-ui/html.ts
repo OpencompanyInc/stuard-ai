@@ -257,6 +257,9 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     animation,
     contentPadding = 0,
     draggable = true,
+    uiPackagesJs = '',
+    uiPackagesCss = '',
+    uiPackagesModules,
   } = options;
 
   // Build sub-CSS pieces
@@ -312,7 +315,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
     }`;
   }
 
-  const { code: processedComponent, diagnostics } = prepareComponentCode(rawCode);
+  const { code: processedComponent, diagnostics } = prepareComponentCode(rawCode, { availableModules: uiPackagesModules });
 
   // Load bundled React runtime (offline)
   let reactRuntime: string;
@@ -338,8 +341,10 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
   <title>${escapeHtml(title)}</title>
   <style>${getTailwindPrebuiltCss()}</style>
   <style>${EXTRA_CSS}</style>
+  ${uiPackagesCss ? `<style>${uiPackagesCss}</style>` : ''}
   <style>${themeCss}\n${css || ''}\n${animationKeyframes}</style>
   <script>${reactRuntime}<\/script>
+  ${uiPackagesJs ? `<script>${uiPackagesJs}<\/script>` : ''}
 </head>
 <body${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
   ${bgOverlay}
@@ -463,6 +468,22 @@ function buildRuntimeScript(options: {
           '<h2 style="font-size:18px;font-weight:bold;margin-bottom:8px">React Runtime Error</h2>' +
           '<p style="color:#94a3b8;font-size:13px">React or ReactDOM failed to initialize. This is a bug.</p></div>';
         return;
+      }
+
+      // === UI Packages Require Shim ===
+      // Component imports are rewritten to these helpers. Packages are bundled
+      // into window.__stuardUiPackages.modules at install time (see ui-packages service).
+      function __stuardRequire(name) {
+        var reg = window.__stuardUiPackages;
+        if (!reg || !reg.modules || !Object.prototype.hasOwnProperty.call(reg.modules, name)) {
+          throw new Error('Package "' + name + '" is not installed for this custom_ui. ' +
+            'Install it with the ui_packages_install tool (or pass uiPackages), then set uiPackageSet on this custom_ui.');
+        }
+        return reg.modules[name];
+      }
+      function __stuardImportDefault(name) {
+        var mod = __stuardRequire(name);
+        return (mod && mod.default !== undefined) ? mod.default : mod;
       }
 
       // === React Hooks (global scope for component code) ===

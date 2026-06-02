@@ -54,4 +54,10 @@ export type CustomUiHtmlOptions = {
   overflow?: string;
   invisible?: boolean;
   draggable?: boolean;
+  /** UI package bundle (esbuild IIFE) injected before the component runtime. */
+  uiPackagesJs?: string;
+  /** CSS collected from the bundled UI packages. */
+  uiPackagesCss?: string;
+  /** Package import names made available to component code. */
+  uiPackagesModules?: string[];
 };

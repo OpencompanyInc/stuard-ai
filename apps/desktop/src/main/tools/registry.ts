@@ -6,6 +6,10 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'custom_ui': { kind: 'electron' },
   'update_custom_ui': { kind: 'electron' },
   'close_custom_ui': { kind: 'electron' },
+  'ui_packages_install': { kind: 'electron' },  // Install a local package set for custom_ui
+  'ui_packages_status': { kind: 'electron' },    // Inspect a custom_ui package set
+  'ui_packages_list': { kind: 'electron' },      // List custom_ui package sets
+  'ui_packages_remove': { kind: 'electron' },    // Delete a custom_ui package set
   'send_notification': { kind: 'electron' },
   'send_ui_event': { kind: 'electron' },     // Send event to custom UI window
   'run_ui_script': { kind: 'electron' },     // Run JavaScript in custom UI window

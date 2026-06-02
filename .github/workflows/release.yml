@@ -201,6 +201,19 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: pnpm run sync:workflow-docs
 
+      # Sync tool/node schemas so search_tools + search_workflow_nodes +
+      # get_tool_schema see whatever shipped in this deploy. Incremental —
+      # only tools not already in tool_embeddings are embedded (changed
+      # schemas / obsolete pruning need a manual `sync:tools:force`).
+      - name: Sync tool_embeddings
+        working-directory: apps/cloud-ai
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: pnpm run sync:tools
+
       - name: Output Deployment Info
         run: |
           echo "## ☁️ Cloud AI Deployed" >> $GITHUB_STEP_SUMMARY

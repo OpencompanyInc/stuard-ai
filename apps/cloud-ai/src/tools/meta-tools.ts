@@ -329,6 +329,71 @@ const updateCustomUiTool = createTool({
     }
 });
 
+// ── Custom UI installable packages (local npm libraries for custom_ui) ──
+// install-once package sets bundled offline by the desktop. Authoring tools the
+// agent emits before/alongside custom_ui; they execute on the desktop bridge.
+const uiPackagesInstallTool = createTool({
+    id: 'ui_packages_install',
+    description: `Install a local npm package set for custom_ui (install-once, reuse by name).
+Bundled offline by the desktop and cached. React, ReactDOM and Framer Motion are
+already runtime globals — never install those.
+
+Curated packages bundle with no npm needed: lucide-react, recharts, clsx,
+tailwind-merge, class-variance-authority, three. Any other package requires
+allowNpm: true (npm must be available on the machine).
+
+After installing, reference the set from a custom_ui call with { uiPackageSet: "<set>" }
+and import packages normally in the component (import { X } from 'pkg').
+
+Tip: for one custom_ui you can skip this and pass uiPackages: ["recharts"] inline
+on the custom_ui call (curated packages only).`,
+    inputSchema: z.object({
+        set: z.string().describe('Package set name (referenced later via custom_ui uiPackageSet). e.g. "charts".'),
+        packages: z.array(z.string()).describe('npm package names, e.g. ["recharts", "lucide-react"].'),
+        mode: z.enum(['add', 'set']).optional().describe('"add" (default) merges with the existing set; "set" replaces it.'),
+        allowNpm: z.boolean().optional().describe('Allow npm install for non-curated packages (requires npm on the machine). Default false.'),
+        force: z.boolean().optional().describe('Force a rebuild even if the resolved set is unchanged.'),
+    }),
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – ui_packages_install requires the Stuard desktop app.');
+        return await execLocalTool('ui_packages_install', args);
+    }
+});
+
+const uiPackagesStatusTool = createTool({
+    id: 'ui_packages_status',
+    description: 'Inspect a custom_ui package set: installed modules, bundle sizes, and any packages that failed to resolve.',
+    inputSchema: z.object({
+        set: z.string().describe('Package set name to inspect.'),
+    }),
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – ui_packages_status requires the Stuard desktop app.');
+        return await execLocalTool('ui_packages_status', args);
+    }
+});
+
+const uiPackagesListTool = createTool({
+    id: 'ui_packages_list',
+    description: 'List all installed custom_ui package sets plus the curated catalog (packages that bundle offline with no npm).',
+    inputSchema: z.object({}),
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – ui_packages_list requires the Stuard desktop app.');
+        return await execLocalTool('ui_packages_list', args);
+    }
+});
+
+const uiPackagesRemoveTool = createTool({
+    id: 'ui_packages_remove',
+    description: 'Delete a custom_ui package set and its cached bundle.',
+    inputSchema: z.object({
+        set: z.string().describe('Package set name to delete.'),
+    }),
+    execute: async (args) => {
+        if (!hasClientBridge()) throw new Error('No desktop bridge available – ui_packages_remove requires the Stuard desktop app.');
+        return await execLocalTool('ui_packages_remove', args);
+    }
+});
+
 const notifyTool = createTool({
     id: 'notify',
     description: 'Show a local desktop notification',
@@ -456,6 +521,10 @@ EXAMPLE (non-blocking display):
 
 registerTool(customUiTool, 'GUI');
 registerTool(updateCustomUiTool, 'GUI');
+registerTool(uiPackagesInstallTool, 'GUI');
+registerTool(uiPackagesStatusTool, 'GUI');
+registerTool(uiPackagesListTool, 'GUI');
+registerTool(uiPackagesRemoveTool, 'GUI');
 registerTool(chatUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');

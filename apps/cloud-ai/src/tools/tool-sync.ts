@@ -272,6 +272,18 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
  * Add alternative phrases, common user queries, and related terms.
  */
 const SEMANTIC_HINTS: Record<string, string[]> = {
+  // Custom UI packages
+  ui_packages_install: [
+    'install npm library for custom_ui',
+    'use recharts charts in a custom ui',
+    'use lucide-react icons in a custom ui',
+    'add a component library to a custom_ui window',
+    'install-once package set referenced via uiPackageSet',
+  ],
+  ui_packages_list: ['what ui packages are available', 'list curated custom_ui libraries', 'show installed package sets'],
+  ui_packages_status: ['is recharts installed for custom_ui', 'check a package set build status'],
+  ui_packages_remove: ['delete a custom_ui package set', 'uninstall a custom ui library'],
+
   // Webhooks
   create_webhook: [
     'create webhook endpoint',

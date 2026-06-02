@@ -4,6 +4,7 @@ import { execCloudTool, execCustomIntegrationTool } from './handlers/cloud';
 import { isCustomIntegrationTool } from './custom-integrations';
 import { execLocalTool, calcToolTimeout } from './handlers/local';
 import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, execEnd, execReturnValue, execUpdateCustomUi, execGetClipboardContent, execSetClipboardContent, execSendNotification, execSendUiEvent, execRunUiScript, execListCustomUiWindows, initCustomUiIpc, execListOpenWindows, execBringWindowToForeground, execGetWindowInfo, execSmartBringWindowToForeground, execSetWindowBounds } from './handlers/electron';
+import { execUiPackagesInstall, execUiPackagesStatus, execUiPackagesList, execUiPackagesRemove } from './handlers/ui-packages';
 import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execAskUserInApp } from './handlers/ask-user-inapp';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
@@ -191,6 +192,10 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'custom_ui') return execCustomUi(args, ctx);
       if (toolName === 'close_custom_ui') return execCloseCustomUi(args);
       if (toolName === 'update_custom_ui') return execUpdateCustomUi(args, ctx);
+      if (toolName === 'ui_packages_install') return execUiPackagesInstall(args, ctx);
+      if (toolName === 'ui_packages_status') return execUiPackagesStatus(args, ctx);
+      if (toolName === 'ui_packages_list') return execUiPackagesList(args, ctx);
+      if (toolName === 'ui_packages_remove') return execUiPackagesRemove(args, ctx);
       if (toolName === 'send_notification') return execSendNotification(args, ctx);
       if (toolName === 'send_ui_event') return execSendUiEvent(args, ctx);
       if (toolName === 'run_ui_script') return execRunUiScript(args, ctx);
