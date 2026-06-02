@@ -169,7 +169,13 @@ function bindingFor(source: string, clause: string): string {
   const src = JSON.stringify(source);
   if (def) parts.push(`var ${def} = __stuardImportDefault(${src});`);
   if (ns) parts.push(`var ${ns} = __stuardRequire(${src});`);
-  if (named.length) parts.push(`var { ${destructure()} } = __stuardRequire(${src});`);
+  if (named.length) {
+    // Validate the named exports exist so a bad import name (misspelled or not in
+    // this package version) fails fast with a clear message rather than a cryptic
+    // React #130 when the undefined binding is later rendered.
+    const members = JSON.stringify(named.map((n) => n.name));
+    parts.push(`var { ${destructure()} } = __stuardImportNamed(${src}, ${members});`);
+  }
   return parts.join(' ');
 }
 

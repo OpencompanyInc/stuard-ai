@@ -54,6 +54,10 @@ export async function execUiPackagesInstall(args: any, ctx: RouterContext): Prom
       logFn: ctx.logFn,
     });
     const ok = status.built && (status.failed?.length ?? 0) === 0;
+    const failedSummary = (status.failed || []).map((f) => `${f.name} (${f.reason})`).join('; ');
+    const message = ok
+      ? `Packages ready for set "${status.id}": ${status.modules.join(', ') || '(none)'}. Use them via custom_ui args { uiPackageSet: "${status.id}" }.`
+      : `Set "${status.id}" built with issues. Failed: ${failedSummary}`;
     return {
       ok,
       set: status.id,
@@ -63,9 +67,8 @@ export async function execUiPackagesInstall(args: any, ctx: RouterContext): Prom
       jsBytes: status.jsBytes,
       cssBytes: status.cssBytes,
       hash: status.hash,
-      message: ok
-        ? `Packages ready for set "${status.id}": ${status.modules.join(', ') || '(none)'}. Use them via custom_ui args { uiPackageSet: "${status.id}" }.`
-        : `Set "${status.id}" built with issues. Failed: ${(status.failed || []).map((f) => `${f.name} (${f.reason})`).join('; ')}`,
+      message,
+      error: ok ? undefined : failedSummary || `ui_packages_install failed for set "${status.id}"`,
     };
   } catch (e: any) {
     return { ok: false, set: setId, error: String(e?.message || e) };

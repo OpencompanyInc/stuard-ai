@@ -104,7 +104,8 @@ describe('rewriteComponentImports', () => {
     );
     expect(code).toContain('var clsx = __stuardImportDefault("clsx");');
     expect(code).toContain('var charts = __stuardRequire("recharts");');
-    expect(code).toContain('var { twMerge } = __stuardRequire("tailwind-merge");');
+    // Named imports are validated up front so a missing export fails clearly.
+    expect(code).toContain('var { twMerge } = __stuardImportNamed("tailwind-merge", ["twMerge"]);');
     expect(code).toContain('__stuardRequire("some-side-effect/styles.css");');
   });
 
@@ -295,5 +296,15 @@ describe('ui-packages tool handlers', () => {
     expect(res.ok).toBe(true);
     expect(res.sets.some((s: any) => s.id === 'listed')).toBe(true);
     expect(res.curated).toEqual(CURATED_UI_PACKAGES);
+  }, 30000);
+
+  it('surfaces failed packages in error for workflow runtime', async () => {
+    const res = await execUiPackagesInstall(
+      { set: 'needs-npm', packages: ['definitely-not-curated-pkg-xyz'], allowNpm: false },
+      { logFn: () => {} } as any,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('definitely-not-curated-pkg-xyz');
+    expect(res.error).toContain('allowNpm');
   }, 30000);
 });

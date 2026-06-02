@@ -485,6 +485,23 @@ function buildRuntimeScript(options: {
         var mod = __stuardRequire(name);
         return (mod && mod.default !== undefined) ? mod.default : mod;
       }
+      // Validates named imports up front so a missing/misspelled export throws a
+      // clear, specific error at component-definition time instead of surfacing
+      // later as a cryptic minified React #130 ("element type is undefined").
+      function __stuardImportNamed(name, members) {
+        var mod = __stuardRequire(name);
+        var bag = Object(mod);
+        var missing = [];
+        for (var i = 0; i < members.length; i++) {
+          if (!(members[i] in bag)) missing.push(members[i]);
+        }
+        if (missing.length) {
+          throw new Error('Package "' + name + '" has no export' + (missing.length > 1 ? 's' : '') +
+            ' named ' + missing.map(function (m) { return '"' + m + '"'; }).join(', ') +
+            '. The import name may be misspelled or not exist in this version of "' + name + '".');
+        }
+        return mod;
+      }
 
       // === React Hooks (global scope for component code) ===
       var useState = React.useState;

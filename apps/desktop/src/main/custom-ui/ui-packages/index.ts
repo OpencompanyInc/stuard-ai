@@ -85,10 +85,15 @@ function readPackageVersion(name: string, startPaths: string[]): string {
   }
 }
 
+/** Node 20+ on Windows rejects .cmd/.bat without shell (EINVAL); npm is a .cmd wrapper. */
+function npmSpawnOpts(): { shell: boolean; windowsHide: boolean } {
+  return { shell: process.platform === 'win32', windowsHide: true };
+}
+
 function detectNpm(): string | null {
   for (const bin of process.platform === 'win32' ? ['npm.cmd', 'npm'] : ['npm']) {
     try {
-      const res = spawnSync(bin, ['--version'], { encoding: 'utf-8', timeout: 15000 });
+      const res = spawnSync(bin, ['--version'], { encoding: 'utf-8', timeout: 15000, ...npmSpawnOpts() });
       if (res.status === 0) return bin;
     } catch {
       /* try next */
@@ -108,10 +113,13 @@ function npmInstall(setDir: string, packages: string[], logFn: (m: string) => vo
   }
 
   logFn(`ui_packages: npm install ${packages.join(' ')} (this can take a moment)`);
+  // Run inside setDir — do NOT pass setDir via --prefix. With shell:true on Windows,
+  // paths containing spaces (e.g. …/Stuard AI/…) get split by cmd unless quoted, which
+  // Node's argv→shell bridge does not reliably do for every arg.
   const res = spawnSync(
     npm,
-    ['install', ...packages, '--prefix', setDir, '--no-audit', '--no-fund', '--loglevel=error'],
-    { cwd: setDir, encoding: 'utf-8', timeout: 5 * 60 * 1000 },
+    ['install', ...packages, '--no-audit', '--no-fund', '--loglevel=error'],
+    { cwd: setDir, encoding: 'utf-8', timeout: 5 * 60 * 1000, ...npmSpawnOpts() },
   );
   if (res.status !== 0) {
     const err = (res.stderr || res.stdout || '').toString().trim().slice(-600);
@@ -206,7 +214,12 @@ export async function installUiPackages(options: InstallUiPackagesOptions): Prom
   let js = '';
   let css = '';
   const prevMeta = readJson<UiPackagesMeta>(paths.meta);
-  const cacheHit = !options.force && prevMeta?.hash === hash && fs.existsSync(paths.bundleJs);
+  const cacheHit =
+    !options.force &&
+    failed.length === 0 &&
+    unresolved.length === 0 &&
+    prevMeta?.hash === hash &&
+    fs.existsSync(paths.bundleJs);
 
   if (cacheHit) {
     logFn(`ui_packages: '${setId}' already built (hash ${hash}), skipping rebuild`);
