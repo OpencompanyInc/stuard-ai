@@ -43,7 +43,7 @@ export const STORAGE_PLANS: Record<string, StoragePlan> = {
     id: 'free',
     name: 'Free',
     hotDiskGb: 5,
-    coldStorageGb: 0.1, // ~100MB of free persistent storage for everyone
+    coldStorageGb: 0.25, // ~250MB of free persistent storage for everyone
     monthlyUsd: 0,
     monthlyCredits: 0,
   },
