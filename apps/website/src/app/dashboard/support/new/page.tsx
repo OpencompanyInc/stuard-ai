@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
@@ -19,7 +19,7 @@ import {
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as SupportTicketCategory[];
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as SupportTicketPriority[];
 
-export default function NewSupportTicketPage() {
+function NewSupportTicketForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userData } = useAuthContext();
@@ -182,6 +182,14 @@ export default function NewSupportTicketPage() {
         </div>
       </form>
     </div>
+  );
+}
+
+export default function NewSupportTicketPage() {
+  return (
+    <Suspense fallback={<div className="max-w-2xl space-y-6"><div className="dash-card p-6 h-64 animate-pulse" /></div>}>
+      <NewSupportTicketForm />
+    </Suspense>
   );
 }
 
