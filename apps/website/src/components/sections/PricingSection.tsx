@@ -6,7 +6,8 @@ const FREE_FEATURES = [
   'Everything that runs on your machine',
   'Chat, voice, workflows, and agents',
   'File search and memory, all local',
-  'Bring your own API keys',
+  'Bring your own API keys (BYOK)',
+  'Use your ChatGPT subscription',
 ];
 
 const CREDIT_FEATURES = [
@@ -121,7 +122,7 @@ const PricingSection = () => {
         </div>
 
         <p className="text-[13px] text-[#737373]">
-          Prefer your own keys? Bring them and skip credits entirely.
+          Prefer your own keys or your ChatGPT subscription? Bring them and skip credits entirely.
         </p>
       </div>
     </section>
