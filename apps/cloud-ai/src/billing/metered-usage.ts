@@ -1,9 +1,67 @@
+/**
+ * Polar metered overage billing — DISABLED for now.
+ * Re-enable when the Polar meter is configured and billing settings UI is wired.
+ */
+
+export async function getCycleOverageSpendCents(_userId: string, _cycleStart?: Date): Promise<number> {
+  return 0;
+}
+
+export async function canUseOverageBilling(_userId: string): Promise<boolean> {
+  return false;
+}
+
+export async function getOverageStatus(_userId: string): Promise<{
+  overageBillingEnabled: boolean;
+  cycleSpendCapCents: number | null;
+  cycleSpendCents: number;
+  cycleStart: string | null;
+  cycleEnd: string | null;
+  hasActiveSubscription: boolean;
+  canUseOverage: boolean;
+}> {
+  return {
+    overageBillingEnabled: false,
+    cycleSpendCapCents: null,
+    cycleSpendCents: 0,
+    cycleStart: null,
+    cycleEnd: null,
+    hasActiveSubscription: false,
+    canUseOverage: false,
+  };
+}
+
+export async function handleOverageUsage(
+  _userId: string,
+  _uncoveredCredits: number,
+  _costUsd: number,
+  _creditCost: number,
+  _usageEventId: string,
+  _extraMetadata?: Record<string, string | number | boolean>,
+): Promise<void> {
+  return;
+}
+
+export function scheduleOverageReport(
+  _userId: string,
+  _uncoveredCredits: number,
+  _costUsd: number,
+  _creditCost: number,
+  _usageEventId: string,
+  _extraMetadata?: Record<string, string | number | boolean>,
+): void {
+  return;
+}
+
+/*
+// ─── Original implementation (disabled) ───────────────────────────────────────
+
 import { Polar } from '@polar-sh/sdk';
 import { getSupabaseAdmin } from '../supabase';
 import { writeLog } from '../utils/logger';
 
 const METER_EVENT_NAME = (process.env.POLAR_METER_EVENT_NAME || 'stuard_usage').trim();
-/** Overage billing requires a subscription in good standing — not past_due (failed payment). */
+// Overage billing requires a subscription in good standing — not past_due (failed payment).
 const OVERAGE_ELIGIBLE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
 
 type OverageProfile = {
@@ -250,3 +308,5 @@ export function scheduleOverageReport(
 ): void {
   void handleOverageUsage(userId, uncoveredCredits, costUsd, creditCost, usageEventId, extraMetadata);
 }
+
+*/

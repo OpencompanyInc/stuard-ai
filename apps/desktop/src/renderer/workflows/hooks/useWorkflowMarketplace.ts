@@ -6,7 +6,7 @@ import { specToDesignerModel } from "../utils/conversions";
 interface UseWorkflowMarketplaceProps {
   selectedId: string;
   refresh: () => Promise<void>;
-  load: (id: string) => Promise<void>;
+  load: (id: string, options?: { forTour?: boolean }) => Promise<boolean>;
 }
 
 export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflowMarketplaceProps) {

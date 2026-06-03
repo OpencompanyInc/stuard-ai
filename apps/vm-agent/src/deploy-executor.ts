@@ -1,7 +1,7 @@
 /**
  * VM Agent — Deploy Executor
  *
- * Manages deployed workflows, scripts, and projects on the VM.
+ * Manages deployed workflows and projects on the VM.
  * Each deployment gets its own directory under /home/stuard/deploys/<id>/
  * and runs as a supervised child process.
  */
@@ -22,7 +22,7 @@ import { mintVMToken } from './lib/vm-token-mint';
 export interface DeployConfig {
   deployId: string;
   downloadUrl: string;
-  kind: 'workflow' | 'script' | 'project';
+  kind: 'workflow' | 'project';
   name: string;
   envVars: Record<string, string>;
   autoRestart: boolean;
@@ -866,9 +866,6 @@ export class DeployExecutor extends EventEmitter {
 
     let entrypoint: string;
     switch (config.kind) {
-      case 'script':
-        entrypoint = await this.prepareScript(deployDir, payload, config.envVars);
-        break;
       case 'project':
         entrypoint = await this.prepareProject(deployDir, payload, config.envVars);
         break;
@@ -883,56 +880,6 @@ export class DeployExecutor extends EventEmitter {
   // ─────────────────────────────────────────────────────────────────────────
   // Preparation — write files + install deps per deploy kind
   // ─────────────────────────────────────────────────────────────────────────
-
-  private async prepareScript(dir: string, payload: any, envVars: Record<string, string>): Promise<string> {
-    const content = typeof payload === 'string' ? payload : (payload.content || payload.code || JSON.stringify(payload));
-    const lang = payload.language || this.detectLanguage(content);
-    const ext = lang === 'python' ? '.py' : lang === 'bash' || lang === 'shell' ? '.sh' : '.js';
-    const scriptFile = path.join(dir, `script${ext}`);
-
-    fs.writeFileSync(scriptFile, content);
-    fs.chmodSync(scriptFile, 0o755);
-    this.writeEnvFile(dir, envVars);
-
-    // Install requirements if present
-    if (payload.requirements) {
-      const reqPath = path.join(dir, 'requirements.txt');
-      fs.writeFileSync(reqPath, payload.requirements);
-      try {
-        execFileSync('pip3', ['install', '-r', reqPath, '--quiet'], { cwd: dir, timeout: 120_000, stdio: 'pipe' });
-      } catch (e: any) {
-        this.appendLog(dir, `[deploy] Warning: pip install failed: ${e.message}`);
-      }
-    }
-
-    // Create runner
-    const runnerPath = path.join(dir, '_runner.sh');
-    let cmd: string;
-    switch (lang) {
-      case 'python':
-        cmd = `python3 "${scriptFile}"`;
-        break;
-      case 'bash':
-      case 'shell':
-        cmd = `bash "${scriptFile}"`;
-        break;
-      default:
-        cmd = `node "${scriptFile}"`;
-    }
-
-    fs.writeFileSync(runnerPath, `#!/bin/bash
-set -e
-cd "${dir}"
-if [ -f .env ]; then
-  set -a
-  source .env 2>/dev/null
-  set +a
-fi
-${cmd}
-`, { mode: 0o755 });
-
-    return runnerPath;
-  }
 
   private async prepareWorkflowRuntime(dir: string, payload: any, envVars: Record<string, string>): Promise<void> {
     fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify(payload, null, 2));
@@ -1162,12 +1109,6 @@ ${startCmd}
   private appendLog(dir: string, message: string): void {
     const logFile = path.join(dir, 'deploy.log');
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${message}\n`);
-  }
-
-  private detectLanguage(content: string): string {
-    if (content.trimStart().startsWith('#!/usr/bin/env python') || content.trimStart().startsWith('#!/usr/bin/python') || content.includes('import ') && content.includes('def ')) return 'python';
-    if (content.trimStart().startsWith('#!/bin/bash') || content.trimStart().startsWith('#!/bin/sh')) return 'bash';
-    return 'javascript';
   }
 
   private truncateLogIfNeeded(logFile: string): void {

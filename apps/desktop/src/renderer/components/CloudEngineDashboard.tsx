@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Cloud, Server, Activity, Power, Trash2,
-  RefreshCw, Loader2, HardDrive, WifiOff, Globe, Clock, Cpu,
+  RefreshCw, Loader2, HardDrive, Globe, Clock, Cpu,
   Download, Upload, Zap, Shield,
-  CreditCard, Plus, X, Rocket, Play, Square, Pause,
-  ScrollText, AlertCircle, CheckCircle2, Circle,
-  Workflow, FileText, CalendarDays, Timer, ListChecks, Radio, History, Bug,
+  CreditCard, Plus, Rocket,
+  CheckCircle2, Circle,
+  Workflow,
 } from 'lucide-react';
 import { useCloudEngine, type CloudDeployment } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
@@ -17,6 +17,7 @@ import { CloudVmPermissions } from './CloudVmPermissions';
 import { CloudVmIntegrations } from './CloudVmIntegrations';
 import { CloudVmSettings } from './CloudVmSettings';
 import { CloudRuntimeWorkspace } from './CloudRuntimeWorkspace';
+import { CloudAutomationsPanel } from '@stuardai/cloud-runtime-ui';
 import { BotsView } from './BotsView';
 import { useConfirm } from './ConfirmDialog';
 
@@ -946,238 +947,6 @@ export function CloudEngineDashboard() {
   );
 }
 
-/* ─── Automations Tab (VM-deployed automations) ──────────────────── */
-
-function formatRelativeAgo(value?: string | null): string {
-  if (!value) return 'Never';
-  const t = new Date(value).getTime();
-  if (!Number.isFinite(t)) return 'Never';
-  const seconds = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function deployKindMeta(kind: CloudDeployment['kind']) {
-  if (kind === 'workflow') return { label: 'Workflow', icon: Workflow, tone: 'text-blue-400 bg-blue-500/10' };
-  if (kind === 'script') return { label: 'Script', icon: FileText, tone: 'text-violet-400 bg-violet-500/10' };
-  return { label: 'Project', icon: Rocket, tone: 'text-amber-400 bg-amber-500/10' };
-}
-
-function deployStatusMeta(status: CloudDeployment['status']) {
-  switch (status) {
-    case 'running':   return { label: 'Running',   tone: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', dot: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse' };
-    case 'completed': return { label: 'Completed', tone: 'bg-sky-500/10 text-sky-400 border-sky-500/20',           dot: 'bg-sky-500' };
-    case 'stopped':   return { label: 'Stopped',   tone: 'bg-zinc-500/10 text-theme-muted border-theme/20',         dot: 'bg-zinc-400' };
-    case 'failed':    return { label: 'Failed',    tone: 'bg-red-500/10 text-red-400 border-red-500/20',           dot: 'bg-red-500' };
-    case 'pending':   return { label: 'Pending',   tone: 'bg-amber-500/10 text-amber-400 border-amber-500/20',     dot: 'bg-amber-500 animate-pulse' };
-    case 'deploying': return { label: 'Deploying', tone: 'bg-blue-500/10 text-blue-400 border-blue-500/20',        dot: 'bg-blue-500 animate-pulse' };
-    case 'uploading': return { label: 'Uploading', tone: 'bg-blue-500/10 text-blue-400 border-blue-500/20',        dot: 'bg-blue-500 animate-pulse' };
-    default:          return { label: status,      tone: 'bg-zinc-500/10 text-theme-muted border-theme/20',         dot: 'bg-zinc-400' };
-  }
-}
-
-interface VmAutomationsTabProps {
-  deployments: CloudDeployment[];
-  stopDeployment: (id: string) => Promise<any>;
-  restartDeployment: (id: string) => Promise<any>;
-  refreshDeployments: () => Promise<void>;
-}
-
-function VmAutomationsTab({ deployments, stopDeployment, restartDeployment, refreshDeployments }: VmAutomationsTabProps) {
-  const [refreshing, setRefreshing] = useState(false);
-  const [actionId, setActionId] = useState<string | null>(null);
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try { await refreshDeployments(); } finally { setRefreshing(false); }
-  };
-
-  const handleStop = async (id: string) => {
-    setActionId(id);
-    try { await stopDeployment(id); } finally { setActionId(null); }
-  };
-
-  const handleRestart = async (id: string) => {
-    setActionId(id);
-    try { await restartDeployment(id); } finally { setActionId(null); }
-  };
-
-  const runningCount = deployments.filter(d => d.status === 'running').length;
-  const scheduledCount = deployments.filter(d => !!d.schedule || (d.trigger_bindings || []).some(t => t.type === 'schedule.cron')).length;
-  const attentionCount = deployments.filter(d => d.status === 'failed' || !!d.error_message).length;
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <div className="mb-6 flex flex-shrink-0 items-start justify-between gap-4 px-1">
-        <div className="min-w-0">
-          <h1 className="font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">Automations on VM</h1>
-          <p className="mt-2 flex items-center gap-2 text-[13px] text-theme-muted">
-            <Cloud className="h-3.5 w-3.5 shrink-0 text-primary/80" />
-            <span>Workflows, scripts, and projects running on this cloud VM — independent of your laptop.</span>
-          </p>
-        </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-full border border-theme/30 bg-theme-card/50 px-3.5 py-2 text-[12px] font-semibold text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:opacity-60"
-          title="Refresh deployments"
-        >
-          <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
-          Refresh
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 custom-scrollbar">
-        <div className="space-y-7">
-          {/* Stats */}
-          <section>
-            <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Overview</h2>
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <AutomationStat value={String(deployments.length).padStart(2, '0')} label="Total" />
-              <AutomationStat value={String(runningCount).padStart(2, '0')} label="Running" />
-              <AutomationStat value={String(scheduledCount).padStart(2, '0')} label="Scheduled" />
-              <AutomationStat value={String(attentionCount).padStart(2, '0')} label="Attention" />
-            </div>
-          </section>
-
-          {/* Grid */}
-          <section>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-[15px] font-semibold text-theme-fg">Deployed automations</h2>
-              <span className="text-[12px] text-theme-muted">{deployments.length} on VM</span>
-            </div>
-
-            {deployments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-theme/40 bg-zinc-500/5 px-6 py-14 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <Zap className="h-5 w-5" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-[15px] font-semibold text-theme-fg">No automations on this VM yet</h3>
-                  <p className="max-w-sm text-[12px] text-theme-muted">
-                    Use the <span className="font-medium text-theme-fg">Deploys</span> tab to push a workflow,
-                    script, or project to the VM. It will keep running 24/7.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {deployments.map(dep => {
-                  const kind = deployKindMeta(dep.kind);
-                  const status = deployStatusMeta(dep.status);
-                  const KindIcon = kind.icon;
-                  const triggers = (dep.trigger_bindings || []).map(t => t.type).filter(Boolean);
-                  const hasSchedule = !!dep.schedule || triggers.some(t => t === 'schedule.cron');
-                  const isRunning = dep.status === 'running';
-                  const isBusy = actionId === dep.id;
-
-                  return (
-                    <div
-                      key={dep.id}
-                      className="group relative flex flex-col gap-3 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-5 transition hover:bg-theme-hover/30"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className={clsx('flex h-11 w-11 items-center justify-center rounded-xl', kind.tone)}>
-                            <KindIcon className="h-5 w-5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-[15px] font-semibold text-theme-fg">{dep.name}</div>
-                            <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-                              <span className={clsx('h-1.5 w-1.5 rounded-full', status.dot)} />
-                              <span className="font-medium text-theme-muted">{status.label} · {kind.label}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <span className={clsx('shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider', status.tone)}>
-                          {status.label}
-                        </span>
-                      </div>
-
-                      {dep.description && (
-                        <p className="line-clamp-2 text-[12px] text-theme-muted">{dep.description}</p>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
-                          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Last run</div>
-                          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
-                            {formatRelativeAgo(dep.last_run_at || dep.started_at)}
-                          </div>
-                        </div>
-                        <div className="rounded-xl bg-theme-card px-3 py-2.5 shadow-sm">
-                          <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-theme-muted/70">Schedule</div>
-                          <div className="mt-1 truncate text-[13px] font-semibold text-theme-fg">
-                            {hasSchedule ? (dep.schedule || 'Cron') : '—'}
-                          </div>
-                        </div>
-                      </div>
-
-                      {dep.error_message && (
-                        <div className="flex items-start gap-1.5 rounded-lg border border-red-500/20 bg-red-500/5 px-2.5 py-1.5 text-[11px] text-red-300">
-                          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-                          <span className="line-clamp-2">{dep.error_message}</span>
-                        </div>
-                      )}
-
-                      <div className="mt-auto flex items-center gap-2 pt-1">
-                        {isRunning ? (
-                          <button
-                            onClick={() => handleStop(dep.id)}
-                            disabled={isBusy}
-                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full border border-theme/30 bg-theme-card px-3 py-1.5 text-[12px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60"
-                          >
-                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
-                            Stop
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleRestart(dep.id)}
-                            disabled={isBusy}
-                            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:opacity-60"
-                          >
-                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                            Start
-                          </button>
-                        )}
-                        {isRunning && (
-                          <button
-                            onClick={() => handleRestart(dep.id)}
-                            disabled={isBusy}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-theme/30 bg-theme-card px-3 py-1.5 text-[12px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60"
-                            title="Restart"
-                          >
-                            {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AutomationStat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="rounded-2xl border border-theme/30 bg-zinc-500/10 px-4 py-3.5">
-      <div className="text-[22px] font-semibold leading-none tracking-tight text-theme-fg">{value}</div>
-      <div className="mt-2 text-[12px] text-theme-muted">{label}</div>
-    </div>
-  );
-}
-
 /* ─── Billing Tab ─────────────────────────────────────────────────── */
 
 function BillingTab({ billing, engine }: { billing: any; engine: any }) {
@@ -1341,7 +1110,7 @@ function formatBytes(bytes: number): string {
 
 /* ─── Deploy Tab ──────────────────────────────────────────────────── */
 
-type DeployKind = 'workflow' | 'script' | 'project';
+type DeployKind = 'workflow' | 'project';
 
 interface DeployEntry {
   id: string;
@@ -1366,37 +1135,6 @@ interface DeployEntry {
   created_at: string;
 }
 
-function formatRelativeTime(value?: string | null): string {
-  if (!value) return 'Never';
-  const time = new Date(value).getTime();
-  if (!Number.isFinite(time)) return 'Unknown';
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function parseDeployLogSummary(text: string) {
-  const lines = text.split('\n').filter(Boolean);
-  return {
-    lines: lines.length,
-    errors: lines.filter(line => /error|failed|crashed/i.test(line)).length,
-    runs: lines.filter(line => /\[run:\d+\] Starting/i.test(line)).length,
-    triggers: lines.filter(line => /\[trigger\]|\[cron\] Fired/i.test(line)).length,
-    lastLine: lines[lines.length - 1] || '',
-  };
-}
-
-function getDeployKindIcon(kind: string) {
-  if (kind === 'workflow') return Workflow;
-  if (kind === 'script') return FileText;
-  return Rocket;
-}
-
 function DeploysTab({
   deployments,
   engineRunning,
@@ -1418,10 +1156,6 @@ function DeploysTab({
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [actionId, setActionId] = useState<string | null>(null);
-  const [logsId, setLogsId] = useState<string | null>(null);
-  const [logs, setLogs] = useState('');
-  const [logsLoading, setLogsLoading] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
 
   // ── Create form state ──
@@ -1441,8 +1175,7 @@ function DeploysTab({
       try {
         payload = JSON.parse(newPayload);
       } catch {
-        // Treat as raw script content
-        payload = newKind === 'script' ? { content: newPayload, language: 'auto' } : newPayload;
+        payload = newPayload;
       }
 
       const envVars: Record<string, string> = {};
@@ -1471,389 +1204,163 @@ function DeploysTab({
       setNewDesc('');
       setNewEnvVars('');
       setNewSchedule('');
+      await refreshDeployments();
     } finally {
       setCreating(false);
     }
   };
 
-  const handleStop = async (id: string) => {
-    setActionId(id);
-    await stopDeployment(id);
-    setActionId(null);
-  };
-
-  const handleRestart = async (id: string) => {
-    setActionId(id);
-    await restartDeployment(id);
-    setActionId(null);
-  };
-
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, name: string) => {
     const ok = await confirm({
-      title: 'Delete this deployment?',
-      message: 'This action cannot be undone.',
-      confirmLabel: 'Delete deployment',
+      title: `Delete “${name}”?`,
+      message: 'This automation and its history will be removed. This can’t be undone.',
+      confirmLabel: 'Delete',
       destructive: true,
     });
     if (!ok) return;
-    setActionId(id);
     await deleteDeployment(id);
-    setActionId(null);
+    await refreshDeployments();
   };
 
-  const handleViewLogs = async (id: string) => {
-    if (logsId === id) { setLogsId(null); return; }
-    setLogsId(id);
-    setLogsLoading(true);
-    const content = await getDeployLogs(id);
-    setLogs(content);
-    setLogsLoading(false);
-  };
+  const KIND_OPTIONS: Array<{ id: DeployKind; label: string; Icon: typeof Workflow }> = [
+    { id: 'workflow', label: 'Workflow', Icon: Workflow },
+    { id: 'project', label: 'App', Icon: Rocket },
+  ];
 
-  const refreshLogs = async () => {
-    if (!logsId) return;
-    setLogsLoading(true);
-    const content = await getDeployLogs(logsId);
-    setLogs(content);
-    setLogsLoading(false);
-  };
+  const createForm = (
+    <div className="dashboard-card mb-5 space-y-4 !border-primary/20 bg-theme-card/50 p-6 animate-in slide-in-from-top-2 duration-200">
+      <h4 className="flex items-center gap-2 text-sm font-black text-theme-fg">
+        <Rocket className="h-4 w-4 text-primary" /> New automation
+      </h4>
 
-  const statusConfig: Record<string, { color: string; bg: string; icon: any; label: string }> = {
-    running: { color: 'text-green-500', bg: 'bg-green-500/10', icon: CheckCircle2, label: 'Running' },
-    stopped: { color: 'text-gray-400', bg: 'bg-gray-400/10', icon: Circle, label: 'Stopped' },
-    failed: { color: 'text-red-500', bg: 'bg-red-500/10', icon: AlertCircle, label: 'Failed' },
-    deploying: { color: 'text-blue-400', bg: 'bg-blue-500/10', icon: Loader2, label: 'Deploying' },
-    pending: { color: 'text-amber-400', bg: 'bg-amber-500/10', icon: Clock, label: 'Pending' },
-    uploading: { color: 'text-blue-400', bg: 'bg-blue-500/10', icon: Upload, label: 'Uploading' },
-    completed: { color: 'text-green-500', bg: 'bg-green-500/10', icon: CheckCircle2, label: 'Completed' },
-  };
-
-  const deployStats = {
-    live: deployments.filter(dep => dep.status === 'running').length,
-    workflows: deployments.filter(dep => dep.kind === 'workflow').length,
-    scheduled: deployments.filter(dep => !!dep.schedule || (dep.trigger_bindings || []).some(binding => binding.type === 'schedule.cron')).length,
-    attention: deployments.filter(dep => dep.status === 'failed' || !!dep.error_message).length,
-  };
-
-  return (
-    <div className="space-y-4">
-      {confirmDialog}
-      <div className="flex items-center justify-between">
+      <div className="grid grid-cols-2 gap-4">
         <div>
-          <h3 className="text-lg font-black text-theme-fg">Deployments</h3>
-          <p className="text-xs text-theme-muted mt-0.5">Deploy workflows, scripts, and projects to your Cloud Engine</p>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Name</label>
+          <input
+            type="text"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="Daily inbox summary"
+            className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+          />
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={refreshDeployments} className="p-2 rounded-lg hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-all">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          {engineRunning && (
-            <button
-              onClick={() => setShowCreate(!showCreate)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-black hover:bg-primary/20 transition-all"
-            >
-              <Plus className="w-3.5 h-3.5" /> New Deploy
-            </button>
-          )}
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Type</label>
+          <div className="flex gap-2">
+            {KIND_OPTIONS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => setNewKind(id)}
+                className={clsx(
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-all',
+                  newKind === id ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 bg-theme-hover text-theme-muted hover:text-theme-fg',
+                )}
+              >
+                <Icon className="h-3 w-3" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        {[
-          { label: 'Live', value: deployStats.live, icon: Radio, tone: 'text-green-400', bg: 'bg-green-500/10' },
-          { label: 'Workflows', value: deployStats.workflows, icon: Workflow, tone: 'text-blue-400', bg: 'bg-blue-500/10' },
-          { label: 'Scheduled', value: deployStats.scheduled, icon: CalendarDays, tone: 'text-amber-400', bg: 'bg-amber-500/10' },
-          { label: 'Attention', value: deployStats.attention, icon: Bug, tone: 'text-red-400', bg: 'bg-red-500/10' },
-        ].map(item => (
-          <div key={item.label} className="dashboard-card p-3 flex items-center gap-3">
-            <span className={clsx('h-9 w-9 rounded-lg flex items-center justify-center', item.bg, item.tone)}>
-              <item.icon className="w-4 h-4" />
-            </span>
-            <div>
-              <div className="text-lg font-black text-theme-fg leading-none">{item.value}</div>
-              <div className="text-[10px] font-bold text-theme-muted uppercase tracking-wider mt-1">{item.label}</div>
-            </div>
-          </div>
-        ))}
+      <div>
+        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">What it does (optional)</label>
+        <input
+          type="text"
+          value={newDesc}
+          onChange={e => setNewDesc(e.target.value)}
+          placeholder="A short description so you remember what this is"
+          className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+        />
       </div>
 
-      {!engineRunning && (
-        <div className="dashboard-card p-6 bg-amber-500/5 !border-amber-500/20 text-center">
-          <Rocket className="w-8 h-8 text-amber-500 mx-auto mb-2 opacity-60" />
-          <p className="text-sm font-bold text-amber-500">Engine not running</p>
-          <p className="text-xs text-theme-muted mt-1">Start your Cloud Engine to deploy and manage workloads</p>
+      <div>
+        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">
+          {newKind === 'workflow' ? 'Workflow JSON' : 'Project manifest (JSON)'}
+        </label>
+        <textarea
+          value={newPayload}
+          onChange={e => setNewPayload(e.target.value)}
+          placeholder={newKind === 'workflow' ? '{\n  "name": "My Workflow",\n  "version": "1",\n  "steps": [...]\n}' : '{\n  "files": {},\n  "packageJson": {},\n  "startCommand": "npm start"\n}'}
+          rows={8}
+          className="w-full resize-y rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Environment variables (optional)</label>
+          <textarea
+            value={newEnvVars}
+            onChange={e => setNewEnvVars(e.target.value)}
+            placeholder="KEY=value&#10;ANOTHER_KEY=value"
+            rows={3}
+            className="w-full resize-y rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+          />
         </div>
-      )}
-
-      {showCreate && (
-        <div className="dashboard-card p-6 !border-primary/20 bg-theme-card/50 space-y-4 animate-in slide-in-from-top-2 duration-200">
-          <h4 className="text-sm font-black text-theme-fg flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-primary" /> New Deployment
-          </h4>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">Name</label>
-              <input
-                type="text"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                placeholder="My Workflow"
-                className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">Type</label>
-              <div className="flex gap-2">
-                {(['workflow', 'script', 'project'] as DeployKind[]).map(k => (
-                  <button
-                    key={k}
-                    onClick={() => setNewKind(k)}
-                    className={clsx(
-                      'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border transition-all',
-                      newKind === k ? 'border-primary/40 bg-primary/10 text-primary' : 'border-theme/10 bg-theme-hover text-theme-muted hover:text-theme-fg'
-                    )}
-                  >
-                    {React.createElement(getDeployKindIcon(k), { className: 'w-3 h-3' })}
-                    {k.charAt(0).toUpperCase() + k.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
+        <div className="space-y-3">
           <div>
-            <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">Description (optional)</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Schedule (cron, optional)</label>
             <input
               type="text"
-              value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              placeholder="Brief description of this deployment"
-              className="w-full px-3 py-2 text-sm rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
+              value={newSchedule}
+              onChange={e => setNewSchedule(e.target.value)}
+              placeholder="0 */6 * * *"
+              className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
             />
           </div>
-
-          <div>
-            <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">
-              {newKind === 'workflow' ? 'Workflow JSON' : newKind === 'script' ? 'Script Content' : 'Project Manifest (JSON)'}
-            </label>
-            <textarea
-              value={newPayload}
-              onChange={e => setNewPayload(e.target.value)}
-              placeholder={newKind === 'workflow' ? '{\n  "name": "My Workflow",\n  "version": "1",\n  "steps": [...]\n}' : newKind === 'script' ? '#!/usr/bin/env python3\nprint("Hello from the cloud!")' : '{\n  "files": {},\n  "packageJson": {},\n  "startCommand": "npm start"\n}'}
-              rows={8}
-              className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">Environment Variables (optional)</label>
-              <textarea
-                value={newEnvVars}
-                onChange={e => setNewEnvVars(e.target.value)}
-                placeholder="KEY=value&#10;ANOTHER_KEY=value"
-                rows={3}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40 resize-y"
-              />
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold text-theme-muted uppercase tracking-wider block mb-1">Schedule (cron, optional)</label>
-                <input
-                  type="text"
-                  value={newSchedule}
-                  onChange={e => setNewSchedule(e.target.value)}
-                  placeholder="0 */6 * * *"
-                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-theme-hover border border-[color:var(--dashboard-panel-border)] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/40"
-                />
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={newAutoRestart} onChange={e => setNewAutoRestart(e.target.checked)} className="rounded border-theme/20 text-primary" />
-                <span className="text-xs font-bold text-theme-muted">Auto-restart on crash</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              onClick={() => setShowCreate(false)}
-              className="px-4 py-2 text-xs font-bold text-theme-muted hover:text-theme-fg rounded-lg transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={creating || !newName.trim() || !newPayload.trim()}
-              className="flex items-center gap-2 px-5 py-2 bg-primary text-white text-xs font-black rounded-xl hover:bg-primary/90 transition-all disabled:opacity-50"
-            >
-              {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
-              Deploy
-            </button>
-          </div>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input type="checkbox" checked={newAutoRestart} onChange={e => setNewAutoRestart(e.target.checked)} className="rounded border-theme/20 text-primary" />
+            <span className="text-xs font-bold text-theme-muted">Restart automatically if it stops</span>
+          </label>
         </div>
-      )}
+      </div>
 
-      {deployments.length === 0 && !showCreate && (
-        <div className="dashboard-card p-12 text-center">
-          <Rocket className="w-10 h-10 text-theme-muted mx-auto mb-3 opacity-30" />
-          <p className="text-sm font-bold text-theme-muted">No deployments yet</p>
-          <p className="text-xs text-theme-muted/70 mt-1">Deploy a workflow, script, or project to your Cloud Engine</p>
-        </div>
-      )}
-
-      {deployments.length > 0 && (
-        <div className="space-y-3">
-          {deployments.map(dep => {
-            const sc = statusConfig[dep.status] || statusConfig.stopped;
-            const StatusIcon = sc.icon;
-            const KindIcon = getDeployKindIcon(dep.kind);
-            const triggerBindings = dep.trigger_bindings || [];
-
-            return (
-              <div key={dep.id}>
-                <div className="dashboard-card p-4 flex items-center justify-between hover:border-theme/20 transition-all">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="h-6 w-6 rounded-lg bg-theme-hover text-theme-muted flex items-center justify-center shrink-0">
-                        <KindIcon className="w-3.5 h-3.5" />
-                      </span>
-                      <span className="text-sm font-bold text-theme-fg truncate">{dep.name}</span>
-                      <span className={clsx('flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black shrink-0', sc.bg, sc.color)}>
-                        <StatusIcon className={clsx('w-2.5 h-2.5', dep.status === 'deploying' && 'animate-spin')} />
-                        {sc.label}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-theme-hover text-theme-muted shrink-0">
-                        {dep.kind}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-[10px] text-theme-muted pl-8">
-                      {dep.description && <span className="truncate max-w-[200px]">{dep.description}</span>}
-                      <span className="flex items-center gap-1"><History className="w-3 h-3" /> Created {formatRelativeTime(dep.created_at)}</span>
-                      {dep.pid && <span>PID {dep.pid}</span>}
-                      {dep.schedule && <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" /> {dep.schedule}</span>}
-                      {dep.timezone && <span className="flex items-center gap-1"><Timer className="w-3 h-3" /> {dep.timezone}</span>}
-                      {dep.auto_restart && <span className="flex items-center gap-1"><RefreshCw className="w-3 h-3" /> auto-restart</span>}
-                    </div>
-                    {(triggerBindings.length > 0 || dep.last_run_at || dep.started_at) && (
-                      <div className="mt-3 ml-8 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px]">
-                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
-                          <div className="text-theme-muted font-bold uppercase tracking-wider">Runs</div>
-                          <div className="text-theme-fg font-black mt-0.5">{dep.run_count ?? 0}</div>
-                        </div>
-                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
-                          <div className="text-theme-muted font-bold uppercase tracking-wider">Last Run</div>
-                          <div className="text-theme-fg font-black mt-0.5">{formatRelativeTime(dep.last_run_at || dep.started_at)}</div>
-                        </div>
-                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
-                          <div className="text-theme-muted font-bold uppercase tracking-wider">Completed</div>
-                          <div className="text-theme-fg font-black mt-0.5">{formatRelativeTime(dep.last_completed_at || dep.stopped_at)}</div>
-                        </div>
-                        <div className="rounded-lg bg-theme-hover/55 px-2.5 py-2">
-                          <div className="text-theme-muted font-bold uppercase tracking-wider">Source</div>
-                          <div className="text-theme-fg font-black mt-0.5 truncate">{dep.last_trigger_source || triggerBindings[0]?.type || 'manual'}</div>
-                        </div>
-                      </div>
-                    )}
-                    {triggerBindings.length > 0 && (
-                      <div className="mt-2 ml-8 flex flex-wrap gap-1.5">
-                        {triggerBindings.slice(0, 4).map(binding => (
-                          <span key={`${binding.type}:${binding.triggerId}`} className="inline-flex items-center gap-1 rounded-full bg-theme-hover px-2 py-0.5 text-[9px] font-bold text-theme-muted">
-                            <ListChecks className="w-2.5 h-2.5" />
-                            {binding.type}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {dep.error_message && (
-                      <div className="flex items-center gap-1.5 mt-1.5 pl-8 text-[10px] text-red-400">
-                        <AlertCircle className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{dep.error_message}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2 shrink-0 ml-4">
-                    <button
-                      onClick={() => handleViewLogs(dep.id)}
-                      className={clsx(
-                        'flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all',
-                        logsId === dep.id ? 'bg-primary/10 text-primary' : 'bg-theme-hover text-theme-muted hover:text-theme-fg'
-                      )}
-                    >
-                      <ScrollText className="w-3 h-3" /> Logs
-                    </button>
-                    {dep.status === 'running' && (
-                      <button
-                        onClick={() => handleStop(dep.id)}
-                        disabled={actionId === dep.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-500/10 text-amber-400 rounded-lg hover:bg-amber-500/20 disabled:opacity-50 transition-all"
-                      >
-                        {actionId === dep.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
-                        Stop
-                      </button>
-                    )}
-                    {(dep.status === 'stopped' || dep.status === 'failed' || dep.status === 'completed') && (
-                      <button
-                        onClick={() => handleRestart(dep.id)}
-                        disabled={actionId === dep.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-green-500/10 text-green-400 rounded-lg hover:bg-green-500/20 disabled:opacity-50 transition-all"
-                      >
-                        {actionId === dep.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                        Restart
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDelete(dep.id)}
-                      disabled={actionId === dep.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 disabled:opacity-50 transition-all"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Logs panel */}
-                {logsId === dep.id && (
-                  <div className="mt-2 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[#0d1117] overflow-hidden animate-in slide-in-from-top-1 duration-150">
-                    <div className="flex items-center justify-between px-4 py-2 border-b border-theme/10">
-                      <span className="text-[10px] font-black text-theme-muted uppercase tracking-wider">Deploy Logs — {dep.name}</span>
-                      <div className="flex items-center gap-2">
-                        <button onClick={refreshLogs} className="text-theme-muted hover:text-theme-fg transition-all">
-                          <RefreshCw className={clsx('w-3 h-3', logsLoading && 'animate-spin')} />
-                        </button>
-                        <button onClick={() => setLogsId(null)} className="text-theme-muted hover:text-theme-fg transition-all">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                    {!logsLoading && (
-                      <div className="grid grid-cols-4 gap-2 px-4 py-3 border-b border-theme/10 bg-white/[0.02]">
-                        {[
-                          { label: 'Lines', value: parseDeployLogSummary(logs).lines, icon: ScrollText },
-                          { label: 'Runs', value: parseDeployLogSummary(logs).runs, icon: Workflow },
-                          { label: 'Triggers', value: parseDeployLogSummary(logs).triggers, icon: Radio },
-                          { label: 'Errors', value: parseDeployLogSummary(logs).errors, icon: AlertCircle },
-                        ].map(item => (
-                          <div key={item.label} className="rounded-lg bg-white/[0.04] px-2.5 py-2">
-                            <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-theme-muted">
-                              <item.icon className="w-2.5 h-2.5" />
-                              {item.label}
-                            </div>
-                            <div className="text-xs font-black text-theme-fg mt-1">{item.value}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <pre className="p-4 text-[11px] font-mono text-green-400/90 overflow-auto max-h-[340px] whitespace-pre-wrap leading-relaxed">
-                      {logsLoading ? 'Loading logs...' : (logs || 'No logs available yet.')}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <button
+          onClick={() => setShowCreate(false)}
+          className="rounded-lg px-4 py-2 text-xs font-bold text-theme-muted transition-all hover:text-theme-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleCreate}
+          disabled={creating || !newName.trim() || !newPayload.trim()}
+          className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-white transition-all hover:bg-primary/90 disabled:opacity-50"
+        >
+          {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+          Set it live
+        </button>
+      </div>
     </div>
+  );
+
+  return (
+    <>
+      {confirmDialog}
+      <CloudAutomationsPanel
+        deployments={deployments as any}
+        isRunning={engineRunning}
+        title="Automations"
+        subtitle="Tasks that run in the cloud around the clock — even when your computer is off."
+        emptyTitle={showCreate ? 'Set up your first automation' : 'No automations yet'}
+        emptyHint="Use “New automation” to deploy a workflow or project. It runs in the cloud 24/7, and you’ll see exactly when it runs and how it’s doing right here."
+        onRefresh={() => void refreshDeployments()}
+        onStart={async (id) => { await restartDeployment(id); await refreshDeployments(); }}
+        onStop={async (id) => { await stopDeployment(id); await refreshDeployments(); }}
+        onDelete={(id, name) => handleDelete(id, name)}
+        getLogs={(id, lines) => getDeployLogs(id, lines)}
+        headerActions={engineRunning ? (
+          <button
+            onClick={() => setShowCreate(v => !v)}
+            className="flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-[12px] font-bold text-primary transition-all hover:bg-primary/20"
+          >
+            <Plus className="h-3.5 w-3.5" /> New automation
+          </button>
+        ) : null}
+        banner={showCreate ? createForm : null}
+      />
+    </>
   );
 }

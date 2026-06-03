@@ -322,6 +322,39 @@ export function formatModel(model: string): string {
     .replace('deepseek/', '');
 }
 
+export type CreditSummaryLike = {
+  unlimited?: boolean;
+  limit?: number;
+  remaining?: number;
+  used?: number;
+};
+
+/** % consumed from grant balance (limit − remaining). Floored so ~5 credits left is not rounded to 100%. */
+export function creditUsagePercent(summary: CreditSummaryLike | null | undefined): number {
+  if (!summary || summary.unlimited) return 0;
+  const limit = Number(summary.limit) || 0;
+  if (limit <= 0) return 0;
+  const remaining = Math.max(0, Number(summary.remaining) || 0);
+  const consumed = Math.max(0, limit - remaining);
+  return Math.min(100, Math.floor((consumed / limit) * 100));
+}
+
+/** 0–100 for progress bars; stays below 100 while any credits remain. */
+export function creditUsageBarPercent(summary: CreditSummaryLike | null | undefined): number {
+  if (!summary || summary.unlimited) return 0;
+  const limit = Number(summary.limit) || 0;
+  if (limit <= 0) return 0;
+  const remaining = Math.max(0, Number(summary.remaining) || 0);
+  const consumed = Math.max(0, limit - remaining);
+  const raw = (consumed / limit) * 100;
+  return remaining > 0 ? Math.min(99.9, raw) : Math.min(100, raw);
+}
+
+export function isCreditExhausted(summary: CreditSummaryLike | null | undefined): boolean {
+  if (!summary || summary.unlimited) return false;
+  return (Number(summary.remaining) || 0) <= 0;
+}
+
 export function formatRelativeTime(dateStr: string): string {
   if (!dateStr) return 'Unknown';
   const date = new Date(dateStr);

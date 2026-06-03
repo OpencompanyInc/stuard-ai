@@ -163,6 +163,41 @@ async def handle_cloud_tool_request(
         _folder_session_ctx.set(_session_id)
         session.folder_session_ids.add(_session_id)
 
+        # chat_ui renders inline in the chat bubble — the desktop/web UI already
+        # drew it from the "started" tool_event above (which carries args). The
+        # cloud orchestrator has no local chat_ui executor, so without this it
+        # falls through to dispatch_execute → unknown_tool → a 300s client-bridge
+        # wait, while the cloud side's own 30s non-blocking timeout fires first
+        # and the model re-renders in a loop. Mirror the desktop main chat
+        # (useAgent.ts): resolve non-blocking UIs immediately, and for blocking
+        # UIs await the user's submit/close via the standard tool_result path.
+        if tool == "chat_ui":
+            is_blocking = bool((args or {}).get("blocking"))
+            if not is_blocking:
+                result = {"ok": True, "displayed": True}
+            else:
+                fut = asyncio.get_event_loop().create_future()
+                session.pending_client_tool_results[req_id] = fut
+                try:
+                    # The UI is already on screen; the client sends a tool_result
+                    # (matched by req_id) when the user submits or closes it.
+                    # Resolve just under the cloud-side 600s blocking timeout so a
+                    # no-response surfaces as a clean result, not a cloud timeout.
+                    result = await asyncio.wait_for(fut, timeout=590.0)
+                except asyncio.TimeoutError:
+                    result = {"ok": True, "displayed": True, "note": "no_user_response"}
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)}
+                finally:
+                    session.pending_client_tool_results.pop(req_id, None)
+            safe_result = sanitize_result(result)
+            await emit("completed", {"result": safe_result})
+            try:
+                await _cws_send(json.dumps({"type": "tool_result", "id": req_id, "tool": tool, "result": result}))
+            except Exception:
+                pass
+            return
+
         # If this tool must run on the Desktop (Electron), forward to the connected client.
         run_on_client = (tool in CLIENT_TOOLS) or any(tool.startswith(p) for p in CLIENT_PREFIXES)
         if run_on_client:

@@ -116,8 +116,8 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
             </div>
             <div className="mt-5 rounded-xl border border-theme/60 bg-theme-hover/20 p-3 text-[11px] text-theme-muted">
               Manage your engine from the top bar. Use the activity bar on the left to switch between chat,
-              files, monitoring, and more. Some panels (deployments, integrations, permissions) are managed
-              from the Stuard desktop app.
+              files, automations, and more. Automations are set up from the Stuard desktop app and run here
+              around the clock.
             </div>
           </div>
         </div>
@@ -133,16 +133,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     integrations: <CloudVmIntegrations engine={engine} />,
     permissions: <CloudVmPermissions engine={engine} />,
     bots: <div className="custom-scrollbar h-full overflow-y-auto p-6"><CloudVmBots engine={engine} /></div>,
-    // "Automations" renders the full, working deployment view (the old
-    // CloudVmAutomations card grid was a broken duplicate).
-    automations: (
-      <CloudVmDeploys
-        engine={engine}
-        title="Automations"
-        subtitle="Workflows, scripts, and projects running on this VM — independent of your laptop."
-        emptyHint="No automations on this VM yet"
-      />
-    ),
+    automations: <CloudVmDeploys engine={engine} />,
     settings: <CloudVmSettings engine={engine} onRefresh={onRefresh} />,
   };
 

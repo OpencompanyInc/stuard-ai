@@ -1,8 +1,6 @@
 import { COMPUTE_BILLING_INTERVAL_MS } from '../utils/config';
 import {
-  STORAGE_PRICING,
   creditsFromUsd,
-  preciseCreditsFromUsd,
   resolveComputeMachineSpec,
 } from '../pricing';
 import {
@@ -14,12 +12,7 @@ import {
 } from '../supabase';
 import { getComputeProvider } from './compute';
 import { syncToCloud } from './sync-engine';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-const HOURS_PER_MONTH = 730;
+import { runStorageBillingCycle, billStoragePlanForUser } from './hot-storage';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Billing Cycle
@@ -27,10 +20,11 @@ const HOURS_PER_MONTH = 730;
 
 /**
  * Runs a single billing cycle. Called hourly by the cron interval.
- * Iterates all non-deleted engines and deducts credits for:
- *  - Compute (if running)
- *  - Hot storage (always, while engine exists)
- *  - Cold storage (always, based on stored bytes)
+ * Iterates all non-deleted engines and deducts credits for compute (if running).
+ *
+ * Storage is NOT metered here: hot disk is a flat prepaid block (see
+ * STORAGE_PLANS / purchaseStoragePlan in hot-storage.ts) and cold storage is
+ * included with the plan, not billed by usage.
  */
 export async function runBillingCycle(): Promise<void> {
   const billingHour = new Date();
@@ -38,16 +32,24 @@ export async function runBillingCycle(): Promise<void> {
   billingHour.setMinutes(0, 0, 0);
 
   const engines = await getActiveCloudEngines();
-  if (engines.length === 0) return;
 
-  console.log(`[billing] Running billing cycle for ${engines.length} engine(s) at ${billingHour.toISOString()}`);
-
-  for (const engine of engines) {
-    try {
-      await billEngine(engine, billingHour);
-    } catch (err: any) {
-      console.error(`[billing] Error billing engine for user ${engine.user_id}:`, err?.message);
+  if (engines.length > 0) {
+    console.log(`[billing] Running billing cycle for ${engines.length} engine(s) at ${billingHour.toISOString()}`);
+    for (const engine of engines) {
+      try {
+        await billEngine(engine, billingHour);
+      } catch (err: any) {
+        console.error(`[billing] Error billing engine for user ${engine.user_id}:`, err?.message);
+      }
     }
+  }
+
+  // Flat monthly storage-plan fees are independent of engines, so renew them in
+  // their own pass (idempotent per calendar month).
+  try {
+    await runStorageBillingCycle(new Date());
+  } catch (err: any) {
+    console.error('[billing] Storage billing cycle error:', err?.message || err);
   }
 }
 
@@ -60,6 +62,8 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
   const machineType = machineSpec?.machineType || engine.machine_type;
 
   // ── Compute billing (only when running) ──────────────────────────────────
+  // Storage is intentionally not billed here — hot disk is a flat prepaid plan
+  // block and cold storage is included with the plan (see hot-storage.ts).
   if (engine.status === 'running') {
     const computeCredits = creditsFromUsd(hourlyUsd);
     if (computeCredits > 0) {
@@ -67,33 +71,6 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
         tier: tierKey,
         machineType,
         hourlyUsd,
-      }, billingHour);
-    }
-  }
-
-  // ── Hot storage billing (24/7 while engine exists) ───────────────────────
-  const hotGb = engine.disk_size_gb;
-  const hotHourlyUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd) / HOURS_PER_MONTH;
-  const hotCredits = preciseCreditsFromUsd(hotHourlyUsd);
-  if (hotCredits > 0) {
-    await insertBillingEvent(userId, 'hot_storage', hotCredits, {
-      diskSizeGb: hotGb,
-      hourlyUsd: hotHourlyUsd,
-    }, billingHour);
-  }
-
-  // ── Cold storage billing (24/7 based on stored bytes) ────────────────────
-  const storageUsage = await getStorageUsage(userId);
-  const coldBytes = Number(storageUsage?.cold_storage_bytes || 0);
-  if (coldBytes > 0) {
-    const coldGb = coldBytes / (1024 * 1024 * 1024);
-    const coldHourlyUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd) / HOURS_PER_MONTH;
-    const coldCredits = preciseCreditsFromUsd(coldHourlyUsd);
-    if (coldCredits > 0) {
-      await insertBillingEvent(userId, 'cold_storage', coldCredits, {
-        coldBytes,
-        coldGb: Number(coldGb.toFixed(4)),
-        hourlyUsd: coldHourlyUsd,
       }, billingHour);
     }
   }
@@ -124,12 +101,13 @@ async function billEngine(engine: CloudEngine, billingHour: Date): Promise<void>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Catch up on any unbilled hours for a single engine.
+ * Catch up on any unbilled compute hours for a single engine.
  * Safe to call on every request — insertBillingEvent upserts by
  * (user_id, event_type, billing_hour) so duplicate calls are no-ops.
  *
- * Compute is only billed from `started_at` (current running session).
- * Storage is billed from `created_at` or month start, whichever is later.
+ * Only compute is metered (storage is a flat prepaid plan fee), and compute is
+ * billed only while running, from `started_at` (current running session). If the
+ * engine isn't running there is nothing to catch up.
  *
  * The optional lookback cap is important for interactive status polling:
  * it prevents a single page load from replaying an entire month of missed
@@ -139,6 +117,18 @@ export async function catchUpBilling(
   engine: CloudEngine,
   options?: { maxBackfillHours?: number },
 ): Promise<void> {
+  // Renew the flat storage-plan fee regardless of compute/running state. This is
+  // idempotent (deduped per calendar month) and keeps storage billing correct on
+  // Cloud Run, where the hourly setInterval cron is unreliable.
+  try {
+    const usage = await getStorageUsage(engine.user_id);
+    if (usage) await billStoragePlanForUser(usage);
+  } catch (err: any) {
+    console.error(`[billing] Storage catch-up failed for user ${engine.user_id}:`, err?.message);
+  }
+
+  if (engine.status !== 'running' || !engine.started_at) return;
+
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -149,42 +139,23 @@ export async function catchUpBilling(
   };
 
   const currentHour = truncateToHour(now);
+
+  // Compute: bill from max(month_start, started_at)
+  const started = new Date(engine.started_at);
+  let computeFrom = truncateToHour(started > monthStart ? started : monthStart);
+
   const maxBackfillHours = Math.max(0, Math.floor(Number(options?.maxBackfillHours || 0)));
-  const lookbackStart = maxBackfillHours > 0
-    ? new Date(currentHour.getTime() - ((maxBackfillHours - 1) * 3_600_000))
-    : null;
-
-  // Storage: bill from max(month_start, created_at)
-  const engineCreated = engine.created_at ? new Date(engine.created_at) : now;
-  let storageFrom = truncateToHour(engineCreated > monthStart ? engineCreated : monthStart);
-  if (lookbackStart && storageFrom < lookbackStart) {
-    storageFrom = lookbackStart;
+  if (maxBackfillHours > 0) {
+    const lookbackStart = new Date(currentHour.getTime() - ((maxBackfillHours - 1) * 3_600_000));
+    if (computeFrom < lookbackStart) computeFrom = lookbackStart;
   }
 
-  // Compute: only bill from started_at if currently running
-  let computeFrom: Date | null = null;
-  if (engine.status === 'running' && engine.started_at) {
-    const started = new Date(engine.started_at);
-    computeFrom = truncateToHour(started > monthStart ? started : monthStart);
-    if (lookbackStart && computeFrom < lookbackStart) {
-      computeFrom = lookbackStart;
-    }
-  }
-
-  // Walk each hour and bill appropriately
-  const cursor = new Date(storageFrom);
+  const cursor = new Date(computeFrom);
   while (cursor <= currentHour) {
-    const billingHour = new Date(cursor);
-    const inComputeWindow = computeFrom && cursor >= computeFrom;
-
     try {
-      // Build a view of the engine with the correct status for this hour
-      const engineForHour = inComputeWindow
-        ? engine
-        : { ...engine, status: 'stopped' }; // suppress compute billing outside running window
-      await billEngine(engineForHour, billingHour);
+      await billEngine(engine, new Date(cursor));
     } catch (err: any) {
-      console.error(`[billing] catchUp error for user ${engine.user_id} at ${billingHour.toISOString()}:`, err?.message);
+      console.error(`[billing] catchUp error for user ${engine.user_id} at ${cursor.toISOString()}:`, err?.message);
     }
     cursor.setTime(cursor.getTime() + 3_600_000);
   }

@@ -8,6 +8,9 @@ import { clsx } from 'clsx';
 import { convertLatexDelims, escapeCurrencyDollars } from '../utils/text';
 import { displayConversationTitle } from '../utils/conversationTitle';
 import { Search, Clock, Trash2, Loader2, Cloud, Monitor } from "lucide-react";
+import { useConfirm } from './ConfirmDialog';
+import type { StreamChunk, ToolCall } from '../hooks/useAgent';
+import { AssistantTracePanel } from './chat/shared/messages/MessageBubble/tools/AssistantTracePanel';
 
 function normalizeMarkdownSpacing(input: string): string {
   const raw = String(input || '').replace(/\r\n/g, '\n');
@@ -28,17 +31,51 @@ function getMessageText(message: any): string {
   return '';
 }
 
+function getMessageMetadata(message: any): Record<string, any> {
+  return message?.metadata && typeof message.metadata === 'object' ? message.metadata : {};
+}
+
 function getMessageReasoning(message: any): string | undefined {
+  const meta = getMessageMetadata(message);
   if (typeof message?.reasoning === 'string' && message.reasoning.trim()) return message.reasoning;
-  if (typeof message?.metadata?.reasoning === 'string' && message.metadata.reasoning.trim()) return message.metadata.reasoning;
+  if (typeof meta.reasoning === 'string' && meta.reasoning.trim()) return meta.reasoning;
   return undefined;
 }
 
-function getMessageToolCalls(message: any): any[] {
+function getMessageReasoningDuration(message: any): number | undefined {
+  const meta = getMessageMetadata(message);
+  const duration = message?.reasoningDuration ?? meta.reasoningDuration;
+  return typeof duration === 'number' && Number.isFinite(duration) ? duration : undefined;
+}
+
+function getMessageToolCalls(message: any): ToolCall[] {
+  const meta = getMessageMetadata(message);
   if (Array.isArray(message?.toolCalls)) return message.toolCalls;
-  if (Array.isArray(message?.metadata?.toolCalls)) return message.metadata.toolCalls;
+  if (Array.isArray(meta.toolCalls)) return meta.toolCalls;
   if (Array.isArray(message?.tool_calls)) return message.tool_calls;
   return [];
+}
+
+function getMessageStreamChunks(message: any): StreamChunk[] | undefined {
+  const meta = getMessageMetadata(message);
+  if (Array.isArray(message?.streamChunks)) return message.streamChunks;
+  if (Array.isArray(meta.streamChunks)) return meta.streamChunks;
+  return undefined;
+}
+
+function messageHasTraceSteps(message: any): boolean {
+  if (message?.role !== 'assistant') return false;
+  const reasoning = getMessageReasoning(message);
+  const toolCalls = getMessageToolCalls(message);
+  const streamChunks = getMessageStreamChunks(message);
+  if (reasoning?.trim()) return true;
+  if (toolCalls.length > 0) return true;
+  return Boolean(streamChunks?.some((chunk) => (
+    chunk.type === 'reasoning' ||
+    chunk.type === 'tool' ||
+    chunk.type === 'status' ||
+    (chunk.type === 'text' && chunk.nested)
+  )));
 }
 
 interface HistoryViewProps {
@@ -60,7 +97,22 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   convLoading,
   onDeleteConversation,
 }) => {
+  const [confirm, confirmDialog] = useConfirm();
+
+  const handleDeleteClick = async (e: React.MouseEvent, conversationId: string) => {
+    e.stopPropagation();
+    const ok = await confirm({
+      title: 'Delete conversation?',
+      message: 'This conversation and its messages will be permanently removed. This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (ok) onDeleteConversation?.(conversationId);
+  };
+
   return (
+    <>
+    {confirmDialog}
     <div className="h-[calc(100vh-140px)] flex gap-6">
       {/* Sidebar List */}
       <div className="w-80 flex flex-col bg-theme-card rounded-theme-card border border-theme overflow-hidden shadow-sm">
@@ -122,12 +174,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                     </div>
                     {onDeleteConversation && (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (window.confirm("Are you sure you want to delete this conversation?")) {
-                            onDeleteConversation(c.id);
-                          }
-                        }}
+                        onClick={(e) => handleDeleteClick(e, c.id)}
                         className={clsx(
                           "p-1.5 rounded-theme-button transition-all opacity-0 group-hover:opacity-100",
                           isActive ? "text-theme-muted hover:text-red-400 hover:bg-theme-hover" : "text-theme-muted hover:text-red-400 hover:bg-theme-hover"
@@ -173,75 +220,78 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               ) : convMessages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-theme-muted text-[13px] italic">No messages in this conversation.</div>
               ) : (
-                convMessages.map((m, i) => (
-                  <div key={i} className={clsx("flex", m.role === 'user' ? "justify-end" : "justify-start")}>
-                    <div className={clsx(
-                      "max-w-[85%] rounded-theme-card px-4 py-3 text-[13px] leading-relaxed shadow-sm border",
-                      m.role === 'user'
-                        ? "bg-primary text-primary-fg border-primary"
-                        : "bg-theme-card text-theme-fg border-theme"
-                    )}>
-                      <div className={clsx("prose prose-sm max-w-none break-words", m.role === 'user' ? "prose-invert" : "")}>
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                          components={{
-                            p: ({ children, ...props }: any) => {
-                              const childArr = Array.isArray(children) ? children : [children];
-                              const isEmpty = childArr
-                                .filter((c) => c !== null && c !== undefined)
-                                .every((c) => typeof c === 'string' && String(c).trim().length === 0);
-                              if (isEmpty) return null;
-                              return <p {...props}>{children}</p>;
-                            },
-                            code: ({ node, inline, className, children, ...props }: any) => {
-                              return inline ? (
-                                  <code className="bg-theme-hover text-theme-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-theme shadow-sm align-middle" {...props}>
-                                      {children}
-                                  </code>
-                              ) : (
-                                  <pre className="block p-3 rounded-lg bg-theme-card border border-theme shadow-sm overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7] my-2">
-                                      <code className={clsx(className, "text-[12px] text-theme-fg")} {...props}>
-                                          {children}
-                                      </code>
-                                  </pre>
-                              )
-                            }
-                          }}
-                        >
-                          {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(getMessageText(m))))}
-                        </ReactMarkdown>
-                      </div>
-                      {getMessageReasoning(m) && (
-                        <details className="mt-3 rounded-lg border border-theme bg-theme-bg/60 px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-medium text-theme-muted">Reasoning</summary>
-                          <div className="mt-2 text-[12px] whitespace-pre-wrap text-theme-muted leading-relaxed">
-                            {getMessageReasoning(m)}
-                          </div>
-                        </details>
+                convMessages.map((m, i) => {
+                  const isUser = m.role === 'user';
+                  const hasTrace = messageHasTraceSteps(m);
+                  const messageText = normalizeMarkdownSpacing(
+                    convertLatexDelims(escapeCurrencyDollars(getMessageText(m))),
+                  );
+                  const showTextBubble = Boolean(messageText.trim());
+
+                  return (
+                    <div
+                      key={i}
+                      className={clsx(
+                        'flex flex-col w-full min-w-0',
+                        isUser ? 'items-end' : 'items-start',
                       )}
-                      {getMessageToolCalls(m).length > 0 && (
-                        <details className="mt-3 rounded-lg border border-theme bg-theme-bg/60 px-3 py-2">
-                          <summary className="cursor-pointer text-[11px] font-medium text-theme-muted">
-                            Tool calls ({getMessageToolCalls(m).length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {getMessageToolCalls(m).map((tool: any, toolIdx: number) => (
-                              <div key={tool.id || toolIdx} className="rounded-md border border-theme bg-theme-card px-2.5 py-2">
-                                <div className="text-[12px] font-medium text-theme-fg">
-                                  {tool.tool || tool.name || 'Tool'}
-                                </div>
-                                {tool.status && (
-                                  <div className="text-[11px] text-theme-muted mt-0.5">{tool.status}</div>
-                                )}
-                              </div>
-                            ))}
+                    >
+                      {!isUser && hasTrace && (
+                        <div className="mb-3 w-full max-w-[85%]">
+                          <AssistantTracePanel
+                            reasoning={getMessageReasoning(m)}
+                            reasoningDuration={getMessageReasoningDuration(m)}
+                            toolCalls={getMessageToolCalls(m)}
+                            streamChunks={getMessageStreamChunks(m)}
+                            defaultOpen={!showTextBubble}
+                          />
+                        </div>
+                      )}
+                      {showTextBubble && (
+                        <div
+                          className={clsx(
+                            'max-w-[85%] rounded-theme-card px-4 py-3 text-[13px] leading-relaxed shadow-sm border',
+                            isUser
+                              ? 'bg-primary text-primary-fg border-primary'
+                              : 'bg-theme-card text-theme-fg border-theme',
+                          )}
+                        >
+                          <div className={clsx('prose prose-sm max-w-none break-words', isUser ? 'prose-invert' : '')}>
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm, remarkMath]}
+                              rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                              components={{
+                                p: ({ children, ...props }: any) => {
+                                  const childArr = Array.isArray(children) ? children : [children];
+                                  const isEmpty = childArr
+                                    .filter((c) => c !== null && c !== undefined)
+                                    .every((c) => typeof c === 'string' && String(c).trim().length === 0);
+                                  if (isEmpty) return null;
+                                  return <p {...props}>{children}</p>;
+                                },
+                                code: ({ node, inline, className, children, ...props }: any) => {
+                                  return inline ? (
+                                    <code className="bg-theme-hover text-theme-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border border-theme shadow-sm align-middle" {...props}>
+                                      {children}
+                                    </code>
+                                  ) : (
+                                    <pre className="block p-3 rounded-lg bg-theme-card border border-theme shadow-sm overflow-x-auto font-mono whitespace-pre tab-4 leading-[1.7] my-2">
+                                      <code className={clsx(className, 'text-[12px] text-theme-fg')} {...props}>
+                                        {children}
+                                      </code>
+                                    </pre>
+                                  );
+                                },
+                              }}
+                            >
+                              {messageText}
+                            </ReactMarkdown>
                           </div>
-                        </details>
+                        </div>
                       )}
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </>
@@ -255,5 +305,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         )}
       </div>
     </div>
+    </>
   );
 };

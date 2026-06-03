@@ -16,11 +16,11 @@ const BeyondTheChatSection = () => {
           </p>
           <h2 className="text-[22px] leading-[1.2] sm:text-[28px] lg:text-[36px] font-normal text-white">
             From a sentence to a workflow to a{' '}
-            <span className="text-[#FF383C]">mini-app</span> — in one flow.
+            <span className="text-[#FF383C]">mini-app</span>, in one flow.
           </h2>
           <p className="max-w-[720px] text-[14px] leading-[22px] sm:text-[15px] sm:leading-[24px] lg:text-[16px] lg:leading-[26px] text-[#E5E5E5]">
             Describe what you want. Stuard wires up the steps, then wraps them in a UI you can run
-            any time — no code, no rebuilding it twice.
+            any time. No code, no rebuilding it twice.
           </p>
         </SectionReveal>
 

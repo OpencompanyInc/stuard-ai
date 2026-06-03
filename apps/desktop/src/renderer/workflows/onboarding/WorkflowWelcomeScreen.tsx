@@ -16,31 +16,29 @@ export function WorkflowWelcomeScreen({
   isReplay,
 }: WorkflowWelcomeScreenProps) {
   return (
-    <div
-      className="fixed inset-0 z-[80] overflow-y-auto"
-      style={{
-        background:
-          "radial-gradient(ellipse at top, rgba(59,130,246,0.18), transparent 60%), var(--wf-bg, #0b1020)",
-      }}
-    >
-      <div className="min-h-full flex items-center justify-center px-8 py-16">
+    <div className="fixed inset-0 z-[80] overflow-y-auto wf-bg wf-fg">
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse at top, color-mix(in srgb, var(--wf-accent) 10%, transparent), transparent 62%)",
+        }}
+      />
+      <div className="relative min-h-full flex items-center justify-center px-8 py-16">
         <div className="w-full max-w-3xl">
           <div className="flex items-center gap-2 mb-6">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: "rgba(59,130,246,0.18)", color: "#93c5fd" }}
-            >
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <div className="text-[12px] uppercase tracking-[0.22em] wf-fg-muted">
+            <span className="wf-feature-tile__icon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
+              <Sparkles className="w-4 h-4" strokeWidth={1.75} />
+            </span>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] wf-fg-faint">
               {isReplay ? "Workflow tour" : "Welcome to Workflows"}
             </div>
           </div>
 
-          <h1 className="text-[36px] leading-tight font-semibold wf-fg">
+          <h1 className="text-[32px] leading-tight font-semibold tracking-tight wf-fg">
             Build small AI agents that run on their own.
           </h1>
-          <p className="mt-4 text-[16px] leading-relaxed wf-fg-muted max-w-2xl">
+          <p className="mt-4 text-[15px] leading-relaxed wf-fg-muted max-w-2xl">
             A workflow is a recipe: a <em>trigger</em> says when it runs, <em>steps</em> say what
             it does, and <em>wires</em> connect them in order. Pick how you want to learn —
             both tours cover the same five concepts.
@@ -48,30 +46,25 @@ export function WorkflowWelcomeScreen({
 
           <div className="grid grid-cols-3 gap-3 mt-8">
             <ConceptCard
-              icon={<Zap className="w-4 h-4" />}
+              icon={<Zap className="w-4 h-4" strokeWidth={1.75} />}
               title="Trigger"
               body="When it runs — manually, on a schedule, on an event, or as a function called by another workflow."
-              tint="amber"
             />
             <ConceptCard
-              icon={<Workflow className="w-4 h-4" />}
+              icon={<Workflow className="w-4 h-4" strokeWidth={1.75} />}
               title="Steps"
               body="The actual work — call an LLM, hit an API, write a file, send a Slack message."
-              tint="blue"
             />
             <ConceptCard
-              icon={<GitBranch className="w-4 h-4" />}
+              icon={<GitBranch className="w-4 h-4" strokeWidth={1.75} />}
               title="Wires"
               body="The path of execution. Step A → Step B means A runs first, B uses A's output."
-              tint="violet"
             />
           </div>
 
-          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <PathCard
-              icon={<Sparkles className="w-5 h-5" />}
-              accent="#60a5fa"
-              accentBg="rgba(59,130,246,0.95)"
+              icon={<Sparkles className="w-5 h-5" strokeWidth={1.75} />}
               title="Watch AI build one"
               subtitle="Demo · 0 credits"
               body="A pre-built workflow loads with a simulated AI exchange so you can see the build flow without spending credits."
@@ -80,9 +73,7 @@ export function WorkflowWelcomeScreen({
               primary
             />
             <PathCard
-              icon={<Wrench className="w-5 h-5" />}
-              accent="#a78bfa"
-              accentBg="rgba(139,92,246,0.95)"
+              icon={<Wrench className="w-5 h-5" strokeWidth={1.75} />}
               title="Build it manually"
               subtitle="Hands-on · drag & drop"
               body="Open the tool palette and drag pieces onto the canvas yourself. You'll wire a real trigger to a real step."
@@ -114,30 +105,16 @@ function ConceptCard({
   icon,
   title,
   body,
-  tint,
 }: {
   icon: React.ReactNode;
   title: string;
   body: string;
-  tint: "amber" | "blue" | "violet";
 }) {
-  const palette = {
-    amber: { bg: "rgba(245,158,11,0.14)", fg: "#fbbf24" },
-    blue: { bg: "rgba(59,130,246,0.14)", fg: "#60a5fa" },
-    violet: { bg: "rgba(139,92,246,0.14)", fg: "#a78bfa" },
-  }[tint];
-
   return (
-    <div
-      className="border wf-panel rounded-2xl p-4"
-      style={{ backdropFilter: "var(--wf-glass-blur)" }}
-    >
-      <div
-        className="w-8 h-8 rounded-lg flex items-center justify-center mb-3"
-        style={{ background: palette.bg, color: palette.fg }}
-      >
+    <div className="wf-card rounded-[20px] p-4">
+      <span className="wf-icon-chip mb-3 flex h-8 w-8 items-center justify-center rounded-lg">
         {icon}
-      </div>
+      </span>
       <div className="text-[14px] font-semibold wf-fg">{title}</div>
       <p className="mt-1.5 text-[12px] leading-relaxed wf-fg-muted">{body}</p>
     </div>
@@ -146,8 +123,6 @@ function ConceptCard({
 
 function PathCard({
   icon,
-  accent,
-  accentBg,
   title,
   subtitle,
   body,
@@ -156,8 +131,6 @@ function PathCard({
   primary,
 }: {
   icon: React.ReactNode;
-  accent: string;
-  accentBg: string;
   title: string;
   subtitle: string;
   body: string;
@@ -169,35 +142,25 @@ function PathCard({
     <button
       type="button"
       onClick={onClick}
-      className="group text-left border wf-panel rounded-2xl p-5 transition-all hover:-translate-y-0.5"
-      style={{
-        backdropFilter: "var(--wf-glass-blur)",
-        boxShadow: primary
-          ? `0 18px 40px -20px ${accentBg.replace(/,\s*0\.95\)$/, ", 0.45)")}`
-          : undefined,
-      }}
+      className={`wf-feature-tile group flex flex-col items-start rounded-[22px] p-5 text-left ${
+        primary ? "wf-card-active" : ""
+      }`}
     >
-      <div className="flex items-center gap-3 mb-3">
-        <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: `${accent}22`, color: accent }}
-        >
+      <div className="flex w-full items-start gap-3 mb-3">
+        <span className="wf-feature-tile__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px]">
           {icon}
-        </div>
+        </span>
         <div className="min-w-0">
           <div className="text-[15px] font-semibold wf-fg">{title}</div>
-          <div className="text-[11px] uppercase tracking-[0.16em] wf-fg-muted mt-0.5">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] wf-fg-faint mt-0.5">
             {subtitle}
           </div>
         </div>
       </div>
       <p className="text-[13px] leading-relaxed wf-fg-muted">{body}</p>
-      <div
-        className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-semibold"
-        style={{ color: accent }}
-      >
-        {cta}
-        <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+      <div className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-semibold wf-fg-muted">
+        <span className="transition-colors group-hover:text-[color:var(--wf-accent)]">{cta}</span>
+        <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 group-hover:text-[color:var(--wf-accent)]" />
       </div>
     </button>
   );

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { creditUsageBarPercent } from "../../../../BillingSettings.utils";
 import {
   AlertTriangle,
   CreditCard,
@@ -109,7 +110,7 @@ export const BillingCreditNotice: React.FC<BillingCreditNoticeProps> = ({
   const used = Math.max(0, Number(summary?.used || 0));
   const remaining = Math.max(0, Number(summary?.remaining || 0));
   const hasLimitData = !!summary?.unlimited || limit > 0;
-  const usagePct = limit > 0 ? Math.min(100, Math.max(0, (used / limit) * 100)) : 100;
+  const usagePct = creditUsageBarPercent({ limit, remaining, used });
   const hasBilling = !!customer?.id;
   const title =
     mode === "exceeded"

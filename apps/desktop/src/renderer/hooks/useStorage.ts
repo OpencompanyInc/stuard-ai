@@ -20,8 +20,10 @@ export interface StorageInfo {
   planId: string;
   plan: StoragePlan;
   hotDiskGb: number;
-  hotUsedGb: number;
-  coldStorageBytes: number;
+  hotUsedGb: number | null;   // null when the VM isn't reporting usage (stopped)
+  coldStorageBytes: number;   // total: files + system backup
+  fileBytes: number;          // user files only (matches the Files list)
+  backupBytes: number;        // Stuard-managed workspace backup
   coldQuotaGb: number;
   lastSyncAt: string | null;
 }
@@ -117,8 +119,10 @@ export function useStorage() {
           planId: data.planId,
           plan: data.plan,
           hotDiskGb: data.hotDiskGb,
-          hotUsedGb: data.hotUsedGb,
+          hotUsedGb: data.hotUsedGb ?? null,
           coldStorageBytes: data.coldStorageBytes,
+          fileBytes: data.fileBytes ?? data.coldStorageBytes,
+          backupBytes: data.backupBytes ?? 0,
           coldQuotaGb: data.coldQuotaGb,
           lastSyncAt: data.lastSyncAt,
         });

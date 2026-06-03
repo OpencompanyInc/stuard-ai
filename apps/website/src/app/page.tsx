@@ -1,4 +1,5 @@
 import HeroSection from '@/components/sections/HeroSection';
+import ProductShowcase from '@/components/sections/ProductShowcase';
 import BeyondTheChatSection from '@/components/sections/BeyondTheChatSection';
 import ConnectedAppsSection from '@/components/sections/ConnectedAppsSection';
 import HowItWorksIntroSection from '@/components/sections/HowItWorksIntroSection';
@@ -6,7 +7,6 @@ import MarketplacePromoSection from '@/components/sections/MarketplacePromoSecti
 import CloudAgentsSection from '@/components/sections/CloudAgentsSection';
 import PrivacySection from '@/components/sections/PrivacySection';
 import PricingSection from '@/components/sections/PricingSection';
-import ClosingCTASection from '@/components/sections/ClosingCTASection';
 
 export default function Home() {
   const organizationSchema = {
@@ -83,6 +83,7 @@ export default function Home() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
       />
       <HeroSection />
+      <ProductShowcase />
       <BeyondTheChatSection />
       <ConnectedAppsSection />
       <HowItWorksIntroSection />
@@ -90,7 +91,6 @@ export default function Home() {
       <CloudAgentsSection />
       <PrivacySection />
       <PricingSection />
-      <ClosingCTASection />
     </>
   );
 }

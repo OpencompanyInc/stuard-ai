@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./CloudRuntimeWorkspace": "./src/CloudRuntimeWorkspace.tsx",
+    "./CloudAutomationsPanel": "./src/CloudAutomationsPanel.tsx",
     "./file-viewer": "./src/file-viewer/index.ts",
     "./shell": "./src/shell/constants.ts",
     "./shell/activity-bar": "./src/shell/CloudRuntimeActivityBar.tsx"

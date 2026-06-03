@@ -432,11 +432,13 @@ export function StorageView() {
 
   const currentPlanId = info?.planId || 'free';
   const badge = PLAN_BADGES[currentPlanId] || PLAN_BADGES.free;
-  const hotUsed = info?.hotUsedGb || 0;
+  const hotUsed = info?.hotUsedGb ?? null; // null = VM not reporting (stopped)
   const hotTotal = info?.hotDiskGb || 5;
   const coldUsedBytes = info?.coldStorageBytes || 0;
   const coldUsedGb = coldUsedBytes / (1024 * 1024 * 1024);
   const coldTotalGb = info?.coldQuotaGb || 1;
+  const fileBytes = info?.fileBytes ?? coldUsedBytes;
+  const backupBytes = info?.backupBytes ?? 0;
 
   return (
     <div className="space-y-6">
@@ -498,8 +500,25 @@ export function StorageView() {
               </button>
             </div>
             <div className="space-y-4">
-              <UsageBar used={hotUsed} total={hotTotal} label="Hot Disk (VM)" color="bg-orange-500" />
-              <UsageBar used={coldUsedGb} total={coldTotalGb} label="Cloud Storage (GCS)" color="bg-blue-500" />
+              {hotUsed === null ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-theme-muted font-medium">VM Disk</span>
+                    <span className="text-theme-muted">{formatGb(hotTotal)} allocated</span>
+                  </div>
+                  <div className="h-2 bg-theme-hover rounded-full overflow-hidden opacity-50" />
+                  <div className="text-[10px] text-theme-muted">Usage shows while your VM is running</div>
+                </div>
+              ) : (
+                <UsageBar used={hotUsed} total={hotTotal} label="VM Disk" color="bg-orange-500" />
+              )}
+              <UsageBar used={coldUsedGb} total={coldTotalGb} label="Cloud Storage" color="bg-blue-500" />
+              {(backupBytes > 0 || fileBytes > 0) && (
+                <div className="flex items-center justify-between text-[10px] text-theme-muted pt-0.5">
+                  <span>Your files: <strong className="text-theme-fg">{formatBytes(fileBytes)}</strong></span>
+                  {backupBytes > 0 && <span>Backup: <strong className="text-theme-fg">{formatBytes(backupBytes)}</strong></span>}
+                </div>
+              )}
             </div>
           </div>
 

@@ -33,6 +33,8 @@ export interface KanbanRunEntry {
   notes?: string;
 }
 
+type KanbanView = 'board' | 'log';
+
 // ─── Local helpers (kept inline so this component is self-contained) ───────
 
 function timeAgo(dateStr: string | null | undefined): string {
@@ -67,6 +69,7 @@ export function KanbanTab({
   const platform = useBotsPlatform();
   const [editingCard, setEditingCard] = useState<KanbanCard | null>(null);
   const [creatingInColumn, setCreatingInColumn] = useState<KanbanStatus | null>(null);
+  const [view, setView] = useState<KanbanView>('board');
 
   // Group by status, newest-first per column.
   const grouped = useMemo(() => {
@@ -82,7 +85,7 @@ export function KanbanTab({
   }, [cards]);
 
   const totalActive = grouped.in_progress.length + grouped.queued.length;
-  const isEmpty = cards.length === 0 && runLog.length === 0;
+  const isBoardEmpty = cards.length === 0;
 
   const handleMove = async (card: KanbanCard, status: KanbanStatus) => {
     if (card.status === status) return;
@@ -114,25 +117,56 @@ export function KanbanTab({
   };
 
   return (
-    <div className="space-y-4">
-      {/* Heading */}
-      <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card px-4 py-3.5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
-              <LayoutGrid className="h-4 w-4" /> Agent kanban
-              <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                <BotIcon className="h-2.5 w-2.5" /> Private
-              </span>
-            </h3>
-            <p className="mt-1 text-[12px] leading-5 text-theme-muted">
-              The agent's own working memory — separate from your task board.
-              {totalActive > 0
-                ? <> {totalActive} active card{totalActive === 1 ? '' : 's'} loaded into the agent's prompt next run.</>
-                : cards.length > 0
-                  ? <> All cards completed or stuck — agent will see history but has nothing active.</>
-                  : <> Empty for now. The agent will fill it as it works, or you can seed it.</>}
-            </p>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* ─── Heading: identity · board⇄log toggle · add card ─────────────── */}
+      <div className="flex flex-shrink-0 flex-col gap-3 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card px-4 py-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="flex flex-wrap items-center gap-2 text-[15px] font-semibold text-theme-fg">
+            <LayoutGrid className="h-4 w-4 shrink-0" /> Agent kanban
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+              <BotIcon className="h-2.5 w-2.5" /> Private
+            </span>
+          </h3>
+          <p className="mt-1 text-[12px] leading-5 text-theme-muted">
+            The agent's own working memory — separate from your task board.
+            {totalActive > 0
+              ? <> {totalActive} active card{totalActive === 1 ? '' : 's'} load into its next run.</>
+              : cards.length > 0
+                ? <> All cards completed or stuck — nothing active right now.</>
+                : <> Empty for now — it'll fill this as it works, or seed it below.</>}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Board ⇄ Run log segmented control */}
+          <div className="inline-flex rounded-full border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-0.5">
+            <button
+              onClick={() => setView('board')}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition',
+                view === 'board' ? 'bg-theme-card text-theme-fg shadow-sm' : 'text-theme-muted hover:text-theme-fg',
+              )}
+            >
+              <LayoutGrid className="h-3 w-3" />
+              Board
+            </button>
+            <button
+              onClick={() => setView('log')}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition',
+                view === 'log' ? 'bg-theme-card text-theme-fg shadow-sm' : 'text-theme-muted hover:text-theme-fg',
+              )}
+            >
+              <Activity className="h-3 w-3" />
+              Run log
+              {runLog.length > 0 && (
+                <span className={clsx(
+                  'inline-flex h-4 min-w-[16px] items-center justify-center rounded px-1 text-[10px] font-semibold',
+                  view === 'log' ? 'bg-primary/15 text-primary' : 'bg-theme-hover/70 text-theme-muted',
+                )}>
+                  {runLog.length}
+                </span>
+              )}
+            </button>
           </div>
           <button
             onClick={() => setCreatingInColumn('queued')}
@@ -144,48 +178,52 @@ export function KanbanTab({
         </div>
       </div>
 
-      {/* Empty state */}
-      {isEmpty && (
-        <div className="rounded-2xl border border-dashed border-theme/40 bg-theme-card/60 p-8 text-center">
-          <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <LayoutGrid className="h-4 w-4" />
+      {/* ─── Body — board fills the height; lanes scroll internally on desktop
+            and stack into one scroll on phone/tablet. ────────────────────── */}
+      <div className="min-h-0 flex-1">
+        {view === 'log' ? (
+          <div className="h-full overflow-y-auto pr-0.5 scrollbar-minimal">
+            <RunLogSection runLog={runLog} />
           </div>
-          <div className="mx-auto max-w-md text-[13px] leading-6 text-theme-fg/90">
-            Once the agent starts running, it will plan, work, and reflect right here.
+        ) : isBoardEmpty ? (
+          <div className="h-full overflow-y-auto scrollbar-minimal">
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-theme/40 bg-theme-card/50 px-6 py-12 text-center">
+              <div className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <LayoutGrid className="h-5 w-5" />
+              </div>
+              <div className="max-w-md text-[13px] font-medium leading-6 text-theme-fg/90">
+                Once the agent runs, it plans, works, and reflects right here.
+              </div>
+              <p className="mt-1 max-w-md text-[12px] leading-5 text-theme-muted">
+                You can seed it with intent up-front — add a card and it'll pick it up on the next run.
+              </p>
+              <button
+                onClick={() => setCreatingInColumn('queued')}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-theme bg-theme-card px-3.5 py-1.5 text-[12px] font-medium text-theme-fg shadow-sm transition hover:bg-theme-hover"
+              >
+                <Plus className="h-3 w-3" />
+                Add a card
+              </button>
+            </div>
           </div>
-          <p className="mx-auto mt-1 max-w-md text-[12px] leading-5 text-theme-muted">
-            You can also seed the agent with intent up-front by adding a card — it'll see it on the next run.
-          </p>
-          <button
-            onClick={() => setCreatingInColumn('queued')}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-theme bg-theme-card px-3.5 py-1.5 text-[12px] font-medium text-theme-fg shadow-sm transition hover:bg-theme-hover"
-          >
-            <Plus className="h-3 w-3" />
-            Add a card
-          </button>
-        </div>
-      )}
-
-      {/* Board — wider columns now that the tab takes full width. */}
-      {!isEmpty && (
-        <div className="rounded-xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-3">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {KANBAN_COLUMNS.map(col => (
-              <KanbanColumn
-                key={col.id}
-                column={col}
-                cards={grouped[col.id]}
-                onAdd={() => setCreatingInColumn(col.id)}
-                onCardClick={(c) => setEditingCard(c)}
-                onMove={handleMove}
-                onDelete={handleDelete}
-              />
-            ))}
+        ) : (
+          <div className="h-full min-h-0 overflow-y-auto pr-0.5 scrollbar-minimal lg:overflow-hidden lg:pr-0">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:h-full lg:grid-cols-4 lg:grid-rows-1">
+              {KANBAN_COLUMNS.map(col => (
+                <KanbanColumn
+                  key={col.id}
+                  column={col}
+                  cards={grouped[col.id]}
+                  onAdd={() => setCreatingInColumn(col.id)}
+                  onCardClick={(c) => setEditingCard(c)}
+                  onMove={handleMove}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-
-      <RunLogSection runLog={runLog} />
+        )}
+      </div>
 
       {(editingCard || creatingInColumn) && (
         <KanbanCardEditModal
@@ -220,8 +258,8 @@ function KanbanColumn({
 }) {
   const Icon = column.icon;
   return (
-    <div className="flex min-h-[220px] flex-col rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card p-3 shadow-sm">
-      <div className="mb-3 flex items-center justify-between border-b border-theme/15 pb-2.5">
+    <div className="flex min-h-[180px] flex-col rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card p-3 shadow-sm lg:h-full lg:min-h-0">
+      <div className="mb-3 flex shrink-0 items-center justify-between border-b border-theme/15 pb-2.5">
         <div className="flex items-center gap-2">
           <span className={clsx('inline-flex h-6 w-6 items-center justify-center rounded-md', column.iconBg)}>
             <Icon className="h-3.5 w-3.5" />
@@ -243,7 +281,7 @@ function KanbanColumn({
         </button>
       </div>
 
-      <div className="flex flex-1 flex-col gap-2">
+      <div className="flex flex-1 flex-col gap-2 lg:min-h-0 lg:overflow-y-auto lg:pr-1 scrollbar-minimal">
         {cards.length === 0 ? (
           <button
             onClick={onAdd}
@@ -434,12 +472,12 @@ function KanbanCardEditModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-150"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-in fade-in duration-150"
       onClick={onClose}
       style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
+        className="max-h-[90vh] w-full max-w-md overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
         <div className="border-b border-theme/15 px-5 py-4">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import {
   Plus,
@@ -6,6 +6,8 @@ import {
   Calendar,
   Trash2,
   ChevronDown,
+  ChevronsUpDown,
+  CalendarPlus,
   CheckCircle2,
   Loader2,
   MoreHorizontal,
@@ -60,27 +62,302 @@ const PRIORITY_CONFIG: Record<TaskPriority, { label: string; color: string; icon
   urgent: { label: 'Urgent', color: 'text-red-500', icon: '🔥', bg: 'bg-red-500/10' },
 };
 
+const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+
+function TaskPriorityPicker({
+  value,
+  onChange,
+  variant = 'dashboard',
+}: {
+  value: TaskPriority;
+  onChange: (priority: TaskPriority) => void;
+  variant?: 'dashboard' | 'compact';
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const cfg = PRIORITY_CONFIG[value];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const isDashboard = variant === 'dashboard';
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className={clsx(
+          'relative flex items-center capitalize outline-none transition-colors',
+          isDashboard
+            ? 'h-8 min-w-[96px] rounded-[12px] bg-[color:var(--dashboard-hover)] pl-3 pr-7 text-[12px] font-medium text-theme-fg hover:opacity-90'
+            : 'rounded-lg bg-theme-hover border border-theme/10 text-[10px] text-theme-muted px-2 py-1 hover:text-theme-fg'
+        )}
+      >
+        <span>{cfg.label}</span>
+        <ChevronsUpDown
+          className={clsx(
+            'absolute right-2 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none',
+            isDashboard ? 'w-3 h-3' : 'w-2.5 h-2.5'
+          )}
+          strokeWidth={1.5}
+        />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className={clsx(
+            'absolute z-50 min-w-[128px] overflow-hidden rounded-xl border shadow-lg animate-in fade-in zoom-in-95 duration-150',
+            isDashboard
+              ? 'bottom-full right-0 mb-1.5 border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] py-1'
+              : 'top-full left-0 mt-1 border-theme/10 bg-theme-card py-1'
+          )}
+        >
+          {PRIORITY_OPTIONS.map((priority) => {
+            const option = PRIORITY_CONFIG[priority];
+            const selected = priority === value;
+            return (
+              <button
+                key={priority}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(priority);
+                  setOpen(false);
+                }}
+                className={clsx(
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] font-medium transition-colors',
+                  selected
+                    ? isDashboard
+                      ? 'bg-[color:var(--dashboard-hover)]'
+                      : 'bg-theme-hover'
+                    : isDashboard
+                      ? 'hover:bg-[color:var(--dashboard-hover)]'
+                      : 'hover:bg-theme-hover',
+                  option.color
+                )}
+              >
+                <span className="flex-1">{option.label}</span>
+                {selected && <Check className="w-3.5 h-3.5 shrink-0 opacity-80" strokeWidth={2} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ReminderWithTask = AgentAssignment & { taskId: string; taskTitle: string };
+
+function UpcomingRemindersSection({
+  reminders,
+  compact,
+  sectionRef,
+  editingId,
+  editDate,
+  editTime,
+  editMessage,
+  onEditDate,
+  onEditTime,
+  onEditMessage,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onDelete,
+  onOpenTask,
+}: {
+  reminders: ReminderWithTask[];
+  compact?: boolean;
+  sectionRef?: React.RefObject<HTMLDivElement | null>;
+  editingId: string | null;
+  editDate: string;
+  editTime: string;
+  editMessage: string;
+  onEditDate: (v: string) => void;
+  onEditTime: (v: string) => void;
+  onEditMessage: (v: string) => void;
+  onStartEdit: (reminder: ReminderWithTask) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (reminder: ReminderWithTask) => void;
+  onDelete: (reminder: ReminderWithTask) => void;
+  onOpenTask: (taskId: string) => void;
+}) {
+  if (reminders.length === 0) return null;
+
+  return (
+    <div ref={sectionRef as React.RefObject<HTMLDivElement>} className={clsx(compact ? 'mb-3' : 'mb-5')}>
+      <div className={clsx('flex items-center gap-2', compact ? 'mb-1.5 px-0.5' : 'mb-2.5 px-1')}>
+        <Bell className="w-3.5 h-3.5 text-amber-500" />
+        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
+          Upcoming reminders
+        </span>
+        <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-amber-500/10 text-amber-500 text-[10px] font-bold px-1">
+          {reminders.length}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {reminders.map((reminder) => {
+          const reminderDate = new Date(reminder.scheduledAt);
+          const isOverdue = reminderDate < new Date();
+          const isSoon = !isOverdue && reminderDate.getTime() - Date.now() < 3600000;
+          return (
+            <div
+              key={reminder.id}
+              className={clsx(
+                'p-3 rounded-xl border transition-all',
+                isOverdue
+                  ? 'bg-red-500/5 border-red-500/20'
+                  : isSoon
+                    ? 'bg-amber-500/5 border-amber-500/20'
+                    : compact
+                      ? 'bg-theme-card border-theme/10 hover:border-theme/20'
+                      : 'bg-transparent border-[color:var(--dashboard-panel-border)] hover:bg-[color:var(--dashboard-hover)]'
+              )}
+            >
+              {editingId === reminder.id ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus
+                      type="date"
+                      value={editDate}
+                      onChange={(e) => onEditDate(e.target.value)}
+                      className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
+                    />
+                    <input
+                      type="time"
+                      value={editTime}
+                      onChange={(e) => onEditTime(e.target.value)}
+                      className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={editMessage}
+                    onChange={(e) => onEditMessage(e.target.value)}
+                    placeholder="Reminder message..."
+                    className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none w-full"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onSaveEdit(reminder)}
+                      disabled={!editDate}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[11px] font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      <Check className="w-3 h-3" /> Save
+                    </button>
+                    <button
+                      onClick={onCancelEdit}
+                      className="px-3 py-1.5 text-[11px] text-theme-muted hover:text-theme-fg rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-3">
+                  <div
+                    className={clsx(
+                      'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
+                      isOverdue ? 'bg-red-500/10' : isSoon ? 'bg-amber-500/10' : 'bg-theme-hover'
+                    )}
+                  >
+                    <Bell
+                      className={clsx(
+                        'w-4 h-4',
+                        isOverdue ? 'text-red-500' : isSoon ? 'text-amber-500' : 'text-theme-muted'
+                      )}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12px] font-semibold text-theme-fg">
+                      {reminder.message || reminder.taskTitle}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Clock className="w-3 h-3 text-theme-muted" />
+                      <span
+                        className={clsx(
+                          'text-[10px] font-medium',
+                          isOverdue ? 'text-red-500' : isSoon ? 'text-amber-600' : 'text-theme-muted'
+                        )}
+                      >
+                        {isOverdue ? 'Overdue: ' : ''}
+                        {reminderDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        {' at '}
+                        {reminderDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    {reminder.taskTitle && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenTask(reminder.taskId)}
+                        className="text-[10px] text-theme-muted mt-1 flex items-center gap-1 hover:text-primary transition-colors"
+                      >
+                        <ListChecks className="w-3 h-3" />
+                        {reminder.taskTitle}
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await syncReminderToCloudSMS({
+                        message: reminder.message || reminder.taskTitle || 'Reminder',
+                        scheduledAt: reminder.scheduledAt,
+                      });
+                      try {
+                        (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.');
+                      } catch { /* ignore */ }
+                    }}
+                    className="p-1.5 text-theme-muted hover:text-sky-400 hover:bg-sky-400/10 rounded-lg transition-colors"
+                    title="Sync to cloud SMS"
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onStartEdit(reminder)}
+                    className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onDelete(reminder)}
+                    className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, defaultSubTab = 'todo', onSubTabChange }) => {
   const [tasks, setTasks] = useState<UnifiedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('pending');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [subTab, setSubTab] = useState<TaskSubTab>(defaultSubTab);
   const [editingGlobalReminderId, setEditingGlobalReminderId] = useState<string | null>(null);
   const [editGlobalReminderDate, setEditGlobalReminderDate] = useState('');
   const [editGlobalReminderTime, setEditGlobalReminderTime] = useState('');
   const [editGlobalReminderMessage, setEditGlobalReminderMessage] = useState('');
-
-  // Sync subTab with defaultSubTab prop
-  useEffect(() => {
-    setSubTab(defaultSubTab);
-  }, [defaultSubTab]);
-
-  const handleSubTabChange = (tab: TaskSubTab) => {
-    setSubTab(tab);
-    onSubTabChange?.(tab);
-  };
+  const remindersSectionRef = useRef<HTMLDivElement>(null);
 
   // New task form state
   const [newTask, setNewTask] = useState({
@@ -220,6 +497,62 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
     return reminders.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
   }, [tasks]);
 
+  const startEditingReminder = useCallback((reminder: ReminderWithTask) => {
+    const dt = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
+    setEditGlobalReminderDate(dt.slice(0, 10));
+    setEditGlobalReminderTime(dt.slice(11, 16) || '09:00');
+    setEditGlobalReminderMessage(reminder.message || reminder.taskTitle || 'Reminder');
+    setEditingGlobalReminderId(reminder.id);
+  }, []);
+
+  const saveEditingReminder = useCallback(async (reminder: ReminderWithTask) => {
+    if (!editGlobalReminderDate) return;
+    const scheduledAt = `${editGlobalReminderDate}T${editGlobalReminderTime}:00`;
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(reminder.taskId, reminder.id, {
+        scheduledAt,
+        message: editGlobalReminderMessage,
+      });
+      if (res?.ok) {
+        if (Array.isArray(res.tasks)) setTasks(res.tasks);
+        else if (res.task) updateTask(res.task);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setEditingGlobalReminderId(null);
+  }, [editGlobalReminderDate, editGlobalReminderTime, editGlobalReminderMessage]);
+
+  const deleteReminder = useCallback(async (reminder: ReminderWithTask) => {
+    try {
+      const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(reminder.taskId, reminder.id);
+      if (res?.ok) {
+        if (Array.isArray(res.tasks)) setTasks(res.tasks);
+        else if (res.task) updateTask(res.task);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const openTaskFromReminder = useCallback((taskId: string) => {
+    setExpandedTaskId(taskId);
+    setFilter('pending');
+  }, []);
+
+  useEffect(() => {
+    if (defaultSubTab === 'reminders' && !loading && allReminders.length > 0) {
+      onSubTabChange?.('todo');
+      const t = window.setTimeout(() => {
+        remindersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+      return () => window.clearTimeout(t);
+    }
+  }, [defaultSubTab, loading, allReminders.length, onSubTabChange]);
+
+  const showRemindersInList = filter === 'pending' && allReminders.length > 0;
+  const showEmptyTasksState = !loading && filteredTasks.length === 0 && !showRemindersInList;
+
   if (loading && compact) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -229,306 +562,56 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   }
 
   return (
-    <div className={clsx("flex flex-col h-full", compact ? "p-3" : "pb-16 max-w-6xl mx-auto w-full")}>
-      <div className={clsx("shrink-0", compact ? "mb-3" : "mb-6")}>
-        {compact ? (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
-              <button
-                onClick={() => handleSubTabChange('todo')}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
-                  subTab === 'todo' ? "bg-primary text-primary-fg shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                )}
-              >
-                <ListChecks className="w-3.5 h-3.5" />
-                To-do
-                {filteredTasks.length > 0 && (
-                  <span className={clsx(
-                    "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
-                    subTab === 'todo' ? "bg-white/20" : "bg-primary/10 text-primary"
-                  )}>
-                    {filteredTasks.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => handleSubTabChange('reminders')}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all",
-                  subTab === 'reminders' ? "bg-amber-500 text-white shadow-sm" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                )}
-              >
-                <Bell className="w-3.5 h-3.5" />
-                Reminders
-                {allReminders.length > 0 && (
-                  <span className={clsx(
-                    "min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold",
-                    subTab === 'reminders' ? "bg-white/20" : "bg-amber-500/10 text-amber-500"
-                  )}>
-                    {allReminders.length}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {subTab === 'todo' && (
-              <div className="flex items-center gap-1 bg-theme-card/50 p-1 rounded-xl border border-theme/10">
-                {(['pending', 'completed'] as const).map(f => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    className={clsx(
-                      "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all capitalize",
-                      filter === f ? "bg-theme-card shadow-sm text-theme-fg" : "text-theme-muted hover:text-theme-fg"
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-3">
-            <div className="inline-flex items-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] p-1 shadow-sm">
-              <button
-                onClick={() => handleSubTabChange('todo')}
-                className={clsx(
-                  "flex items-center gap-2 px-5 py-2 text-[13px] font-semibold rounded-full transition-all min-w-[110px] justify-center",
-                  subTab === 'todo'
-                    ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm"
-                    : "text-theme-muted hover:text-theme-fg"
-                )}
-              >
-                <ListChecks className="w-3.5 h-3.5" />
-                To-do
-                {filteredTasks.length > 0 && (
-                  <span className={clsx(
-                    "min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] font-bold px-1",
-                    subTab === 'todo' ? "bg-primary/10 text-primary" : "bg-theme-hover text-theme-muted"
-                  )}>
-                    {filteredTasks.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => handleSubTabChange('reminders')}
-                className={clsx(
-                  "flex items-center gap-2 px-5 py-2 text-[13px] font-semibold rounded-full transition-all min-w-[110px] justify-center",
-                  subTab === 'reminders'
-                    ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm"
-                    : "text-theme-muted hover:text-theme-fg"
-                )}
-              >
-                <Bell className="w-3.5 h-3.5" />
-                Reminders
-                {allReminders.length > 0 && (
-                  <span className={clsx(
-                    "min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] font-bold px-1",
-                    subTab === 'reminders' ? "bg-amber-500/10 text-amber-500" : "bg-theme-hover text-theme-muted"
-                  )}>
-                    {allReminders.length}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {subTab === 'todo' && (
-              <div className="inline-flex items-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] p-1 shadow-sm">
-                {(['pending', 'completed'] as const).map(f => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    className={clsx(
-                      "px-5 py-2 text-[13px] font-semibold rounded-full transition-all capitalize min-w-[70px]",
-                      filter === f ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
-                    )}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Reminders Tab Content */}
-      {subTab === 'reminders' && (
-        <div className="flex-1 overflow-y-auto custom-scrollbar -mx-2 px-2 pb-4">
-          {allReminders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-center">
-              <div className="w-14 h-14 bg-amber-500/10 rounded-full flex items-center justify-center mb-4">
-                <Bell className="w-7 h-7 text-amber-500/40" />
-              </div>
-              <p className="text-theme-fg font-semibold text-sm">No reminders set</p>
-              <p className="text-[11px] text-theme-muted mt-1 max-w-[200px]">
-                Add reminders to tasks to get notified at specific times.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {allReminders.map(reminder => {
-                const reminderDate = new Date(reminder.scheduledAt);
-                const isOverdue = reminderDate < new Date();
-                const isSoon = !isOverdue && reminderDate.getTime() - Date.now() < 3600000;
-                return (
-                  <div
-                    key={reminder.id}
-                    className={clsx(
-                      "p-3 rounded-xl border transition-all",
-                      isOverdue
-                        ? "bg-red-500/5 border-red-500/20"
-                        : isSoon
-                          ? "bg-amber-500/5 border-amber-500/20"
-                          : "bg-theme-card border-theme/10 hover:border-theme/20"
-                    )}
-                  >
-                    {editingGlobalReminderId === reminder.id ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          <input
-                            autoFocus
-                            type="date"
-                            value={editGlobalReminderDate}
-                            onChange={(e) => setEditGlobalReminderDate(e.target.value)}
-                            className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
-                          />
-                          <input
-                            type="time"
-                            value={editGlobalReminderTime}
-                            onChange={(e) => setEditGlobalReminderTime(e.target.value)}
-                            className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none"
-                          />
-                        </div>
-                        <input
-                          type="text"
-                          value={editGlobalReminderMessage}
-                          onChange={(e) => setEditGlobalReminderMessage(e.target.value)}
-                          placeholder="Reminder message..."
-                          className="bg-theme-hover border border-theme/10 rounded-lg text-[11px] px-2 py-1.5 outline-none w-full"
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={async () => {
-                              if (!editGlobalReminderDate) return;
-                              const scheduledAt = `${editGlobalReminderDate}T${editGlobalReminderTime}:00`;
-                              try {
-                                const res = await (window as any).desktopAPI?.unifiedTasksUpdateReminder?.(reminder.taskId, reminder.id, {
-                                  scheduledAt,
-                                  message: editGlobalReminderMessage,
-                                });
-                                if (res?.ok) {
-                                  if (Array.isArray(res.tasks)) setTasks(res.tasks);
-                                  else if (res.task) updateTask(res.task);
-                                }
-                              } catch (e) { console.error(e); }
-                              setEditingGlobalReminderId(null);
-                            }}
-                            disabled={!editGlobalReminderDate}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[11px] font-medium hover:opacity-90 disabled:opacity-50"
-                          >
-                            <Check className="w-3 h-3" /> Save
-                          </button>
-                          <button
-                            onClick={() => setEditingGlobalReminderId(null)}
-                            className="px-3 py-1.5 text-[11px] text-theme-muted hover:text-theme-fg rounded-lg"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        <div className={clsx(
-                          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                          isOverdue ? "bg-red-500/10" : isSoon ? "bg-amber-500/10" : "bg-theme-hover"
-                        )}>
-                          <Bell className={clsx(
-                            "w-4 h-4",
-                            isOverdue ? "text-red-500" : isSoon ? "text-amber-500" : "text-theme-muted"
-                          )} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[12px] font-semibold text-theme-fg">
-                            {reminder.message || reminder.taskTitle}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Clock className="w-3 h-3 text-theme-muted" />
-                            <span className={clsx(
-                              "text-[10px] font-medium",
-                              isOverdue ? "text-red-500" : isSoon ? "text-amber-600" : "text-theme-muted"
-                            )}>
-                              {isOverdue ? 'Overdue: ' : ''}
-                              {reminderDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                              {' at '}
-                              {reminderDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          {reminder.taskTitle && reminder.message && (
-                            <div className="text-[10px] text-theme-muted mt-1 flex items-center gap-1">
-                              <ListChecks className="w-3 h-3" />
-                              {reminder.taskTitle}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          onClick={async () => {
-                            await syncReminderToCloudSMS({
-                              message: reminder.message || reminder.taskTitle || 'Reminder',
-                              scheduledAt: reminder.scheduledAt,
-                            });
-                            try { (window as any).desktopAPI?.notify?.('Synced', 'Reminder synced to cloud SMS.'); } catch { }
-                          }}
-                          className="p-1.5 text-theme-muted hover:text-sky-400 hover:bg-sky-400/10 rounded-lg transition-colors"
-                          title="Sync to cloud SMS"
-                        >
-                          <Cloud className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            const dt = reminder.scheduledAt ? String(reminder.scheduledAt).slice(0, 16) : '';
-                            setEditGlobalReminderDate(dt.slice(0, 10));
-                            setEditGlobalReminderTime(dt.slice(11, 16) || '09:00');
-                            setEditGlobalReminderMessage(reminder.message || reminder.taskTitle || 'Reminder');
-                            setEditingGlobalReminderId(reminder.id);
-                          }}
-                          className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const res = await (window as any).desktopAPI?.unifiedTasksDeleteReminder?.(reminder.taskId, reminder.id);
-                              if (res?.ok) {
-                                if (Array.isArray(res.tasks)) setTasks(res.tasks);
-                                else if (res.task) updateTask(res.task);
-                              }
-                            } catch (e) { console.error(e); }
-                          }}
-                          className="p-1.5 text-theme-muted hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+    <div
+      className={clsx(
+        compact ? 'flex flex-col h-full min-h-0 p-3' : 'pb-16 max-w-6xl mx-auto w-full'
       )}
+    >
+      <div className={clsx(compact ? 'shrink-0 space-y-3 mb-3' : 'space-y-6 mb-6')}>
+        <div className={clsx('flex', compact ? 'justify-end' : 'justify-center')}>
+          <div
+            className={clsx(
+              'inline-flex items-center p-1 shadow-sm',
+              compact
+                ? 'gap-1 bg-theme-card/50 rounded-xl border border-theme/10'
+                : 'rounded-full border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)]'
+            )}
+          >
+            {(['pending', 'completed'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={clsx(
+                  'font-semibold transition-all capitalize',
+                  compact
+                    ? 'px-2.5 py-1 rounded-lg text-[10px] font-bold'
+                    : 'px-5 py-2 text-[13px] rounded-full min-w-[70px]',
+                  filter === f
+                    ? compact
+                      ? 'bg-theme-card shadow-sm text-theme-fg'
+                      : 'bg-[color:var(--dashboard-panel-solid)] text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg'
+                )}
+              >
+                {f}
+                {f === 'pending' && filteredTasks.length > 0 && (
+                  <span
+                    className={clsx(
+                      'ml-1.5 inline-flex min-w-[18px] h-[18px] items-center justify-center rounded-full text-[10px] font-bold',
+                      filter === f ? 'bg-primary/10 text-primary' : 'bg-theme-hover text-theme-muted'
+                    )}
+                  >
+                    {filteredTasks.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
 
-      {/* Todo Tab Content */}
-      {subTab === 'todo' && (
-        <>
-          {compact ? (
+        {compact ? (
             <div className={clsx(
-              "relative transition-all duration-300 ease-in-out shrink-0 group",
-              compact ? "mb-3" : "mb-4",
+              "relative transition-all duration-300 ease-in-out group",
               isAdding ? "ring-2 ring-primary/20 rounded-xl" : ""
             )}>
               <div className={clsx(
@@ -565,16 +648,11 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                       onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
                       className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20"
                     />
-                    <select
+                    <TaskPriorityPicker
+                      variant="compact"
                       value={newTask.priority}
-                      onChange={(e) => setNewTask({ ...newTask, priority: e.target.value as TaskPriority })}
-                      className="bg-theme-hover border border-theme/10 rounded-lg text-[10px] text-theme-muted px-2 py-1 outline-none focus:ring-1 focus:ring-primary/20 cursor-pointer"
-                    >
-                      <option value="low">Low</option>
-                      <option value="normal">Normal</option>
-                      <option value="high">High</option>
-                      <option value="urgent">Urgent</option>
-                    </select>
+                      onChange={(priority) => setNewTask({ ...newTask, priority })}
+                    />
                     <button 
                       onClick={handleAddTask}
                       disabled={!newTask.title.trim()}
@@ -587,64 +665,94 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
               </div>
             </div>
           ) : (
-            <div className="shrink-0 mb-6 flex justify-center">
-              <div className="w-full max-w-[560px] flex items-center gap-2.5">
-                <div className="flex-1 h-10 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent px-4 flex items-center">
-                  <input
-                    type="text"
-                    placeholder="Add task"
-                    className="w-full bg-transparent border-none outline-none text-[15px] text-theme-fg placeholder:text-theme-muted/65"
-                    value={newTask.title}
-                    onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleAddTask();
-                    }}
-                  />
-                </div>
-                <label className="relative h-10 w-10 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent flex items-center justify-center text-theme-muted hover:text-theme-fg transition-colors cursor-pointer overflow-hidden">
-                  <Calendar className="w-4 h-4" />
-                  <input
-                    type="date"
-                    value={newTask.dueDate}
-                    onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
-                  />
-                </label>
-                <div className="relative h-10 min-w-[108px] rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-transparent overflow-hidden">
-                  <select
+            <div className="flex justify-center w-full">
+              <div className="w-full max-w-[480px] flex flex-col rounded-[22px] bg-[color:var(--dashboard-panel-solid)] px-5 pt-4 pb-3.5 min-h-[100px] shadow-sm">
+                <input
+                  type="text"
+                  placeholder="Add Task"
+                  className="w-full min-w-0 bg-transparent border-none outline-none text-[15px] text-theme-fg placeholder:text-theme-muted/60"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddTask();
+                  }}
+                />
+                <div className="mt-auto flex items-center justify-end gap-2 pt-3">
+                  <TaskPriorityPicker
+                    variant="dashboard"
                     value={newTask.priority}
-                    onChange={(e) => setNewTask({ ...newTask, priority: e.target.value as TaskPriority })}
-                    className="w-full h-full appearance-none bg-transparent px-4 pr-8 text-[15px] text-theme-fg outline-none cursor-pointer"
+                    onChange={(priority) => setNewTask({ ...newTask, priority })}
+                  />
+                  <label
+                    className={clsx(
+                      "relative h-8 w-8 rounded-[11px] bg-[color:var(--dashboard-hover)] flex items-center justify-center cursor-pointer transition-colors",
+                      newTask.dueDate ? "text-primary" : "text-theme-fg"
+                    )}
+                    title={newTask.dueDate ? `Due ${newTask.dueDate}` : 'Set due date'}
                   >
-                    <option value="low">Low</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-theme-muted absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <CalendarPlus className="w-4 h-4" strokeWidth={1.5} />
+                    <input
+                      type="date"
+                      value={newTask.dueDate}
+                      onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                    />
+                  </label>
+                  <button
+                    onClick={handleAddTask}
+                    disabled={!newTask.title.trim()}
+                    className="h-8 w-8 shrink-0 rounded-[11px] bg-primary text-primary-fg flex items-center justify-center hover:opacity-90 disabled:opacity-50 transition-all"
+                    title="Add task"
+                  >
+                    <CheckCircle2 className="w-[18px] h-[18px]" strokeWidth={2} />
+                  </button>
                 </div>
-                <button
-                  onClick={handleAddTask}
-                  disabled={!newTask.title.trim()}
-                  className="h-10 w-10 shrink-0 rounded-2xl bg-primary text-primary-fg flex items-center justify-center hover:opacity-90 disabled:opacity-50 transition-all"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
               </div>
             </div>
           )}
+      </div>
 
-          {/* Task List */}
-          <div className={clsx(
-            "flex-1 overflow-y-auto custom-scrollbar pb-4",
-            compact ? "space-y-1.5 -mx-2 px-2" : "space-y-3"
-          )}>
+      <div
+        className={clsx(
+          compact
+            ? 'flex-1 min-h-0 overflow-y-auto custom-scrollbar pb-4 space-y-1.5 -mx-2 px-2'
+            : 'space-y-3'
+        )}
+      >
+            {showRemindersInList && (
+              <UpcomingRemindersSection
+                reminders={allReminders}
+                compact={compact}
+                sectionRef={remindersSectionRef}
+                editingId={editingGlobalReminderId}
+                editDate={editGlobalReminderDate}
+                editTime={editGlobalReminderTime}
+                editMessage={editGlobalReminderMessage}
+                onEditDate={setEditGlobalReminderDate}
+                onEditTime={setEditGlobalReminderTime}
+                onEditMessage={setEditGlobalReminderMessage}
+                onStartEdit={startEditingReminder}
+                onCancelEdit={() => setEditingGlobalReminderId(null)}
+                onSaveEdit={saveEditingReminder}
+                onDelete={deleteReminder}
+                onOpenTask={openTaskFromReminder}
+              />
+            )}
+
             {loading && !compact ? (
               Array.from({ length: 5 }).map((_, idx) => (
-                <div key={idx} className="h-[64px] rounded-[18px] bg-transparent border border-[color:var(--dashboard-panel-border)] animate-pulse" />
+                <div
+                  key={idx}
+                  className="h-[64px] rounded-[18px] bg-transparent border border-[color:var(--dashboard-panel-border)] animate-pulse"
+                />
               ))
-            ) : filteredTasks.length === 0 ? (
-              <div className={clsx("flex flex-col items-center justify-center text-center", compact ? "h-48" : "h-[360px]")}>
+            ) : showEmptyTasksState ? (
+              <div
+                className={clsx(
+                  'flex flex-col items-center justify-center text-center',
+                  compact ? 'h-48' : 'h-[360px]'
+                )}
+              >
                 {!compact && filter === 'pending' ? (
                   <>
                     <p className="text-theme-fg font-semibold text-[24px]">You have no Tasks</p>
@@ -659,30 +767,47 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                     </div>
                     <p className="text-theme-fg font-semibold text-sm">All caught up</p>
                     <p className="text-[11px] text-theme-muted mt-1 max-w-[200px]">
-                      {filter === 'pending' ? "No pending tasks. Enjoy!" : "No completed tasks yet."}
+                      {filter === 'pending'
+                        ? 'No pending tasks. Add a reminder on any task when you expand it.'
+                        : 'No completed tasks yet.'}
                     </p>
                   </>
                 )}
               </div>
             ) : (
-              filteredTasks.map(task => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  compact={compact}
-                  expanded={expandedTaskId === task.id}
-                  onToggleExpand={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
-                  onToggle={() => handleToggleTask(task.id)}
-                  onDelete={() => handleDeleteTask(task.id)}
-                  onUpdateTask={handleUpdateTask}
-                  onUpdate={updateTask}
-                  onRefreshTasks={() => loadTasks()}
-                />
-              ))
+              <>
+                {showRemindersInList && filteredTasks.length > 0 && (
+                  <div
+                    className={clsx(
+                      'flex items-center gap-2',
+                      compact ? 'px-0.5 pt-1' : 'px-1 pt-2'
+                    )}
+                  >
+                    <ListChecks className="w-3.5 h-3.5 text-theme-muted" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
+                      Tasks
+                    </span>
+                  </div>
+                )}
+                {filteredTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    compact={compact}
+                    expanded={expandedTaskId === task.id}
+                    onToggleExpand={() =>
+                      setExpandedTaskId(expandedTaskId === task.id ? null : task.id)
+                    }
+                    onToggle={() => handleToggleTask(task.id)}
+                    onDelete={() => handleDeleteTask(task.id)}
+                    onUpdateTask={handleUpdateTask}
+                    onUpdate={updateTask}
+                    onRefreshTasks={() => loadTasks()}
+                  />
+                ))}
+              </>
             )}
-          </div>
-        </>
-      )}
+      </div>
     </div>
   );
 };

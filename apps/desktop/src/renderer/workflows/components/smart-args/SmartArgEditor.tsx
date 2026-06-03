@@ -342,7 +342,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'boolean') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <BooleanToggle value={value} onChange={onChange} />
         </div>
       );
@@ -351,7 +351,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (Array.isArray(value)) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <ArrayEditor
             value={value}
             onChange={onChange}
@@ -366,7 +366,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'object' && value !== null) {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <JsonEditor
             value={value}
             onChange={onChange}
@@ -380,7 +380,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     if (typeof value === 'number') {
       return (
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-slate-700">{argKey}</label>
+          <label className="text-sm font-semibold wf-fg">{argKey}</label>
           <TextInputWithVariables
             value={String(value)}
             onChange={(v: string) => {
@@ -398,7 +398,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
     // Default: string text input
     return (
       <div className="space-y-2">
-        <label className="text-sm font-semibold text-slate-700">{argKey}</label>
+        <label className="text-sm font-semibold wf-fg">{argKey}</label>
         <TextInputWithVariables
           value={String(value ?? '')}
           onChange={onChange}
@@ -659,12 +659,12 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
   return (
     <div className="space-y-2">
       <div className="flex flex-col gap-0.5 mb-1">
-        <label className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+        <label className="text-sm font-semibold wf-fg flex items-center gap-1.5">
           {label || argKey}
           {required && <span className="text-red-400 text-xs">*</span>}
         </label>
         {description && (
-          <p className="text-[11px] text-slate-400 leading-snug">
+          <p className="text-[11px] wf-fg-faint leading-snug">
             {description}
           </p>
         )}
@@ -771,16 +771,16 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* React Component Editor - Primary mode */}
-        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
-          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-50 to-sky-50 hover:from-blue-100 hover:to-sky-100 transition-colors">
-<Code2 className="w-4 h-4 text-blue-600" />
-            <span className="text-blue-700">Component (React)</span>
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-sky-500/10 hover:from-blue-500/15 hover:to-sky-500/15 transition-colors">
+            <Code2 className="w-4 h-4 text-blue-400" />
+            <span className="text-blue-400">Component (React)</span>
             {hasComponent && (
-              <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">active</span>
+              <span className="ml-auto text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">active</span>
             )}
           </summary>
-          <div className="p-4 space-y-3 bg-white">
-            <p className="text-[11px] text-slate-400 leading-snug">
+          <div className="p-4 space-y-3 wf-bg-elevated">
+            <p className="text-[11px] wf-fg-faint leading-snug">
               Define a function App() using JSX. Hooks: useState, useEffect, useVar(name, default), useStream(streamId). API: stuard.submit(data), stuard.close(), stuard.callNode(nodeIdOrLabel, data). Use callNode wires for worker actions; callTool is legacy and invisible.
             </p>
             <button
@@ -810,10 +810,10 @@ export function ToolArgsEditor({
         </details>
 
         {/* UI Identity */}
-        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
-            <div className="text-sm font-semibold text-slate-700">UI Details</div>
-            <p className="text-[11px] text-slate-500 mt-1">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated">
+          <div className="px-4 py-3 border-b wf-border-subtle wf-bg-overlay">
+            <div className="text-sm font-semibold wf-fg">UI Details</div>
+            <p className="text-[11px] wf-fg-muted mt-1">
               Give the window a clear title and a stable ID so you can update or close it later.
             </p>
           </div>
@@ -848,10 +848,10 @@ export function ToolArgsEditor({
         </div>
 
         {/* Runtime Behavior */}
-        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-          <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-violet-50 to-sky-50">
-            <div className="text-sm font-semibold text-slate-700">Run Behavior</div>
-            <p className="text-[11px] text-slate-500 mt-1">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated">
+          <div className="px-4 py-3 border-b wf-border-subtle wf-bg-overlay">
+            <div className="text-sm font-semibold wf-fg">Run Behavior</div>
+            <p className="text-[11px] wf-fg-muted mt-1">
               Choose whether this UI pauses the workflow for a decision or behaves like a live panel in the background.
             </p>
           </div>
@@ -862,20 +862,18 @@ export function ToolArgsEditor({
                 onClick={() => setBlockingMode(true)}
                 className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
                   isBlocking
-                    ? 'border-violet-300 bg-violet-50 shadow-sm'
-                    : 'border-slate-200 hover:border-violet-200 hover:bg-slate-50'
+                    ? 'border-[color:var(--wf-accent)]/35 bg-[color:var(--wf-accent-soft)]'
+                    : 'border wf-border-subtle wf-hover-bg'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-slate-800">Wait for a response</div>
-                    <p className="text-[11px] text-slate-500 mt-1">
+                    <div className="text-sm font-semibold wf-fg">Wait for a response</div>
+                    <p className="text-[11px] wf-fg-muted mt-1">
                       Best for forms, confirmations, and approval flows. The workflow continues after `stuard.submit()` or closing the window.
                     </p>
                   </div>
-                  <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${isBlocking ? 'border-violet-500 bg-violet-500' : 'border-slate-300 bg-white'}`}>
-                    {isBlocking && <div className="h-2 w-2 rounded-full bg-white" />}
-                  </div>
+                  <div className={`h-5 w-5 rounded-full border-2 shrink-0 ${isBlocking ? 'border-[color:var(--wf-accent)] bg-[color:var(--wf-accent)]' : 'border-[color:var(--wf-border)] bg-transparent'}`} />
                 </div>
               </button>
 
@@ -884,30 +882,28 @@ export function ToolArgsEditor({
                 onClick={() => setBlockingMode(false)}
                 className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
                   !isBlocking
-                    ? 'border-emerald-300 bg-emerald-50 shadow-sm'
-                    : 'border-slate-200 hover:border-emerald-200 hover:bg-slate-50'
+                    ? 'border-[color:var(--wf-accent)]/35 bg-[color:var(--wf-accent-soft)]'
+                    : 'border wf-border-subtle wf-hover-bg'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-slate-800">Show it and keep going</div>
-                    <p className="text-[11px] text-slate-500 mt-1">
+                    <div className="text-sm font-semibold wf-fg">Show it and keep going</div>
+                    <p className="text-[11px] wf-fg-muted mt-1">
                       Best for widgets, overlays, and status panels. The UI stays open while the workflow continues immediately.
                     </p>
                   </div>
-                  <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${!isBlocking ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white'}`}>
-                    {!isBlocking && <div className="h-2 w-2 rounded-full bg-white" />}
-                  </div>
+                  <div className={`h-5 w-5 rounded-full border-2 shrink-0 ${!isBlocking ? 'border-[color:var(--wf-accent)] bg-[color:var(--wf-accent)]' : 'border-[color:var(--wf-border)] bg-transparent'}`} />
                 </div>
               </button>
             </div>
 
             {isBlocking ? (
-              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4 space-y-4">
+              <div className="rounded-xl border wf-border-subtle wf-bg-overlay p-4 space-y-4">
                 <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
                   <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Auto-timeout (ms)</label>
-                    <p className="text-[11px] text-slate-500">
+                    <label className="text-sm font-semibold wf-fg">Auto-timeout (ms)</label>
+                    <p className="text-[11px] wf-fg-muted">
                       Optional. Leave blank or `0` to wait indefinitely.
                     </p>
                     <input
@@ -917,32 +913,32 @@ export function ToolArgsEditor({
                       value={timeoutMsValue}
                       onChange={e => setTimeoutMs(e.target.value)}
                       placeholder="0"
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-violet-100 focus:border-violet-300"
+                      className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl wf-input wf-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
                     />
                   </div>
 
-                  <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 cursor-pointer hover:border-violet-200 transition-colors">
+                  <label className="flex items-start gap-3 rounded-xl border wf-border-subtle wf-bg-elevated px-3 py-3 cursor-pointer wf-hover-bg transition-colors">
                     <input
                       type="checkbox"
                       checked={keepOpenAfterResolve}
                       onChange={e => setKeepOpenAfterResolve(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                      className="mt-0.5 h-4 w-4 rounded border wf-border-subtle text-[color:var(--wf-accent)] focus:ring-[color:var(--wf-accent)]/30"
                     />
                     <div>
-                      <div className="text-sm font-semibold text-slate-700">Keep window open after resolve</div>
-                      <p className="text-[11px] text-slate-500 mt-1">
+                      <div className="text-sm font-semibold wf-fg">Keep window open after resolve</div>
+                      <p className="text-[11px] wf-fg-muted mt-1">
                         Useful when submit should unblock the workflow but the UI should remain visible.
                       </p>
                     </div>
                   </label>
                 </div>
 
-                <div className="rounded-lg border border-violet-200 bg-white/80 px-3 py-2 text-[11px] text-slate-600">
+                <div className="rounded-lg border wf-border-subtle wf-bg-elevated px-3 py-2 text-[11px] wf-fg-muted">
                   The workflow will wait for `stuard.submit(...)`, `stuard.close()`, a manual close, or the timeout above.
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-[11px] text-slate-600">
+              <div className="rounded-xl border wf-border-subtle wf-bg-overlay px-4 py-3 text-[11px] wf-fg-muted">
                 The workflow continues right away. Use `update_custom_ui` to refresh this panel and `close_custom_ui` when you are done with it.
               </div>
             )}
@@ -950,15 +946,15 @@ export function ToolArgsEditor({
         </div>
 
         {/* Window Configuration - Collapsible */}
-        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
-          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <Settings className="w-4 h-4" />
             Window Settings
-            <span className="ml-auto text-xs text-slate-400">
+            <span className="ml-auto text-xs wf-fg-faint">
               {args.window?.width || args.width || 600}×{args.window?.height || args.height || 450}
             </span>
           </summary>
-          <div className="p-4 space-y-4 bg-white">
+          <div className="p-4 space-y-4 wf-bg-elevated">
             <SmartArgEditor
               toolName={toolName}
               argKey="window"
@@ -971,17 +967,17 @@ export function ToolArgsEditor({
         </details>
 
         {/* Pages System - Collapsible */}
-        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open={hasPages}>
-          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open={hasPages}>
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <LayoutGrid className="w-4 h-4" />
             Pages (Multi-page SPA)
             {hasPages && (
-              <span className="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+              <span className="ml-auto text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">
                 {Object.keys(args.pages).length} page(s)
               </span>
             )}
           </summary>
-          <div className="p-4 space-y-4 bg-white">
+          <div className="p-4 space-y-4 wf-bg-elevated">
             <SmartArgEditor
               toolName={toolName}
               argKey="pages"
@@ -1005,24 +1001,24 @@ export function ToolArgsEditor({
 
         {/* Add Custom Property */}
         {showAddArg ? (
-          <div className="flex gap-2 items-center p-3 bg-slate-50 rounded-xl border border-indigo-200 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
             <input
               value={newArgKey}
               onChange={e => setNewArgKey(e.target.value)}
               placeholder="custom_property_name"
-className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono bg-white"
+              className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono wf-input wf-fg"
               onKeyDown={e => e.key === 'Enter' && addCustomArg()}
               autoFocus
             />
             <button
               onClick={addCustomArg}
-className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors"
             >
               Add
             </button>
             <button
               onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg transition-colors"
+              className="p-2 wf-fg-faint hover:wf-fg wf-hover-bg rounded-lg transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1030,9 +1026,9 @@ className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover
         ) : (
           <button
             onClick={() => setShowAddArg(true)}
-className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/30 transition-all flex items-center justify-center gap-2 group"
-            >
-              <div className="w-6 h-6 rounded-full bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center transition-colors">
+            className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2 group"
+          >
+            <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-blue-500/10 flex items-center justify-center transition-colors">
               <Plus className="w-3.5 h-3.5" />
             </div>
             Add Custom Property
@@ -1137,15 +1133,15 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
 
         {/* Pages Navigation - if pages exist */}
         {hasPages && (
-          <details className="text-sm border border-slate-200 rounded-xl overflow-hidden" open>
-            <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+          <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+            <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
               <LayoutGrid className="w-4 h-4" />
               Pages
-              <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+              <span className="ml-auto text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">
                 {Object.keys(args.pages).length} page(s)
               </span>
             </summary>
-            <div className="p-4 space-y-4 bg-white">
+            <div className="p-4 space-y-4 wf-bg-elevated">
               <SmartArgEditor
                 toolName={toolName}
                 argKey="pages"
@@ -1167,12 +1163,12 @@ className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs 
         )}
 
         {/* Raw Code Editing */}
-        <details className="text-sm border border-slate-200 rounded-xl overflow-hidden">
-          <summary className="cursor-pointer text-slate-600 hover:text-slate-800 font-medium p-3 flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+          <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <Code2 className="w-4 h-4" />
             Edit HTML/CSS/JS
           </summary>
-          <div className="p-4 space-y-4 bg-white">
+          <div className="p-4 space-y-4 wf-bg-elevated">
             <SmartArgEditor
               toolName={toolName}
               argKey="html"

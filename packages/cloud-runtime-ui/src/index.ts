@@ -4,6 +4,12 @@ export {
   type CloudRuntimeMode,
 } from './CloudRuntimeWorkspace';
 export type { SyncState } from './CloudRuntimeWorkspace';
+export {
+  CloudAutomationsPanel,
+  type CloudAutomationsPanelProps,
+  type AutomationDeployment,
+  type AutomationTriggerBinding,
+} from './CloudAutomationsPanel';
 export * from './file-viewer';
 export * from './shell/constants';
 export {

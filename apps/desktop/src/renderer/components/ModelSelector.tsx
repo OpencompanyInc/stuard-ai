@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search,
-  Sparkles,
+  Wand2,
   Check,
   Zap,
   Brain,
@@ -78,6 +78,15 @@ function stripVariantSuffix(modelId: string): string {
   return String(modelId || '').replace(/:free$/i, '');
 }
 
+/** Compact context-window label: 2000000 → "2M", 1500000 → "1.5M", 128000 → "128k". */
+function formatContextWindow(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${Number.isInteger(m) ? m : +m.toFixed(1)}M`;
+  }
+  return `${Math.round(n / 1000)}k`;
+}
+
 function dedupeBrowseModels(models: ModelMeta[]): ModelMeta[] {
   const seen = new Set<string>();
   const out: ModelMeta[] = [];
@@ -98,6 +107,58 @@ function isOpenAIModel(model: ModelMeta | null | undefined): boolean {
   return modelProviderId(model) === 'openai';
 }
 
+/**
+ * Stuard-served models keep their `openrouter/...` id (the silent transport)
+ * even though they're displayed de-branded as the underlying vendor. These are
+ * the always-available catalog; native ids (no prefix) are the BYOK surface.
+ */
+function isStuardServed(model: ModelMeta | null | undefined): boolean {
+  return String(model?.id || '').startsWith('openrouter/');
+}
+
+/**
+ * Canonical identity that collapses a native entry and its Stuard-served twin
+ * (e.g. `openai/gpt-5.1` ⇆ `openrouter/openai/gpt-5.1`, ignoring `:free`).
+ */
+function canonicalModelKey(id: string): string {
+  return String(id || '').replace(/^openrouter\//i, '').replace(/:free$/i, '').toLowerCase();
+}
+
+/**
+ * Whether the user can route this model through a BYOK key. Native ids are
+ * served by their own provider, so they need that provider's key. Stuard-served
+ * (`openrouter/...`) ids route through the OpenRouter transport, so a personal
+ * OpenRouter key is what overrides them onto the user's own account.
+ */
+function hasByokForModel(
+  model: ModelMeta | null | undefined,
+  snap: Pick<ReturnType<typeof useByokStatus>, 'byokProviders'>,
+): boolean {
+  if (!model) return false;
+  if (isStuardServed(model)) return snap.byokProviders.has('openrouter');
+  return snap.byokProviders.has(modelProviderId(model));
+}
+
+/**
+ * A model is offered in the picker when it's reachable:
+ *   • Stuard-served catalog (`openrouter/...`) — always, no key needed. This is
+ *     the full OpenRouter catalog (GPT, Gemini, Grok, DeepSeek, Qwen, …),
+ *     de-branded as the underlying vendor.
+ *   • Bare native ids — only with that provider's BYOK key, or (OpenAI) a linked
+ *     ChatGPT/Codex plan. When the user has a key, dedupeAcrossSources prefers
+ *     this native entry over its Stuard-served twin so they get "Your key".
+ */
+function isModelSelectable(
+  model: ModelMeta | null | undefined,
+  snap: ReturnType<typeof useByokStatus>,
+): boolean {
+  if (!model) return false;
+  if (isStuardServed(model)) return true;
+  if (snap.byokProviders.has(modelProviderId(model))) return true;
+  if (isOpenAIModel(model) && snap.codexReady) return true;
+  return false;
+}
+
 function sourceBadgeForModel(
   model: ModelMeta | null | undefined,
   source: ModelSourcePreference,
@@ -105,12 +166,43 @@ function sourceBadgeForModel(
 ): 'byok' | 'subscription' | null {
   if (!model) return null;
   if (source === 'api_key') {
-    return snap.byokProviders.has(modelProviderId(model)) ? 'byok' : null;
+    return hasByokForModel(model, snap) ? 'byok' : null;
   }
   if (source === 'subscription') {
     return isOpenAIModel(model) && snap.codexReady ? 'subscription' : null;
   }
   return null;
+}
+
+/**
+ * Collapse native ↔ Stuard-served twins to a single row. Prefer the native
+ * entry when the user can actually use it (own key / plan) so they get the
+ * "Your key"/"ChatGPT" affordance; otherwise show the Stuard-served entry.
+ */
+function dedupeAcrossSources(
+  models: ModelMeta[],
+  snap: ReturnType<typeof useByokStatus>,
+): ModelMeta[] {
+  const byKey = new Map<string, ModelMeta>();
+  const order: string[] = [];
+  for (const model of models) {
+    const key = canonicalModelKey(model.id);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, model);
+      order.push(key);
+      continue;
+    }
+    // Prefer whichever twin the user can select; tie-break to native.
+    const existingSelectable = isModelSelectable(existing, snap);
+    const candidateSelectable = isModelSelectable(model, snap);
+    if (candidateSelectable && !existingSelectable) {
+      byKey.set(key, model);
+    } else if (candidateSelectable === existingSelectable && !isStuardServed(model)) {
+      byKey.set(key, model);
+    }
+  }
+  return order.map((k) => byKey.get(k)!).filter(Boolean);
 }
 
 const SectionHeader: React.FC<{ icon: React.ReactNode; label: string; extra?: React.ReactNode }> = ({ icon, label, extra }) => (
@@ -171,6 +263,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       if (!rect) return;
 
       const width = panelWidth;
+      const margin = 12;
       const left =
         align === 'center'
           ? rect.left + rect.width / 2 - width / 2
@@ -178,12 +271,26 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             ? rect.right - width
             : rect.left;
 
+      // Clamp the panel to the room actually available, and flip to the side
+      // with more space when the preferred side is too cramped, so the panel
+      // never spills past the top/bottom of the viewport.
+      const spaceAbove = rect.top - margin;
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      let effectiveSide = side;
+      if (side === 'top' && spaceAbove < 320 && spaceBelow > spaceAbove) effectiveSide = 'bottom';
+      else if (side === 'bottom' && spaceBelow < 320 && spaceAbove > spaceBelow) effectiveSide = 'top';
+
+      const available = effectiveSide === 'top' ? spaceAbove : spaceBelow;
+      const maxHeight = Math.max(240, Math.min(520, available));
+
       setPortalStyle({
         position: 'fixed',
         width,
-        left: Math.max(12, Math.min(left, window.innerWidth - width - 12)),
-        top: side === 'top' ? rect.top - 12 : rect.bottom + 12,
-        transform: side === 'top' ? 'translateY(-100%)' : undefined,
+        maxHeight,
+        left: Math.max(margin, Math.min(left, window.innerWidth - width - margin)),
+        ...(effectiveSide === 'top'
+          ? { top: rect.top - margin, transform: 'translateY(-100%)' }
+          : { top: rect.bottom + margin }),
       });
     };
 
@@ -205,15 +312,23 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
   }, [open]);
 
+  // Collapse native ↔ Stuard-served twins to one row each, then keep only the
+  // models the user can actually route to: the Stuard-served catalog (always)
+  // plus native ids unlocked by a BYOK key / ChatGPT plan.
+  const selectableModels = useMemo(
+    () => dedupeAcrossSources(ALL_MODELS, byokStatus).filter((m) => isModelSelectable(m, byokStatus)),
+    [ALL_MODELS, byokStatus],
+  );
+
   const filteredModels = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return ALL_MODELS;
-    return ALL_MODELS.filter(m =>
+    if (!q) return selectableModels;
+    return selectableModels.filter(m =>
       m.name.toLowerCase().includes(q) ||
       m.provider.toLowerCase().includes(q) ||
       m.id.toLowerCase().includes(q)
     );
-  }, [search, ALL_MODELS]);
+  }, [search, selectableModels]);
 
   const grouped = useMemo(() => {
     if (search) {
@@ -294,7 +409,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       if (!isOpenAIModel(nextModel)) onModelSourceChange?.('stuard');
     } else if (modelSource === 'api_key') {
       const nextModel = ALL_MODELS.find(m => m.id === id);
-      if (nextModel && !byokStatus.byokProviders.has(modelProviderId(nextModel))) onModelSourceChange?.('stuard');
+      if (nextModel && !hasByokForModel(nextModel, byokStatus)) onModelSourceChange?.('stuard');
     }
     onSelectModel(id);
     setOpen(false);
@@ -344,14 +459,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       label: 'Your key',
       disabled: selectedModelId === 'auto'
         ? true
-        : !selectedModel || !byokStatus.byokProviders.has(modelProviderId(selectedModel)),
+        : !selectedModel || !hasByokForModel(selectedModel, byokStatus),
       title: selectedModelId === 'auto'
         ? 'Pick a specific model to route through your API key.'
         : !selectedModel
           ? 'Unknown model.'
-          : byokStatus.byokProviders.has(modelProviderId(selectedModel))
-            ? `Route through your ${selectedModel.provider} API key — no Stuard credits used.`
-            : `Add a ${selectedModel.provider} API key in Settings to enable this.`,
+          : hasByokForModel(selectedModel, byokStatus)
+            ? byokStatus.byokProviders.has(modelProviderId(selectedModel))
+              ? `Route through your ${selectedModel.provider} API key — no Stuard credits used.`
+              : `Route through your OpenRouter API key — no Stuard credits used.`
+            : `Add a ${selectedModel.provider} or OpenRouter API key in Settings to enable this.`,
     },
     {
       value: 'subscription' as ModelSourcePreference,
@@ -410,7 +527,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             selectedModel ? (
               PROVIDER_FALLBACK_ICONS[selectedModel.provider] || <Cpu className="w-3.5 h-3.5 text-neutral-500" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              <Wand2 className="w-3.5 h-3.5 text-primary" />
             )
           )}
           {selectedSource && (
@@ -450,7 +567,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             ref={panelRef}
             data-wf-theme={wfSurfaceTheme}
             className={clsx(
-              "z-[10005] model-selector-panel rounded-2xl overflow-hidden flex flex-col max-h-[520px] animate-in fade-in zoom-in-95 duration-150 shadow-2xl",
+              // Height cap lives in CSS on .model-selector-panel (robust against
+              // Tailwind JIT missing the arbitrary min()/calc() value). Non-portal
+              // (launcher + window) uses that cap; portal callers override it with
+              // an inline maxHeight computed from the available viewport space.
+              "z-[10005] model-selector-panel rounded-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 shadow-2xl",
               variant === 'glass'
                 ? "bg-theme-card/90 backdrop-blur-2xl"
                 : "bg-theme-card/98 backdrop-blur-xl",
@@ -479,9 +600,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {search ? (
-                <div ref={scrollRef} className="flex-1 overflow-y-auto p-1.5 custom-scrollbar">
+                <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-1.5 custom-scrollbar">
                   {allVisibleItems.length > 0 ? (
                     <div className="flex flex-col gap-0.5">
                       {allVisibleItems.map((item, i) => item.type === 'model' && (
@@ -512,7 +633,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   )}
                 </div>
               ) : (
-                <div ref={scrollRef} className="flex-1 p-1.5 flex flex-col gap-3 overflow-y-auto custom-scrollbar">
+                <div ref={scrollRef} className="flex-1 min-h-0 p-1.5 flex flex-col gap-3 overflow-y-auto custom-scrollbar">
                   {/* Auto router */}
                   <button
                     onClick={() => handleSelect('auto')}
@@ -524,7 +645,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     )}
                   >
                     <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-primary/15 to-primary/5">
-                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <Wand2 className="w-3.5 h-3.5 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-medium text-theme-fg leading-tight">Automatic</div>
@@ -533,10 +654,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     {selectedModelId === 'auto' && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
                   </button>
 
+                  {/* No specific models to list: the user has no API key, so the
+                      Stuard "Automatic" default (above) is the only route. */}
+                  {selectableModels.length === 0 && (
+                    <div className="px-3 py-3 text-center">
+                      <p className="text-[11px] text-theme-muted leading-relaxed">
+                        Stuard automatically picks the best model for each task.
+                        <br />
+                        Add a provider API key in <span className="text-theme-fg/80">Settings</span> to choose a specific one.
+                      </p>
+                    </div>
+                  )}
+
                   {grouped.openai.length > 0 && (
                     <div className="flex flex-col gap-0.5">
                       <SectionHeader
-                        icon={<Sparkles className="w-3 h-3 text-cyan-500/80" />}
+                        icon={<Wand2 className="w-3 h-3 text-cyan-500/80" />}
                         label="ChatGPT plan"
                         extra={byokStatus.codexAccountEmail && (
                           <span className="text-[10px] text-theme-muted/60 font-normal normal-case tracking-normal truncate">
@@ -748,7 +881,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   </span>
                 </div>
                 <div className="text-[10px] text-theme-muted/60">
-                  {ALL_MODELS.length} models
+                  {selectableModels.length} models
                 </div>
               </div>
             </div>
@@ -784,7 +917,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
   byokStatus,
   onSelectWithSource,
 }) => {
-  const byokAvailable = byokStatus.byokProviders.has(modelProviderId(model));
+  const byokAvailable = hasByokForModel(model, byokStatus);
   const codexAvailable = isOpenAIModel(model) && byokStatus.codexReady;
   const showByokAction = byokAvailable && currentSource !== 'api_key';
   const showPlanAction = codexAvailable && currentSource !== 'subscription';
@@ -822,7 +955,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
         </div>
         <div className="text-[11px] text-theme-muted truncate mt-0.5">
           {model.provider}
-          {model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k context` : ''}
+          {model.contextWindow ? ` · ${formatContextWindow(model.contextWindow)} context` : ''}
         </div>
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">

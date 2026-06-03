@@ -4,6 +4,7 @@ import {
   isMediaGalleryExcludedToolName,
   isMediaLibraryItemVisibleInDashboard,
   shouldAutoRegisterToolMedia,
+  shouldSkipIncompleteCaptureRegistration,
 } from './media-library-policy';
 
 describe('media-library policy', () => {
@@ -19,6 +20,33 @@ describe('media-library policy', () => {
     expect(shouldAutoRegisterToolMedia('generate_image')).toBe(true);
     expect(shouldAutoRegisterToolMedia('text_to_speech')).toBe(true);
     expect(shouldAutoRegisterToolMedia('capture_media')).toBe(true);
+  });
+
+  it('skips registering in-progress capture sessions', () => {
+    expect(shouldSkipIncompleteCaptureRegistration('capture_screen', {
+      status: 'recording',
+      mode: 'until_stop',
+    })).toBe(true);
+
+    expect(shouldSkipIncompleteCaptureRegistration('capture_media', {
+      status: 'streaming',
+      mode: 'stream',
+    })).toBe(true);
+
+    expect(shouldSkipIncompleteCaptureRegistration('capture_screen', {
+      status: 'completed',
+      mode: 'fixed',
+    })).toBe(false);
+
+    expect(shouldSkipIncompleteCaptureRegistration('stop_screen_capture', {
+      status: 'completed',
+      mode: 'until_stop',
+    })).toBe(false);
+
+    expect(shouldSkipIncompleteCaptureRegistration('stop_capture', {
+      status: 'completed',
+      mode: 'until_stop',
+    })).toBe(false);
   });
 
   it('only hides explicitly hidden items from the dashboard media tab', () => {

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { Polar } from '@polar-sh/sdk';
 import { verifyToken } from '../supabase';
-import { getAutoRefillPending } from '../billing/auto-refill';
+// import { getAutoRefillPending } from '../billing/auto-refill'; // DISABLED
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...CORS };
@@ -155,11 +155,14 @@ export async function handleBillingRoutes(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  // DISABLED: auto-refill / billing settings greyed out
   // GET /v1/billing/auto-refill/pending
   if (req.method === 'GET' && parsedUrl.pathname === '/v1/billing/auto-refill/pending') {
     const user = await authenticate(req, res);
     if (!user) return true;
-
+    reply(res, 200, { ok: true, pending: false });
+    return true;
+    /*
     try {
       const pending = await getAutoRefillPending(user.userId);
       reply(res, 200, { ok: true, ...pending });
@@ -167,6 +170,7 @@ export async function handleBillingRoutes(req: IncomingMessage, res: ServerRespo
       reply(res, 500, { ok: false, error: e?.message || 'Failed to load auto-refill status' });
     }
     return true;
+    */
   }
 
   // POST /v1/billing/checkout

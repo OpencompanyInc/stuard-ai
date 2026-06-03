@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 
 type LazyVideoProps = {
   src: string;
@@ -37,6 +38,13 @@ export default function LazyVideo({
 }: LazyVideoProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [active, setActive] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setReady(false);
+    setError(false);
+  }, [src, active]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -48,7 +56,6 @@ export default function LazyVideo({
           if (entry.isIntersecting) {
             setActive(true);
             if (autoPlay) {
-              // Autoplay can be rejected by the browser; ignore the rejection.
               void el.play().catch(() => {});
             }
           } else if (autoPlay) {
@@ -56,27 +63,51 @@ export default function LazyVideo({
           }
         }
       },
-      // Start fetching a touch before it's on screen for a seamless first frame.
       { rootMargin: '200px 0px', threshold: 0.25 },
     );
     io.observe(el);
     return () => io.disconnect();
   }, [autoPlay]);
 
+  const showLoading = active && !ready && !error;
+
   return (
-    <video
-      ref={videoRef}
-      className={className}
-      // Only attach the source once in view so nothing downloads up front.
-      src={active ? src : undefined}
-      poster={poster}
-      preload="none"
-      autoPlay={autoPlay}
-      muted={muted}
-      loop={loop}
-      controls={controls}
-      playsInline
-      aria-label={ariaLabel}
-    />
+    <div className="absolute inset-0">
+      {showLoading ? (
+        <div
+          className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-2 bg-[#0d0d0d]"
+          role="status"
+          aria-live="polite"
+          aria-label="Loading video"
+        >
+          <Loader2 className="h-7 w-7 animate-spin text-[#FF383C]" aria-hidden />
+          <span className="text-[11px] text-[#737373]">Loading video…</span>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="absolute inset-0 z-[1] flex items-center justify-center bg-[#111111] px-4 text-center text-[12px] text-[#737373]">
+          Video could not be loaded
+        </div>
+      ) : null}
+      <video
+        ref={videoRef}
+        className={className}
+        src={active ? src : undefined}
+        poster={poster}
+        preload={active ? 'auto' : 'none'}
+        autoPlay={autoPlay}
+        muted={muted}
+        loop={loop}
+        controls={controls}
+        playsInline
+        aria-label={ariaLabel}
+        onLoadedData={() => setReady(true)}
+        onCanPlay={() => setReady(true)}
+        onError={() => {
+          setError(true);
+          setReady(false);
+        }}
+      />
+    </div>
   );
 }

@@ -30,7 +30,7 @@ import {
   withActiveBridgeContext,
 } from '../../tools/device/shared';
 import { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
-import { searchWorkflowDocs } from './docs';
+import { createSearchWorkflowDocsTool } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
 import { normalizeToolInputForSchema, coerceToolInputSchema } from '../../tools/zod-utils';
@@ -164,8 +164,12 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
   }
 
   Object.assign(baseTools, {
-    // 1. Search workflow documentation on demand
-    search_workflow_docs: createLoggedTool(searchWorkflowDocs, 'search_workflow_docs'),
+    // 1. Search workflow documentation on demand. Fresh dedup set per agent
+    //    build → the same section isn't returned in full twice in one session.
+    search_workflow_docs: createLoggedTool(
+      createSearchWorkflowDocsTool({ seen: new Set<string>() }),
+      'search_workflow_docs',
+    ),
     // 2. Search workflow nodes with schema metadata
     search_workflow_nodes: createLoggedTool(search_workflow_nodes, 'search_workflow_nodes'),
     // 3. Search tools (sis search)

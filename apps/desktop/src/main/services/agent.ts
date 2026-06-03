@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as net from "net";
 import { isDev } from "../env";
 import logger from "../utils/logger";
+import { syncAgentMediaPathConfig, getMediaLibraryRoot } from "./media-library";
 
 interface AgentInstance {
   process: ChildProcess;
@@ -104,6 +105,9 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   }
 
   const env = { ...process.env } as NodeJS.ProcessEnv;
+  syncAgentMediaPathConfig();
+  env.STUARD_MEDIA_DIR = getMediaLibraryRoot();
+  env.STUARD_AI_MEDIA_DIR = env.STUARD_MEDIA_DIR;
   if (process.env.CLOUD_AI_WS) {
     env.CLOUD_AI_WS = process.env.CLOUD_AI_WS;
   } else {

@@ -27,6 +27,45 @@ interface VmChatAttachment {
   existing?: boolean;
 }
 
+function firstText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function extractFinalText(event: any, fallback = ''): string {
+  const result = event?.result;
+  const nested = result?.result;
+  return firstText(
+    event?.text,
+    event?.response,
+    event?.message,
+    event?.content,
+    event?.data?.text,
+    event?.data?.response,
+    event?.data?.message,
+    event?.data?.content,
+    result?.text,
+    result?.response,
+    result?.message,
+    result?.content,
+    result?.output,
+    nested?.text,
+    nested?.response,
+    nested?.message,
+    nested?.content,
+    nested?.output,
+    fallback,
+  );
+}
+
+function fallbackNoAssistantText(reason?: string): string {
+  return reason
+    ? `The VM stream ended without assistant text (${reason}).`
+    : 'The VM stream ended without assistant text.';
+}
+
 export function VmChat({
   engine,
   platform,
@@ -73,6 +112,7 @@ export function VmChat({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [loadingConvId, setLoadingConvId] = useState<string | null>(null);
   const historyPanelRef = useRef<HTMLDivElement>(null);
+  const [historyMaxHeight, setHistoryMaxHeight] = useState(384);
 
   const upsertConversationEntry = useCallback((conversation: Partial<ConversationEntry> & { id: string; incrementMessageCountBy?: number }) => {
     setConversations((prev) => {
@@ -216,6 +256,27 @@ export function VmChat({
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
 
+  // Cap the history panel to the space actually available so it never runs off
+  // the viewport. In the workspace variant it opens upward (`bottom-full`), so
+  // on a short window a fixed height would otherwise overflow the top of the
+  // screen — measure the room above/below the trigger and clamp to it.
+  useEffect(() => {
+    if (!showHistory) return;
+    const measure = () => {
+      const trigger = historyPanelRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const margin = 16;
+      const available = variant === 'workspace'
+        ? rect.top - margin // room above the trigger
+        : window.innerHeight - rect.bottom - margin; // room below
+      setHistoryMaxHeight(Math.max(160, Math.min(384, available)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [showHistory, variant]);
+
   // Fetch conversation history — query all sources in parallel and merge.
   // Always preserves any in-memory entries (e.g. a just-sent chat) that the
   // backends haven't indexed yet, so the list never flashes empty after a send.
@@ -335,6 +396,8 @@ export function VmChat({
     let accReasoning = '';
     let accTools: VmToolCall[] = [];
     let accChunks: StreamChunk[] = [];
+    let finalSeen = false;
+    let streamEndReason = '';
 
     const normalizeToolStatus = (status: string | undefined): VmToolCall['status'] => {
       switch (String(status || '').toLowerCase()) {
@@ -582,11 +645,15 @@ export function VmChat({
                 // event.text/event.data.text. Reading only the latter showed a
                 // blank "No response" whenever the answer arrived in the final
                 // frame instead of as streamed deltas.
-                const finalText = event.text
-                  || event.data?.text
-                  || event.result?.text
-                  || event.result?.result?.text
-                  || accText;
+                finalSeen = true;
+                streamEndReason = String(
+                  event.result?.finishReason
+                    || event.result?.result?.finishReason
+                    || event.finishReason
+                    || (event.aborted ? 'aborted' : '')
+                    || streamEndReason,
+                ).trim();
+                const finalText = extractFinalText(event, accText);
                 if (finalText) accText = finalText;
                 if (event.conversationId) conversationIdRef.current = event.conversationId;
                 break;
@@ -609,7 +676,10 @@ export function VmChat({
         setMessages((prev) => [
           ...prev,
           {
-            id: `assistant-${Date.now()}`, role: 'assistant', text: accText || 'No response', timestamp: Date.now(),
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            text: accText || fallbackNoAssistantText(finalSeen ? (streamEndReason || 'empty final') : 'stream closed before final'),
+            timestamp: Date.now(),
             reasoning: accReasoning || undefined,
             toolCalls: accTools.length > 0 ? accTools : undefined,
             streamChunks: accChunks.length > 0 ? accChunks : undefined,
@@ -623,7 +693,9 @@ export function VmChat({
         // If we raced the VM still booting, resume the readiness probe so the
         // composer flips back to "starting" and re-enables the instant it's up.
         if (data?.error === 'vm_starting') setReadyNonce((n) => n + 1);
-        const replyText = String(data?.text || data?.result?.text || data?.message || data?.error || 'No response').trim();
+        const replyText = extractFinalText(data)
+          || firstText(data?.error, data?.detail)
+          || fallbackNoAssistantText('empty JSON response');
         if (data?.conversationId) conversationIdRef.current = data.conversationId;
         setMessages((prev) => [
           ...prev,
@@ -860,10 +932,13 @@ export function VmChat({
       </button>
 
       {showHistory && (
-        <div className={clsx(
-          'absolute z-50 w-80 max-h-96 rounded-2xl border border-theme bg-theme-card shadow-elevate flex flex-col',
-          variant === 'workspace' ? 'bottom-full left-0 mb-2' : 'right-0 top-full mt-1',
-        )}>
+        <div
+          className={clsx(
+            'absolute z-50 w-80 rounded-2xl border border-theme bg-theme-card shadow-elevate flex flex-col',
+            variant === 'workspace' ? 'bottom-full left-0 mb-2' : 'right-0 top-full mt-1',
+          )}
+          style={{ maxHeight: historyMaxHeight }}
+        >
           <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-theme/10">
             <span className="text-xs font-semibold text-theme-fg">Conversations</span>
             <div className="flex items-center gap-1.5">
@@ -1085,7 +1160,7 @@ export function VmChat({
   );
 
   const composer = variant === 'workspace' ? (
-    <div className="rounded-2xl border border-theme/10 bg-theme-card/30 transition-colors focus-within:border-primary/30">
+    <div className="rounded-2xl border border-theme bg-theme-card/40 shadow-sm transition-colors focus-within:border-primary/40">
       {attachmentChips}
       <textarea
         ref={inputRef}
@@ -1100,12 +1175,12 @@ export function VmChat({
       />
       {attachmentPickerInput}
       <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleAttachClick}
             disabled={loading || !isRunning}
-            className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors disabled:opacity-40"
+            className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors disabled:opacity-40"
             title="Attach files to this VM chat"
           >
             <Paperclip className="w-3.5 h-3.5" />
@@ -1113,21 +1188,21 @@ export function VmChat({
           {modelSelector}
           {historyButton}
           <span
-            className={clsx('h-1.5 w-1.5 rounded-full ml-1', (loading || vmStarting) ? 'bg-amber-500 animate-pulse' : 'bg-green-500')}
+            className={clsx('h-1.5 w-1.5 rounded-full ml-0.5', (loading || vmStarting) ? 'bg-amber-500 animate-pulse' : 'bg-green-500')}
             title={vmStarting ? 'VM agent is finishing startup…' : undefined}
           />
           {messages.length > 0 && (
-            <button type="button" onClick={handleClear} className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors ml-1" title="Clear">
-              <Trash2 className="w-3 h-3" />
+            <button type="button" onClick={handleClear} className="p-1.5 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors" title="Clear">
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {loading && (
             <button
               type="button"
               onClick={handleStop}
-              className="rounded-lg p-1.5 text-red-400 hover:bg-red-500/10 transition-colors"
+              className="rounded-lg p-2 text-red-400 hover:bg-red-500/10 transition-colors"
               title="Stop"
             >
               <Square className="w-3.5 h-3.5" />
@@ -1138,10 +1213,10 @@ export function VmChat({
             onClick={sendMessage}
             disabled={!input.trim() || loading || isUploadingAny || !vmReady}
             className={clsx(
-              'rounded-lg p-1.5 transition-colors',
+              'rounded-lg p-2 transition-colors',
               input.trim() && !loading && !isUploadingAny && vmReady
                 ? 'bg-primary text-primary-fg hover:opacity-90'
-                : 'text-theme-muted/30',
+                : 'bg-theme-hover/40 text-theme-muted/40',
             )}
             title={isUploadingAny ? 'Uploading attachments...' : 'Send (Enter)'}
           >

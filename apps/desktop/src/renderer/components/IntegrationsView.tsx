@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
+import { IntegrationSearchEmptyState } from "./IntegrationSearchEmptyState";
+import { openCustomIntegrationBuilder } from "../utils/integrationDiscovery";
 import { clsx } from 'clsx';
 import { getCloudAiHttp } from '../utils/cloud';
 import {
@@ -2245,20 +2247,15 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
           </div>
 
           {filteredIntegrations.length === 0 ? (
-            <div className="dashboard-card flex flex-col items-center justify-center rounded-[24px] border-dashed px-6 py-16 text-center">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-[color:var(--dashboard-panel-border)] bg-theme-hover/40">
-                <Search className="h-6 w-6 text-theme-muted/70" />
-              </div>
-              <h3 className="text-[15px] font-semibold text-theme-fg">No matching apps</h3>
-              <p className="mt-1.5 max-w-xs text-[12px] text-theme-muted">
-                We couldn&apos;t find any tools matching “{intQuery}” in {intCategory}.
-              </p>
-              <button
-                onClick={() => { setIntQuery(""); setIntCategory("All"); }}
-                className="dashboard-refresh-button mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium"
-              >
-                Clear Filters
-              </button>
+            <div className="dashboard-card rounded-[24px] border-dashed">
+              <IntegrationSearchEmptyState
+                query={intQuery.trim() || undefined}
+                onBuildIntegration={() => void openCustomIntegrationBuilder()}
+                secondaryAction={{
+                  label: 'Clear filters',
+                  onClick: () => { setIntQuery(""); setIntCategory("All"); },
+                }}
+              />
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

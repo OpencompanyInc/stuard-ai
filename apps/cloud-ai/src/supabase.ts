@@ -7,7 +7,7 @@ import { embedMany } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { DEFAULT_EMBEDDER } from './utils/config';
 import { encryptForUser, decryptForUser, type EncryptedField } from './utils/token-encryption';
-import { scheduleAutoRefillCheck } from './billing/auto-refill';
+// import { scheduleAutoRefillCheck } from './billing/auto-refill'; // DISABLED: billing settings greyed out
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 // Prefer new key names, fall back to legacy
@@ -727,7 +727,7 @@ export async function logUsageEvent(userId: string, conversationId: string | nul
     if (!billingExcluded && creditCost > 0) {
       try {
         await debitCreditGrants(userId, creditCost);
-        scheduleAutoRefillCheck(userId);
+        // scheduleAutoRefillCheck(userId); // DISABLED: auto-refill greyed out
       } catch {}
     }
   } catch {}
@@ -1918,6 +1918,24 @@ export async function getStorageUsage(userId: string): Promise<StorageUsage | nu
     return data as any;
   } catch {
     return null;
+  }
+}
+
+/**
+ * List all storage_usage rows on a paid (non-free) plan. Used by the recurring
+ * storage billing cycle to renew flat plan fees.
+ */
+export async function getPaidStorageUsages(): Promise<StorageUsage[]> {
+  if (!supabaseService) return [];
+  try {
+    const { data, error } = await supabaseService
+      .from('storage_usage')
+      .select(STORAGE_USAGE_COLS)
+      .neq('storage_plan_id', 'free');
+    if (error || !data) return [];
+    return data as any[];
+  } catch {
+    return [];
   }
 }
 

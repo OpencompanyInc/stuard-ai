@@ -13,39 +13,21 @@ from urllib import request, error as urlerror
 
 # Import media bus for shared capture support
 from . import media_bus
+from .media_paths import library_source_dir, library_source_dir_for_category
 
 # Global registry of active capture sessions for until_stop mode
 _active_sessions: Dict[str, threading.Event] = {}
 _active_recordings: Dict[str, Dict[str, Any]] = {}  # Stores background recording info
 _sessions_lock = threading.Lock()
 
-def _media_base_dir() -> str:
-    """Return the base StuardAI media directory (Documents/StuardAI/media)."""
-    home = os.path.expanduser("~")
-    docs = os.path.join(home, "Documents")
-    if not os.path.isdir(docs):
-        docs = home
-    base = os.path.join(docs, "StuardAI", "media")
-    try:
-        os.makedirs(base, exist_ok=True)
-    except Exception:
-        pass
-    return base
-
-
-def _media_dir(category: str = "misc") -> str:
-    """Return a category-specific media directory, e.g. Documents/StuardAI/media/recordings."""
-    d = os.path.join(_media_base_dir(), category)
-    try:
-        os.makedirs(d, exist_ok=True)
-    except Exception:
-        pass
-    return d
-
-
-def _tmp_dir() -> str:
-    """Legacy fallback — points to the organized media directory."""
-    return _media_dir("misc")
+def _capture_dir_for_kind(kind: str) -> str:
+    if kind == "audio":
+        return library_source_dir("audio-recordings")
+    if kind == "video":
+        return library_source_dir("video-recordings")
+    if kind == "photo":
+        return library_source_dir("photos")
+    return library_source_dir("misc")
 
 
 def _normalize_silence_threshold(value: float) -> float:
@@ -440,7 +422,7 @@ async def _capture_via_bus(
         if not file_path:
             ext = "wav" if kind == "audio" else "mp4"
             cat = "recordings" if kind in ("audio", "audiovideo") else "videos"
-            file_path = os.path.join(_media_dir(cat), f"{kind}_{session_id}_{int(time.time()*1000)}.{ext}")
+            file_path = os.path.join(library_source_dir_for_category(cat), f"{kind}_{session_id}_{int(time.time()*1000)}.{ext}")
             with _sessions_lock:
                 rec = _active_recordings.get(session_id)
                 if isinstance(rec, dict):
@@ -604,7 +586,7 @@ async def _start_background_recording(
     import soundfile as sf  # type: ignore
     import numpy as np  # type: ignore
     
-    path = explicit_path or os.path.join(_media_dir("recordings"), f"audio_{int(time.time()*1000)}.wav")
+    path = explicit_path or os.path.join(library_source_dir("audio-recordings"), f"audio_{int(time.time()*1000)}.wav")
     
     # Resolve device index
     dev_index = None
@@ -842,7 +824,7 @@ async def _start_background_video(
     except Exception:
         raise RuntimeError("opencv-python not installed")
     
-    path = explicit_path or os.path.join(_media_dir("videos"), f"video_{int(time.time()*1000)}.mp4")
+    path = explicit_path or os.path.join(library_source_dir("video-recordings"), f"video_{int(time.time()*1000)}.mp4")
     
     idx = _parse_device_index(device)
     
@@ -952,7 +934,7 @@ async def _start_background_video(
             out = cv2.VideoWriter(path, fourcc, fps, (width, height))
             used_path = path
         if out is None or not out.isOpened():
-            used_path = os.path.join(_media_dir("videos"), f"video_{int(time.time()*1000)}.avi")
+            used_path = os.path.join(library_source_dir("video-recordings"), f"video_{int(time.time()*1000)}.avi")
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(used_path, fourcc, fps, (width, height))
         recording_info["path"] = used_path
@@ -1281,7 +1263,7 @@ async def _capture_photo(device: Any, explicit_path: str, emit: Optional[Callabl
     except Exception:
         raise RuntimeError("opencv-python not installed")
 
-    path = explicit_path or os.path.join(_media_dir("photos"), f"photo_{int(time.time()*1000)}.jpg")
+    path = explicit_path or os.path.join(library_source_dir("photos"), f"photo_{int(time.time()*1000)}.jpg")
 
     idx = _parse_device_index(device)
 
@@ -1335,7 +1317,7 @@ async def _capture_video_with_stop(
         raise RuntimeError("opencv-python not installed")
 
     # Try mp4 first, fallback to avi
-    preferred_path = explicit_path or os.path.join(_media_dir("videos"), f"video_{int(time.time()*1000)}.mp4")
+    preferred_path = explicit_path or os.path.join(library_source_dir("video-recordings"), f"video_{int(time.time()*1000)}.mp4")
 
     idx = _parse_device_index(device)
 
@@ -1504,7 +1486,7 @@ async def _capture_audio_with_stop(
     except Exception:
         raise RuntimeError("sounddevice/soundfile not installed")
 
-    path = explicit_path or os.path.join(_media_dir("recordings"), f"audio_{int(time.time()*1000)}.wav")
+    path = explicit_path or os.path.join(library_source_dir("audio-recordings"), f"audio_{int(time.time()*1000)}.wav")
 
     # Resolve device index if provided
     dev_index = None

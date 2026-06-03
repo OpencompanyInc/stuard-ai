@@ -338,6 +338,11 @@
 /* Model selector dropdown — shadow-only, no light stroke */
 .model-selector-panel {
   border: none !important;
+  /* Keep the dropdown short so its search header stays on-screen when it opens
+     upward inside the launcher/window chat column (which clips overflow). The
+     list scrolls. Portal callers (e.g. workflows) override this with an inline
+     max-height sized to the available viewport space. */
+  max-height: min(340px, calc(100vh - 8rem));
 }
 
 [data-theme='dark'] .launcher-compact-skin .model-selector-panel {
@@ -1781,6 +1786,7 @@ button.input-status-float:not(:disabled) {
 /* Workflow theme utility classes */
 .wf-bg            { background-color: var(--wf-bg); }
 .wf-bg-elevated   { background-color: var(--wf-bg-elevated); }
+.wf-bg-overlay    { background: var(--wf-bg-overlay); }
 .wf-bg-glass      { background: var(--wf-bg-glass); backdrop-filter: var(--wf-glass-blur); }
 .wf-bg-canvas     { background-color: var(--wf-canvas); }
 .wf-fg            { color: var(--wf-fg); }
@@ -2109,6 +2115,30 @@ button.input-status-float:not(:disabled) {
   border-color: color-mix(in srgb, var(--wf-accent) 26%, var(--wf-border));
   color: var(--wf-accent);
   transform: scale(1.04);
+}
+
+/* Onboarding spotlight — uses brand accent, inherits theme via data-wf-theme on portal root. */
+.wf-spotlight-ring {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 16px;
+  z-index: 60;
+  animation: wf-spotlight-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes wf-spotlight-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--wf-accent) 88%, white),
+      0 0 0 6px color-mix(in srgb, var(--wf-accent) 22%, transparent),
+      0 0 32px 8px color-mix(in srgb, var(--wf-accent) 28%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--wf-accent),
+      0 0 0 10px color-mix(in srgb, var(--wf-accent) 12%, transparent),
+      0 0 48px 16px color-mix(in srgb, var(--wf-accent) 38%, transparent);
+  }
 }
 
 /* Neutral icon chip for list/card rows — quiet by default. */

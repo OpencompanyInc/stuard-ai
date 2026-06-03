@@ -47,10 +47,11 @@ interface CategoryDef {
 const CATEGORIES: CategoryDef[] = [
   { id: 'all', label: 'All Media', icon: Grid3X3, color: 'text-primary', match: () => true },
   { id: 'images', label: 'Images', icon: ImageIcon, color: 'text-blue-400', match: (i) => i.kind === 'image' && !i.source.includes('screenshot') && i.source !== 'generated' },
-  { id: 'videos', label: 'Videos', icon: Film, color: 'text-purple-400', match: (i) => i.kind === 'video' && !i.source.includes('screen') },
-  { id: 'audio', label: 'Audio', icon: Music, color: 'text-amber-400', match: (i) => i.kind === 'audio' },
-  { id: 'recordings', label: 'Recordings', icon: Mic, color: 'text-red-400', match: (i) => ['audio-recordings', 'video-recordings'].includes(i.source) || i.classification?.toLowerCase().includes('capture') },
-  { id: 'screenshots', label: 'Screenshots', icon: Monitor, color: 'text-cyan-400', match: (i) => i.source === 'screenshots' || i.classification === 'Screenshot' || i.source === 'screen-recordings' || i.source === 'screen-audio' },
+  { id: 'videos', label: 'Videos', icon: Film, color: 'text-purple-400', match: (i) => i.kind === 'video' && !i.source.includes('screen') && i.source !== 'video-recordings' },
+  { id: 'audio', label: 'Audio', icon: Music, color: 'text-amber-400', match: (i) => i.kind === 'audio' && !['screen-audio', 'audio-recordings'].includes(i.source) },
+  { id: 'recordings', label: 'Camera & Mic', icon: Mic, color: 'text-red-400', match: (i) => ['audio-recordings', 'video-recordings', 'photos'].includes(i.source) || (i.classification?.toLowerCase().includes('capture') && !i.source.includes('screen')) },
+  { id: 'screen-recordings', label: 'Screen Recordings', icon: Film, color: 'text-cyan-400', match: (i) => i.source === 'screen-recordings' || i.source === 'screen-audio' || i.classification === 'Screen recording' || i.classification === 'Screen audio' || i.classification === 'System audio' },
+  { id: 'screenshots', label: 'Screenshots', icon: Monitor, color: 'text-teal-400', match: (i) => i.source === 'screenshots' || i.classification === 'Screenshot' },
   { id: 'generated', label: 'AI Generated', icon: Wand2, color: 'text-violet-400', match: (i) => i.source === 'generated' || i.source === 'generated-audio' || i.classification?.toLowerCase().includes('generated') },
   { id: 'messages', label: 'Messages', icon: MessageSquare, color: 'text-green-400', match: (i) => i.source === 'message-media' || i.tags?.some((t) => ['telnyx', 'whatsapp', 'message-media'].includes(t)) },
   { id: 'misc', label: 'Other', icon: File, color: 'text-gray-400', match: (i) => !CATEGORIES.slice(1, -1).some((c) => c.match(i)) },
@@ -89,9 +90,9 @@ function sourceLabel(value: string) {
     'screen-audio': 'Screen Audio',
     'message-media': 'Messages',
     imports: 'Imported',
-    photos: 'Photos',
+    photos: 'Photo Captures',
     'audio-recordings': 'Audio Recordings',
-    'video-recordings': 'Video Recordings',
+    'video-recordings': 'Video Captures',
     'generated-audio': 'AI Audio',
     misc: 'Miscellaneous',
   };
@@ -497,9 +498,12 @@ export function MediaLibraryView() {
         </div>
 
         <div className="flex flex-col gap-3 rounded-xl border border-theme/10 bg-theme-hover/25 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <button type="button" onClick={() => void openMediaFolder()} className="flex min-w-0 items-center gap-2 text-left text-xs text-theme-muted hover:text-theme-fg">
-            <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
-            <span className="truncate">{prefs.resolvedStorageRootPath || 'Media folder not set'}</span>
+          <button type="button" onClick={() => void openMediaFolder()} className="flex min-w-0 flex-col gap-0.5 text-left text-xs text-theme-muted hover:text-theme-fg">
+            <span className="flex items-center gap-2">
+              <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+              <span className="truncate">{prefs.resolvedStorageRootPath || 'Media folder not set'}</span>
+            </span>
+            <span className="pl-6 text-[10px] text-theme-muted/70">Screen and camera captures are saved under this folder.</span>
           </button>
           <div className="flex shrink-0 items-center gap-2">
             {prefs.storageRootPath && (

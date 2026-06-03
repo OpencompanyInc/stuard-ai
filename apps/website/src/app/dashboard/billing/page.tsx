@@ -13,6 +13,9 @@ import {
   Sliders,
   Zap,
 } from 'lucide-react';
+
+/** Set true to re-enable Settings tab (auto-refill, budgets, metered limits). */
+const BILLING_SETTINGS_UI_ENABLED = false;
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { getBillingAuthToken } from '@/lib/billingApi';
@@ -28,6 +31,9 @@ import {
   isNonBillableUsageEvent,
   normalizeUsageLogEntry,
   resolveBillingPeriodStart,
+  creditUsageBarPercent,
+  creditUsagePercent,
+  isCreditExhausted,
   type UsageLogEntry,
 } from '@/lib/billingUtils';
 import {
@@ -363,6 +369,10 @@ export default function BillingPage() {
   }, [user, billingPeriodStart]);
 
   const loadPrefs = useCallback(async () => {
+    if (!BILLING_SETTINGS_UI_ENABLED) {
+      setPrefsLoading(false);
+      return;
+    }
     if (!user) { setPrefsLoading(false); return; }
     setPrefsLoading(true);
     try {
@@ -454,9 +464,9 @@ export default function BillingPage() {
 
   // ---------- Derived ----------
   const usageTotal = usageBreakdown.reduce((s, b) => s + b.credits, 0);
-  const usagePercent = creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
-    ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
-    : 0;
+  const usagePercent = creditUsagePercent(creditSummary);
+  const usageBarPercent = creditUsageBarPercent(creditSummary);
+  const creditExhausted = isCreditExhausted(creditSummary);
 
   const pieData = usageBreakdown
     .filter((item) => item.credits > 0)
@@ -592,6 +602,7 @@ export default function BillingPage() {
   };
 
   const handleSavePrefs = async (next: Partial<BillingPrefs>) => {
+    if (!BILLING_SETTINGS_UI_ENABLED) return;
     if (!prefs) return;
     const merged = { ...prefs, ...next };
     setPrefs(merged);
@@ -614,7 +625,7 @@ export default function BillingPage() {
     <div className="space-y-6 max-w-5xl">
       <div>
         <h1 className="dash-page-title">Billing & Credits</h1>
-        <p className="dash-page-subtitle">Manage your subscription, credits, usage, and auto-refill.</p>
+        <p className="dash-page-subtitle">Manage your subscription, credits, and usage.</p>
       </div>
 
       {error && (
@@ -686,7 +697,7 @@ export default function BillingPage() {
               <div className="w-full bg-gray-100 rounded-full h-2.5">
                 <div
                   className={`h-2.5 rounded-full transition-all ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${usagePercent}%` }}
+                  style={{ width: `${usageBarPercent}%` }}
                 />
               </div>
             </div>
@@ -714,12 +725,12 @@ export default function BillingPage() {
           </div>
 
           {usagePercent >= 70 && (
-            <div className={`mt-4 p-3 rounded-lg flex items-center gap-2 ${usagePercent >= 90 ? 'bg-red-50 border border-red-200' : 'bg-amber-50 border border-amber-200'}`}>
-              <AlertCircle className={`w-4 h-4 ${usagePercent >= 90 ? 'text-red-500' : 'text-amber-500'}`} />
-              <span className={`text-[12px] font-medium ${usagePercent >= 90 ? 'text-red-700' : 'text-amber-700'}`}>
-                {usagePercent >= 100
+            <div className={`mt-4 p-3 rounded-lg flex items-start gap-2 ${usagePercent >= 90 ? 'bg-red-50 border border-red-200' : 'bg-amber-50 border border-amber-200'}`}>
+              <AlertCircle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${usagePercent >= 90 ? 'text-red-500' : 'text-amber-500'}`} />
+              <span className={`text-[12px] font-medium leading-snug min-w-0 ${usagePercent >= 90 ? 'text-red-700' : 'text-amber-700'}`}>
+                {creditExhausted
                   ? 'Credit limit reached. Top up or upgrade to keep going.'
-                  : `You've used ${usagePercent}% of this period's credits.`}
+                  : `You've used ${usagePercent}% of this period's credits (${Number(creditSummary?.remaining || 0).toLocaleString()} remaining).`}
               </span>
             </div>
           )}
@@ -736,11 +747,15 @@ export default function BillingPage() {
         ] as const).map(([id, label]) => (
           <button
             key={id}
-            onClick={() => setActiveTab(id)}
+            onClick={() => id !== 'settings' && setActiveTab(id)}
+            disabled={id === 'settings'}
+            title={id === 'settings' ? 'Coming soon' : undefined}
             className={`px-4 py-2 text-[13px] font-medium rounded-md transition-colors whitespace-nowrap ${
-              activeTab === id
-                ? 'bg-neutral-800 text-white shadow-sm border border-neutral-700'
-                : 'text-neutral-400 hover:text-neutral-200'
+              id === 'settings'
+                ? 'text-neutral-600 cursor-not-allowed opacity-50'
+                : activeTab === id
+                  ? 'bg-neutral-800 text-white shadow-sm border border-neutral-700'
+                  : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
             {label}
@@ -879,7 +894,7 @@ export default function BillingPage() {
                   <div className="flex items-end justify-between mb-1">
                     <div>
                       <p className="text-[12px] text-gray-500">Your price</p>
-                      <p className="text-3xl font-bold text-gray-900">${amount}</p>
+                      <p className="text-3xl font-bold text-gray-900">{`$${amount}`}</p>
                       <p className="text-[12px] text-gray-500">per month</p>
                     </div>
                     <div className="text-right">
@@ -909,7 +924,7 @@ export default function BillingPage() {
                             className="absolute top-0 whitespace-nowrap"
                             style={{ left: `${percent}%`, transform: `translateX(${translateX})` }}
                           >
-                            ${marker}
+                            {`$${marker}`}
                           </span>
                         );
                       })}
@@ -927,14 +942,14 @@ export default function BillingPage() {
                           : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
                       }`}
                     >
-                      ${preset}
+                      {`$${preset}`}
                     </button>
                   ))}
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
                   {CREDIT_ANCHORS.slice(0, 4).map((anchor) => (
                     <div key={anchor.amount}>
-                      <p className="text-[10px] uppercase tracking-wide text-gray-400">${anchor.amount}/mo</p>
+                      <p className="text-[10px] uppercase tracking-wide text-gray-400">{`$${anchor.amount}/mo`}</p>
                       <p className="text-[13px] font-semibold text-gray-900 mt-1">{anchor.credits.toLocaleString()} credits</p>
                     </div>
                   ))}
@@ -945,7 +960,7 @@ export default function BillingPage() {
                 <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
                   <p className="text-[12px] text-gray-400">Monthly credits</p>
                   <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
-                  <p className="text-[12px] text-gray-400 mt-1">${amount}/mo · credits roll over 30 days</p>
+                  <p className="text-[12px] text-gray-400 mt-1">{`$${amount}/mo · credits roll over 30 days`}</p>
                 </div>
                 <div className="space-y-3 text-[13px] mb-5">
                   <div className="flex justify-between">
@@ -1010,7 +1025,7 @@ export default function BillingPage() {
                       disabled={!user || loading}
                       className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Subscribe ${amount}/mo
+                      {`Subscribe $${amount}/mo`}
                     </button>
                   )}
                   {!isSubscribed && (
@@ -1339,20 +1354,29 @@ export default function BillingPage() {
         </div>
       )}
 
-      {activeTab === 'settings' && prefsLoading && (
+      {!BILLING_SETTINGS_UI_ENABLED && (
+        <div className="dash-card p-6 opacity-50 pointer-events-none select-none">
+          <p className="text-[13px] font-medium text-gray-500">Billing settings</p>
+          <p className="text-[12px] text-gray-400 mt-1">
+            Auto-refill, metered overage, and spend limits are temporarily unavailable.
+          </p>
+        </div>
+      )}
+
+      {BILLING_SETTINGS_UI_ENABLED && activeTab === 'settings' && prefsLoading && (
         <div className="dash-card p-6 flex items-center justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
         </div>
       )}
 
-      {activeTab === 'settings' && !prefsLoading && !prefs && (
+      {BILLING_SETTINGS_UI_ENABLED && activeTab === 'settings' && !prefsLoading && !prefs && (
         <div className="dash-card p-6 text-center text-sm text-gray-500">
           Could not load settings. Please refresh the page.
         </div>
       )}
 
-      {/* ---------- Settings tab (auto-refill + limits) ---------- */}
-      {activeTab === 'settings' && !prefsLoading && prefs && (
+      {/* ---------- Settings tab (auto-refill + limits) — disabled when BILLING_SETTINGS_UI_ENABLED is false ---------- */}
+      {BILLING_SETTINGS_UI_ENABLED && activeTab === 'settings' && !prefsLoading && prefs && (
         <div className="space-y-4">
           <div className="dash-card p-6">
             <div className="flex items-center gap-2 mb-4">
@@ -1391,8 +1415,8 @@ export default function BillingPage() {
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Refill amount (USD)</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400">$</span>
+                <div className="flex flex-nowrap items-center gap-2">
+                  <span className="text-gray-400 shrink-0">$</span>
                   <input
                     type="number"
                     min={5}
@@ -1419,8 +1443,8 @@ export default function BillingPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Monthly soft budget (USD)</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400">$</span>
+                <div className="flex flex-nowrap items-center gap-2">
+                  <span className="text-gray-400 shrink-0">$</span>
                   <input
                     type="number"
                     min={0}
@@ -1438,8 +1462,8 @@ export default function BillingPage() {
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Hard limit (USD)</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400">$</span>
+                <div className="flex flex-nowrap items-center gap-2">
+                  <span className="text-gray-400 shrink-0">$</span>
                   <input
                     type="number"
                     min={0}

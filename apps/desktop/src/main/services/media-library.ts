@@ -8,6 +8,7 @@ import { getMainAccessToken, getMainUserId } from './auth-session';
 import {
   isMediaLibraryItemVisibleInDashboard,
   shouldAutoRegisterToolMedia,
+  shouldSkipIncompleteCaptureRegistration,
 } from './media-library-policy';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown';
@@ -41,6 +42,7 @@ export interface MediaLibraryPrefs {
   storageRootPath: string | null;
   resolvedStorageRootPath: string;
   defaultStorageRootPath: string;
+  indexPath?: string;
 }
 
 export interface MediaLibrarySummary {
@@ -92,6 +94,35 @@ const DEFAULT_PREFS: MediaLibraryPrefs = {
 let storeCache: MediaLibraryStore | null = null;
 let prefsCache: MediaLibraryPrefs | null = null;
 let syncPromise: Promise<{ ok: boolean; synced: number; failed: number; items: MediaLibraryItem[] }> | null = null;
+let legacyDocumentsCaptureMigrationDone = false;
+
+const MEDIA_FILE_EXTENSIONS = new Set([
+  '.mp4', '.webm', '.mov', '.mkv', '.avi',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif',
+  '.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg',
+]);
+
+const AGENT_CAPTURE_DIR_MAP: Record<string, { source: string; classification?: string }> = {
+  'screen-recordings': { source: 'screen-recordings', classification: 'Screen recording' },
+  'screen-audio': { source: 'screen-audio', classification: 'Screen audio' },
+  videos: { source: 'video-recordings', classification: 'Video capture' },
+  photos: { source: 'photos', classification: 'Photo capture' },
+  recordings: { source: 'audio-recordings', classification: 'Audio capture' },
+};
+
+const LIBRARY_SOURCE_DIRS = new Set([
+  'generated',
+  'screenshots',
+  'imports',
+  'message-media',
+  'screen-recordings',
+  'screen-audio',
+  'audio-recordings',
+  'video-recordings',
+  'photos',
+  'generated-audio',
+  'misc',
+]);
 
 function mediaConfigDir() {
   return path.join(app.getPath('userData'), 'media-library');
@@ -112,11 +143,24 @@ function ensureMediaConfigDir() {
 function getDefaultMediaStorageRoot() {
   const envRoot = String(process.env.STUARD_MEDIA_DIR || process.env.STUARD_AI_MEDIA_DIR || '').trim();
   if (envRoot) return path.resolve(envRoot.replace(/^~(?=$|[\\/])/, os.homedir()));
+  return path.join(app.getPath('userData'), 'media');
+}
+
+export function getLegacyDocumentsMediaRoot() {
   try {
     return path.join(app.getPath('documents'), 'StuardAI', 'media');
   } catch {
     return path.join(os.homedir(), 'Documents', 'StuardAI', 'media');
   }
+}
+
+export function syncAgentMediaPathConfig() {
+  const root = getMediaLibraryRoot();
+  process.env.STUARD_MEDIA_DIR = root;
+  process.env.STUARD_AI_MEDIA_DIR = root;
+  ensureMediaConfigDir();
+  fs.writeFileSync(path.join(mediaConfigDir(), 'capture-root.txt'), root, 'utf-8');
+  return root;
 }
 
 function normalizeStorageRootPath(value: unknown) {
@@ -144,6 +188,168 @@ function isPathInsideDir(targetPath: string, dirPath: string) {
   const resolvedDir = path.resolve(dirPath);
   const relative = path.relative(resolvedDir, resolvedTarget);
   return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+export function inferCaptureSourceFromPath(
+  filePath: string,
+  mediaRoot: string,
+): { source: string; classification?: string } | null {
+  const resolvedRoot = path.resolve(mediaRoot);
+  const resolvedFile = path.resolve(filePath);
+  if (!isPathInsideDir(resolvedFile, resolvedRoot)) return null;
+
+  const rel = path.relative(resolvedRoot, resolvedFile).replace(/\\/g, '/');
+  const topSegment = rel.split('/').filter(Boolean)[0]?.toLowerCase();
+  if (!topSegment) return null;
+
+  const mapped = AGENT_CAPTURE_DIR_MAP[topSegment];
+  if (mapped) return mapped;
+
+  if (LIBRARY_SOURCE_DIRS.has(topSegment)) {
+    return { source: topSegment };
+  }
+
+  return null;
+}
+
+function walkMediaFiles(dirPath: string, results: string[] = []): string[] {
+  if (!fs.existsSync(dirPath)) return results;
+
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      walkMediaFiles(fullPath, results);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).toLowerCase();
+    if (MEDIA_FILE_EXTENSIONS.has(ext)) {
+      results.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
+
+function resolveUniqueTargetPath(targetDir: string, fileName: string) {
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext);
+  let finalPath = path.join(targetDir, fileName);
+  let collisionIndex = 1;
+  while (fs.existsSync(finalPath)) {
+    finalPath = path.join(targetDir, `${base}-${collisionIndex}${ext}`);
+    collisionIndex += 1;
+  }
+  return finalPath;
+}
+
+function tryRemoveEmptyDir(dirPath: string) {
+  try {
+    if (fs.existsSync(dirPath) && fs.readdirSync(dirPath).length === 0) {
+      fs.rmdirSync(dirPath);
+    }
+  } catch {
+    // best effort
+  }
+}
+
+async function migrateCaptureFile(
+  sourcePath: string,
+  meta: { source: string; classification?: string },
+): Promise<boolean> {
+  const resolvedSource = path.resolve(sourcePath);
+  if (!fs.existsSync(resolvedSource)) return false;
+
+  const libraryRoot = path.resolve(getMediaLibraryRoot());
+  const store = loadStore();
+  const existing = findExistingItem(store, {
+    localPath: resolvedSource,
+    originalPath: resolvedSource,
+  });
+
+  if (isPathInsideDir(resolvedSource, libraryRoot)) {
+    if (existing) return false;
+    await registerLocalMedia({
+      filePath: resolvedSource,
+      source: meta.source,
+      classification: meta.classification,
+      linkOnly: true,
+      metadata: { migratedFrom: 'legacy-documents' },
+    });
+    return true;
+  }
+
+  const stat = fs.statSync(resolvedSource);
+  const targetDir = ensureDirForSource(meta.source, stat.birthtime || stat.ctime);
+  const targetPath = resolveUniqueTargetPath(targetDir, path.basename(resolvedSource));
+  fs.renameSync(resolvedSource, targetPath);
+
+  if (existing) {
+    upsertItem(store, mergeItem(existing, {
+      localPath: targetPath,
+      originalPath: existing.originalPath || resolvedSource,
+      source: meta.source,
+      classification: meta.classification ?? existing.classification,
+      metadata: {
+        ...(existing.metadata || {}),
+        migratedFrom: resolvedSource,
+      },
+    }));
+  } else {
+    await registerLocalMedia({
+      filePath: targetPath,
+      source: meta.source,
+      classification: meta.classification,
+      linkOnly: true,
+      metadata: { migratedFrom: resolvedSource },
+    });
+  }
+
+  return true;
+}
+
+/** Move legacy Documents/StuardAI/media captures into the managed media library root. */
+export async function migrateLegacyCaptureFiles(): Promise<number> {
+  if (legacyDocumentsCaptureMigrationDone) return 0;
+
+  syncAgentMediaPathConfig();
+  let migrated = 0;
+  const legacyRoot = getLegacyDocumentsMediaRoot();
+  const libraryRoot = path.resolve(getMediaLibraryRoot());
+
+  const store = loadStore();
+  for (const item of [...store.items]) {
+    if (!item.localPath) continue;
+    const resolved = path.resolve(item.localPath);
+    if (!isPathInsideDir(resolved, legacyRoot)) continue;
+    if (isPathInsideDir(resolved, libraryRoot)) continue;
+    const meta = inferCaptureSourceFromPath(resolved, legacyRoot) || {
+      source: item.source,
+      classification: item.classification,
+    };
+    if (await migrateCaptureFile(resolved, meta)) migrated += 1;
+  }
+
+  if (fs.existsSync(legacyRoot)) {
+    for (const [legacyDir, meta] of Object.entries(AGENT_CAPTURE_DIR_MAP)) {
+      const dirPath = path.join(legacyRoot, legacyDir);
+      if (!fs.existsSync(dirPath)) continue;
+      for (const filePath of walkMediaFiles(dirPath)) {
+        const resolved = path.resolve(filePath);
+        if (isPathInsideDir(resolved, libraryRoot) && !isPathInsideDir(resolved, legacyRoot)) continue;
+        if (await migrateCaptureFile(resolved, meta)) migrated += 1;
+      }
+      tryRemoveEmptyDir(dirPath);
+    }
+  }
+
+  legacyDocumentsCaptureMigrationDone = true;
+  const prefs = loadPrefs();
+  savePrefsRecord(prefs, { legacyDocumentsCaptureMigrationDone: true });
+  logger.info(`[media-library] Migrated ${migrated} legacy capture file(s) to ${libraryRoot}`);
+  return migrated;
 }
 
 function normalizeTag(value: string) {
@@ -226,7 +432,10 @@ function loadPrefs(): MediaLibraryPrefs {
   try {
     if (fs.existsSync(mediaPrefsPath())) {
       const raw = fs.readFileSync(mediaPrefsPath(), 'utf-8');
-      const parsed = JSON.parse(raw) as Partial<MediaLibraryPrefs>;
+      const parsed = JSON.parse(raw) as Partial<MediaLibraryPrefs> & {
+        legacyDocumentsCaptureMigrationDone?: boolean;
+      };
+      legacyDocumentsCaptureMigrationDone = parsed?.legacyDocumentsCaptureMigrationDone === true;
       const storageRootPath = normalizeStorageRootPath(parsed?.storageRootPath);
       prefsCache = {
         syncMode: parsed?.syncMode === 'mirror-cloud' ? 'mirror-cloud' : 'local-only',
@@ -247,10 +456,24 @@ function loadPrefs(): MediaLibraryPrefs {
   return prefsCache;
 }
 
-function savePrefs(prefs: MediaLibraryPrefs) {
+function savePrefsRecord(
+  prefs: MediaLibraryPrefs,
+  extra?: { legacyDocumentsCaptureMigrationDone?: boolean },
+) {
   ensureMediaConfigDir();
-  fs.writeFileSync(mediaPrefsPath(), JSON.stringify(prefs, null, 2), 'utf-8');
+  const payload = {
+    syncMode: prefs.syncMode,
+    storageRootPath: prefs.storageRootPath,
+    ...(legacyDocumentsCaptureMigrationDone || extra?.legacyDocumentsCaptureMigrationDone
+      ? { legacyDocumentsCaptureMigrationDone: true }
+      : {}),
+  };
+  fs.writeFileSync(mediaPrefsPath(), JSON.stringify(payload, null, 2), 'utf-8');
   prefsCache = prefs;
+}
+
+function savePrefs(prefs: MediaLibraryPrefs) {
+  savePrefsRecord(prefs);
 }
 
 function looksLikeUrl(value: string) {
@@ -416,13 +639,9 @@ function fileExists(targetPath: string | null | undefined) {
   }
 }
 
-/** Check if a path is already inside a known StuardAI media directory (gallery or Documents). */
+/** Check if a path is already inside the managed media library root. */
 function isInMediaDirectory(filePath: string) {
-  if (isPathInsideDir(filePath, getMediaLibraryRoot())) return true;
-  if (isPathInsideDir(filePath, mediaConfigDir())) return true;
-  const docsMedia = path.join(os.homedir(), 'Documents', 'StuardAI', 'media');
-  if (isPathInsideDir(filePath, docsMedia)) return true;
-  return false;
+  return isPathInsideDir(filePath, getMediaLibraryRoot());
 }
 
 function copyFileIntoLibrary(originalPath: string, source: string, preserveName = false) {
@@ -519,6 +738,7 @@ export function getMediaLibraryPrefs() {
     ...prefs,
     resolvedStorageRootPath: root,
     defaultStorageRootPath: getDefaultMediaStorageRoot(),
+    indexPath: mediaConfigDir(),
   };
 }
 
@@ -536,9 +756,11 @@ export function updateMediaLibraryPrefs(updates: Partial<MediaLibraryPrefs>) {
     storageRootPath,
     resolvedStorageRootPath: storageRootPath || getDefaultMediaStorageRoot(),
     defaultStorageRootPath: getDefaultMediaStorageRoot(),
+    indexPath: mediaConfigDir(),
   };
   fs.mkdirSync(nextPrefs.resolvedStorageRootPath, { recursive: true });
   savePrefs(nextPrefs);
+  syncAgentMediaPathConfig();
   if (currentPrefs.syncMode !== 'mirror-cloud' && nextPrefs.syncMode === 'mirror-cloud') {
     void syncMediaLibrary().catch((error) => {
       logger.warn('[media-library] Failed to auto-sync after enabling mirror-cloud:', error);
@@ -903,6 +1125,7 @@ export function deleteMediaItem(itemId: string, deleteFile = true) {
 export async function captureToolMedia(toolName: string, args: any, result: any) {
   if (!result || result.ok === false) return result;
   if (!shouldAutoRegisterToolMedia(toolName)) return result;
+  if (shouldSkipIncompleteCaptureRegistration(toolName, result)) return result;
 
   if (toolName === 'generate_image' && Array.isArray(result.images)) {
     const images = await Promise.all(
@@ -963,16 +1186,24 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
   }
 
   if ((toolName === 'capture_media' || toolName === 'stop_capture') && result.filePath) {
-    const requestedKind = String(args?.kind || result?.mimeType || '').toLowerCase();
+    const requestedKind = String(args?.kind || result?.kind || result?.mimeType || '').toLowerCase();
     const kind = inferKind(String(result.filePath), String(result.mimeType || ''));
     const source = kind === 'image'
       ? 'photos'
       : kind === 'audio'
         ? 'audio-recordings'
         : 'video-recordings';
+    const classification = kind === 'image'
+      ? 'Photo capture'
+      : kind === 'audio'
+        ? 'Audio capture'
+        : kind === 'video'
+          ? 'Video capture'
+          : undefined;
     fileTargets.push({
       field: 'filePath',
       source,
+      classification,
       tags: ['capture', kind],
       metadata: {
         requestedKind,
@@ -981,7 +1212,7 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
     });
   }
 
-  if (toolName === 'capture_screen' && result.filePath) {
+  if ((toolName === 'capture_screen' || toolName === 'stop_screen_capture') && result.filePath) {
     fileTargets.push({
       field: 'filePath',
       source: 'screen-recordings',
@@ -994,12 +1225,21 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
     });
   }
 
-  if (toolName === 'capture_screen' && result.audioFilePath) {
+  if ((toolName === 'capture_screen' || toolName === 'stop_screen_capture') && result.audioFilePath) {
     fileTargets.push({
       field: 'audioFilePath',
       source: 'screen-audio',
       classification: 'Screen audio',
       tags: ['screen-audio', 'audio'],
+    });
+  }
+
+  if ((toolName === 'capture_system_audio' || toolName === 'stop_system_audio') && result.filePath) {
+    fileTargets.push({
+      field: 'filePath',
+      source: 'screen-audio',
+      classification: 'System audio',
+      tags: ['system-audio', 'audio'],
     });
   }
 

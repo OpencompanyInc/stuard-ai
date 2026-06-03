@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { Polar } from '@polar-sh/sdk';
 import { getSupabaseAdmin } from '../supabase';
 import { writeLog } from '../utils/logger';
-import { markAutoRefillSuccess } from '../billing/auto-refill';
+// import { markAutoRefillSuccess } from '../billing/auto-refill'; // DISABLED: auto-refill greyed out
 
 // ─── Credit pricing (mirrors apps/website/src/lib/creditPricing.ts) ──────────
 
@@ -592,9 +592,10 @@ async function applyAddonGrant(userId: string, payload: any) {
     metadata: { productId, orderId: orderRef, ...(isAutoRefill ? { autoRefill: true } : {}) },
   });
 
-  if (isAutoRefill) {
-    await markAutoRefillSuccess(userId);
-  }
+  // DISABLED: auto-refill greyed out
+  // if (isAutoRefill) {
+  //   await markAutoRefillSuccess(userId);
+  // }
 }
 
 async function handlePolarEvent(eventType: string, payload: any) {

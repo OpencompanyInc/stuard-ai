@@ -60,10 +60,10 @@ export function SettingsTab({
   const [active, setActive] = useState<SettingsSection>('about');
 
   return (
-    <div className="rounded-xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 overflow-hidden">
-      <div className="grid min-h-[420px] grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)]">
-        {/* Sub-nav rail */}
-        <nav className="border-b border-theme/15 p-2 md:border-b-0 md:border-r md:p-3">
+    <div className="flex h-full min-h-0 flex-col rounded-xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10">
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:min-h-[420px] md:grid-cols-[220px_minmax(0,1fr)]">
+        {/* Sub-nav rail — stays fixed while the section panel scrolls */}
+        <nav className="shrink-0 border-b border-theme/15 p-2 md:self-start md:border-b-0 md:border-r md:p-3">
           <div className="flex flex-row gap-1 overflow-x-auto md:flex-col md:overflow-x-visible scrollbar-minimal">
             {SECTIONS.map(s => {
               const Icon = s.icon;
@@ -97,7 +97,7 @@ export function SettingsTab({
         </nav>
 
         {/* Active section */}
-        <div className="p-4 md:p-5">
+        <div className="min-h-0 overflow-y-auto p-4 md:p-5 scrollbar-minimal">
           {active === 'about' && (
             <AboutSection bot={bot} onUpdateBot={onUpdateBot} />
           )}

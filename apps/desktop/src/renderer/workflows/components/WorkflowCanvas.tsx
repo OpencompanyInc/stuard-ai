@@ -1,7 +1,7 @@
 /**
  * WorkflowCanvas - The visual canvas for rendering workflow nodes and wires
  */
-import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { MousePointer2, ZoomIn, ZoomOut, Maximize2, Trash2, LayoutGrid } from "lucide-react";
 import { DiscoverTips } from "./DiscoverTips";
 import { WorkflowNode } from "./WorkflowNodeCard";
@@ -132,46 +132,61 @@ export function WorkflowCanvas({
     return { rightOnly, booleanPair };
   }, [safeWires]);
 
-  const scaledSize = {
-    w: size.w * zoom,
-    h: size.h * zoom
-  };
-
   const GRID_STEP = 24;
-  const [gridOffset, setGridOffset] = useState({ x: 0, y: 0 });
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  const transformContentRef = useRef<HTMLDivElement>(null);
 
-  const syncGrid = useCallback(() => {
+  const applyZoomDom = useCallback(
+    (z: number) => {
+      const wrapper = scrollContentRef.current;
+      const inner = transformContentRef.current;
+      if (wrapper) {
+        wrapper.style.width = `${size.w * z}px`;
+        wrapper.style.height = `${size.h * z}px`;
+      }
+      if (inner) {
+        inner.style.transform = `scale(${z})`;
+      }
+    },
+    [size.w, size.h],
+  );
+
+  useLayoutEffect(() => {
+    applyZoomDom(zoom);
+  }, [zoom, applyZoomDom]);
+
+  const syncGridDom = useCallback(() => {
     const el = canvasRef.current;
     if (!el) return;
-    setGridOffset({
-      x: -(el.scrollLeft % GRID_STEP),
-      y: -(el.scrollTop % GRID_STEP),
-    });
+    el.style.backgroundPosition = `${-(el.scrollLeft % GRID_STEP)}px ${-(el.scrollTop % GRID_STEP)}px`;
   }, [canvasRef]);
 
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    syncGrid();
-    el.addEventListener("scroll", syncGrid, { passive: true });
-    window.addEventListener("resize", syncGrid);
+    syncGridDom();
+    el.addEventListener("scroll", syncGridDom, { passive: true });
+    window.addEventListener("resize", syncGridDom);
     return () => {
-      el.removeEventListener("scroll", syncGrid);
-      window.removeEventListener("resize", syncGrid);
+      el.removeEventListener("scroll", syncGridDom);
+      window.removeEventListener("resize", syncGridDom);
     };
-  }, [canvasRef, syncGrid, zoom, scaledSize.w, scaledSize.h]);
+  }, [canvasRef, syncGridDom]);
 
-  const wheelCleanupRef = useRef<(() => void) | null>(null);
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+
   const mergedCanvasRef = useCallback(
     (node: HTMLDivElement | null) => {
       (canvasRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-      wheelCleanupRef.current?.();
-      wheelCleanupRef.current = bindWheelTarget?.(node) ?? null;
+      setCanvasEl(node);
     },
-    [canvasRef, bindWheelTarget],
+    [canvasRef],
   );
 
-  useEffect(() => () => wheelCleanupRef.current?.(), []);
+  useLayoutEffect(() => {
+    if (!canvasEl || !bindWheelTarget) return;
+    return bindWheelTarget(canvasEl);
+  }, [canvasEl, bindWheelTarget]);
 
   return (
     <div className="w-full h-full relative overflow-hidden wf-bg-canvas" data-onboarding="workflow-canvas">
@@ -182,7 +197,6 @@ export function WorkflowCanvas({
         style={{
           cursor: 'default',
           backgroundSize: `${GRID_STEP}px ${GRID_STEP}px`,
-          backgroundPosition: `${gridOffset.x}px ${gridOffset.y}px`,
         }}
         onDragOver={onDragOver}
         onDrop={onDrop}
@@ -210,12 +224,13 @@ export function WorkflowCanvas({
         }}
       >
         {/* Scrollable content wrapper */}
-        <div style={{ width: scaledSize.w, height: scaledSize.h, position: 'relative' }}>
-        {/* Scaled Content Container */}
+        <div ref={scrollContentRef} data-wf-scroll-content style={{ position: 'relative' }}>
+        {/* Scaled Content Container — size/transform applied via ref to survive pinch without React re-renders */}
         <div
+          ref={transformContentRef}
+          data-wf-transform-content
           className="absolute top-0 left-0 origin-top-left wf-canvas-content"
           style={{
-            transform: `scale(${zoom})`,
             transformOrigin: 'top left',
             width: size.w,
             height: size.h,
@@ -1063,7 +1078,7 @@ export function WorkflowCanvas({
         <button
           onClick={onZoomOut}
           className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
-          title="Zoom out (Ctrl + scroll, Alt + scroll)"
+          title="Zoom out (Ctrl + scroll or pinch)"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
@@ -1077,7 +1092,7 @@ export function WorkflowCanvas({
         <button
           onClick={onZoomIn}
           className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
-          title="Zoom in (Ctrl + scroll, Alt + scroll)"
+          title="Zoom in (Ctrl + scroll or pinch)"
         >
           <ZoomIn className="w-4 h-4" />
         </button>

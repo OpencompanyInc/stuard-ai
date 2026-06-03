@@ -15,6 +15,14 @@ const VALID_OBJECT_NAME_RE = /^[a-zA-Z0-9_\-./() @+,!#%&=~]+$/;
 /** Public bucket name — derived from the private bucket name + "-public" suffix. */
 const PUBLIC_BUCKET = `${CLOUD_ENGINE_BUCKET}-public`;
 
+/**
+ * Object names (relative to the `{userId}/` prefix) that are Stuard-managed
+ * system artifacts, NOT files the user uploaded. They're hidden from file
+ * listings and reported separately in the storage breakdown so the dashboard's
+ * "your files" view and totals reconcile (and users can't delete their backup).
+ */
+const SYSTEM_OBJECT_NAMES = new Set<string>(['memory_backup.tar.gz']);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Filename Sanitization
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,12 +287,39 @@ export async function listUserFiles(
   const fullPrefix = prefix ? `${userId}/${prefix}` : `${userId}/`;
   const [files] = await getBucket().getFiles({ prefix: fullPrefix, maxResults });
 
-  return files.map(f => ({
-    name: String(f.name).replace(`${userId}/`, ''),
-    size: Number(f.metadata.size || 0),
-    updated: String(f.metadata.updated || f.metadata.timeCreated || ''),
-    contentType: String(f.metadata.contentType || 'application/octet-stream'),
-  }));
+  return files
+    .map(f => ({
+      name: String(f.name).replace(`${userId}/`, ''),
+      size: Number(f.metadata.size || 0),
+      updated: String(f.metadata.updated || f.metadata.timeCreated || ''),
+      contentType: String(f.metadata.contentType || 'application/octet-stream'),
+    }))
+    // Hide Stuard-managed system artifacts (e.g. the workspace backup) — they
+    // aren't user files and showing them makes usage numbers look wrong and
+    // invites accidental deletion of the backup.
+    .filter(f => !SYSTEM_OBJECT_NAMES.has(f.name));
+}
+
+/**
+ * Sum a user's stored bytes split into their own files vs Stuard-managed
+ * system artifacts (the workspace backup). `totalBytes` is what's billed and
+ * counts against quota; `fileBytes` is what the dashboard's file list shows.
+ */
+export async function getUserStorageBreakdown(
+  userId: string,
+): Promise<{ totalBytes: number; fileBytes: number; backupBytes: number }> {
+  const prefix = `${userId}/`;
+  const [files] = await getBucket().getFiles({ prefix });
+  let totalBytes = 0;
+  let backupBytes = 0;
+  for (const file of files) {
+    const size = Number(file.metadata.size || 0);
+    totalBytes += size;
+    if (SYSTEM_OBJECT_NAMES.has(String(file.name).slice(prefix.length))) {
+      backupBytes += size;
+    }
+  }
+  return { totalBytes, fileBytes: totalBytes - backupBytes, backupBytes };
 }
 
 /**

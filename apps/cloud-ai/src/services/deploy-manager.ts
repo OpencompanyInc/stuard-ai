@@ -1,7 +1,7 @@
 /**
  * Deploy Manager
  *
- * Orchestrates deploying workflows, scripts, and projects to Cloud VMs.
+ * Orchestrates deploying workflows and projects to Cloud VMs.
  *
  * Deploy flow:
  * 1. Validate workflow/payload and store metadata in Supabase
@@ -38,7 +38,7 @@ const RETRYABLE_STORAGE_ERROR_CODES = new Set([
   'EPIPE',
 ]);
 
-export type DeployKind = 'workflow' | 'script' | 'project';
+export type DeployKind = 'workflow' | 'project';
 export type DeployStatus = 'pending' | 'uploading' | 'deploying' | 'running' | 'stopped' | 'failed' | 'completed';
 
 export interface WorkflowTriggerBinding {
@@ -52,7 +52,7 @@ export interface DeployRequest {
   name: string;
   kind: DeployKind;
   description?: string;
-  /** Workflow JSON, script content, or project manifest */
+  /** Workflow JSON or project manifest */
   payload: any;
   /** Environment variables to inject */
   envVars?: Record<string, string>;

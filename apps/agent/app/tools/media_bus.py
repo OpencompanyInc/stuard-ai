@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from collections import deque
 
+from .media_paths import library_source_dir
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Types and Data Structures
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,30 +142,21 @@ def _get_or_create_bus(kind: str, device: Optional[int] = None) -> MediaBus:
         return _buses[key]
 
 
+def _capture_dir_for_kind(kind: str) -> str:
+    if kind == "audio":
+        return library_source_dir("audio-recordings")
+    if kind == "video":
+        return library_source_dir("video-recordings")
+    if kind == "audiovideo":
+        return library_source_dir("video-recordings")
+    return library_source_dir("misc")
+
+
 def _remove_bus(kind: str, device: Optional[int] = None) -> None:
     """Remove a bus from registry."""
     key = _bus_key(kind, device)
     with _buses_lock:
         _buses.pop(key, None)
-
-
-def _media_dir(category: str = "recordings") -> str:
-    """Get organized media directory for bus recordings."""
-    home = os.path.expanduser("~")
-    docs = os.path.join(home, "Documents")
-    if not os.path.isdir(docs):
-        docs = home
-    base = os.path.join(docs, "StuardAI", "media", category)
-    try:
-        os.makedirs(base, exist_ok=True)
-    except Exception:
-        pass
-    return base
-
-
-def _tmp_dir() -> str:
-    """Legacy alias — points to organized recordings directory."""
-    return _media_dir("recordings")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -575,7 +568,7 @@ async def _subscribe_audiovideo(
     video_sub_id = f"{subscriber_id}_video"
     
     # Generate temp paths for both streams
-    out_dir = _tmp_dir()
+    out_dir = library_source_dir("video-recordings")
     if file_path:
         base_path = file_path.rsplit(".", 1)[0]
         audio_path = f"{base_path}_audio.wav"
@@ -834,7 +827,7 @@ async def subscribe_media_bus(
     if start_recording:
         if not file_path:
             ext = "wav" if kind == "audio" else "mp4"
-            file_path = os.path.join(_tmp_dir(), f"{kind}_{subscriber_id}_{int(time.time()*1000)}.{ext}")
+            file_path = os.path.join(_capture_dir_for_kind(kind), f"{kind}_{subscriber_id}_{int(time.time()*1000)}.{ext}")
         subscriber.recording_path = file_path
         subscriber.recording_active = True
     
@@ -1211,7 +1204,7 @@ async def start_bus_recording(
         
         if not file_path:
             ext = "wav" if kind == "audio" else "mp4"
-            file_path = os.path.join(_tmp_dir(), f"{kind}_{subscriber_id}_{int(time.time()*1000)}.{ext}")
+            file_path = os.path.join(_capture_dir_for_kind(kind), f"{kind}_{subscriber_id}_{int(time.time()*1000)}.{ext}")
         
         subscriber.recording_path = file_path
         subscriber.recording_active = True

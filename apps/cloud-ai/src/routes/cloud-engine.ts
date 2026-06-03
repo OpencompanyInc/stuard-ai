@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { verifyToken, checkAccess, getCloudEngine, upsertCloudEngine, updateCloudEngineStatus, deleteCloudEngine, getStorageUsage, upsertStorageUsage, updateEngineHealth, getCreditSummary, listExternalAccounts, getSyncPreferences, updateSyncPreferences } from '../supabase';
-import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, STORAGE_PRICING, estimateComputeCostCredits, estimateMachineCreditsPerHour, estimateStorageCostCredits, resolveComputeMachineSpec } from '../pricing';
+import { COMPUTE_TIER_CONFIG, DEFAULT_CLOUD_DISK_GB_BY_TIER, estimateComputeCostCredits, estimateMachineCreditsPerHour, resolveComputeMachineSpec } from '../pricing';
+import { listStoragePlans } from '../services/hot-storage';
 import { getComputeProvider } from '../services/compute';
 import { syncToCloud, restoreFromCloud, getSyncStatus } from '../services/sync-engine';
 import { deleteAllUserData, uploadAgentData } from '../services/cold-storage';
@@ -370,16 +371,16 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       defaultDiskGb: DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB,
       hourlyUsd: cfg.hourlyUsd,
       estimatedComputeCreditsPerHour: estimateComputeCostCredits(key, 1),
-      estimatedStorageCreditsPerHour: estimateStorageCostCredits(DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB, 0, 1),
-      estimatedTotalCreditsPerHour:
-        estimateComputeCostCredits(key, 1)
-        + estimateStorageCostCredits(DEFAULT_CLOUD_DISK_GB_BY_TIER[key] ?? MIN_DISK_GB, 0, 1),
+      // Storage is a flat prepaid plan block (see storagePlans / /v1/storage/plans),
+      // not metered per hour — only compute is billed hourly while running.
+      estimatedStorageCreditsPerHour: 0,
+      estimatedTotalCreditsPerHour: estimateComputeCostCredits(key, 1),
       estimatedMonthlyCostCredits: estimateComputeCostCredits(key, 730),
     }));
     json(res, 200, {
       ok: true,
       tiers,
-      storagePricing: STORAGE_PRICING,
+      storagePlans: listStoragePlans(),
       diskSizeLimits: { min: MIN_DISK_GB, max: MAX_DISK_GB },
     });
     return true;

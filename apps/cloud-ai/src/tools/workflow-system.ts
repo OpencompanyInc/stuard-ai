@@ -134,9 +134,19 @@ function getCloudTools(): Map<string, any> {
   return registry;
 }
 
+// Free-form tool-argument bag. Must NOT be z.any(): that emits a JSON Schema
+// property with no `type`, and Gemini's tool-schema validator drops type-less
+// properties and then 400s on any `required` entry that referenced them
+// ("GenerateContentRequest...items.required[0]: property is not defined").
+// Because `.default({})` makes the field `required` in output mode, the bare
+// z.any() form broke every Gemini call that exposed these tools. A loose object
+// keeps args free-form while giving Gemini a concrete `type: object`.
+// OpenAI/Anthropic tolerate the type-less form, which is why only Gemini broke.
+const ToolArgsSchema = z.object({}).loose();
+
 const StepSchema = z.object({
   tool: z.string(),
-  args: z.any().default({}),
+  args: ToolArgsSchema.default({}),
   kind: z.enum(['auto', 'cloud', 'local']).default('auto'),
   timeoutMs: z.number().int().min(100).max(600000).optional(),
 });
@@ -704,7 +714,7 @@ export const testWorkflowStepTool = createTool({
   inputSchema: z.object({
     mode: z.enum(['single', 'segment']).default('single').describe('Test mode: a single tool call or a multi-step segment'),
     tool: z.string().optional().describe('The tool name to test (single mode)'),
-    args: z.any().default({}).describe('Arguments to pass to the tool (single mode)'),
+    args: ToolArgsSchema.default({}).describe('Arguments to pass to the tool (single mode)'),
     steps: z.array(StepSchema).optional().describe('Steps to execute (segment mode). Each step supports tool/args/kind/timeoutMs.'),
     dryRun: z.boolean().default(false).describe('If true, only validates args without executing'),
     continueOnError: z.boolean().default(false).describe('If true in segment mode, continue even if a step fails'),

@@ -157,21 +157,28 @@ export async function clearAutoRefillPending(userId: string): Promise<void> {
   });
 }
 
-export async function markAutoRefillSuccess(userId: string): Promise<void> {
+export async function markAutoRefillSuccess(_userId: string): Promise<void> {
+  // DISABLED: auto-refill / billing settings greyed out in app UI.
+  return;
+  /*
   await updateProfile(userId, {
     auto_refill_pending_checkout_id: null,
     auto_refill_pending_url: null,
     auto_refill_pending_at: null,
     auto_refill_last_success_at: new Date().toISOString(),
   });
+  */
 }
 
-export async function getAutoRefillPending(userId: string): Promise<{
+export async function getAutoRefillPending(_userId: string): Promise<{
   pending: boolean;
   checkoutId?: string;
   url?: string;
   pendingAt?: string;
 }> {
+  // DISABLED: auto-refill / billing settings greyed out in app UI.
+  return { pending: false };
+  /*
   const profile = await fetchProfile(userId);
   if (!profile || !hasFreshPending(profile)) {
     return { pending: false };
@@ -182,9 +189,13 @@ export async function getAutoRefillPending(userId: string): Promise<{
     url: profile.auto_refill_pending_url || undefined,
     pendingAt: profile.auto_refill_pending_at || undefined,
   };
+  */
 }
 
-export async function maybeTriggerAutoRefill(userId: string): Promise<void> {
+export async function maybeTriggerAutoRefill(_userId: string): Promise<void> {
+  // DISABLED: auto-refill / billing settings greyed out in app UI.
+  return;
+  /*
   if (!userId) return;
 
   try {
@@ -288,8 +299,11 @@ export async function maybeTriggerAutoRefill(userId: string): Promise<void> {
   } catch (e: any) {
     writeLog('auto_refill_error', { userId, error: e?.message || String(e) });
   }
+  */
 }
 
-export function scheduleAutoRefillCheck(userId: string): void {
-  void maybeTriggerAutoRefill(userId);
+export function scheduleAutoRefillCheck(_userId: string): void {
+  // DISABLED: auto-refill / billing settings greyed out in app UI.
+  return;
+  // void maybeTriggerAutoRefill(userId);
 }

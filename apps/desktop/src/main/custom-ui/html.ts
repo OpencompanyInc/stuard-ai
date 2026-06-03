@@ -496,8 +496,17 @@ function buildRuntimeScript(options: {
           if (!(members[i] in bag)) missing.push(members[i]);
         }
         if (missing.length) {
+          var available = [];
+          try { available = Object.keys(bag); } catch (e) {}
+          var detail = missing.map(function (m) {
+            var stem = m.toLowerCase().replace(/[^a-z]/g, '').slice(0, 5);
+            var near = stem
+              ? available.filter(function (k) { return k.toLowerCase().indexOf(stem) !== -1; }).slice(0, 3)
+              : [];
+            return '"' + m + '"' + (near.length ? ' (did you mean ' + near.join(', ') + '?)' : '');
+          });
           throw new Error('Package "' + name + '" has no export' + (missing.length > 1 ? 's' : '') +
-            ' named ' + missing.map(function (m) { return '"' + m + '"'; }).join(', ') +
+            ' named ' + detail.join('; ') +
             '. The import name may be misspelled or not exist in this version of "' + name + '".');
         }
         return mod;
@@ -783,30 +792,35 @@ function buildRuntimeScript(options: {
       // are block-scoped. We convert "function App(" to "App = function App("
       // so the assignment reaches the outer var App.
       var App;
+      var __compDefError = null;
       try {
         ${processedComponent.replace(/^(\s*)function\s+App\s*\(/m, '$1App = function App(')}
-      } catch (__compDefError) {
-        console.error('[stuard] Component definition error:', __compDefError);
-        App = function ErrorApp() {
-          __showComponentError('Component Definition Error', __compDefError,
-            'The component code threw an error while being defined. Check for syntax errors or undefined references.');
-          return null;
-        };
+      } catch (__e) {
+        console.error('[stuard] Component definition error:', __e);
+        __compDefError = __e;
       }
 
       // === Render ===
-      try {
-        var root = document.getElementById('stuard-root');
-        var AppComponent = typeof App === 'function' ? App : function() {
-          return React.createElement('div', { className: 'p-4 text-red-400' },
-            'No App component defined. Your component must define a function named App.'
-          );
-        };
-        ReactDOM.render(React.createElement(AppComponent), root);
-      } catch (__renderError) {
-        console.error('[stuard] Render error:', __renderError);
-        __showComponentError('Render Error', __renderError,
-          'The component defined an App function but it failed to render.');
+      // Definition errors are shown directly (NOT via a React component): an
+      // ErrorApp that sets innerHTML then returns null would be wiped when
+      // ReactDOM commits the null render, leaving a blank window.
+      if (__compDefError) {
+        __showComponentError('Component Definition Error', __compDefError,
+          'The component code threw an error while being defined. Check the import names and for undefined references.');
+      } else {
+        try {
+          var root = document.getElementById('stuard-root');
+          var AppComponent = typeof App === 'function' ? App : function() {
+            return React.createElement('div', { className: 'p-4 text-red-400' },
+              'No App component defined. Your component must define a function named App.'
+            );
+          };
+          ReactDOM.render(React.createElement(AppComponent), root);
+        } catch (__renderError) {
+          console.error('[stuard] Render error:', __renderError);
+          __showComponentError('Render Error', __renderError,
+            'The component defined an App function but it failed to render.');
+        }
       }
     })();
   `;

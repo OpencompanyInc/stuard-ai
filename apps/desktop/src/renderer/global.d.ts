@@ -55,6 +55,9 @@ declare global {
         signedIn: boolean;
         accountEmail: string | null;
         planType: string | null;
+        tokenExpiresAt: string | null;
+        tokenExpired: boolean;
+        lastRefreshAtMs: number | null;
         authJsonPath: string;
         lastSyncedAtMs: number | null;
         lastSyncError: string | null;

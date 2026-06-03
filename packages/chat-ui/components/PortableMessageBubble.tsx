@@ -232,6 +232,69 @@ function useMarkdownComponents() {
   }), []);
 }
 
+// Compact markdown for chain-of-thought / branch detail content. Desktop renders
+// this same content as markdown (via the prose typography plugin); the website
+// has no prose plugin, so we mirror it with an explicit, prose-free component map
+// at trace scale. Colors are inherited from the muted container — components set
+// only spacing/size so they don't fight the parent's color-mix tint.
+const traceMarkdownComponents = {
+  p: (props: any) => <p className="mb-1.5 leading-relaxed last:mb-0" {...props} />,
+  a: ({ href, children, ...props }: any) => (
+    <a
+      className="font-medium text-primary underline decoration-primary/40 underline-offset-2"
+      href={href}
+      onClick={(event: React.MouseEvent) => {
+        if (typeof href === 'string') {
+          event.preventDefault();
+          getExternalOpener()(href);
+        }
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+  ul: (props: any) => <ul className="mb-1.5 list-disc space-y-0.5 pl-4 marker:text-theme-muted/60" {...props} />,
+  ol: (props: any) => <ol className="mb-1.5 list-decimal space-y-0.5 pl-4 marker:text-theme-muted/60" {...props} />,
+  li: (props: any) => <li className="leading-relaxed" {...props} />,
+  h1: (props: any) => <h1 className="mb-1 mt-1.5 text-[12px] font-semibold first:mt-0" {...props} />,
+  h2: (props: any) => <h2 className="mb-1 mt-1.5 text-[12px] font-semibold first:mt-0" {...props} />,
+  h3: (props: any) => <h3 className="mb-1 mt-1.5 text-[11px] font-semibold first:mt-0" {...props} />,
+  h4: (props: any) => <h4 className="mb-1 mt-1.5 text-[11px] font-semibold first:mt-0" {...props} />,
+  strong: (props: any) => <strong className="font-semibold text-theme-fg/90" {...props} />,
+  em: (props: any) => <em className="italic" {...props} />,
+  blockquote: (props: any) => <blockquote className="my-1.5 border-l-2 border-theme/30 pl-2 italic" {...props} />,
+  code: ({ className, children, ...props }: any) => {
+    const isBlock = className?.startsWith('language-');
+    if (isBlock) {
+      return <code className={clsx(className, 'text-[10px]')} {...props}>{children}</code>;
+    }
+    return (
+      <code className="rounded bg-theme-hover px-1 py-0.5 font-mono text-[10px] text-primary" {...props}>
+        {children}
+      </code>
+    );
+  },
+  pre: ({ children, ...props }: any) => (
+    <pre className="my-1.5 overflow-x-auto rounded-md border border-theme/10 bg-black/20 p-2 text-[10px] leading-relaxed" {...props}>
+      {children}
+    </pre>
+  ),
+  hr: () => <hr className="my-2 border-theme/10" />,
+};
+
+function TraceMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkMath, remarkGfm]}
+      rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+      components={traceMarkdownComponents}
+    >
+      {normalizeMarkdown(content)}
+    </ReactMarkdown>
+  );
+}
+
 function CopyActionButton({
   value,
   className,
@@ -1359,13 +1422,13 @@ function BranchLane({
             <div className="ml-[28px] pb-1.5">
               {(child.kind === 'reasoning' || child.kind === 'text') && child.content ? (
                 <div
-                  className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                  className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed break-words"
                   style={{
                     backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
                     color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
                   }}
                 >
-                  {child.content}
+                  <TraceMarkdown content={child.content} />
                 </div>
               ) : null}
               {child.kind === 'tool' && tool ? <ToolTraceContent tool={tool} /> : null}
@@ -1773,13 +1836,13 @@ function AssistantTracePanel({
                 >
                   {(step.kind === 'reasoning' || step.kind === 'text') && step.content ? (
                     <div
-                      className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                      className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed break-words"
                       style={{
                         backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
                         color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
                       }}
                     >
-                      {step.content}
+                      <TraceMarkdown content={step.content} />
                     </div>
                   ) : null}
                   {step.kind === 'tool' && step.tool ? <ToolTraceContent tool={step.tool} /> : null}

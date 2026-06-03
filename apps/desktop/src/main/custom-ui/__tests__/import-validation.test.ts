@@ -55,5 +55,25 @@ describe('missing named import surfaces a clear error', () => {
     // Missing export → clear, specific error
     expect(() => run('var { Nope } = __stuardImportNamed("pkg", ["Nope"]);', { Present: () => null }))
       .toThrow(/has no export named "Nope"/);
+
+    // Missing export with a near-match → suggests it
+    expect(() => run('var { TrendUp01Icon } = __stuardImportNamed("pkg", ["TrendUp01Icon"]);', { TrendUpIcon: () => null }))
+      .toThrow(/did you mean .*TrendUpIcon/);
+  });
+
+  it('definition errors render the error card instead of blanking the window', () => {
+    // A bad named import throws at definition time; the generated runtime must
+    // show the error (not ReactDOM.render(null), which would wipe it → black screen).
+    const html = generateEnhancedCustomUiHtml({
+      id: 't', title: 't', css: '', layout: null, data: {}, borderRadius: 0, flowId: 'f', transparentBg: false,
+      component: "import { Nope } from 'recharts';\nfunction App(){ return null; }",
+      uiPackagesModules: ['recharts'],
+    } as any);
+
+    // The render section guards on __compDefError and calls __showComponentError
+    // directly rather than rendering an ErrorApp that returns null.
+    expect(html).toContain('if (__compDefError)');
+    expect(html).toContain("__showComponentError('Component Definition Error'");
+    expect(html).not.toContain('function ErrorApp');
   });
 });

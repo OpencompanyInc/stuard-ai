@@ -3,7 +3,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
-import CompactDemo from '@/components/sections/CompactDemo';
 
 const HeroSection = () => {
   const { user } = useAuthContext();
@@ -18,25 +17,29 @@ const HeroSection = () => {
     <section className="hero-section relative overflow-x-hidden text-white">
       <div className="hero-bg" aria-hidden="true" />
       <div className="hero-vignette" aria-hidden="true" />
+      {/* Fade the hero into the dark sections below so the scroll feels seamless */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-48 bg-gradient-to-b from-transparent to-[#0A0A0B]"
+        aria-hidden="true"
+      />
 
       <div className="relative z-10">
         {/* Headline + CTAs: centered in the viewport, clear of floating nav */}
         <div className="hero-copy-panel flex min-h-[100svh] min-h-screen flex-col px-4">
           <div className="flex flex-1 flex-col items-center justify-center pb-10 sm:pb-12">
-            <div className="flex w-full max-w-[720px] flex-col items-center text-center gap-5 sm:gap-6 lg:gap-7">
+            <div className="flex w-full max-w-[900px] flex-col items-center text-center gap-5 sm:gap-6 lg:gap-7">
               <h1
+                style={{ fontFamily: 'var(--font-general-sans)' }}
                 className="
-                  w-full
-                  font-medium tracking-tight text-white
-                  text-[28px] leading-[1.15]
-                  sm:text-[36px] sm:leading-[1.15]
-                  md:text-[44px] md:leading-[1.12]
-                  lg:text-[52px] lg:leading-[1.1]
+                  w-full font-normal tracking-[-0.02em]
+                  bg-gradient-to-b from-white to-white/75 bg-clip-text text-transparent
+                  text-[42px] leading-[1.05]
+                  sm:text-[60px]
+                  md:text-[76px]
+                  lg:text-[92px]
                 "
               >
-                The AI that lives on your{' '}
-                <span className="font-bold text-white">PC</span>.{' '}
-                <span className="font-bold text-white">Not</span> in a tab.
+                Your personal AI workspace on your PC
               </h1>
 
               <p
@@ -49,8 +52,9 @@ const HeroSection = () => {
                   text-[#A3A3A3]
                 "
               >
-                Stuard knows your files, your apps, and your routines. It finishes the repetitive
-                work you keep redoing. Free. Local-first. No credit card.
+                It remembers every single conversation, so you never repeat yourself. Your projects,
+                your files, and how you like to work stay in context, then it puts them to work right
+                on your machine.
               </p>
 
               <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
@@ -103,17 +107,8 @@ const HeroSection = () => {
           </div>
         </div>
 
-        <div className="mx-auto flex w-full max-w-[1100px] flex-col items-center gap-8 px-4 pb-20 sm:gap-10 sm:pb-24 lg:gap-12 lg:pb-28">
-          <div
-            className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d0f] shadow-2xl"
-            style={{ aspectRatio: '16 / 10' }}
-          >
-            <CompactDemo />
-          </div>
-
-          <div className="flex w-full max-w-[480px] flex-col items-center">
-            <MacLinuxWaitlist />
-          </div>
+        <div className="mx-auto flex w-full max-w-[480px] flex-col items-center px-4 pb-16 sm:pb-20 lg:pb-24">
+          <MacLinuxWaitlist />
         </div>
       </div>
     </section>

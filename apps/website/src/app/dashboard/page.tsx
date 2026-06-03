@@ -9,6 +9,8 @@ import {
   formatRelativeTime,
   isInferenceModel,
   isNonBillableUsageEvent,
+  creditUsagePercent,
+  creditUsageBarPercent,
 } from '@/lib/billingUtils';
 
 type UsageEvent = {
@@ -185,12 +187,18 @@ export default function DashboardPage() {
     return p.charAt(0).toUpperCase() + p.slice(1);
   }, [stats.plan, userData?.plan]);
 
-  const usagePercent = useMemo(() => {
-    if (!stats.creditsLimit) return 0;
-    return Math.min(100, Math.round((stats.creditsUsed / stats.creditsLimit) * 100));
-  }, [stats.creditsUsed, stats.creditsLimit]);
+  const creditSummaryLike = useMemo(
+    () => ({
+      limit: stats.creditsLimit,
+      remaining: stats.creditsRemaining,
+      used: stats.creditsUsed,
+    }),
+    [stats.creditsLimit, stats.creditsRemaining, stats.creditsUsed],
+  );
+  const usagePercent = useMemo(() => creditUsagePercent(creditSummaryLike), [creditSummaryLike]);
+  const usageBarPercent = useMemo(() => creditUsageBarPercent(creditSummaryLike), [creditSummaryLike]);
 
-  const remainingPercent = Math.max(0, 100 - usagePercent);
+  const remainingPercent = Math.max(0, 100 - usageBarPercent);
   const maxCredits = Math.max(...stats.usageSeries.map((p) => p.credits), 1);
 
   return (
@@ -420,12 +428,12 @@ function StatCard({
       </div>
 
       <div className="flex flex-col items-start gap-1.5">
-        <div className="flex items-baseline gap-2">
-          <span className="text-[28px] sm:text-[32px] font-semibold leading-none text-white tracking-tight">
+        <div className="flex flex-col items-start gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+          <span className="text-[28px] sm:text-[32px] font-semibold leading-none text-white tracking-tight tabular-nums">
             {value}
           </span>
           {subtitle && (
-            <span className="text-[11px] text-neutral-500">{subtitle}</span>
+            <span className="text-[11px] font-medium text-neutral-500">{subtitle}</span>
           )}
         </div>
 

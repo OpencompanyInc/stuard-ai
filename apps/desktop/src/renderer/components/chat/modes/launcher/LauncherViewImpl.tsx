@@ -22,17 +22,13 @@ import {
   File as FileIcon,
   Loader2,
   Image as ImageIcon,
-  Music,
-  Code as CodeIcon,
-  Archive,
   AppWindow,
-  Film,
-  FileText,
   Sparkles,
   Zap,
   MessageCircle,
-  FolderSearch,
   MessageSquare,
+  FolderSearch,
+  ExternalLink,
   ListTodo,
   CheckCircle,
   CornerDownLeft,
@@ -74,6 +70,8 @@ import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 import { CreditsLimitNotice } from "../../shared/CreditsLimitNotice";
 import { AttachmentBar } from "../../shared/input/AttachmentBar";
 import { IntegrationSuggestionChip } from "../../shared/input/suggestions/IntegrationSuggestionChip";
+import { HighlightMatch } from "../../shared/input/HighlightMatch";
+import { getFileKindConfig } from "../../shared/input/fileKind";
 
 interface LauncherViewProps {
   query: string;
@@ -846,74 +844,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       fileResults.length > 0 ||
       appResults.length > 0);
 
-  const getFileKindConfig = (k: string) => {
-    switch (k) {
-      case "application":
-        return {
-          icon: AppWindow,
-          color: "text-blue-500",
-          bg: "bg-blue-500/10",
-          label: "APP",
-        };
-      case "folder":
-        return {
-          icon: Folder,
-          color: "text-yellow-500",
-          bg: "bg-yellow-500/10",
-          label: "FOLDER",
-        };
-      case "image":
-        return {
-          icon: ImageIcon,
-          color: "text-purple-500",
-          bg: "bg-purple-500/10",
-          label: "IMG",
-        };
-      case "video":
-        return {
-          icon: Film,
-          color: "text-red-500",
-          bg: "bg-red-500/10",
-          label: "VID",
-        };
-      case "audio":
-        return {
-          icon: Music,
-          color: "text-pink-500",
-          bg: "bg-pink-500/10",
-          label: "AUDIO",
-        };
-      case "code":
-        return {
-          icon: CodeIcon,
-          color: "text-emerald-500",
-          bg: "bg-emerald-500/10",
-          label: "CODE",
-        };
-      case "archive":
-        return {
-          icon: Archive,
-          color: "text-orange-500",
-          bg: "bg-orange-500/10",
-          label: "ZIP",
-        };
-      case "document":
-        return {
-          icon: FileText,
-          color: "text-sky-500",
-          bg: "bg-sky-500/10",
-          label: "DOC",
-        };
-      default:
-        return {
-          icon: FileIcon,
-          color: "text-theme-muted",
-          bg: "bg-theme-muted/10",
-          label: "FILE",
-        };
-    }
-  };
-
   const isCompact = overlayMode === "compact";
   const isWindowMode = overlayMode === "window";
 
@@ -1165,12 +1095,12 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       <div className="w-7 h-7 rounded-[10px] bg-primary/15 flex items-center justify-center shrink-0">
                         <MessageSquare className="w-3.5 h-3.5 text-primary" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-semibold text-theme-fg">
-                          Ask Stuard
+                      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                        <div className="text-[13px] font-semibold text-theme-fg truncate">
+                          &ldquo;{query.trim()}&rdquo;
                         </div>
                         <div className="text-[11px] text-theme-muted truncate">
-                          Get an AI assistant response
+                          Ask Stuard
                         </div>
                       </div>
                       <span className="text-[10px] font-semibold text-theme-muted bg-theme-active px-2 py-1 rounded-md shrink-0">
@@ -1178,7 +1108,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </span>
                     </button>
 
-                    {/* Apps â€” always first */}
                     {appResults.length > 0 && (
                       <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                         <div className="flex items-center gap-2 mb-3">
@@ -1191,47 +1120,51 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                           )}
                         </div>
                         <div className="space-y-1">
-                          {appResults.map((a: any) => {
+                          {appResults.map((a: any, idx: number) => {
                             const iconUrl =
                               a?.iconDataUrl ||
                               (a?.path
                                 ? fileIconDataUrls[String(a.path)]
                                 : undefined);
+                            const name = String(a.display_name || a.name || "");
                             return (
                               <button
-                                key={a.path || a.name}
+                                key={`app-${a.path || idx}`}
                                 onClick={() =>
                                   handleLaunchApp(a.launchTarget || a.path)
                                 }
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/app text-left border border-transparent hover:border-blue-500/30"
+                                className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
                               >
                                 <div
-                                  className={clsx(
-                                    "w-7 h-7 rounded-lg flex items-center justify-center",
-                                    iconUrl
-                                      ? "bg-transparent border-transparent"
-                                      : "bg-blue-500/10 text-blue-500 border border-theme/20",
-                                  )}
+                                  className="flex items-center justify-center shrink-0 overflow-hidden"
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 4,
+                                    background: iconUrl
+                                      ? "rgba(64, 64, 64, 0.5)"
+                                      : "#3B82F6",
+                                  }}
                                 >
                                   {iconUrl ? (
                                     <img
                                       src={iconUrl}
                                       alt=""
                                       loading="lazy"
-                                      className="w-5 h-5 object-contain"
+                                      className="w-7 h-7 object-contain"
                                     />
                                   ) : (
-                                    <AppWindow className="w-3.5 h-3.5" />
+                                    <AppWindow className="w-4 h-4 text-white" />
                                   )}
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[13px] font-semibold text-theme-fg truncate group-hover/app:text-blue-500 transition-colors">
-                                    {a.display_name || a.name}
+                                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                                  <div className="text-[13px] font-semibold text-theme-fg truncate">
+                                    <HighlightMatch text={name} query={query} />
+                                  </div>
+                                  <div className="text-[11px] text-theme-muted truncate">
+                                    open {name}
                                   </div>
                                 </div>
-                                <span className="text-[9px] font-bold text-blue-500/60 bg-blue-500/8 px-1.5 py-0.5 rounded-md uppercase">
-                                  App
-                                </span>
                               </button>
                             );
                           })}
@@ -1239,70 +1172,86 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </div>
                     )}
 
-                    {/* Files â€” after apps */}
                     {fileResults.length > 0 && (
-                      <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
+                      <div className="rounded-2xl p-4">
                         <div className="flex items-center gap-2 mb-3">
                           <FolderSearch className="w-4 h-4 text-emerald-500" />
                           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
                             Files
                           </span>
                           {fileSemanticLoading && (
-                            <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />
+                            <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />
                           )}
                         </div>
                         <div className="space-y-1">
-                          {fileResults.map((f: any) => {
-                            const cfg = getFileKindConfig(
-                              String(f.kind || "other").toLowerCase(),
-                            );
-                            const iconUrl =
-                              f?.path ? fileIconDataUrls[String(f.path)] : undefined;
+                          {fileResults.map((f: any, idx: number) => {
+                            const kind = String(f.kind || "other").toLowerCase();
+                            const cfg = getFileKindConfig(kind);
+                            const iconUrl = f?.path
+                              ? fileIconDataUrls[String(f.path)]
+                              : undefined;
                             const isThumbnail =
-                              String(f?.preview_kind || "icon") === "thumbnail";
+                              String(f.preview_kind || "icon") === "thumbnail";
+                            const fileName =
+                              String(f.display_name || f.filename || f.name || "").trim() ||
+                              String(f.path || "")
+                                .split(/[/\\]/)
+                                .pop() ||
+                              "Untitled";
+                            const fullPath = String(f.path || f.target_path || "");
+                            const showThumbnail = iconUrl && isThumbnail;
                             return (
                               <button
-                                key={f.path}
+                                key={String(f.id || f.path || idx)}
                                 onClick={() => handleOpenIndexedFile(f.path)}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-theme-hover transition-all group/file text-left border border-transparent hover:border-theme/30"
+                                className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
                               >
                                 <div
-                                  className={clsx(
-                                    "w-7 h-7 rounded-lg flex items-center justify-center",
-                                    iconUrl
-                                      ? "bg-transparent border-transparent"
-                                      : [cfg.bg, cfg.color, "border border-theme/20"],
-                                    isThumbnail && "overflow-hidden",
-                                  )}
+                                  className="flex items-center justify-center shrink-0 overflow-hidden"
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 4,
+                                    background: showThumbnail
+                                      ? "rgba(64, 64, 64, 0.5)"
+                                      : cfg.tile,
+                                  }}
                                 >
-                                  {iconUrl ? (
+                                  {showThumbnail ? (
                                     <img
                                       src={iconUrl}
                                       alt=""
                                       loading="lazy"
-                                      className={clsx(
-                                        isThumbnail
-                                          ? "w-full h-full object-cover"
-                                          : "w-5 h-5 object-contain",
-                                      )}
+                                      className="w-full h-full object-cover"
                                     />
+                                  ) : iconUrl ? (
+                                    <img
+                                      src={iconUrl}
+                                      alt=""
+                                      loading="lazy"
+                                      className="w-7 h-7 object-contain"
+                                    />
+                                  ) : kind === "folder" ? (
+                                    <Folder className="w-5 h-5 text-white" />
                                   ) : (
-                                    <cfg.icon className="w-3.5 h-3.5" />
+                                    <span className="text-[10px] font-semibold text-white">
+                                      {cfg.label}
+                                    </span>
                                   )}
                                 </div>
-                                <div className="min-w-0 flex-1">
+                                <div className="flex-1 min-w-0 flex flex-col gap-1">
                                   <div className="text-[13px] font-semibold text-theme-fg truncate">
-                                    {f.display_name || f.filename || f.path}
+                                    <HighlightMatch text={fileName} query={query} />
+                                  </div>
+                                  <div className="text-[10px] text-theme-muted truncate">
+                                    {fullPath}
                                   </div>
                                 </div>
                                 <span
-                                  className={clsx(
-                                    "text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase",
-                                    cfg.color,
-                                    cfg.bg,
-                                  )}
+                                  className="shrink-0 text-theme-muted p-1"
+                                  title="Open file"
                                 >
-                                  {cfg.label}
+                                  <ExternalLink className="w-4 h-4" strokeWidth={1.75} />
                                 </span>
                               </button>
                             );

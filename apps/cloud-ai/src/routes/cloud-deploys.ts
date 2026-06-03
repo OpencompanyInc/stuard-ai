@@ -1,7 +1,7 @@
 /**
  * Cloud Deploy API Routes
  *
- * Deploy workflows, scripts, and projects to Cloud VMs.
+ * Deploy workflows and projects to Cloud VMs.
  *
  * Endpoints:
  *   POST   /v1/cloud-engine/deploys              — Create deployment
@@ -69,7 +69,7 @@ async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<
   return user;
 }
 
-const VALID_KINDS = ['workflow', 'script', 'project'];
+const VALID_KINDS = ['workflow', 'project'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Route Handler
@@ -158,7 +158,7 @@ export async function handleCloudDeploysRoutes(req: IncomingMessage, res: Server
         return true;
       }
       if (!body.payload) {
-        json(res, 400, { ok: false, error: 'payload_required', message: 'Workflow JSON, script content, or project manifest is required' });
+        json(res, 400, { ok: false, error: 'payload_required', message: 'Workflow JSON or project manifest is required' });
         return true;
       }
 

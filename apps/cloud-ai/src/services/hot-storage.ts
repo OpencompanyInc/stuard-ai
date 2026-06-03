@@ -9,17 +9,21 @@
  * This module handles quota management, plan upgrades, and billing.
  */
 
-import { STORAGE_PRICING, creditsFromUsd, preciseCreditsFromUsd } from '../pricing';
+import { creditsFromUsd } from '../pricing';
 import {
   getStorageUsage,
   upsertStorageUsage,
-  insertBillingEvent,
   insertStoragePurchase,
   getCloudEngine,
   upsertCloudEngine,
+  debitCredits,
+  getCreditSummary,
+  getPaidStorageUsages,
+  type StorageUsage,
 } from '../supabase';
-import { getUserStorageBytes } from './cold-storage';
+import { getUserStorageBreakdown } from './cold-storage';
 import { getComputeProvider } from './compute';
+import { getLatestMetrics } from './vm-health';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage Plans
@@ -39,7 +43,7 @@ export const STORAGE_PLANS: Record<string, StoragePlan> = {
     id: 'free',
     name: 'Free',
     hotDiskGb: 5,
-    coldStorageGb: 1,
+    coldStorageGb: 0.1, // ~100MB of free persistent storage for everyone
     monthlyUsd: 0,
     monthlyCredits: 0,
   },
@@ -93,8 +97,10 @@ export interface UserStorageInfo {
   planId: string;
   plan: StoragePlan;
   hotDiskGb: number;       // allocated hot disk size
-  hotUsedGb: number;       // actual usage on VM
-  coldStorageBytes: number; // bytes in GCS
+  hotUsedGb: number | null; // actual VM disk usage; null when the VM isn't reporting (stopped)
+  coldStorageBytes: number; // total bytes in GCS (files + system backup) — billed/quota
+  fileBytes: number;        // user files only — what the dashboard file list shows
+  backupBytes: number;      // Stuard-managed workspace backup
   coldQuotaGb: number;     // max cold storage
   lastSyncAt: string | null;
 }
@@ -122,26 +128,35 @@ export async function getUserStorageInfo(userId: string): Promise<UserStorageInf
   const planId = (usage as any)?.storage_plan_id || 'free';
   const plan = STORAGE_PLANS[planId] || STORAGE_PLANS.free;
 
-  const coldBytes = await getUserStorageBytes(userId).catch(() => Number(usage?.cold_storage_bytes || 0));
+  const breakdown = await getUserStorageBreakdown(userId).catch(() => {
+    const fallback = Number(usage?.cold_storage_bytes || 0);
+    return { totalBytes: fallback, fileBytes: fallback, backupBytes: 0 };
+  });
 
   // hot_storage_gb in the DB is the ALLOCATED disk size (set during provision),
-  // NOT actual disk usage. Use the VM's actual disk size from cloud_engines
-  // for the total, and derive actual usage from cold storage backup size
-  // (since we can't query the VM's disk usage in real-time from this endpoint).
+  // NOT actual disk usage. Use the VM's actual disk size from cloud_engines.
   const engine = await getCloudEngine(userId);
   const actualDiskGb = engine?.disk_size_gb || plan.hotDiskGb;
 
-  // Estimate hot disk usage: cold backup size approximates what's on disk.
-  // If no backup exists yet, we don't know actual usage — show 0.
-  const coldGbForEstimate = coldBytes / (1024 * 1024 * 1024);
-  const estimatedHotUsedGb = coldBytes > 0 ? Math.min(coldGbForEstimate, actualDiskGb) : 0;
+  // Real hot-disk usage comes from the VM's reported metrics. When the VM isn't
+  // reporting (stopped, or this process hasn't pinged it yet) we return null so
+  // the UI shows "—" instead of a fabricated, fluctuating number.
+  let hotUsedGb: number | null = null;
+  try {
+    const metrics = getLatestMetrics(userId);
+    if (metrics && metrics.disk_total > 0) {
+      hotUsedGb = metrics.disk_used / (1024 * 1024 * 1024);
+    }
+  } catch { /* metrics unavailable — leave null */ }
 
   return {
     planId,
     plan,
     hotDiskGb: actualDiskGb,
-    hotUsedGb: estimatedHotUsedGb,
-    coldStorageBytes: coldBytes,
+    hotUsedGb,
+    coldStorageBytes: breakdown.totalBytes,
+    fileBytes: breakdown.fileBytes,
+    backupBytes: breakdown.backupBytes,
     coldQuotaGb: plan.coldStorageGb,
     lastSyncAt: usage?.last_sync_at || null,
   };
@@ -186,33 +201,44 @@ export async function purchaseStoragePlan(
     return { ok: false, error: 'cold_storage_exceeds_plan_limit' };
   }
 
-  // Record the billing event (prorated for remaining month)
+  // Charge the flat plan fee for the current month. Uses debitCredits (the
+  // canonical balance path) so the charge actually consumes credits and is
+  // deduped per (plan, calendar-month) — the same ref the monthly renewal uses,
+  // so the purchase month is never double-charged.
   const creditsToCharge = plan.monthlyCredits;
   const action = STORAGE_PLANS[currentPlanId] && plan.hotDiskGb > (STORAGE_PLANS[currentPlanId]?.hotDiskGb || 0)
     ? 'upgrade' as const
     : currentPlanId === 'free' ? 'purchase' as const : 'downgrade' as const;
+  const now = new Date();
 
   if (creditsToCharge > 0) {
-    await insertBillingEvent(userId, 'storage_purchase', creditsToCharge, {
-      plan_id: newPlanId,
-      previous_plan_id: currentPlanId,
-      hot_disk_gb: plan.hotDiskGb,
-      cold_quota_gb: plan.coldStorageGb,
-      monthly_usd: plan.monthlyUsd,
-      action,
+    await debitCredits(userId, {
+      sourceType: 'storage_plan',
+      sourceRef: storageChargeRef(newPlanId, now),
+      credits: creditsToCharge,
+      amountUsd: plan.monthlyUsd,
+      metadata: {
+        plan_id: newPlanId,
+        previous_plan_id: currentPlanId,
+        hot_disk_gb: plan.hotDiskGb,
+        cold_quota_gb: plan.coldStorageGb,
+        action,
+        kind: 'storage_purchase',
+      },
     });
   }
 
   // Record purchase audit log
   await insertStoragePurchase(userId, newPlanId, currentPlanId, creditsToCharge, action);
 
-  // Update storage_usage with new plan info
+  // Update storage_usage with new plan info + the billing period boundary.
   await upsertStorageUsage(userId, {
     hot_storage_gb: plan.hotDiskGb,
     storage_plan_id: newPlanId,
     storage_quota_gb: plan.hotDiskGb,
     cold_quota_gb: plan.coldStorageGb,
-    plan_purchased_at: new Date().toISOString(),
+    plan_purchased_at: now.toISOString(),
+    plan_expires_at: firstOfNextMonth(now).toISOString(),
   } as any);
 
   // If VM is running, resize the disk
@@ -278,41 +304,125 @@ export async function canUploadFile(userId: string, fileSizeBytes: number): Prom
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hourly Billing
+// Recurring Storage Billing (flat monthly plan fee + grace period)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Bill a user for their storage usage for the current hour.
- * Called by the billing cron alongside compute billing.
+ * Days a user keeps their storage plan (and data) after they can no longer
+ * cover the monthly fee, before being downgraded to free. Data is NEVER deleted
+ * by this flow — downgrade only tightens the quota going forward.
  */
-export async function billStorageHourly(userId: string): Promise<void> {
-  const info = await getUserStorageInfo(userId);
-  const now = new Date();
-  const hoursPerMonth = 730;
+const STORAGE_GRACE_DAYS = (() => {
+  const n = Number(process.env.STORAGE_GRACE_DAYS);
+  return Number.isFinite(n) && n > 0 ? n : 14;
+})();
 
-  // Hot storage billing (based on plan disk allocation)
-  const hotMonthlyUsd = info.hotDiskGb * STORAGE_PRICING.hotPerGbMonthUsd;
-  const hotHourlyUsd = hotMonthlyUsd / hoursPerMonth;
-  const hotCredits = preciseCreditsFromUsd(hotHourlyUsd);
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
-  if (hotCredits > 0) {
-    await insertBillingEvent(userId, 'hot_storage', hotCredits, {
-      hot_disk_gb: info.hotDiskGb,
-      hourly_usd: hotHourlyUsd,
-      plan_id: info.planId,
-    }, now);
+function firstOfNextMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+}
+
+/** Idempotency key for a plan's charge in a given calendar month. */
+function storageChargeRef(planId: string, d: Date): string {
+  return `storage:${planId}:${monthKey(d)}`;
+}
+
+/**
+ * Renew a single user's flat storage-plan fee for the current period, applying a
+ * grace period when they can't pay. NEVER deletes user data — on grace expiry the
+ * plan is downgraded to free (quota tightens; existing data is retained).
+ *
+ * Idempotent: the charge is deduped per (plan, calendar-month) by debitCredits,
+ * so this is safe to call hourly and on every status poll.
+ */
+export async function billStoragePlanForUser(usage: StorageUsage, now = new Date()): Promise<void> {
+  const planId = usage.storage_plan_id || 'free';
+  const plan = STORAGE_PLANS[planId];
+  // Free / unknown plans are never charged and never expire.
+  if (!plan || plan.monthlyCredits <= 0) return;
+
+  const userId = usage.user_id;
+  const expiresAt = usage.plan_expires_at ? new Date(usage.plan_expires_at) : null;
+
+  // Plans purchased before recurring billing existed have no period boundary.
+  // Grandfather the current month (no charge) and start renewing next month.
+  if (!expiresAt || isNaN(expiresAt.getTime())) {
+    await upsertStorageUsage(userId, { plan_expires_at: firstOfNextMonth(now).toISOString() } as any);
+    return;
   }
 
-  // Cold storage billing (based on actual GCS bytes)
-  const coldGb = info.coldStorageBytes / (1024 * 1024 * 1024);
-  const coldMonthlyUsd = coldGb * STORAGE_PRICING.coldPerGbMonthUsd;
-  const coldHourlyUsd = coldMonthlyUsd / hoursPerMonth;
-  const coldCredits = preciseCreditsFromUsd(coldHourlyUsd);
+  // Current period still active — nothing to do.
+  if (now < expiresAt) return;
 
-  if (coldCredits > 0) {
-    await insertBillingEvent(userId, 'cold_storage', coldCredits, {
-      cold_storage_gb: coldGb,
-      hourly_usd: coldHourlyUsd,
-    }, now);
+  // Period ended → attempt to renew for the current calendar month.
+  const summary = await getCreditSummary(userId);
+  const canPay = summary.unlimited || summary.remaining >= plan.monthlyCredits;
+
+  if (canPay) {
+    await debitCredits(userId, {
+      sourceType: 'storage_plan',
+      sourceRef: storageChargeRef(planId, now),
+      credits: plan.monthlyCredits,
+      amountUsd: plan.monthlyUsd,
+      metadata: {
+        plan_id: planId,
+        hot_disk_gb: plan.hotDiskGb,
+        cold_quota_gb: plan.coldStorageGb,
+        period: monthKey(now),
+        kind: 'storage_renewal',
+      },
+    });
+    await upsertStorageUsage(userId, { plan_expires_at: firstOfNextMonth(now).toISOString() } as any);
+    console.log(`[hot-storage] Renewed storage plan ${planId} for user ${userId} (${plan.monthlyCredits} credits)`);
+    return;
+  }
+
+  // Can't pay → grace window. Retain the plan + data until the deadline, then
+  // downgrade to free (still without deleting anything).
+  const graceDeadline = new Date(expiresAt.getTime() + STORAGE_GRACE_DAYS * 24 * 60 * 60 * 1000);
+  if (now >= graceDeadline) {
+    await downgradeToFreeStoragePlan(userId, planId);
+    console.warn(`[hot-storage] Storage grace expired for user ${userId} — downgraded ${planId}→free (data retained)`);
+  } else {
+    console.warn(`[hot-storage] User ${userId} can't cover storage plan ${planId}; in grace until ${graceDeadline.toISOString()}`);
+  }
+}
+
+/**
+ * Downgrade a user to the free storage plan WITHOUT deleting any data. Existing
+ * data above the free quota is retained, but new uploads are blocked until they
+ * free space or re-subscribe (see canUploadFile). The VM disk is intentionally
+ * not shrunk (shrinking a live disk is unsafe).
+ */
+export async function downgradeToFreeStoragePlan(userId: string, previousPlanId: string): Promise<void> {
+  const free = STORAGE_PLANS.free;
+  await upsertStorageUsage(userId, {
+    storage_plan_id: 'free',
+    hot_storage_gb: free.hotDiskGb,
+    storage_quota_gb: free.hotDiskGb,
+    cold_quota_gb: free.coldStorageGb,
+    plan_expires_at: null,
+    plan_purchased_at: null,
+  } as any);
+  await insertStoragePurchase(userId, 'free', previousPlanId, 0, 'downgrade');
+}
+
+/**
+ * Renew every paid storage plan. Called hourly by the billing cron. Charges are
+ * idempotent per calendar month, so running this every hour is safe.
+ */
+export async function runStorageBillingCycle(now = new Date()): Promise<void> {
+  const usages = await getPaidStorageUsages();
+  if (usages.length === 0) return;
+  console.log(`[hot-storage] Storage billing cycle for ${usages.length} paid plan(s)`);
+  for (const usage of usages) {
+    try {
+      await billStoragePlanForUser(usage, now);
+    } catch (err: any) {
+      console.error(`[hot-storage] Storage billing error for user ${usage.user_id}:`, err?.message);
+    }
   }
 }

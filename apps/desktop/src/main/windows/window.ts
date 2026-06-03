@@ -4,7 +4,8 @@ import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
 import logger from "../utils/logger";
-import { getGlobalHotkey } from "../settings";
+import { getGlobalHotkey, loadSettings, setRendererPrefs } from "../settings";
+import { updates_check } from "../services/updates";
 import { initOverlayHotkey } from "./overlay-hotkey";
 
 let win: BrowserWindow | null = null;
@@ -1063,6 +1064,14 @@ export function openWorkflowsWindow(options?: { marketplaceSlug?: string; workfl
     backgroundColor: "#ffffff",
   });
   attachStandaloneWindowChrome(d);
+  // Let the workflow canvas handle Ctrl/pinch wheel — block Chromium page zoom.
+  try {
+    d.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "mouseWheel" && (input.control || input.meta)) {
+        event.preventDefault();
+      }
+    });
+  } catch { }
   // Keep the application menu hidden so it doesn't add an Electron menu bar
   // above the native title bar. The OS title bar still renders normally.
   d.setMenu(null);
@@ -2206,20 +2215,155 @@ export function registerGlobalShortcuts() {
   logger.info("Global shortcuts registration complete");
 }
 
-export function createTray() {
-  // 1x1 transparent PNG
-  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
-  const image = nativeImage.createFromDataURL(`data:image/png;base64,${pixel}`).resize({ width: 16, height: 16 });
-  tray = new Tray(image);
-  tray.setToolTip("StuardAI Assistant");
-  const contextMenu = Menu.buildFromTemplate([
-    { label: "Toggle", click: toggleWindow },
-    { label: "Workflows", click: () => openWorkflowsWindow() },
+type TrayThemeMode = "light" | "dark" | "custom";
+
+function getTrayIconImage(): Electron.NativeImage {
+  const appPath = (() => { try { return app?.getAppPath?.() || ""; } catch { return ""; } })();
+  const filenames = process.platform === "win32" ? ["icon.ico", "icon2.png"] : ["icon2.png", "icon.ico"];
+  const baseDirs = [
+    process.resourcesPath || "",
+    path.join(__dirname, "..", "..", "icons"),
+    appPath ? path.join(appPath, "icons") : "",
+  ].filter(Boolean);
+
+  for (const dir of baseDirs) {
+    for (const name of filenames) {
+      try {
+        const iconPath = path.join(dir, name);
+        if (!fs.existsSync(iconPath)) continue;
+        const img = nativeImage.createFromPath(iconPath);
+        if (img.isEmpty()) continue;
+        const size = process.platform === "win32" ? 16 : 18;
+        return img.resize({ width: size, height: size, quality: "best" });
+      } catch { }
+    }
+  }
+
+  if (APP_ICON_PATH) {
+    try {
+      const img = nativeImage.createFromPath(APP_ICON_PATH);
+      if (!img.isEmpty()) {
+        return img.resize({ width: 16, height: 16, quality: "best" });
+      }
+    } catch { }
+  }
+
+  logger.warn("Tray icon not found; using fallback");
+  return nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIUlEQVQ4T2NkYGD4z0ABYBxVSFUBqGqAagAA0Q8B5X9R8QAAAABJRU5ErkJggg==",
+  ).resize({ width: 16, height: 16 });
+}
+
+function getFeedbackUrl(): string {
+  return isDev
+    ? "http://localhost:3000/dashboard/support/new"
+    : "https://stuard.ai/dashboard/support/new";
+}
+
+function getActiveThemeMode(): TrayThemeMode {
+  const raw = String(loadSettings().themeMode || "light").toLowerCase();
+  if (raw === "dark") return "dark";
+  if (raw === "custom") return "custom";
+  return "light";
+}
+
+function applyThemeFromTray(mode: TrayThemeMode) {
+  const settings = loadSettings();
+  setRendererPrefs({ themeMode: mode });
+  const payload: Record<string, string> = { themeMode: mode };
+  if (mode === "custom") {
+    if (typeof settings.themeDarkShade === "string") payload.themeDarkShade = settings.themeDarkShade;
+    if (typeof settings.themeLightShade === "string") payload.themeLightShade = settings.themeLightShade;
+    if (settings.themeText === "black" || settings.themeText === "white") payload.themeText = settings.themeText;
+  }
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send("prefs:themeUpdated", payload); } catch { }
+  }
+}
+
+function buildTrayContextMenu(): Menu {
+  const overlayVisible = !!(win && !win.isDestroyed() && win.isVisible());
+  const themeMode = getActiveThemeMode();
+
+  return Menu.buildFromTemplate([
+    {
+      label: overlayVisible ? "Hide Stuard" : "Show Stuard",
+      click: toggleWindow,
+    },
     { type: "separator" },
-    { label: "Quit", click: () => app.quit() },
+    {
+      label: "Dashboard",
+      click: () => openDashboardWindow(),
+    },
+    {
+      label: "Workflows",
+      click: () => openWorkflowsWindow(),
+    },
+    {
+      label: "Settings",
+      click: () => openDashboardWindow({ tab: "settings" }),
+    },
+    { type: "separator" },
+    {
+      label: "Theme",
+      submenu: [
+        {
+          label: "Light",
+          type: "radio",
+          checked: themeMode === "light",
+          click: () => applyThemeFromTray("light"),
+        },
+        {
+          label: "Dark",
+          type: "radio",
+          checked: themeMode === "dark",
+          click: () => applyThemeFromTray("dark"),
+        },
+        {
+          label: "Custom",
+          type: "radio",
+          checked: themeMode === "custom",
+          click: () => {
+            applyThemeFromTray("custom");
+            openDashboardWindow({ tab: "settings" });
+          },
+        },
+      ],
+    },
+    { type: "separator" },
+    {
+      label: "Send Feedback",
+      click: () => {
+        shell.openExternal(getFeedbackUrl()).catch((e) => logger.warn("Failed to open feedback URL", e));
+      },
+    },
+    {
+      label: "Check for Updates…",
+      click: () => {
+        updates_check().catch((e) => logger.warn("Tray update check failed", e));
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit Stuard",
+      click: () => app.quit(),
+    },
   ]);
-  tray.setContextMenu(contextMenu);
+}
+
+export function createTray() {
+  if (tray && !tray.isDestroyed()) {
+    try { tray.destroy(); } catch { }
+    tray = null;
+  }
+
+  const image = getTrayIconImage();
+  tray = new Tray(image);
+  tray.setToolTip(`Stuard AI v${app.getVersion()}`);
   tray.on("click", toggleWindow);
+  tray.on("right-click", () => {
+    try { tray?.popUpContextMenu(buildTrayContextMenu()); } catch { }
+  });
 }
 
 // Movement shortcuts when window is not focused

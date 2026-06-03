@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useWorkflowTheme } from "../WorkflowThemeContext";
 
 interface WorkflowSpotlightProps {
   targetId: string;
@@ -17,6 +18,7 @@ interface Rect {
 const RING_PAD = 8;
 
 export function WorkflowSpotlight({ targetId, refresh }: WorkflowSpotlightProps) {
+  const { isDark } = useWorkflowTheme();
   const [rect, setRect] = useState<Rect | null>(null);
 
   useEffect(() => {
@@ -64,38 +66,17 @@ export function WorkflowSpotlight({ targetId, refresh }: WorkflowSpotlightProps)
   const height = rect.height + RING_PAD * 2;
 
   return createPortal(
-    <div
-      style={{
-        position: "fixed",
-        top,
-        left,
-        width,
-        height,
-        pointerEvents: "none",
-        borderRadius: 16,
-        boxShadow:
-          "0 0 0 2px rgba(96, 165, 250, 0.9), 0 0 0 6px rgba(59, 130, 246, 0.25), 0 0 32px 8px rgba(59, 130, 246, 0.35)",
-        animation: "wf-spotlight-pulse 1.8s ease-in-out infinite",
-        zIndex: 60,
-      }}
-    >
-      <style>{`
-        @keyframes wf-spotlight-pulse {
-          0%, 100% {
-            box-shadow:
-              0 0 0 2px rgba(96, 165, 250, 0.9),
-              0 0 0 6px rgba(59, 130, 246, 0.25),
-              0 0 32px 8px rgba(59, 130, 246, 0.35);
-          }
-          50% {
-            box-shadow:
-              0 0 0 2px rgba(147, 197, 253, 1),
-              0 0 0 10px rgba(59, 130, 246, 0.12),
-              0 0 48px 16px rgba(59, 130, 246, 0.45);
-          }
-        }
-      `}</style>
+    <div data-wf-theme={isDark ? "dark" : "light"}>
+      <div
+        className="wf-spotlight-ring"
+        style={{
+          top,
+          left,
+          width,
+          height,
+        }}
+      />
     </div>,
-    document.body
+    document.body,
   );
 }

@@ -84,7 +84,7 @@ export interface CloudFileEntry {
   modified: string;
 }
 
-export type DeployKind = 'workflow' | 'script' | 'project';
+export type DeployKind = 'workflow' | 'project';
 export type DeployStatus =
   | 'pending'
   | 'uploading'

@@ -12,6 +12,7 @@
 @source "../../../../packages/chat-ui";
 @source "../../../../packages/cloud-runtime-ui";
 @source "../../../../packages/vm-chat";
+@source "../../../../packages/bots-ui";
 
 :root {
   /* Dark theme is the default site-wide (matches the landing page) */

@@ -18,8 +18,9 @@ import { pingVMAgent, fetchVMMetrics } from './vm-command';
 import { getComputeProvider } from './compute';
 import { writeLog } from '../utils/logger';
 import { deliverQueuedVMChatEvents } from './chat-sync';
-import { generateAgentDataDownloadUrl } from './cold-storage';
+import { generateAgentDataDownloadUrl, generateAgentDataUploadUrl } from './cold-storage';
 import { sendVMCommand } from './vm-command';
+import { syncToCloud, getSyncStatus } from './sync-engine';
 
 /** Desktop-friendly metrics format (field names match what the desktop UI expects). */
 export interface DesktopMetrics {
@@ -48,6 +49,21 @@ const healthMap = new Map<string, HealthEntry>();
 // network blip) which would clobber VM-side mutations made between blips.
 // Cleared when the engine becomes inactive so a fresh VM gets a fresh pull.
 const agentDataBootstrapped = new Set<string>();
+
+// ── Periodic cold-storage backup ─────────────────────────────────────────────
+// The VM only persisted to cold storage on a *graceful* stop/start/deploy. Any
+// non-graceful lifecycle event in between — a crash, GCP preemption, OOM, or a
+// recreate to pick up a new bundle — therefore rolled the workspace AND agent
+// databases back to the last graceful checkpoint ("memory disappears after a
+// while", uploaded files vanish). To bound that loss we push BOTH cold-storage
+// objects on a fixed cadence while the VM is healthy, refreshing them together
+// so the workspace copy of agent-data and the dedicated agent-data object never
+// diverge. Both /sync/upload and `sync_agent_data` upload handlers already exist
+// on deployed VMs, so this needs no new VM bundle.
+const COLD_BACKUP_INTERVAL_MS = Number(
+  process.env.VM_COLD_BACKUP_INTERVAL_MS || 30 * 60 * 1000,
+); // 30 min
+const coldBackupInFlight = new Set<string>();
 
 // Metrics buffer — flushed to DB every FLUSH_INTERVAL_MS
 const metricsBuffer: Array<{ user_id: string } & VMMetrics> = [];
@@ -202,6 +218,14 @@ async function runHealthCheck(): Promise<void> {
           health_status: 'healthy',
           agent_version: agentData.agentVersion || '',
         }).catch(() => {});
+
+        // Steady-state only (already healthy last cycle): push a periodic
+        // cold-storage checkpoint. Skipped on the non-healthy → healthy
+        // transition cycle so it never races the agent-data bootstrap *pull*
+        // above (which runs exactly on that transition).
+        if (prevStatus === 'healthy') {
+          void maybeBackupToColdStorage(engine.user_id);
+        }
       } else {
         const prev = healthMap.get(engine.user_id);
         const newStatus = prev?.lastPing && (now - prev.lastPing < VM_HEALTH_STALE_THRESHOLD_MS)
@@ -230,6 +254,68 @@ async function runHealthCheck(): Promise<void> {
     }
   } catch (e) {
     console.error('[vm-health] Health check error:', e);
+  }
+}
+
+/**
+ * Push the VM's workspace and agent databases to cold storage if the last
+ * checkpoint is older than COLD_BACKUP_INTERVAL_MS. Fire-and-forget; safe to
+ * call every health cycle.
+ *
+ * `last_sync_at` (updated by syncToCloud and the stop/start paths) is the
+ * cross-instance guard: with multiple Cloud Run instances each running their
+ * own health monitor, whichever backs up first advances the timestamp and the
+ * others skip. The in-flight set guards against overlap within one instance.
+ */
+async function maybeBackupToColdStorage(userId: string): Promise<void> {
+  if (coldBackupInFlight.has(userId)) return;
+
+  try {
+    const status = await getSyncStatus(userId);
+    const last = status.lastSyncAt ? Date.parse(status.lastSyncAt) : 0;
+    if (last && Date.now() - last < COLD_BACKUP_INTERVAL_MS) return;
+  } catch {
+    // Can't read the cursor — fall through and back up (prefer over-backup to
+    // a silent data-loss window).
+  }
+
+  coldBackupInFlight.add(userId);
+  try {
+    // 1. Workspace → {userId}/memory_backup.tar.gz (also bumps last_sync_at).
+    const workspace = await syncToCloud(userId);
+
+    // 2. Refresh the full agent-data object — the restore-of-record used on a
+    //    recreate/crash. Done in the same pass as the workspace backup so the
+    //    two copies of the agent DBs stay consistent. Pass the upload URL so the
+    //    VM needn't round-trip back to mint one.
+    let agentOk = false;
+    let agentErr: string | undefined;
+    try {
+      const { uploadUrl } = await generateAgentDataUploadUrl(userId);
+      const result = await sendVMCommand(
+        userId,
+        'sync_agent_data',
+        { direction: 'upload', mode: 'full', uploadUrl },
+        10 * 60_000,
+      );
+      agentOk = Boolean(result?.ok);
+      agentErr = result?.error;
+    } catch (e: any) {
+      agentErr = e?.message || 'agent_data_upload_failed';
+    }
+
+    writeLog('vm_cold_backup', {
+      userId,
+      workspaceOk: workspace.success,
+      workspaceBytes: workspace.bytes,
+      workspaceErr: workspace.success ? undefined : workspace.error,
+      agentOk,
+      agentErr,
+    });
+  } catch (e: any) {
+    writeLog('vm_cold_backup_failed', { userId, error: e?.message });
+  } finally {
+    coldBackupInFlight.delete(userId);
   }
 }
 

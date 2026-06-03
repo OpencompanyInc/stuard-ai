@@ -11,6 +11,7 @@ import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc, shutdownAllBrowserUseServers, prewarmBrowserUseServer } from "./tools/index";
 import { shutdownWakewordListener } from "./tools/handlers/wakeword";
 import logger from "./utils/logger";
+import { migrateLegacyCaptureFiles, syncAgentMediaPathConfig } from "./services/media-library";
 
 initEnv();
 
@@ -242,6 +243,10 @@ app.whenReady().then(async () => {
 
   try {
     logger.info("Starting agent...");
+    syncAgentMediaPathConfig();
+    void migrateLegacyCaptureFiles().catch((error) => {
+      logger.warn('[media-library] Legacy capture migration failed:', error);
+    });
     await startAgentIfNeeded();
     logger.info("Agent start requested");
   } catch (e) {

@@ -291,6 +291,7 @@ function WorkflowsApp() {
     ? getOnboardingStepConfig(onboarding.track, onboarding.stepId)
     : null;
   const aiDemoCleanupRef = useRef<(() => void) | null>(null);
+  const pendingAiDemoRef = useRef<{ workflowId: string } | null>(null);
   const onboardingRunLogBaselineRef = useRef(0);
   const onboardingRunObservedRef = useRef(false);
   const previousOnboardingStepRef = useRef<string | null>(null);
@@ -331,6 +332,7 @@ function WorkflowsApp() {
   const { zoom, zoomIn, zoomOut, zoomReset, fitToView, bindWheelTarget } = useWorkflowZoom({
     canvasRef,
     getContentBBox,
+    getCanvasSize: () => size,
   });
 
   const {
@@ -429,57 +431,72 @@ function WorkflowsApp() {
     return () => clearInterval(interval);
   }, []);
 
-  const load = useCallback(async (id: string) => {
-    if (!id) return;
+  const load = useCallback(async (id: string, options?: { forTour?: boolean }): Promise<boolean> => {
+    if (!id) return false;
     const res = await (window as any).desktopAPI?.workflowsRead?.(id);
-    if (res?.ok) {
-      setSelectedId(res.id);
-      let loadedModel: DesignerModel | null = null;
-      try {
-        const parsed = JSON.parse(res.content || '{}');
-        // Normalize: allow loading either DesignerModel (nodes/wires) or StuardSpec (steps/next)
-        loadedModel = specToDesignerModel({ ...parsed, id: res.id } as any) as any;
-      } catch {
-        loadedModel = null;
-      }
-      setModel(loadedModel);
-      setDirty(false);
-      setSelectedNodeId("");
-      setSelectedNodeIds(new Set());
-      setSelectedWireIndex(null);
-      chat.setMessages([]);
-      // Reset undo/redo history for new workflow
-      setHistory([]);
-      setHistoryIndex(-1);
-      // Clear file tabs when switching workflows
-      setOpenTabs([]);
-      setActiveTab('canvas');
-      // Clear logs from previous workflow
-      setLogs([]);
-      // If workflow is locked, force manual mode and close panels
-      if (loadedModel?.locked) {
-        setViewMode('manual');
-        setRightPanel('none');
-      }
-      // Load workspace info and auto-show workspace sidebar
-      if (res.isWorkspace) {
-        try {
-          const wsRes = await (window as any).desktopAPI?.workflowsGetWorkspaceInfo?.(res.id);
-          if (wsRes?.ok) {
-            setWorkspaceInfo({ workspacePath: wsRes.workspacePath, subdirs: wsRes.subdirs, files: wsRes.files });
-            setShowWorkspace(true);
-            setViewMode('none');
-            setRightPanel('none');
-          } else {
-            setWorkspaceInfo(null);
-          }
-        } catch { setWorkspaceInfo(null); }
-      } else {
-        setWorkspaceInfo(null);
-        setShowWorkspace(false);
-      }
+    if (!res?.ok) {
+      console.error('[workflows] load failed:', res?.error || 'read_failed', id);
+      return false;
     }
+
+    let loadedModel: DesignerModel | null = null;
+    try {
+      const parsed = JSON.parse(res.content || '{}');
+      // Normalize: allow loading either DesignerModel (nodes/wires) or StuardSpec (steps/next)
+      loadedModel = specToDesignerModel({ ...parsed, id: res.id } as any) as any;
+    } catch {
+      loadedModel = null;
+    }
+    if (!loadedModel) return false;
+
+    setSelectedId(res.id);
+    setModel(loadedModel);
+    setDirty(false);
+    setSelectedNodeId("");
+    setSelectedNodeIds(new Set());
+    setSelectedWireIndex(null);
+    chat.setMessages([]);
+    // Reset undo/redo history for new workflow
+    setHistory([]);
+    setHistoryIndex(-1);
+    // Clear file tabs when switching workflows
+    setOpenTabs([]);
+    setActiveTab('canvas');
+    // Clear logs from previous workflow
+    setLogs([]);
+    // If workflow is locked, force manual mode and close panels
+    if (loadedModel.locked) {
+      setViewMode('manual');
+      setRightPanel('none');
+    } else if (!options?.forTour) {
+      // Open on the visual canvas + AI panel. Workspace projects no longer
+      // hijack the view with the file explorer (Continue building, My Workflows, etc.).
+      setViewMode('ai');
+      setRightPanel('ai');
+    }
+    // Load workspace metadata but stay on canvas — user can open the explorer from the header.
+    if (res.isWorkspace) {
+      try {
+        const wsRes = await (window as any).desktopAPI?.workflowsGetWorkspaceInfo?.(res.id);
+        if (wsRes?.ok) {
+          setWorkspaceInfo({ workspacePath: wsRes.workspacePath, subdirs: wsRes.subdirs, files: wsRes.files });
+        } else {
+          setWorkspaceInfo(null);
+        }
+      } catch { setWorkspaceInfo(null); }
+    } else {
+      setWorkspaceInfo(null);
+    }
+    setShowWorkspace(false);
+    return true;
   }, [chat]);
+
+  const selectWorkflow = useCallback(async (id: string) => {
+    const loaded = await load(id);
+    if (!loaded) {
+      alert('Could not open this workflow. It may have been moved, deleted, or corrupted.');
+    }
+  }, [load]);
 
   // Deep-link: open a specific workflow on launch (?workflowId=...) or when
   // the host sends a `workflows:navigate` IPC with a workflowId. Used by the
@@ -802,13 +819,24 @@ function WorkflowsApp() {
     return { ...inputModel, triggers: newTriggers, nodes: newNodes };
   }, []);
 
-  const createFromModel = useCallback(async (skeleton: DesignerModel): Promise<string | null> => {
+  const createFromModel = useCallback(async (
+    skeleton: DesignerModel,
+    options?: { forTour?: boolean; skipRefresh?: boolean },
+  ): Promise<string | null> => {
     const arrangedSkeleton = applyAutoLayoutToModel(skeleton);
     try {
       const res = await (window as any).desktopAPI?.workflowsSave?.(skeleton.id, JSON.stringify(arrangedSkeleton, null, 2));
       if (res?.ok) {
-        await refresh();
-        await load(skeleton.id);
+        const loaded = await load(skeleton.id, { forTour: options?.forTour });
+        if (!loaded) {
+          alert('Failed to open the new workflow');
+          return null;
+        }
+        if (options?.skipRefresh) {
+          void refresh();
+        } else {
+          await refresh();
+        }
         return skeleton.id;
       }
       alert(res?.error || 'Failed to create workflow');
@@ -818,11 +846,15 @@ function WorkflowsApp() {
     return null;
   }, [applyAutoLayoutToModel, load, refresh]);
 
-  const create = useCallback(async (projectName?: string, templateId?: string): Promise<string | null> => {
+  const create = useCallback(async (
+    projectName?: string,
+    templateId?: string,
+    options?: { forTour?: boolean; skipRefresh?: boolean },
+  ): Promise<string | null> => {
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
     const template = getWorkflowTemplate(templateId);
     const skeleton = template.build(safe, projectName || template.defaultName);
-    return createFromModel(skeleton);
+    return createFromModel(skeleton, options);
   }, [createFromModel]);
 
   // Begin the AI demo tour. Always creates a fresh blank workflow so the demo
@@ -833,24 +865,16 @@ function WorkflowsApp() {
     // Tear down any previous demo run that's still in flight.
     aiDemoCleanupRef.current?.();
     aiDemoCleanupRef.current = null;
+    pendingAiDemoRef.current = null;
 
-    const workflowId = await create(undefined, "blank");
+    const workflowId = await create(undefined, "blank", { forTour: true, skipRefresh: true });
     if (!workflowId) return;
+    setShowWorkspace(false);
     setViewMode("ai");
     setRightPanel("ai");
     onboarding.beginAiTour();
-
-    // After the new workflow mounts, kick off the fake sequence. We give React
-    // a moment so the AI panel is on screen before the messages stream in.
-    setTimeout(() => {
-      aiDemoCleanupRef.current = runAiDemoSequence({
-        chat: { setMessages: chat.setMessages, setBusy: chat.setBusy },
-        applyModel,
-        workflowId: workflowId || selectedId || `flow_demo_${Math.random().toString(36).slice(2, 8)}`,
-        workflowName: "Tour Demo Workflow",
-      });
-    }, 350);
-  }, [onboarding, create, chat.setMessages, chat.setBusy, applyModel, selectedId]);
+    pendingAiDemoRef.current = { workflowId };
+  }, [onboarding, create]);
 
   // Begin the manual tour. Same shell setup (fresh workflow), but enters manual
   // mode so the user actually drags + wires nodes themselves. Always creates a
@@ -858,22 +882,49 @@ function WorkflowsApp() {
   const beginManualTour = useCallback(async () => {
     aiDemoCleanupRef.current?.();
     aiDemoCleanupRef.current = null;
+    pendingAiDemoRef.current = null;
 
     const safe = `flow_${Math.random().toString(36).slice(2, 10)}`;
-    const workflowId = await createFromModel(buildManualOnboardingWorkflow(safe, "Task Ping Tour"));
+    const workflowId = await createFromModel(
+      buildManualOnboardingWorkflow(safe, "Task Ping Tour"),
+      { forTour: true, skipRefresh: true },
+    );
     if (!workflowId) return;
+    setShowWorkspace(false);
     setViewMode("manual");
     setRightPanel("none");
     onboarding.beginManualTour();
   }, [createFromModel, onboarding]);
 
-  // Make sure we cancel any pending fake-demo timers if the user skips out.
+  // Start the narrated AI demo only after the tour workflow is mounted on canvas.
   useEffect(() => {
     if (onboarding.phase !== "guided" || onboarding.track !== "ai") {
+      pendingAiDemoRef.current = null;
       aiDemoCleanupRef.current?.();
       aiDemoCleanupRef.current = null;
+      return;
     }
-  }, [onboarding.phase, onboarding.track]);
+    if (!selectedId || !pendingAiDemoRef.current) return;
+    if (pendingAiDemoRef.current.workflowId !== selectedId) return;
+
+    const { workflowId } = pendingAiDemoRef.current;
+    pendingAiDemoRef.current = null;
+
+    const timer = window.setTimeout(() => {
+      aiDemoCleanupRef.current = runAiDemoSequence({
+        chat: { setMessages: chat.setMessages, setBusy: chat.setBusy },
+        applyModel,
+        workflowId,
+        workflowName: "Tour Demo Workflow",
+      });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      aiDemoCleanupRef.current?.();
+      aiDemoCleanupRef.current = null;
+    };
+  }, [onboarding.phase, onboarding.track, selectedId, chat.setMessages, chat.setBusy, applyModel]);
 
   // During the manual tour, keep the starter workflow focused on the lesson:
   // variables are created up front, and the notification the user drags in gets
@@ -1430,7 +1481,7 @@ function WorkflowsApp() {
           runningIds={runningIds}
           updates={updates}
           initialView={launcherView}
-          onSelect={load}
+          onSelect={selectWorkflow}
           onCreate={() => {
             setCreateTemplateId("blank");
             setShowNameModal(true);
@@ -1633,6 +1684,7 @@ function WorkflowsApp() {
           onOpenStuard={openStuardCanvas}
           chatInputRef={chatInputRef}
           toolPaletteRef={toolPaletteRef}
+          onBuildIntegration={() => openIntegrationBuilder()}
           breadcrumbs={breadcrumbPath}
           currentSubPath={currentSubPath}
           onNavigateBack={navigateBack}

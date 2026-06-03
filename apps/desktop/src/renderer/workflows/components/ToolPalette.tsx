@@ -3,6 +3,7 @@
  */
 import React, { useEffect, useState, useMemo, forwardRef, useImperativeHandle, useRef } from "react";
 import { Search, X, ChevronRight, GripVertical, Box, Lock, Package, Workflow, Plug } from "lucide-react";
+import { IntegrationSearchEmptyState } from "../../components/IntegrationSearchEmptyState";
 import { PALETTE_CATEGORIES, CATEGORY_COLORS, PALETTE_GROUPS, type PaletteCategory, type PaletteCategoryItem } from "../constants/paletteCategories";
 import { getFunctionNodeIcon } from "../constants/functionNodeStyle";
 import { fetchInstalledIntegrations, toToolEntries } from "../../utils/installedIntegrations";
@@ -15,7 +16,8 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
   onDragStart: (e: React.DragEvent, item: any) => void;
   disabled?: boolean;
   workflowId?: string;
-}>(({ onDragStart, disabled, workflowId }, ref) => {
+  onBuildIntegration?: () => void;
+}>(({ onDragStart, disabled, workflowId, onBuildIntegration }, ref) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['installed', 'triggers', 'flow']));
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -414,7 +416,17 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
           </div>
         ))}
 
-        {groupedCategories.length === 0 && (
+        {groupedCategories.length === 0 && searchQuery.trim() ? (
+          <IntegrationSearchEmptyState
+            variant="compact"
+            query={searchQuery}
+            onBuildIntegration={onBuildIntegration}
+            secondaryAction={{
+              label: 'Clear search',
+              onClick: () => setSearchQuery(''),
+            }}
+          />
+        ) : groupedCategories.length === 0 ? (
           <div className="py-12 text-center">
             <div className="w-12 h-12 wf-bg-overlay rounded-2xl flex items-center justify-center mx-auto mb-3 wf-fg-muted border wf-border-subtle">
               <Search className="w-5 h-5" />
@@ -422,7 +434,7 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
             <p className="text-xs font-bold wf-fg">No tools found</p>
             <p className="text-[10px] wf-fg-muted mt-1">Try searching for something else</p>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

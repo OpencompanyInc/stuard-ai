@@ -142,6 +142,7 @@ interface WorkflowMainContentProps {
   onOpenStuard?: (subPath: string) => void;
   chatInputRef?: React.RefObject<ChatInputRef>;
   toolPaletteRef?: React.RefObject<ToolPaletteRef>;
+  onBuildIntegration?: () => void;
   breadcrumbs?: Array<{ label: string; path: string | null }>;
   currentSubPath?: string | null;
   onNavigateBack?: () => void;
@@ -221,6 +222,7 @@ export function WorkflowMainContent({
   onOpenStuard,
   chatInputRef,
   toolPaletteRef,
+  onBuildIntegration,
   breadcrumbs,
   currentSubPath,
   onNavigateBack,
@@ -419,6 +421,7 @@ export function WorkflowMainContent({
                   e.dataTransfer.effectAllowed = "copy";
                 }}
                 disabled={model.locked}
+                onBuildIntegration={onBuildIntegration}
               />
             </div>
           )}

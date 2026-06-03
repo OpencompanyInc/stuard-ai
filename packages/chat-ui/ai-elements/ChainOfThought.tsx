@@ -179,9 +179,9 @@ export function ChainOfThoughtStep({
           className="absolute bottom-0"
           style={{
             left: dotCenter,
-            width: 1,
+            width: 1.5,
             top: hasIcon ? 20 : 14,
-            backgroundColor: 'color-mix(in srgb, var(--foreground-muted) 22%, transparent)',
+            backgroundColor: 'color-mix(in srgb, var(--foreground-muted) 30%, transparent)',
           }}
         />
       )}
@@ -189,14 +189,20 @@ export function ChainOfThoughtStep({
       <div
         className="relative z-10 shrink-0 flex items-start"
         style={{
-          width: hasIcon ? 14 : DOT_SIZE,
+          width: hasIcon ? 16 : DOT_SIZE,
           paddingTop: hasIcon ? 3 : 6,
         }}
       >
         <StepDot status={status} icon={icon} />
       </div>
 
-      <div className={clsx('min-w-0 flex-1 pl-2.5', isLast ? 'pb-0' : 'pb-4')}>
+      {/* Concrete padding (not a Tailwind class) so the dot/connector → text
+          gutter can never be dropped by class scanning — a comfortable, even
+          lane between the rail and the step label. */}
+      <div
+        className={clsx('min-w-0 flex-1', isLast ? 'pb-0' : 'pb-4')}
+        style={{ paddingLeft: 14 }}
+      >
         {label ? (
           <div
             className="text-[13px] leading-5"

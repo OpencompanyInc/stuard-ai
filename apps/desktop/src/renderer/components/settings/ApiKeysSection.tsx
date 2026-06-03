@@ -358,6 +358,15 @@ function formatRelativeTime(ms: number | null | undefined): string | null {
   return `${d}d ago`;
 }
 
+/** "token valid until Jun 20" / "token expired Jun 1" — null if no/invalid expiry. */
+function formatTokenExpiry(iso: string | null | undefined, expired: boolean): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  const date = new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return expired ? `token expired ${date}` : `token valid until ${date}`;
+}
+
 function CodexCard({ onChange }: { onChange: () => void }) {
   const [status, setStatus] = useState<CodexStatus | null>(null);
   const [busy, setBusy] = useState<null | 'sync' | 'login' | 'reveal'>(null);
@@ -425,6 +434,11 @@ function CodexCard({ onChange }: { onChange: () => void }) {
   const installed = !!status?.installed;
   const signedIn = !!status?.signedIn;
   const lastSync = formatRelativeTime(status?.lastSyncedAtMs);
+  const tokenExpired = !!status?.tokenExpired;
+  const expiryLabel = formatTokenExpiry(status?.tokenExpiresAt, tokenExpired);
+  const planTooltip =
+    'Plan is read from your cached Codex token (set at your last sign-in), not a live OpenAI lookup. ' +
+    'If your subscription changed, re-sign in to refresh it.';
 
   return (
     <div className="dashboard-card p-4">
@@ -452,11 +466,30 @@ function CodexCard({ onChange }: { onChange: () => void }) {
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-theme-muted">
               {status?.accountEmail && <span className="font-medium text-theme-fg">{status.accountEmail}</span>}
               {status?.planType && (
-                <span className="rounded-md bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-600 dark:text-cyan-400 tracking-tight">
+                <span
+                  title={planTooltip}
+                  className={clsx(
+                    'cursor-help rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-tight',
+                    tokenExpired
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                      : 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400',
+                  )}
+                >
                   {formatPlanType(status.planType)}
                 </span>
               )}
+              {expiryLabel && (
+                <span className={clsx('text-[11px]', tokenExpired ? 'font-semibold text-amber-500' : 'text-theme-muted')}>
+                  · {expiryLabel}
+                </span>
+              )}
               {lastSync && <span className="text-[11px]">· synced {lastSync}</span>}
+            </div>
+          )}
+          {signedIn && tokenExpired && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+              <AlertCircle className="mt-0.5 h-3 w-3 flex-none" />
+              <span>Your Codex token has expired — the plan shown above may be out of date. Re-sign in to refresh it and keep inference working.</span>
             </div>
           )}
           {!installed && (
@@ -488,6 +521,21 @@ function CodexCard({ onChange }: { onChange: () => void }) {
         <div className="flex items-center gap-2">
           {signedIn ? (
             <>
+              <button
+                type="button"
+                onClick={onLogin}
+                disabled={busy !== null}
+                title="Re-run the Codex CLI sign-in to refresh your plan and tokens"
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition-all disabled:opacity-50',
+                  tokenExpired
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400'
+                    : 'border-theme text-theme-fg hover:bg-theme-hover',
+                )}
+              >
+                {busy === 'login' ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                Re-sign in
+              </button>
               <button
                 type="button"
                 onClick={onSync}

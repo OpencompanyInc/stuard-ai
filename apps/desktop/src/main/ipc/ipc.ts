@@ -28,7 +28,9 @@ import {
   getMediaLibrarySummary,
   importMediaPaths,
   listMediaLibraryItems,
+  migrateLegacyCaptureFiles,
   syncMediaLibrary,
+  syncAgentMediaPathConfig,
   updateMediaLibraryPrefs,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
@@ -507,15 +509,17 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-  ipcMain.handle("media:list", () => {
+  ipcMain.handle("media:list", async () => {
     try {
+      await migrateLegacyCaptureFiles();
       return { ok: true, items: listMediaLibraryItems() };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
-  ipcMain.handle("media:summary", () => {
+  ipcMain.handle("media:summary", async () => {
     try {
+      await migrateLegacyCaptureFiles();
       return { ok: true, summary: getMediaLibrarySummary() };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };

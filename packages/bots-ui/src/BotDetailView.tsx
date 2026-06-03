@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
-  Activity, AlertCircle, Brain, ChevronLeft, LayoutGrid, Loader2, Pause, Play,
-  Settings2, Terminal,
+  Activity, AlertCircle, Brain, ChevronLeft, LayoutGrid, Loader2, Pause,
+  Play, Settings2, Target, Terminal, Zap,
 } from 'lucide-react';
 import {
   EXECUTION_TARGET_LABELS,
@@ -13,12 +13,11 @@ import {
 import type {
   BadgeTone, Bot, BotConfig, BotsViewScope, BotTrigger, VmBotRuntime,
 } from './types';
-import { DashboardBadge, StatCard } from './primitives';
+import { StatCard } from './primitives';
 import {
   formatClockTime, formatShortScheduleLabel, humanizeVmError, padCount, statusInfo,
 } from './helpers';
 import { KanbanTab } from './KanbanTab';
-import { KanbanSummaryStrip } from './KanbanSummaryStrip';
 import { ActivityTab } from './ActivityTab';
 import { MemoryTab } from './MemoryTab';
 import { SettingsTab } from './SettingsTab';
@@ -336,215 +335,208 @@ export function BotDetailView({
     { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
 
+  const executorLabel = bot.vmDeployedAt
+    ? `${executionTargetMeta.label} · VM`
+    : executionTargetMeta.label;
+
   return (
     <div className="flex h-full min-h-0 flex-col animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="mb-6 flex flex-shrink-0 items-start justify-between gap-4 px-1">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* ─── Fixed workspace header ──────────────────────────────────────────
+          Controls · identity + status + meta pills · tab bar. This whole zone
+          stays put; only the content below scrolls — so the board, memory and
+          settings always open from the same spot and never drift on tab switch
+          (this is the StudioHome / workflow-workspace pattern). ─────────────── */}
+      <div className="flex flex-shrink-0 flex-col gap-3.5">
+        {/* Control row: back · run / deploy */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             onClick={onBack}
-            className="rounded-full p-1.5 text-theme-muted transition hover:bg-theme-hover/40 hover:text-theme-fg"
-            title="Back to agents"
+            className="inline-flex items-center gap-1.5 rounded-full border border-theme/40 bg-theme-card/40 px-3 py-1.5 text-[12.5px] font-medium text-theme-muted transition hover:bg-theme-card hover:text-theme-fg"
+            aria-label="Back to agents"
           >
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronLeft className="h-3.5 w-3.5" />
+            <span>Agents</span>
           </button>
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-500/10 text-2xl">
-            {bot.emoji}
-          </div>
-          <div className="min-w-0">
-            <h1 className="truncate font-stuard text-[28px] font-semibold leading-none tracking-tight text-theme-fg">{bot.name}</h1>
-            <p className="mt-2 text-[13px] text-theme-muted">
-              {bot.isLegacyDefault
-                ? 'Default proactive agent — your always-on agent.'
-                : 'Configure how this agent wakes up, thinks, and remembers.'}
-            </p>
+          <div className="flex items-center gap-2">
+            {saving && (
+              <span className="hidden items-center gap-1.5 text-[11px] font-medium text-primary sm:inline-flex">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Saving…
+              </span>
+            )}
+            <button
+              onClick={handleRunNow}
+              disabled={running || vmRunActive}
+              className="inline-flex items-center gap-2 rounded-full border border-theme/60 bg-theme-card px-3.5 py-2 text-[13px] font-medium text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+            >
+              {running || vmRunActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{running || vmRunActive ? 'Running' : 'Run now'}</span>
+            </button>
+            <button
+              onClick={handleToggleStatus}
+              disabled={saving || readOnly}
+              className="inline-flex items-center gap-2 rounded-full bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+            >
+              {bot.status === 'running' ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {bot.status === 'running' ? 'Pause' : 'Deploy'}
+            </button>
           </div>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
-          <button
-            onClick={handleRunNow}
-            disabled={running || vmRunActive}
-            className="inline-flex items-center gap-2 rounded-full border border-theme bg-theme-card px-4 py-2 text-[13px] font-medium text-theme-fg shadow-sm transition hover:bg-theme-hover disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {running || vmRunActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />}
-            {running || vmRunActive ? 'Running' : 'Run Now'}
-          </button>
-          <button
-            onClick={handleToggleStatus}
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {bot.status === 'running' ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            {bot.status === 'running' ? 'Pause' : 'Deploy'}
-          </button>
+
+        {/* Identity row: avatar · name + status + executor · model / trigger pills */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-zinc-500/10 text-2xl shadow-sm">
+              {bot.emoji || '🤖'}
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate font-stuard text-[22px] font-semibold leading-tight tracking-tight text-theme-fg sm:text-[24px]">
+                {bot.name}
+              </h1>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] font-medium">
+                <span className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', status.dot)} />
+                <span className={status.textColor}>{status.label}</span>
+                <span className="text-theme-muted/50">·</span>
+                <span className="truncate text-theme-muted">{executorLabel}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <HeroPill icon={Brain}>{modelModeMeta.label}</HeroPill>
+            <HeroPill icon={Zap}>{triggerSummary}</HeroPill>
+            {bot.isLegacyDefault && <HeroPill accent>Default agent</HeroPill>}
+          </div>
+        </div>
+
+        {runError && (
+          <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-[12px] text-red-300">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="font-medium">Couldn't run on your VM.</div>
+              <div className="mt-0.5 text-red-300/80">{runError}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Segmented tab bar */}
+        <div className="flex overflow-x-auto rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-1 shadow-sm scrollbar-minimal">
+          {tabs.map(t => {
+            const Icon = t.icon;
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={clsx(
+                  'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-[13px] font-medium transition-all sm:flex-1',
+                  active
+                    ? 'bg-theme-card text-theme-fg shadow-sm'
+                    : 'text-theme-muted hover:text-theme-fg',
+                )}
+              >
+                <Icon className={clsx('h-3.5 w-3.5', active && 'text-primary')} />
+                <span>{t.label}</span>
+                {t.showCount && (t.count ?? 0) > 0 && (
+                  <span
+                    className={clsx(
+                      'ml-0.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded-md px-1.5 text-[10px] font-semibold',
+                      active ? 'bg-primary text-primary-fg' : 'bg-theme-hover/80 text-theme-muted',
+                    )}
+                  >
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {runError && (
-        <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-[12px] text-red-300">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <div className="min-w-0">
-            <div className="font-medium">Couldn’t run on your VM.</div>
-            <div className="mt-0.5 text-red-300/80">{runError}</div>
-          </div>
-        </div>
-      )}
-
-      <div className={clsx(
-        'grid min-h-0 flex-1 gap-6 overflow-hidden',
-        tab === 'kanban'
-          ? 'grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]'
-          : 'grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]',
-      )}>
-        {/* LEFT aside */}
-        <aside className={clsx(
-          'overflow-y-auto px-1 pb-2 scrollbar-minimal',
-          tab === 'kanban' ? 'lg:order-2' : 'lg:order-1',
-        )}>
-          <div className="space-y-7">
-            <section>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-[15px] font-semibold text-theme-fg">Overview</h2>
-                <DashboardBadge label={status.label} tone={status.badgeTone} />
-              </div>
-              <div className="grid grid-cols-2 gap-2.5">
+      {/* ─── Content zone ────────────────────────────────────────────────────
+          One flex cell; each tab owns its own scroll so the board can fill the
+          full height while Activity / Memory / Settings scroll normally. ────── */}
+      <div className="mt-4 min-h-0 flex-1">
+        {tab === 'activity' && (
+          <div className="h-full overflow-y-auto px-0.5 pb-6 scrollbar-minimal animate-in fade-in duration-200">
+            <div className="space-y-5">
+              {/* Status tiles */}
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                 <StatCard
                   value={(nextRunValue || '').includes(':') ? nextRunValue.replace(':', ' : ') : nextRunValue}
-                  label="Next Check-in"
+                  label="Next check-in"
                 />
-                <StatCard value={padCount(displayedTasks.length)} label="Active Tasks" />
-                <StatCard value={padCount(displayedLogs.length)} label="Total Runs" className="col-span-2 sm:col-span-1" />
+                <StatCard value={padCount(displayedTasks.length)} label="Active tasks" />
+                <StatCard value={padCount(displayedLogs.length)} label="Total runs" />
               </div>
-            </section>
 
-            <section>
-              <h2 className="mb-3 text-[15px] font-semibold text-theme-fg">Config</h2>
-              <div className="grid grid-cols-3 gap-2.5">
-                <StatCard size="md" value={executionTargetMeta.label} label={bot.vmDeployedAt ? 'VM + Local' : 'Executor'} />
-                <StatCard size="md" value={modelModeMeta.label} label="Intelligence" />
-                <StatCard size="md" value={triggerSummary} label="Trigger" />
-              </div>
-            </section>
-
-            {config && (
-              <section>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 className="text-[15px] font-semibold text-theme-fg">Focus Brief</h2>
-                  {saving && <span className="text-[11px] font-medium text-primary">Saving…</span>}
-                </div>
-                <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 px-4 py-3.5">
+              {/* Focus brief — slim editable card. */}
+              {config && (
+                <section className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <h3 className="flex items-center gap-2 text-[13px] font-semibold text-theme-fg">
+                      <Target className="h-3.5 w-3.5 text-primary" />
+                      <span>What it's focused on</span>
+                    </h3>
+                    {saving && <span className="text-[11px] font-medium text-primary">Saving…</span>}
+                  </div>
                   <textarea
                     value={config.instructions || ''}
                     onChange={e => setConfig(prev => prev ? { ...prev, instructions: e.target.value } : prev)}
                     onBlur={() => updateConfigField({ instructions: config.instructions || '' })}
                     placeholder="Today: focus on the launch announcement."
-                    rows={5}
-                    className="min-h-[128px] w-full resize-none bg-transparent text-[13px] leading-6 text-theme-fg placeholder:text-theme-muted/50 outline-none"
+                    rows={2}
+                    readOnly={readOnly}
+                    className="w-full resize-none rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3.5 py-2.5 text-[13.5px] leading-6 text-theme-fg outline-none transition placeholder:text-theme-muted/50 focus:border-primary/60"
                   />
-                </div>
-              </section>
-            )}
-          </div>
-        </aside>
+                </section>
+              )}
 
-        {/* RIGHT/MAIN */}
-        <main className={clsx(
-          'flex min-h-0 flex-col overflow-hidden',
-          tab === 'kanban' ? 'lg:order-1' : 'lg:order-2',
-        )}>
-          {tab === 'kanban' && (
-            <KanbanSummaryStrip
-              status={status}
-              nextRunValue={nextRunValue}
-              activeTaskCount={displayedTasks.length}
-              totalRuns={displayedLogs.length}
-              executionLabel={executionTargetMeta.label}
-              modelLabel={modelModeMeta.label}
-              triggerLabel={triggerSummary}
-              vmDeployed={!!bot.vmDeployedAt}
+              <ActivityTab
+                tasks={displayedTasks}
+                logs={displayedLogs}
+                triggersById={triggersById}
+                onSelectLog={(id) => setSelectedLogId(id)}
+                vmActivity={isVmActivity}
+              />
+            </div>
+          </div>
+        )}
+
+        {tab === 'kanban' && (
+          <div className="h-full min-h-0 px-0.5 animate-in fade-in duration-200">
+            <KanbanTab
+              botId={bot.id}
+              cards={kanbanCards}
+              runLog={runLog}
+              onChanged={reloadKanban}
             />
-          )}
-
-          <div className="mb-4 flex flex-shrink-0 items-center gap-2 p-0.5">
-            {tabs.map(t => {
-              const Icon = t.icon;
-              const active = tab === t.id;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={clsx(
-                    'inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-[13px] font-medium transition-all',
-                    active
-                      ? 'border-primary bg-theme-card text-theme-fg shadow-sm ring-2 ring-primary/30'
-                      : 'border-theme/40 bg-theme-card/40 text-theme-muted hover:bg-theme-card hover:text-theme-fg',
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{t.label}</span>
-                  {t.showCount && (t.count ?? 0) > 0 && (
-                    <span
-                      className={clsx(
-                        'ml-0.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded-md px-1.5 text-[10px] font-semibold',
-                        active ? 'bg-theme-fg text-theme-bg' : 'bg-theme-hover/80 text-theme-muted',
-                      )}
-                    >
-                      {t.count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
           </div>
+        )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 scrollbar-minimal">
-            {tab === 'activity' && (
-              <div className="animate-in fade-in duration-200">
-                <ActivityTab
-                  tasks={displayedTasks}
-                  logs={displayedLogs}
-                  triggersById={triggersById}
-                  onSelectLog={(id) => setSelectedLogId(id)}
-                  vmActivity={isVmActivity}
-                />
-              </div>
-            )}
-            {tab === 'kanban' && (
-              <div className="animate-in fade-in duration-200">
-                <KanbanTab
-                  botId={bot.id}
-                  cards={kanbanCards}
-                  runLog={runLog}
-                  onChanged={reloadKanban}
-                />
-              </div>
-            )}
-            {tab === 'memory' && (
-              <div className="animate-in fade-in duration-200">
-                <MemoryTab
-                  bot={bot}
-                  logs={logs}
-                  onSaveFacts={(storedFacts) => updateBotField({ storedFacts })}
-                  onToggleMemory={config ? (memoryEnabled) => updateConfigField({ memoryEnabled }) : undefined}
-                  memoryEnabled={config?.memoryEnabled ?? true}
-                />
-              </div>
-            )}
-            {tab === 'settings' && config && (
-              <div className="animate-in fade-in duration-200">
-                <SettingsTab
-                  bot={bot}
-                  config={config}
-                  onUpdateBot={updateBotField}
-                  onUpdateConfig={updateConfigField}
-                  onDelete={handleDelete}
-                  onTriggersChanged={async () => { await onChange(); await reload(); }}
-                />
-              </div>
-            )}
+        {tab === 'memory' && (
+          <div className="h-full overflow-y-auto px-0.5 pb-6 scrollbar-minimal animate-in fade-in duration-200">
+            <MemoryTab
+              bot={bot}
+              logs={logs}
+              onSaveFacts={(storedFacts) => updateBotField({ storedFacts })}
+              onToggleMemory={config ? (memoryEnabled) => updateConfigField({ memoryEnabled }) : undefined}
+              memoryEnabled={config?.memoryEnabled ?? true}
+            />
           </div>
-        </main>
+        )}
+
+        {tab === 'settings' && config && (
+          <div className="flex h-full min-h-0 flex-col px-0.5 pb-6 animate-in fade-in duration-200">
+            <SettingsTab
+              bot={bot}
+              config={config}
+              onUpdateBot={updateBotField}
+              onUpdateConfig={updateConfigField}
+              onDelete={handleDelete}
+              onTriggersChanged={async () => { await onChange(); await reload(); }}
+            />
+          </div>
+        )}
       </div>
 
       {selectedLog && (
@@ -559,5 +551,31 @@ export function BotDetailView({
         />
       )}
     </div>
+  );
+}
+
+/** Small pill used in the agent header meta row. Reads like a label, doesn't
+ *  shout. Keeps tonal weight away from the name + status. */
+function HeroPill({
+  icon: Icon,
+  accent,
+  children,
+}: {
+  icon?: any;
+  accent?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium',
+        accent
+          ? 'border-primary/25 bg-primary/10 text-primary'
+          : 'border-[color:var(--dashboard-panel-border)] bg-theme-card/50 text-theme-muted',
+      )}
+    >
+      {Icon && <Icon className={clsx('h-3 w-3', accent ? 'text-primary' : 'text-theme-muted')} />}
+      <span className="truncate">{children}</span>
+    </span>
   );
 }

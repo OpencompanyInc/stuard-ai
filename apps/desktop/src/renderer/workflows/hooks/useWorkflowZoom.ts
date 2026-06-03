@@ -6,7 +6,8 @@
  * - Toolbar buttons: animated multiplicative zoom toward viewport center
  * - Fit / reset: eased transitions with scroll correction
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import type { GroupBox } from "../utils/groupGeometry";
 
 export const MIN_ZOOM = 0.08;
@@ -24,6 +25,12 @@ function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
 
+const GRID_STEP = 24;
+
+function syncGridBackground(el: HTMLDivElement) {
+  el.style.backgroundPosition = `${-(el.scrollLeft % GRID_STEP)}px ${-(el.scrollTop % GRID_STEP)}px`;
+}
+
 function applyScrollForZoom(
   el: HTMLDivElement,
   contentX: number,
@@ -34,55 +41,53 @@ function applyScrollForZoom(
 ) {
   el.scrollLeft = Math.max(0, contentX * newZoom - localX);
   el.scrollTop = Math.max(0, contentY * newZoom - localY);
+  syncGridBackground(el);
 }
 
 interface UseWorkflowZoomOptions {
   canvasRef: RefObject<HTMLDivElement>;
   /** Tight bounds of visible content — used by fit-to-view. */
   getContentBBox?: () => GroupBox | null;
+  /** Logical canvas dimensions — used for imperative pinch sizing between React commits. */
+  getCanvasSize?: () => { w: number; h: number };
 }
 
 /** Pinch-to-zoom and modifier+scroll are treated as zoom gestures. */
 function isZoomWheel(e: WheelEvent): boolean {
-  // Trackpad pinch on Chrome/Edge/Firefox (Windows + Mac) sets ctrlKey.
   if (e.ctrlKey || e.metaKey) return true;
-  // Alt + scroll fallback for mice / some drivers.
+  try {
+    if (e.getModifierState?.("Control") || e.getModifierState?.("Meta")) return true;
+  } catch { /* ignore */ }
   if (e.altKey) return true;
   return false;
 }
 
 function normalizeWheelDelta(e: WheelEvent): number {
-  // deltaMode: 0 = pixels (trackpads), 1 = lines, 2 = pages
   let dy = e.deltaY;
   if (e.deltaMode === 1) dy *= 16;
   else if (e.deltaMode === 2) dy *= window.innerHeight;
   return dy;
 }
 
-export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOptions) {
+/** Pixel-mode wheels fire continuously (trackpad pinch). */
+function isCoalescedWheel(e: WheelEvent): boolean {
+  return e.deltaMode === 0;
+}
+
+export function useWorkflowZoom({ canvasRef, getContentBBox, getCanvasSize }: UseWorkflowZoomOptions) {
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
   const animFrameRef = useRef<number | null>(null);
-  const pendingScrollRef = useRef<{
-    contentX: number;
-    contentY: number;
-    localX: number;
-    localY: number;
-    targetZoom: number;
-  } | null>(null);
+  const wheelRafRef = useRef<number | null>(null);
+  const wheelFactorRef = useRef(1);
+  const wheelAnchorRef = useRef({ x: 0, y: 0 });
+  const pinchSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const getCanvasSizeRef = useRef(getCanvasSize);
+  getCanvasSizeRef.current = getCanvasSize;
 
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
-
-  // Apply scroll correction after React commits an instant (wheel) zoom.
-  useLayoutEffect(() => {
-    const pending = pendingScrollRef.current;
-    const el = canvasRef.current;
-    if (!pending || !el) return;
-    pendingScrollRef.current = null;
-    applyScrollForZoom(el, pending.contentX, pending.contentY, pending.targetZoom, pending.localX, pending.localY);
-  });
 
   const cancelAnimation = useCallback(() => {
     if (animFrameRef.current != null) {
@@ -90,6 +95,110 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
       animFrameRef.current = null;
     }
   }, []);
+
+  const cancelWheelRaf = useCallback(() => {
+    if (wheelRafRef.current != null) {
+      cancelAnimationFrame(wheelRafRef.current);
+      wheelRafRef.current = null;
+    }
+    wheelFactorRef.current = 1;
+  }, []);
+
+  const syncReactZoom = useCallback(() => {
+    if (pinchSyncTimerRef.current != null) {
+      clearTimeout(pinchSyncTimerRef.current);
+      pinchSyncTimerRef.current = null;
+    }
+    flushSync(() => setZoom(zoomRef.current));
+  }, []);
+
+  const schedulePinchReactSync = useCallback(() => {
+    if (pinchSyncTimerRef.current != null) {
+      clearTimeout(pinchSyncTimerRef.current);
+    }
+    pinchSyncTimerRef.current = setTimeout(syncReactZoom, 120);
+  }, [syncReactZoom]);
+
+  /** Pinch path: update DOM + scroll immediately; defer heavy React commit until gesture pauses. */
+  const applyPinchZoom = useCallback(
+    (targetZoom: number, clientX: number, clientY: number) => {
+      const el = canvasRef.current;
+      const next = clampZoom(targetZoom);
+      if (!el) {
+        zoomRef.current = next;
+        flushSync(() => setZoom(next));
+        return;
+      }
+
+      cancelAnimation();
+
+      const rect = el.getBoundingClientRect();
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const current = zoomRef.current;
+      const contentX = (el.scrollLeft + localX) / current;
+      const contentY = (el.scrollTop + localY) / current;
+
+      const size = getCanvasSizeRef.current?.() ?? { w: 4000, h: 3000 };
+      const wrapper = el.querySelector("[data-wf-scroll-content]") as HTMLDivElement | null;
+      const inner = el.querySelector("[data-wf-transform-content]") as HTMLDivElement | null;
+
+      zoomRef.current = next;
+      if (wrapper) {
+        wrapper.style.width = `${size.w * next}px`;
+        wrapper.style.height = `${size.h * next}px`;
+      }
+      if (inner) {
+        inner.style.transform = `scale(${next})`;
+      }
+      applyScrollForZoom(el, contentX, contentY, next, localX, localY);
+      schedulePinchReactSync();
+    },
+    [cancelAnimation, canvasRef, schedulePinchReactSync],
+  );
+
+  /** Synchronous React commit + scroll — keeps transform and scroll in one paint. */
+  const applyInstantZoom = useCallback(
+    (targetZoom: number, clientX: number, clientY: number) => {
+      const el = canvasRef.current;
+      const next = clampZoom(targetZoom);
+      if (!el) {
+        cancelAnimation();
+        zoomRef.current = next;
+        flushSync(() => setZoom(next));
+        return;
+      }
+
+      cancelAnimation();
+
+      const rect = el.getBoundingClientRect();
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const current = zoomRef.current;
+      const contentX = (el.scrollLeft + localX) / current;
+      const contentY = (el.scrollTop + localY) / current;
+
+      zoomRef.current = next;
+      flushSync(() => setZoom(next));
+      applyScrollForZoom(el, contentX, contentY, next, localX, localY);
+    },
+    [cancelAnimation, canvasRef],
+  );
+
+  const flushCoalescedWheel = useCallback(() => {
+    wheelRafRef.current = null;
+    const factor = wheelFactorRef.current;
+    wheelFactorRef.current = 1;
+    if (Math.abs(factor - 1) < 0.00001) return;
+    const next = clampZoom(zoomRef.current * factor);
+    const { x, y } = wheelAnchorRef.current;
+    applyPinchZoom(next, x, y);
+  }, [applyPinchZoom]);
+
+  const scheduleCoalescedWheel = useCallback(() => {
+    if (wheelRafRef.current != null) return;
+    wheelRafRef.current = requestAnimationFrame(flushCoalescedWheel);
+  }, [flushCoalescedWheel]);
 
   const zoomAtClient = useCallback(
     (targetZoom: number, clientX: number, clientY: number, animate: boolean) => {
@@ -109,13 +218,17 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
       const contentY = (el.scrollTop + localY) / current;
 
       if (!animate || Math.abs(next - current) < 0.001) {
-        cancelAnimation();
-        pendingScrollRef.current = { contentX, contentY, localX, localY, targetZoom: next };
-        setZoom(next);
+        cancelWheelRaf();
+        if (pinchSyncTimerRef.current != null) {
+          clearTimeout(pinchSyncTimerRef.current);
+          pinchSyncTimerRef.current = null;
+        }
+        applyInstantZoom(next, clientX, clientY);
         return;
       }
 
       cancelAnimation();
+      cancelWheelRaf();
       const startZoom = current;
       const startTime = performance.now();
 
@@ -127,11 +240,13 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
         }
         const t = Math.min(1, (now - startTime) / ZOOM_ANIM_MS);
         const z = startZoom + (next - startZoom) * easeOutCubic(t);
+        zoomRef.current = z;
         setZoom(z);
         applyScrollForZoom(canvas, contentX, contentY, z, localX, localY);
         if (t < 1) {
           animFrameRef.current = requestAnimationFrame(tick);
         } else {
+          zoomRef.current = next;
           setZoom(next);
           applyScrollForZoom(canvas, contentX, contentY, next, localX, localY);
           animFrameRef.current = null;
@@ -140,7 +255,7 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
 
       animFrameRef.current = requestAnimationFrame(tick);
     },
-    [cancelAnimation, canvasRef],
+    [cancelAnimation, cancelWheelRaf, applyInstantZoom, canvasRef],
   );
 
   const viewportCenter = useCallback(() => {
@@ -184,6 +299,7 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
     const targetZoom = clampZoom(Math.min(availW / bbox.w, availH / bbox.h));
 
     cancelAnimation();
+    cancelWheelRaf();
     const startZoom = zoomRef.current;
     const startTime = performance.now();
 
@@ -196,6 +312,7 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
       const t = Math.min(1, (now - startTime) / FIT_ANIM_MS);
       const z = startZoom + (targetZoom - startZoom) * easeOutCubic(t);
 
+      zoomRef.current = z;
       setZoom(z);
       canvas.scrollLeft = Math.max(0, bbox.x * z - (canvas.clientWidth - bbox.w * z) / 2);
       canvas.scrollTop = Math.max(0, bbox.y * z - (canvas.clientHeight - bbox.h * z) / 2);
@@ -203,6 +320,7 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(tick);
       } else {
+        zoomRef.current = targetZoom;
         setZoom(targetZoom);
         canvas.scrollLeft = Math.max(0, bbox.x * targetZoom - (canvas.clientWidth - bbox.w * targetZoom) / 2);
         canvas.scrollTop = Math.max(0, bbox.y * targetZoom - (canvas.clientHeight - bbox.h * targetZoom) / 2);
@@ -211,16 +329,14 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
     };
 
     animFrameRef.current = requestAnimationFrame(tick);
-  }, [cancelAnimation, canvasRef, getContentBBox]);
+  }, [cancelAnimation, cancelWheelRaf, canvasRef, getContentBBox]);
 
-  // Stable wheel handler via ref so the listener never goes stale.
-  const zoomAtClientRef = useRef(zoomAtClient);
-  zoomAtClientRef.current = zoomAtClient;
+  const applyInstantZoomRef = useRef(applyInstantZoom);
+  applyInstantZoomRef.current = applyInstantZoom;
+  const scheduleCoalescedWheelRef = useRef(scheduleCoalescedWheel);
+  scheduleCoalescedWheelRef.current = scheduleCoalescedWheel;
 
-  /** Bind directly to a canvas node — call from a callback ref for reliable mount timing. */
-  const bindWheelTarget = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return () => {};
-
+  const attachWheelZoom = useCallback((el: HTMLDivElement) => {
     const onWheel = (e: WheelEvent) => {
       if (!isZoomWheel(e)) return;
 
@@ -229,18 +345,40 @@ export function useWorkflowZoom({ canvasRef, getContentBBox }: UseWorkflowZoomOp
 
       const dy = normalizeWheelDelta(e);
       const factor = Math.exp(-dy * ZOOM_WHEEL_SENSITIVITY);
-      const current = zoomRef.current;
-      const next = clampZoom(current * factor);
-      if (Math.abs(next - current) < 0.0001) return;
 
-      zoomAtClientRef.current(next, e.clientX, e.clientY, false);
+      if (isCoalescedWheel(e)) {
+        wheelFactorRef.current *= factor;
+        wheelAnchorRef.current = { x: e.clientX, y: e.clientY };
+        scheduleCoalescedWheelRef.current();
+        return;
+      }
+
+      cancelWheelRaf();
+      if (pinchSyncTimerRef.current != null) {
+        clearTimeout(pinchSyncTimerRef.current);
+        pinchSyncTimerRef.current = null;
+      }
+      const next = clampZoom(zoomRef.current * factor);
+      if (Math.abs(next - zoomRef.current) < 0.0001) return;
+      applyInstantZoomRef.current(next, e.clientX, e.clientY);
     };
 
     el.addEventListener("wheel", onWheel, { passive: false, capture: true });
     return () => el.removeEventListener("wheel", onWheel, { capture: true });
-  }, []);
+  }, [cancelWheelRaf]);
 
-  useEffect(() => () => cancelAnimation(), [cancelAnimation]);
+  const bindWheelTarget = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return () => {};
+    return attachWheelZoom(el);
+  }, [attachWheelZoom]);
+
+  useEffect(() => () => {
+    cancelAnimation();
+    cancelWheelRaf();
+    if (pinchSyncTimerRef.current != null) {
+      clearTimeout(pinchSyncTimerRef.current);
+    }
+  }, [cancelAnimation, cancelWheelRaf]);
 
   return { zoom, zoomIn, zoomOut, zoomReset, fitToView, zoomAtClient, bindWheelTarget };
 }

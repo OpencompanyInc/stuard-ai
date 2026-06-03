@@ -113,6 +113,14 @@ export interface CodexStatus {
   signedIn: boolean;      // auth.json exists with tokens
   accountEmail: string | null;
   planType: string | null;
+  // The plan label above is decoded from the cached token, NOT a live OpenAI
+  // lookup. The plan_type claim is only re-issued when the Codex CLI
+  // logs in or refreshes, so a subscription change won't show until then.
+  // These fields let the UI flag a possibly-stale plan instead of asserting
+  // it confidently.
+  tokenExpiresAt: string | null; // ISO; JWT `exp`
+  tokenExpired: boolean;         // exp is in the past
+  lastRefreshAtMs: number | null; // when auth.json was last refreshed/written
   authJsonPath: string;
   lastSyncedAtMs: number | null;
   lastSyncError: string | null;
@@ -124,11 +132,32 @@ export function getCodexStatus(): CodexStatus {
   const tokens = auth?.tokens;
   const idToken = tokens?.id_token || tokens?.access_token || '';
   const decoded = idToken ? decodeJwt(idToken) : { email: null, accountId: null, planType: null, expiresAt: null };
+
+  // When was the token last refreshed/written? Prefer auth.json's own
+  // `last_refresh` marker, fall back to the file mtime.
+  let lastRefreshAtMs: number | null = null;
+  if (auth?.last_refresh) {
+    const t = Date.parse(auth.last_refresh);
+    if (!Number.isNaN(t)) lastRefreshAtMs = t;
+  }
+  if (lastRefreshAtMs == null) {
+    try {
+      if (existsSync(AUTH_PATH)) lastRefreshAtMs = statSync(AUTH_PATH).mtimeMs;
+    } catch {}
+  }
+
+  const tokenExpiresAt = decoded.expiresAt;
+  const expMs = tokenExpiresAt ? Date.parse(tokenExpiresAt) : NaN;
+  const tokenExpired = !Number.isNaN(expMs) && expMs < Date.now();
+
   return {
     installed,
     signedIn: !!(tokens?.access_token),
     accountEmail: decoded.email,
     planType: decoded.planType,
+    tokenExpiresAt,
+    tokenExpired,
+    lastRefreshAtMs,
     authJsonPath: AUTH_PATH,
     lastSyncedAtMs,
     lastSyncError,

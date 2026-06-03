@@ -33,10 +33,16 @@ import {
   rollupUsageBreakdownForDisplay,
   normalizeComputeBillingLogEntry,
   normalizeUsageLogEntry,
+  creditUsageBarPercent,
+  creditUsagePercent,
+  isCreditExhausted,
   type ComputeBillingEventRow,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
 import { displayConversationTitle } from "../utils/conversationTitle";
+
+/** Set true to re-enable auto-refill, budgets, and metered-limit settings UI. */
+const BILLING_ADVANCED_SETTINGS_ENABLED = false;
 
 interface CreditSummary {
   plan?: string;
@@ -492,7 +498,7 @@ export const BillingSettings: React.FC = () => {
       supabase
         .from("profiles")
         .select("plan, current_period_start, current_period_end, billing_customer_id, billing_subscription_id, billing_subscription_status")
-        .eq("user_id", user.id)
+        .eq("id", user.id)
         .maybeSingle(),
       supabase.from("credit_grants").select("source_type, total_credits, remaining_credits, expires_at").eq("user_id", user.id),
     ]);
@@ -540,12 +546,17 @@ export const BillingSettings: React.FC = () => {
   }, []);
 
   const loadBillingPrefs = useCallback(async (uid: string) => {
+    if (!BILLING_ADVANCED_SETTINGS_ENABLED) {
+      setBillingPrefs(DEFAULT_BILLING_PREFS);
+      setPrefsLoading(false);
+      return;
+    }
     setPrefsLoading(true);
     try {
       const { data, error: prefsError } = await supabase
         .from("profiles")
         .select("auto_refill_enabled, auto_refill_threshold_credits, auto_refill_amount_cents, monthly_budget_cents, hard_spend_limit_cents")
-        .eq("user_id", uid)
+        .eq("id", uid)
         .maybeSingle();
       if (prefsError) throw prefsError;
       if (!mountedRef.current) return;
@@ -831,20 +842,21 @@ export const BillingSettings: React.FC = () => {
   }, [userId, billingPrefs, hasBillingAccount]);
 
   useEffect(() => {
+    if (!BILLING_ADVANCED_SETTINGS_ENABLED) return;
     if (!userId || !billingPrefs?.autoRefillEnabled || !hasBillingAccount) return;
     void pollAutoRefillPending();
     const timer = setInterval(() => void pollAutoRefillPending(), 30_000);
     return () => clearInterval(timer);
   }, [userId, billingPrefs?.autoRefillEnabled, hasBillingAccount, pollAutoRefillPending]);
 
-  const usagePercent =
-    creditSummary && !creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0
-      ? Math.min(100, Math.round(((creditSummary.used || 0) / creditSummary.limit) * 100))
-      : 0;
+  const usagePercent = creditUsagePercent(creditSummary);
+  const usageBarPercent = creditUsageBarPercent(creditSummary);
+  const creditExhausted = isCreditExhausted(creditSummary);
 
   const totalLogsPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
 
   const handleSaveBillingPrefs = async (next: Partial<BillingPrefs>) => {
+    if (!BILLING_ADVANCED_SETTINGS_ENABLED) return;
     if (!userId) return;
     const previous = billingPrefs || DEFAULT_BILLING_PREFS;
     const merged = { ...previous, ...next };
@@ -853,7 +865,7 @@ export const BillingSettings: React.FC = () => {
     try {
       const row = billingPrefsToRow(next);
       if (Object.keys(row).length === 0) return;
-      const { error: prefsError } = await supabase.from("profiles").update(row).eq("user_id", userId);
+      const { error: prefsError } = await supabase.from("profiles").update(row).eq("id", userId);
       if (prefsError) throw prefsError;
     } catch (e: any) {
       setBillingPrefs(previous);
@@ -1007,7 +1019,7 @@ export const BillingSettings: React.FC = () => {
                         "h-2 rounded-full transition-all",
                         usagePercent >= 90 ? "bg-red-500" : usagePercent >= 70 ? "bg-amber-500" : "bg-primary",
                       )}
-                      style={{ width: `${usagePercent}%` }}
+                      style={{ width: `${usageBarPercent}%` }}
                     />
                   </div>
                   <div className="flex justify-between text-[11px] text-theme-muted mt-1.5">
@@ -1063,19 +1075,19 @@ export const BillingSettings: React.FC = () => {
               </div>
 
               {usagePercent >= 90 && (
-                <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 flex items-center gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-                  <span className="text-[12px] text-red-500 font-medium">
-                    {usagePercent >= 100
+                <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <span className="text-[12px] text-red-500 font-medium leading-snug min-w-0">
+                    {creditExhausted
                       ? "Credit limit reached. Purchase add-ons or upgrade your plan."
-                      : "You've used over 90% of your credits this period."}
+                      : `You've used over 90% of your credits this period (${Number(creditSummary?.remaining || 0).toLocaleString()} remaining).`}
                   </span>
                 </div>
               )}
               {usagePercent >= 70 && usagePercent < 90 && (
-                <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-center gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                  <span className="text-[12px] text-amber-600 font-medium">
+                <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <span className="text-[12px] text-amber-600 font-medium leading-snug min-w-0">
                     You've used {usagePercent}% of your credits this period.
                   </span>
                 </div>
@@ -1251,6 +1263,17 @@ export const BillingSettings: React.FC = () => {
       {/* ── Auto-Refill + Add-Ons Card ── */}
       {(creditSummary || !loading) && (
       <div className="dashboard-card p-6 space-y-6">
+        {!BILLING_ADVANCED_SETTINGS_ENABLED && (
+          <div className="rounded-xl border border-theme bg-theme-hover/30 p-5 opacity-50 pointer-events-none select-none">
+            <h3 className="text-[15px] font-semibold text-theme-fg tracking-tight">Billing settings</h3>
+            <p className="text-[12px] text-theme-muted mt-2 leading-relaxed">
+              Auto-refill, metered overage, and spend limits are temporarily unavailable. Use one-time top-ups below or manage your plan on stuard.ai.
+            </p>
+          </div>
+        )}
+
+        {BILLING_ADVANCED_SETTINGS_ENABLED && (
+        <>
         <div>
           <div className="flex items-start justify-between gap-3 mb-4 border-b border-theme-sidebar pb-4">
             <div>
@@ -1321,8 +1344,8 @@ export const BillingSettings: React.FC = () => {
                 </div>
               </BillingField>
               <BillingField label="Refill amount" hint="Minimum $5. Uses your existing add-on packs or a custom amount.">
-                <div className="flex items-center gap-2">
-                  <span className="text-theme-muted font-medium">$</span>
+                <div className="flex flex-nowrap items-center gap-2">
+                  <span className="text-theme-muted font-medium shrink-0">$</span>
                   <input
                     type="number"
                     min={5}
@@ -1372,8 +1395,8 @@ export const BillingSettings: React.FC = () => {
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <BillingField label="Monthly soft budget" hint="Leave blank for no soft budget.">
-              <div className="flex items-center gap-2">
-                <span className="text-theme-muted font-medium">$</span>
+              <div className="flex flex-nowrap items-center gap-2">
+                <span className="text-theme-muted font-medium shrink-0">$</span>
                 <input
                   type="number"
                   min={0}
@@ -1391,8 +1414,8 @@ export const BillingSettings: React.FC = () => {
               </div>
             </BillingField>
             <BillingField label="Hard limit" hint="Leave blank for no hard cap.">
-              <div className="flex items-center gap-2">
-                <span className="text-theme-muted font-medium">$</span>
+              <div className="flex flex-nowrap items-center gap-2">
+                <span className="text-theme-muted font-medium shrink-0">$</span>
                 <input
                   type="number"
                   min={0}
@@ -1411,6 +1434,8 @@ export const BillingSettings: React.FC = () => {
             </BillingField>
           </div>
         </div>
+        </>
+        )}
 
         <div>
           <BillingSectionHeader title="One-time top-up" description="Add credits instantly without changing your plan." />

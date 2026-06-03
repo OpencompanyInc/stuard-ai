@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const workspaceRoot = process.cwd().replace(/[\\/]apps[\\/]website$/, '');
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@stuardai/chat-ui'],
+  transpilePackages: ['@stuardai/chat-ui', '@stuardai/vm-chat'],
   outputFileTracingRoot: workspaceRoot,
   turbopack: {
     root: workspaceRoot,

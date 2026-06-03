@@ -2548,105 +2548,187 @@ export function getDocSection(id: string): DocChunk | null {
 // SEARCH TOOL DEFINITION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const searchWorkflowDocs = createTool({
-  id: 'search_workflow_docs',
-  description:
-    'Search workflow documentation by topic. Returns relevant doc sections covering architecture, execution model, connecting nodes, triggers (manual/hotkey/cron/webhook including local request-response /webhooks/call with return_value), nodes, wires (basic/branching/convergence/callNode), guards (jsonlogic + ai routing), loops (forEach/repeat/while + patterns), variables (workflow + runtime), templates, workspace, utility tools, scripts (python/node), ai_inference, agent_nodes, streams, function triggers, custom_ui (basics, hooks, data passing, markdown, live updates, stuard API, node routing, multi-page, window config, visual effects, pitfalls), modify_workflow ops & pitfalls, output_schema, debugging, common pitfalls, and performance tips. Use "list" to see all sections, or a section id for a specific one.',
-  inputSchema: z.object({
-    query: z
-      .string()
-      .describe(
-        'Search query describing what you need to know (e.g., "how do guards work", "live update custom ui", "markdown rendering", "connecting nodes", "forEach loop"), or "list" to see all sections, or a section ID to get that specific section.',
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-session dedup: don't return the same doc section twice across multiple
+// search_workflow_docs calls in one session. We remember which section ids were
+// already returned in FULL and omit their content from later searches (the model
+// can still re-request a section by its exact id, which bypasses dedup).
+//
+// Seen-set resolution, in priority order:
+//  1) An explicitly injected Set — buildWorkflowTools() passes a fresh one per
+//     agent build, giving reliable per-conversation-turn dedup for the workflow
+//     agent (the primary caller).
+//  2) A run-scoped object on the tool-execution context (WeakMap, auto-GC) —
+//     best-effort for the orchestrator / registry singleton paths.
+//  3) Neither available → no dedup (preserves prior behavior).
+// ─────────────────────────────────────────────────────────────────────────────
+const seenSectionsByRunObject = new WeakMap<object, Set<string>>();
+
+function resolveSeenSet(injected: Set<string> | undefined, ctx: any): Set<string> | null {
+  if (injected) return injected;
+  const runObj =
+    ctx && typeof ctx === 'object'
+      ? ctx.requestContext ?? ctx.runtimeContext ?? ctx.abortSignal ?? ctx.agent
+      : null;
+  if (runObj && typeof runObj === 'object') {
+    let set = seenSectionsByRunObject.get(runObj);
+    if (!set) {
+      set = new Set<string>();
+      seenSectionsByRunObject.set(runObj, set);
+    }
+    return set;
+  }
+  return null;
+}
+
+export interface SearchWorkflowDocsOptions {
+  /**
+   * Dedup set shared across all search_workflow_docs calls that use this tool
+   * instance. Pass a fresh Set per agent build to scope dedup to one session.
+   */
+  seen?: Set<string>;
+}
+
+/**
+ * Build a search_workflow_docs tool. Each instance can carry its own dedup
+ * `seen` set so the same section isn't returned in full more than once per
+ * session. See `searchWorkflowDocs` for the shared (ctx-scoped) default.
+ */
+export function createSearchWorkflowDocsTool(opts: SearchWorkflowDocsOptions = {}) {
+  return createTool({
+    id: 'search_workflow_docs',
+    description:
+      'Search workflow documentation by topic. Returns relevant doc sections covering architecture, execution model, connecting nodes, triggers (manual/hotkey/cron/webhook including local request-response /webhooks/call with return_value), nodes, wires (basic/branching/convergence/callNode), guards (jsonlogic + ai routing), loops (forEach/repeat/while + patterns), variables (workflow + runtime), templates, workspace, utility tools, scripts (python/node), ai_inference, agent_nodes, streams, function triggers, custom_ui (basics, hooks, data passing, markdown, live updates, stuard API, node routing, multi-page, window config, visual effects, pitfalls), modify_workflow ops & pitfalls, output_schema, debugging, common pitfalls, and performance tips. Use "list" to see all sections, or a section id for a specific one. Sections already returned earlier in the session are omitted (listed under "omitted") to save tokens — re-request by exact id only if you need the full text again.',
+    inputSchema: z.object({
+      query: z
+        .string()
+        .describe(
+          'Search query describing what you need to know (e.g., "how do guards work", "live update custom ui", "markdown rendering", "connecting nodes", "forEach loop"), or "list" to see all sections, or a section ID to get that specific section.',
+        ),
+      topK: z
+        .number()
+        .int()
+        .min(1)
+        .max(3)
+        .default(3)
+        .describe('Maximum number of doc sections to return (capped at 3).'),
+    }),
+    outputSchema: z.object({
+      ok: z.boolean(),
+      sections: z.array(
+        z.object({
+          id: z.string(),
+          title: z.string(),
+          content: z.string(),
+        }),
       ),
-    topK: z
-      .number()
-      .int()
-      .min(1)
-      .max(3)
-      .default(3)
-      .describe('Maximum number of doc sections to return (capped at 3).'),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    sections: z.array(
-      z.object({
-        id: z.string(),
-        title: z.string(),
-        content: z.string(),
-      }),
-    ),
-    // Further matches beyond the content budget — fetch full content on demand
-    // by calling search_workflow_docs again with the section id.
-    more: z
-      .array(z.object({ id: z.string(), title: z.string() }))
-      .optional(),
-    availableSections: z
-      .array(z.object({ id: z.string(), title: z.string() }))
-      .optional(),
-  }),
-  execute: async (inputData) => {
-    const { query, topK } = inputData as { query: string; topK: number };
+      // Further matches beyond the content budget — fetch full content on demand
+      // by calling search_workflow_docs again with the section id.
+      more: z
+        .array(z.object({ id: z.string(), title: z.string() }))
+        .optional(),
+      // Matches already returned in full earlier this session — content omitted
+      // here on purpose. Re-request by exact id only if the full text is needed.
+      omitted: z
+        .array(z.object({ id: z.string(), title: z.string() }))
+        .optional(),
+      // Human-readable explanation when matches were omitted for dedup.
+      note: z.string().optional(),
+      availableSections: z
+        .array(z.object({ id: z.string(), title: z.string() }))
+        .optional(),
+    }),
+    execute: async (inputData, ctx) => {
+      const { query, topK } = inputData as { query: string; topK: number };
+      const seen = resolveSeenSet(opts.seen, ctx);
 
-    // List mode
-    if (query.trim().toLowerCase() === 'list') {
-      return {
-        ok: true,
-        sections: [],
-        availableSections: listDocSections(),
-      };
-    }
-
-    // Direct ID lookup
-    const directMatch = getDocSection(query.trim());
-    if (directMatch) {
-      return {
-        ok: true,
-        sections: [
-          {
-            id: directMatch.id,
-            title: directMatch.title,
-            content: directMatch.content,
-          },
-        ],
-      };
-    }
-
-    // Search mode (semantic via Supabase, lexical fallback)
-    const results = await searchDocs(query, topK);
-    if (results.length === 0) {
-      return {
-        ok: true,
-        sections: [],
-        availableSections: listDocSections(),
-      };
-    }
-
-    // Content budget: always return the top hit in full, then include further
-    // hits only while under budget. Remaining matches come back as lightweight
-    // `more` pointers the model can fetch by id. This caps the worst case
-    // (large custom_ui sections) without changing typical small multi-section
-    // results, which still fit under the budget.
-    const DOC_CONTENT_BUDGET = 7000; // chars (~1.75k tokens)
-    const sections: Array<{ id: string; title: string; content: string }> = [];
-    const more: Array<{ id: string; title: string }> = [];
-    let used = 0;
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      if (i === 0 || used + r.content.length <= DOC_CONTENT_BUDGET) {
-        sections.push({ id: r.id, title: r.title, content: r.content });
-        used += r.content.length;
-      } else {
-        more.push({ id: r.id, title: r.title });
+      // List mode
+      if (query.trim().toLowerCase() === 'list') {
+        return {
+          ok: true,
+          sections: [],
+          availableSections: listDocSections(),
+        };
       }
-    }
 
-    return {
-      ok: true,
-      sections,
-      ...(more.length > 0 ? { more } : {}),
-    };
-  },
-});
+      // Direct ID lookup — always returns full content (an explicit re-request
+      // bypasses dedup), and records the id so later searches don't repeat it.
+      const directMatch = getDocSection(query.trim());
+      if (directMatch) {
+        seen?.add(directMatch.id);
+        return {
+          ok: true,
+          sections: [
+            {
+              id: directMatch.id,
+              title: directMatch.title,
+              content: directMatch.content,
+            },
+          ],
+        };
+      }
+
+      // Search mode (semantic via Supabase, lexical fallback)
+      const results = await searchDocs(query, topK);
+      if (results.length === 0) {
+        return {
+          ok: true,
+          sections: [],
+          availableSections: listDocSections(),
+        };
+      }
+
+      // Drop matches already returned in full this session — surface them as
+      // lightweight `omitted` pointers instead of resending their content.
+      const omitted: Array<{ id: string; title: string }> = [];
+      const fresh = results.filter(r => {
+        if (seen && seen.has(r.id)) {
+          omitted.push({ id: r.id, title: r.title });
+          return false;
+        }
+        return true;
+      });
+
+      // Content budget: always return the top FRESH hit in full, then include
+      // further fresh hits only while under budget. Remaining matches come back
+      // as lightweight `more` pointers the model can fetch by id. This caps the
+      // worst case (large custom_ui sections) without changing typical small
+      // multi-section results, which still fit under the budget.
+      const DOC_CONTENT_BUDGET = 7000; // chars (~1.75k tokens)
+      const sections: Array<{ id: string; title: string; content: string }> = [];
+      const more: Array<{ id: string; title: string }> = [];
+      let used = 0;
+      for (let i = 0; i < fresh.length; i++) {
+        const r = fresh[i];
+        if (i === 0 || used + r.content.length <= DOC_CONTENT_BUDGET) {
+          sections.push({ id: r.id, title: r.title, content: r.content });
+          used += r.content.length;
+          seen?.add(r.id);
+        } else {
+          more.push({ id: r.id, title: r.title });
+        }
+      }
+
+      let note: string | undefined;
+      if (omitted.length > 0) {
+        note =
+          sections.length === 0
+            ? `All ${omitted.length} match(es) for this query were already returned earlier in this session — their content is in your earlier tool results. Re-request a section by its exact id only if you truly need the full text again.`
+            : `${omitted.length} further match(es) were already returned earlier this session and are omitted here (see "omitted").`;
+      }
+
+      return {
+        ok: true,
+        sections,
+        ...(more.length > 0 ? { more } : {}),
+        ...(omitted.length > 0 ? { omitted } : {}),
+        ...(note ? { note } : {}),
+      };
+    },
+  });
+}
+
+export const searchWorkflowDocs = createSearchWorkflowDocsTool();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EMBEDDINGS SYNC

@@ -506,7 +506,7 @@ function DashboardApp() {
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
-        .eq("user_id", userId)
+        .eq("id", userId)
         .limit(1);
       if (!error) {
         const profileData = (data as any[])?.[0] ?? null;
@@ -596,13 +596,13 @@ function DashboardApp() {
 
         const totalLimit = includedCredits + addonCredits;
         const grantRemaining = includedRemaining + addonRemaining;
-        const usageBasedRemaining = totalLimit > 0 ? Math.max(0, totalLimit - used) : grantRemaining;
         setCreditsInfo({
           ok: true,
           plan: String((profileRow as any)?.plan || 'Free'),
           limit: Math.ceil(totalLimit),
           used: Math.ceil(used),
-          remaining: Math.ceil(Math.min(grantRemaining, usageBasedRemaining)),
+          // Match BillingSettings: remaining is grant balance, not limit-minus-usage
+          remaining: Math.ceil(grantRemaining),
           unlimited: false,
         });
       } catch { }

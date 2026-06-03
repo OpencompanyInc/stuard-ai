@@ -40,8 +40,75 @@ const ALLOWED_MODEL_SET = new Set(ALL_CHAT_MODEL_IDS);
 
 function isModelAllowed(id: string): boolean {
   if (ALLOWED_MODEL_SET.has(id)) return true;
+  // OpenRouter is the Stuard-served catalog — shown, but de-branded as the
+  // underlying vendor (see debrandOpenRouterModel); the name never surfaces.
   if (id.startsWith('openrouter/')) return true;
   return false;
+}
+
+// De-branded OpenRouter vendors get logos from LobeHub's AI-icon set (jsDelivr):
+// models.dev silently serves a placeholder for unknown vendors, whereas LobeHub
+// covers the long tail, 404s honestly, and ships monochrome currentColor SVGs.
+const LOBE_LOGO_BASE = 'https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg/icons';
+
+const VENDOR_LOGO_SLUG: Record<string, string> = {
+  'x-ai': 'grok',
+  'meta-llama': 'meta',
+  'mistralai': 'mistral',
+  'z-ai': 'zhipu',
+  'moonshotai': 'moonshot',
+  'bytedance-seed': 'bytedance',
+  'amazon': 'bedrock',
+  'ibm-granite': 'ibm',
+  'arcee-ai': 'arcee',
+  'nousresearch': 'nous',
+};
+
+function vendorLogoUrl(vendor: string): string {
+  const slug = VENDOR_LOGO_SLUG[vendor.toLowerCase()] || vendor.toLowerCase();
+  return `${LOBE_LOGO_BASE}/${encodeURIComponent(slug)}.svg`;
+}
+
+// Model-family logos that differ from the vendor mark (Gemini/Gemma ≠ Google),
+// applied to every model id.
+const MODEL_FAMILY_LOGO: Array<[RegExp, string]> = [
+  [/gemini/i, 'gemini'],
+  [/gemma/i, 'gemma'],
+];
+
+function familyLogoUrl(id: string): string | null {
+  for (const [re, slug] of MODEL_FAMILY_LOGO) {
+    if (re.test(id)) return `${LOBE_LOGO_BASE}/${slug}.svg`;
+  }
+  return null;
+}
+
+function humanizeVendor(vendor: string): string {
+  const v = String(vendor || '').toLowerCase();
+  const SPECIAL: Record<string, string> = {
+    openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', xai: 'xAI',
+    deepseek: 'DeepSeek', anthropic: 'Anthropic', perplexity: 'Perplexity',
+    'meta-llama': 'Meta', mistralai: 'Mistral', qwen: 'Qwen', cohere: 'Cohere',
+    'z-ai': 'Z.AI', moonshotai: 'Moonshot', nousresearch: 'Nous', microsoft: 'Microsoft',
+  };
+  if (SPECIAL[v]) return SPECIAL[v];
+  return v.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function identityVendor(vendor: string): string {
+  const v = String(vendor || '').toLowerCase();
+  return v === 'x-ai' ? 'xai' : v;
+}
+
+function debrandOpenRouterModel(
+  m: { id: string; providerId: string },
+): { providerId: string; provider: string; logoUrl: string } {
+  const vendor = String(m.id).split('/')[1] || m.providerId;
+  return {
+    providerId: identityVendor(vendor),
+    provider: humanizeVendor(vendor),
+    logoUrl: vendorLogoUrl(vendor),
+  };
 }
 
 const REASONING_IDS = new Set([
@@ -230,18 +297,24 @@ export function useModelRegistry() {
     if (raw.length === 0) return FALLBACK_MODELS;
 
     const registryIds = new Set(raw.map((m: any) => m.id));
-    const registryModels: ModelMeta[] = raw.map((m: any) => ({
-      id: m.id,
-      name: fallbackById.get(m.id)?.name || m.name,
-      provider: fallbackById.get(m.id)?.provider || m.providerName,
-      providerId: m.providerId,
-      logoUrl: logoByProvider[m.providerId],
-      isReasoning: typeof fallbackById.get(m.id)?.isReasoning === 'boolean'
-        ? !!fallbackById.get(m.id)?.isReasoning
-        : !!m.reasoning,
-      contextWindow: fallbackById.get(m.id)?.contextWindow ?? m.limit?.context,
-      category: fallbackById.get(m.id)?.category || ((m.tier as any) || (m.reasoning ? 'smart' : 'balanced')),
-    }));
+    const registryModels: ModelMeta[] = raw.map((m: any) => {
+      const debrand = m.providerId === 'openrouter'
+        ? debrandOpenRouterModel(m)
+        : null;
+      return {
+        id: m.id,
+        name: fallbackById.get(m.id)?.name || m.name,
+        provider: debrand?.provider || fallbackById.get(m.id)?.provider || m.providerName,
+        providerId: debrand?.providerId || m.providerId,
+        logoUrl: debrand ? debrand.logoUrl : logoByProvider[m.providerId],
+        isReasoning: typeof fallbackById.get(m.id)?.isReasoning === 'boolean'
+          ? !!fallbackById.get(m.id)?.isReasoning
+          : !!m.reasoning,
+        // Prefer the registry's real context window over the hardcoded table.
+        contextWindow: m.limit?.context ?? fallbackById.get(m.id)?.contextWindow,
+        category: fallbackById.get(m.id)?.category || ((m.tier as any) || (m.reasoning ? 'smart' : 'balanced')),
+      };
+    });
 
     const extras = FALLBACK_MODELS
       .filter((m) => !registryIds.has(m.id))
@@ -251,7 +324,11 @@ export function useModelRegistry() {
         return { ...m, logoUrl: providerLogo };
       });
 
-    return [...registryModels, ...extras];
+    // Model-family logo override (Gemini/Gemma ≠ Google), applied uniformly.
+    return [...registryModels, ...extras].map((mm) => {
+      const fam = familyLogoUrl(mm.id);
+      return fam ? { ...mm, logoUrl: fam } : mm;
+    });
   }, [registry, logoByProvider, fallbackById]);
 
   const modelById = useMemo(() => {

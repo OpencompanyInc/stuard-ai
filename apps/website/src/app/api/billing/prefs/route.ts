@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 
+/** Set to false to re-enable auto-refill / budget / metered-limit prefs API. */
+const BILLING_PREFS_DISABLED = true;
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -31,13 +34,20 @@ const PREF_COLUMNS = [
 ] as const;
 
 export async function GET(req: NextRequest) {
+  if (BILLING_PREFS_DISABLED) {
+    return NextResponse.json(
+      { error: 'disabled', message: 'Billing settings are temporarily unavailable.' },
+      { status: 503 },
+    );
+  }
+
   const userId = await getAuthedUserId(req);
   if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { data, error } = await admin()
     .from('profiles')
     .select(PREF_COLUMNS.join(','))
-    .eq('user_id', userId)
+    .eq('id', userId)
     .maybeSingle();
 
   if (error) {
@@ -55,6 +65,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  if (BILLING_PREFS_DISABLED) {
+    return NextResponse.json(
+      { error: 'disabled', message: 'Billing settings are temporarily unavailable.' },
+      { status: 503 },
+    );
+  }
+
   const userId = await getAuthedUserId(req);
   if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 

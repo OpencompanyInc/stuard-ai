@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { AttachmentPicker } from '@/components/support/AttachmentPicker';
@@ -21,8 +21,10 @@ const PRIORITIES = Object.keys(PRIORITY_LABELS) as SupportTicketPriority[];
 
 export default function NewSupportTicketPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { userData } = useAuthContext();
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const prefillApplied = useRef(false);
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState<SupportTicketCategory>('general');
   const [priority, setPriority] = useState<SupportTicketPriority>('medium');
@@ -31,6 +33,20 @@ export default function NewSupportTicketPage() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prefillApplied.current) return;
+    const subjectParam = searchParams.get('subject')?.trim();
+    const categoryParam = searchParams.get('category')?.trim();
+    const messageParam = searchParams.get('message');
+    if (!subjectParam && !categoryParam && !messageParam) return;
+    prefillApplied.current = true;
+    if (subjectParam) setSubject(subjectParam);
+    if (categoryParam && CATEGORIES.includes(categoryParam as SupportTicketCategory)) {
+      setCategory(categoryParam as SupportTicketCategory);
+    }
+    if (messageParam) setMessage(messageParam);
+  }, [searchParams]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;

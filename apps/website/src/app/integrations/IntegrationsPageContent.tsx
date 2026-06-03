@@ -416,10 +416,28 @@ function IntegrationsGrid({
 
         <SectionReveal delay={0.1}>
           {filtered.length === 0 ? (
-            <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 rounded-2xl border border-[#262626] bg-[#111111] p-8 text-center">
-              <p className="text-[15px] text-white">No matches.</p>
-              <p className="text-[13px] text-[#A3A3A3]">
-                Try a different search or category — or build your own with a custom MCP server.
+            <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-[#262626] bg-[#111111] p-8 text-center">
+              <p className="text-[15px] font-medium text-white">
+                {query.trim() ? "Can't find it?" : 'No matches'}
+              </p>
+              <p className="max-w-md text-[13px] leading-relaxed text-[#A3A3A3]">
+                {query.trim() ? (
+                  <>
+                    No integration matched &ldquo;{query.trim()}&rdquo;. Try another search or category,{' '}
+                    <Link href="/contact" className="text-[#FF6B6E] hover:underline">
+                      request an integration
+                    </Link>
+                    , or build your own with a custom MCP server in the desktop app.
+                  </>
+                ) : (
+                  <>
+                    Try a different search or category —{' '}
+                    <Link href="/contact" className="text-[#FF6B6E] hover:underline">
+                      request an integration
+                    </Link>
+                    , or build your own with a custom MCP server.
+                  </>
+                )}
               </p>
             </div>
           ) : (
