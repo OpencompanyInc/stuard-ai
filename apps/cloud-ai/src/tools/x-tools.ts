@@ -17,6 +17,7 @@ import {
 import { getClientOAuthAccount, storeClientOAuthAccount } from './vm-oauth';
 
 const X_API = 'https://api.x.com/2';
+const X_WEB = 'https://x.com';
 
 const profileField = z.string().optional().describe(
   'OAuth profile label to use (e.g. "work", "personal"). Omit to use the default profile.'
@@ -58,7 +59,7 @@ async function refreshXToken(userId: string, acc: any): Promise<string | null> {
       const basicAuth = Buffer.from(`${X_CLIENT_ID}:${X_CLIENT_SECRET}`).toString('base64');
       headers.Authorization = `Basic ${basicAuth}`;
     }
-    const tokenRes = await fetch('https://api.twitter.com/2/oauth2/token', {
+    const tokenRes = await fetch(`${X_API}/oauth2/token`, {
       method: 'POST',
       headers,
       body: new URLSearchParams(body),
@@ -297,7 +298,7 @@ function formatTweet(t: any, usersById: Map<string, any>) {
       username: m.username,
       id: m.id,
     })),
-    url: author ? `https://twitter.com/${author.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
+    url: author ? `${X_WEB}/${author.username}/status/${t.id}` : `${X_WEB}/i/status/${t.id}`,
   };
 }
 
@@ -347,7 +348,7 @@ export const x_search_tweets = createTool({
           username: m.username,
           id: m.id,
         })),
-        url: u ? `https://twitter.com/${u.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
+        url: u ? `${X_WEB}/${u.username}/status/${t.id}` : `${X_WEB}/i/status/${t.id}`,
       };
     });
     await meterX(userId, 'search_tweets', X_PRICE_USD_READ);
@@ -610,7 +611,7 @@ export const x_get_tweet = createTool({
         username: m.username,
         id: m.id,
       })),
-      url: author ? `https://twitter.com/${author.username}/status/${t.id}` : `https://twitter.com/i/status/${t.id}`,
+      url: author ? `${X_WEB}/${author.username}/status/${t.id}` : `${X_WEB}/i/status/${t.id}`,
     } : null;
   },
 });
@@ -639,7 +640,7 @@ export const x_post_tweet = createTool({
     return {
       id: body?.data?.id || null,
       text: body?.data?.text || text,
-      url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+      url: body?.data?.id ? `${X_WEB}/i/status/${body.data.id}` : null,
     };
   },
 });
@@ -670,7 +671,7 @@ export const x_comment_on_post = createTool({
       id: body?.data?.id || null,
       text: body?.data?.text || text,
       in_reply_to_tweet_id: replyToTweetId,
-      url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+      url: body?.data?.id ? `${X_WEB}/i/status/${body.data.id}` : null,
     };
   },
 });
@@ -702,7 +703,7 @@ export const x_reply_to_comment = createTool({
       id: body?.data?.id || null,
       text: body?.data?.text || text,
       in_reply_to_tweet_id: replyToTweetId,
-      url: body?.data?.id ? `https://twitter.com/i/status/${body.data.id}` : null,
+      url: body?.data?.id ? `${X_WEB}/i/status/${body.data.id}` : null,
     };
   },
 });
@@ -886,7 +887,7 @@ export const x_get_user = createTool({
       profile_image_url: u.profile_image_url,
       created_at: u.created_at,
       metrics: u.public_metrics,
-      url: `https://twitter.com/${u.username}`,
+      url: `${X_WEB}/${u.username}`,
     } : null;
   },
 });

@@ -28,6 +28,9 @@ const X_SCOPES = [
   'offline.access',
 ].join(' ');
 
+const X_API = 'https://api.x.com/2';
+const X_WEB = 'https://x.com';
+
 // PKCE verifiers are short-lived. We hold them in-process keyed by nonce so the
 // callback can finish the exchange. State HMAC ties them to the original user.
 const _pkceVerifiers = new Map<string, { verifier: string; createdAt: number }>();
@@ -152,7 +155,7 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       // Stash the verifier keyed by nonce so the callback can complete PKCE
       rememberVerifier(nonce, verifier);
 
-      const authorize = new URL('https://twitter.com/i/oauth2/authorize');
+      const authorize = new URL(`${X_WEB}/i/oauth2/authorize`);
       authorize.searchParams.set('response_type', 'code');
       authorize.searchParams.set('client_id', X_CLIENT_ID);
       authorize.searchParams.set('redirect_uri', redirectUri);
@@ -250,7 +253,7 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
         headers.Authorization = `Basic ${basicAuth}`;
       }
 
-      const tokenRes = await fetch('https://api.twitter.com/2/oauth2/token', {
+      const tokenRes = await fetch(`${X_API}/oauth2/token`, {
         method: 'POST',
         headers,
         body: new URLSearchParams(tokenBody),
@@ -273,7 +276,7 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       // Fetch X user profile for the connected handle
       let accountEmail: string | null = null;
       try {
-        const userRes = await fetch('https://api.twitter.com/2/users/me?user.fields=username', {
+        const userRes = await fetch(`${X_API}/users/me?user.fields=username`, {
           headers: { Authorization: `Bearer ${access_token}` },
         });
         const user: any = await (async () => { try { return await userRes.json(); } catch { return null; } })();

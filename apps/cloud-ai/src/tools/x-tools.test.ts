@@ -175,7 +175,7 @@ describe('x_reply_to_comment', () => {
       id: 'reply-123',
       text: 'Thanks!',
       in_reply_to_tweet_id: 'tweet-456',
-      url: 'https://twitter.com/i/status/reply-123',
+      url: 'https://x.com/i/status/reply-123',
     });
     const [url, request] = (global.fetch as any).mock.calls[0];
     expect(url).toBe('https://api.x.com/2/tweets');
