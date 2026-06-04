@@ -1332,6 +1332,19 @@ export function FileExplorer({
                 </button>
               </div>
             )}
+            {/* Explain cold-storage space used by the automatic workspace backup,
+                which is intentionally hidden from this list — otherwise an empty
+                Files view next to a non-empty storage meter looks like a bug. */}
+            {!searchQuery && (info?.backupBytes ?? 0) > 0 && (
+              <div className="mt-5 flex max-w-[340px] items-start gap-2.5 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] px-3.5 py-3 text-left">
+                <Archive className="mt-0.5 h-4 w-4 shrink-0 text-theme-muted" />
+                <p className="text-[12px] leading-relaxed text-theme-muted">
+                  <strong className="font-semibold text-theme-fg">{formatBytes(info!.backupBytes)}</strong> of
+                  your cloud storage holds an automatic workspace backup. It keeps your
+                  memories and data safe across VM restarts, so it isn&apos;t listed here and can&apos;t be deleted.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

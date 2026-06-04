@@ -1,3 +1,4 @@
+import { createElement } from 'react';
 import Link from 'next/link';
 import {
   ListChecks,
@@ -46,7 +47,7 @@ function formatCount(n: number): string {
 }
 
 function TopAppCard({ app }: { app: MarketWorkflow }) {
-  const Icon = iconFor(app.category);
+  const icon = iconFor(app.category);
   return (
     <Link
       href={`/marketplace/${app.slug}`}
@@ -54,7 +55,7 @@ function TopAppCard({ app }: { app: MarketWorkflow }) {
     >
       <div className="flex items-start gap-3">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#FF383C]/20 bg-[#FF383C]/10 text-[#FF6B6E]">
-          <Icon className="h-5 w-5" strokeWidth={1.75} />
+          {createElement(icon, { className: 'h-5 w-5', strokeWidth: 1.75 })}
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[15px] font-medium text-white group-hover:text-[#FF6B6E] transition-colors">

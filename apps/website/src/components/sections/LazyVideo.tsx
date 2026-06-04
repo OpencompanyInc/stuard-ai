@@ -41,10 +41,15 @@ export default function LazyVideo({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
+  // Reset load state when the source or activation changes. Done during render
+  // (instead of an effect) so we avoid an extra commit + cascading re-render.
+  const resetKey = `${src}|${active}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  if (prevResetKey !== resetKey) {
+    setPrevResetKey(resetKey);
     setReady(false);
     setError(false);
-  }, [src, active]);
+  }
 
   useEffect(() => {
     const el = videoRef.current;

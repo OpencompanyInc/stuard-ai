@@ -1,6 +1,6 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
-import { Suspense } from 'react';
+import { Suspense, createElement } from 'react';
 import {
   ListChecks,
   Workflow as WorkflowIcon,
@@ -88,7 +88,7 @@ function formatCount(n: number): string {
 }
 
 function WorkflowCard({ workflow }: { workflow: Workflow }) {
-  const Icon = iconFor(workflow.category) ?? Package;
+  const icon = iconFor(workflow.category) ?? Package;
 
   return (
     <Link
@@ -97,7 +97,7 @@ function WorkflowCard({ workflow }: { workflow: Workflow }) {
     >
       <div className="flex items-start gap-3">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#FF383C]/20 bg-[#FF383C]/10 text-[#FF6B6E]">
-          <Icon className="h-5 w-5" strokeWidth={1.75} />
+          {createElement(icon, { className: 'h-5 w-5', strokeWidth: 1.75 })}
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[15px] font-medium text-white transition-colors group-hover:text-[#FF6B6E]">
