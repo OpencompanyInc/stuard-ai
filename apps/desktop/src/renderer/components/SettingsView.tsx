@@ -52,8 +52,6 @@ interface SettingsViewProps {
   setTranslucentMode: (v: boolean) => void;
   wakewordEnabled: boolean;
   setWakewordEnabled: (v: boolean) => void;
-  terminalEnabled: boolean;
-  setTerminalEnabled: (v: boolean) => void;
   screenCaptureInvisible: boolean;
   setScreenCaptureInvisible: (v: boolean) => void;
   handleSaveTheme: () => void;
@@ -1308,8 +1306,6 @@ interface GeneralTabProps {
   setTranslucentMode: (v: boolean) => void;
   wakewordEnabled: boolean;
   setWakewordEnabled: (v: boolean) => void;
-  terminalEnabled: boolean;
-  setTerminalEnabled: (v: boolean) => void;
   screenCaptureInvisible: boolean;
   setScreenCaptureInvisible: (v: boolean) => void;
   handleSaveTheme: () => void;
@@ -1333,7 +1329,6 @@ function GeneralTab({
   themeText, setThemeText,
   translucentMode, setTranslucentMode,
   wakewordEnabled, setWakewordEnabled,
-  terminalEnabled, setTerminalEnabled,
   screenCaptureInvisible, setScreenCaptureInvisible,
   handleSaveTheme,
   setOnboardingComplete,
@@ -1413,12 +1408,6 @@ function GeneralTab({
               description="Runs continuously in the background using the shared audio bus."
               checked={wakewordEnabled}
               onChange={setWakewordEnabled}
-            />
-            <ToggleRow
-              title="Terminal Access"
-              description="Interactive terminal and command execution."
-              checked={terminalEnabled}
-              onChange={setTerminalEnabled}
             />
             <ToggleRow
               title="Screen Capture Invisibility"

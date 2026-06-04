@@ -524,7 +524,6 @@ export default function OnboardingFlow({ onComplete, expanded, onExpand, modalOn
               {[
                 { keys: ['Ctrl', 'Shift', 'Space'], desc: 'Summon Stuard' },
                 { keys: ['Esc'], desc: 'Hide overlay' },
-                { keys: ['Ctrl', '/'], desc: 'Command palette' },
                 { keys: ['Ctrl', '↑↓←→'], desc: 'Move overlay' },
               ].map((shortcut, i) => (
                 <div key={i} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2 border border-white/[0.08]">

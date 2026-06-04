@@ -43,9 +43,9 @@ const PROVIDER_FALLBACK_ICONS: Record<string, React.ReactNode> = {
 };
 
 const TIER_DEFAULTS: Record<'fast' | 'balanced' | 'smart' | 'research', string> = {
-  fast: 'deepseek/deepseek-chat',
-  balanced: 'xai/grok-4-1-fast',
-  smart: 'openai/gpt-5.1',
+  fast: 'google/gemini-3.1-flash-lite',
+  balanced: 'google/gemini-3.1-pro-preview',
+  smart: 'openai/gpt-5.4',
   research: 'perplexity/sonar-pro',
 };
 

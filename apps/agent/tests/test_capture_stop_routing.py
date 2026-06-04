@@ -120,3 +120,55 @@ def test_capture_system_audio_passes_requested_device_to_worker(monkeypatch: pyt
     assert result["sessionId"] == "requested-device-session"
     assert captured["session_id"] == "requested-device-session"
     assert captured["device"] == "Loopback Output A"
+
+
+def test_normalize_capture_mode_accepts_until_stop_label():
+    assert media_tools._normalize_capture_mode("Until Stop") == "until_stop"
+    assert media_tools._normalize_capture_mode("until-stop") == "until_stop"
+
+
+def test_stop_capture_falls_back_to_media_bus_subscriber(monkeypatch: pytest.MonkeyPatch):
+    from app.tools import media_bus
+
+    session_id = "bus-fallback-session"
+
+    monkeypatch.setattr(
+        media_bus,
+        "find_subscriber_session",
+        lambda sid: {
+            "kind": "audio",
+            "device": None,
+            "bus_mode": True,
+            "path": "C:/tmp/bus-fallback.wav",
+            "bus_id": "bus123",
+            "mode": "until_stop",
+        } if sid == session_id else None,
+    )
+
+    async def fake_unsubscribe(args, emit=None):
+        assert args["subscriberId"] == session_id
+        return {"ok": True, "filePath": "C:/tmp/bus-fallback.wav", "busStopped": True, "remainingSubscribers": 0}
+
+    monkeypatch.setattr(media_bus, "unsubscribe_media_bus", fake_unsubscribe)
+
+    result = asyncio.run(media_tools.stop_capture({"sessionId": session_id}))
+
+    assert result["ok"] is True
+    assert result["wasActive"] is True
+    assert result["filePath"] == "C:/tmp/bus-fallback.wav"
+
+
+def test_register_bus_capture_session_visible_to_stop_capture():
+    session_id = "early-register-session"
+    media_tools._register_bus_capture_session(
+        session_id,
+        kind="audio",
+        device=0,
+        mode="until_stop",
+        flow_id="flow-1",
+    )
+
+    with media_tools._sessions_lock:
+        assert session_id in media_tools._active_sessions
+        assert session_id in media_tools._active_recordings
+        assert media_tools._active_recordings[session_id]["bus_mode"] is True

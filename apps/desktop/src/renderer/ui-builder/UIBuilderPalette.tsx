@@ -46,7 +46,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 const CATEGORY_LABELS: Record<string, { label: string; color: string }> = {
   layout: { label: 'Layout', color: 'from-blue-500 to-cyan-500' },
   input: { label: 'Input', color: 'from-emerald-500 to-teal-500' },
-  display: { label: 'Display', color: 'from-violet-500 to-purple-500' },
+  display: { label: 'Display', color: 'from-rose-500 to-rose-500' },
   special: { label: 'Special', color: 'from-amber-500 to-orange-500' },
 };
 
@@ -80,20 +80,20 @@ export function UIBuilderPalette({ onDragStart }: UIBuilderPaletteProps) {
   };
 
   return (
-    <div className="w-56 bg-slate-50 border-r border-slate-200 flex flex-col h-full">
+    <div className="w-56 uib-surface-2 border-r uib-border flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 border-b border-slate-200 bg-white">
-        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+      <div className="p-3 border-b uib-border uib-surface">
+        <div className="text-xs font-bold uib-fg-muted uppercase tracking-wider mb-2">
           Components
         </div>
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 uib-fg-faint" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+            className="w-full pl-8 pr-3 py-1.5 text-xs uib-surface-2 border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
           />
         </div>
       </div>
@@ -108,19 +108,19 @@ export function UIBuilderPalette({ onDragStart }: UIBuilderPaletteProps) {
           const isExpanded = expandedCategories.has(category);
 
           return (
-            <div key={category} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <div key={category} className="uib-surface rounded-lg border uib-border overflow-hidden">
               {/* Category Header */}
               <button
                 onClick={() => toggleCategory(category)}
-                className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 transition-colors"
+                className="w-full flex items-center justify-between px-3 py-2 uib-hover transition-colors"
               >
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${categoryInfo.color}`} />
-                  <span className="text-xs font-semibold text-slate-700">{categoryInfo.label}</span>
-                  <span className="text-[10px] text-slate-400">({filtered.length})</span>
+                  <span className="text-xs font-semibold uib-fg">{categoryInfo.label}</span>
+                  <span className="text-[10px] uib-fg-faint">({filtered.length})</span>
                 </div>
                 <ChevronDownIcon
-                  className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isExpanded ? '' : '-rotate-90'}`}
+                  className={`w-3.5 h-3.5 uib-fg-faint transition-transform ${isExpanded ? '' : '-rotate-90'}`}
                 />
               </button>
 
@@ -135,16 +135,16 @@ export function UIBuilderPalette({ onDragStart }: UIBuilderPaletteProps) {
                         key={component.type}
                         draggable
                         onDragStart={e => onDragStart(e, component)}
-                        className="group flex flex-col items-center gap-1 p-2 rounded-lg border border-transparent hover:border-indigo-200 hover:bg-indigo-50/50 cursor-grab active:cursor-grabbing transition-all"
+                        className="group flex flex-col items-center gap-1 p-2 rounded-lg border border-transparent hover:border-rose-500/30 hover:bg-rose-500/10 cursor-grab active:cursor-grabbing transition-all"
                         title={component.description}
                       >
                         <div className="relative">
-                          <div className="w-8 h-8 rounded-lg bg-slate-100 group-hover:bg-white flex items-center justify-center text-slate-500 group-hover:text-indigo-600 transition-colors">
+                          <div className="w-8 h-8 rounded-lg uib-surface-2 group-uib-hover flex items-center justify-center uib-fg-muted group-hover:text-rose-500 transition-colors">
                             <Icon className="w-4 h-4" />
                           </div>
-                          <GripVertical className="absolute -right-1 -top-1 w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <GripVertical className="absolute -right-1 -top-1 w-3 h-3 uib-fg-faint opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
-                        <span className="text-[10px] font-medium text-slate-600 group-hover:text-indigo-700 text-center leading-tight">
+                        <span className="text-[10px] font-medium uib-fg-muted group-hover:text-rose-500 text-center leading-tight">
                           {component.label}
                         </span>
                       </div>
@@ -159,14 +159,14 @@ export function UIBuilderPalette({ onDragStart }: UIBuilderPaletteProps) {
         {/* Empty state */}
         {search.trim() && Object.values(PALETTE_BY_CATEGORY).every(c => filterComponents(c).length === 0) && (
           <div className="p-4 text-center">
-            <div className="text-slate-400 text-xs">No components found</div>
+            <div className="uib-fg-faint text-xs">No components found</div>
           </div>
         )}
       </div>
 
       {/* Instructions */}
-      <div className="p-3 border-t border-slate-200 bg-white">
-        <div className="text-[10px] text-slate-400 text-center">
+      <div className="p-3 border-t uib-border uib-surface">
+        <div className="text-[10px] uib-fg-faint text-center">
           Drag components onto the canvas to build your UI
         </div>
       </div>

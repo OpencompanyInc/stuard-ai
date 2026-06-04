@@ -51,13 +51,59 @@ function isScopedName(name: string): boolean {
   return name.startsWith('workflow.') || name.startsWith('local.');
 }
 
+/** Is this the project-wide (global) scope? `workflow.*` is shared across all
+ * stuard files in a project (workspace); `local.*` is per-file. */
+function isWorkflowScopedName(name: string): boolean {
+  return name.startsWith('workflow.');
+}
+
+// ── Project (workspace) scoping ──────────────────────────────────────────────
+// A project = the workspace dir (`<mainFlowId>/main.stuard` + its other .stuard
+// files). `workflow.*` variables are shared across ALL stuard files in that
+// project, so they must key off the PROJECT id, not the per-execution flowId.
+// call_workspace_function runs each sub-.stuard under a fresh execId; without
+// this map its globals would land in a separate namespace and never be seen by
+// main.stuard or sibling files. `local.*` stays keyed by the execution flowId.
+//
+// Default is identity (a flow is its own project), so single-file workflows and
+// intra-spec call_function — which never register a mapping — are unchanged.
+const projectRootByFlow = new Map<string, string>();
+
+/** Map an execution flowId to its owning project (workspace) id. */
+export function registerFlowProject(flowId: string, projectId: string): void {
+  if (flowId && projectId && flowId !== projectId) {
+    projectRootByFlow.set(flowId, projectId);
+  }
+}
+
+/** Drop a flow→project mapping once its run finishes. */
+export function unregisterFlowProject(flowId: string): void {
+  if (flowId) projectRootByFlow.delete(flowId);
+}
+
+/** Resolve a flowId to its project id (transitively); identity if unmapped. */
+export function resolveProjectId(flowId: string | undefined): string | undefined {
+  if (!flowId) return flowId;
+  // Walk the chain (sub→…→main) with a guard against accidental cycles.
+  let cur = flowId;
+  for (let i = 0; i < 16; i++) {
+    const next = projectRootByFlow.get(cur);
+    if (!next || next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
+
 /**
  * Compose a storage key from a flowId and a scoped variable name.
  * If the name isn't scoped, or no flowId is given, returns the name unchanged.
+ * `workflow.*` (global) names key off the resolved PROJECT id so they're shared
+ * across every stuard file in the project; `local.*` keys off the flowId as-is.
  */
 export function composeStorageKey(flowId: string | undefined, name: string): string {
   if (!flowId || !isScopedName(name)) return name;
-  return `${flowId}${KEY_SEPARATOR}${name}`;
+  const keyFlowId = isWorkflowScopedName(name) ? (resolveProjectId(flowId) || flowId) : flowId;
+  return `${keyFlowId}${KEY_SEPARATOR}${name}`;
 }
 
 /** Parse a storage key back to its components. */
@@ -352,5 +398,28 @@ export function cleanupWorkflowVariables(flowId: string): void {
 
   unregisterWorkflowVariables(flowId);
   saveVariables();
+}
+
+/**
+ * Clear a flow's ephemeral `local.*` variables (keyed `${flowId}::local.*`).
+ * Used when a workspace sub-function run finishes: its locals are scoped to that
+ * one execId and would otherwise accumulate in the store/disk across repeated
+ * calls. Deliberately never touches `workflow.*` (project-scoped) keys, which
+ * are shared and outlive the sub-run.
+ */
+export function clearFlowLocalVariables(flowId: string): void {
+  if (!flowId) return;
+  const localPrefix = `${flowId}${KEY_SEPARATOR}local.`;
+  let removed = 0;
+  for (const [key, entry] of variableStore.entries()) {
+    if (key.startsWith(localPrefix) || (entry.flowId === flowId && parseStorageKey(key).scopedName.startsWith('local.'))) {
+      variableStore.delete(key);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    console.log(`[VARS] Cleared ${removed} local variable(s) for sub-run ${flowId}`);
+    saveVariables();
+  }
 }
 

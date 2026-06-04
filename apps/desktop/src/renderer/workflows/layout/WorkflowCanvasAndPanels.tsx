@@ -24,6 +24,10 @@ interface WorkflowCanvasAndPanelsProps {
   logs: Array<{ ts: string; msg: string }>;
   floatingContent?: React.ReactNode;
   rightPanel: RightPanel;
+  /** True while the floating AI panel is open — docked panels dock to its left. */
+  aiOpen: boolean;
+  /** Current width of the AI panel, used to offset docked panels beside it. */
+  aiLeftWidth: number;
   manualRightWidth: number;
   errors: ValidationError[];
   showWorkspace: boolean;
@@ -92,6 +96,8 @@ export function WorkflowCanvasAndPanels({
   logs,
   floatingContent,
   rightPanel,
+  aiOpen,
+  aiLeftWidth,
   manualRightWidth,
   errors,
   showWorkspace,
@@ -187,6 +193,8 @@ export function WorkflowCanvasAndPanels({
 
       <WorkflowRightPanels
         rightPanel={rightPanel}
+        aiOpen={aiOpen}
+        aiLeftWidth={aiLeftWidth}
         manualRightWidth={manualRightWidth}
         onStartResizeManualRight={onStartResizeManualRight}
         onResetManualRightWidth={onResetManualRightWidth}

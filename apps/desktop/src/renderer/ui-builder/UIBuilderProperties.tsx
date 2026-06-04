@@ -36,19 +36,19 @@ function Section({
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="border-b border-slate-100 last:border-b-0">
+    <div className="border-b uib-border-subtle last:border-b-0">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2.5 uib-hover transition-colors"
       >
         <div className="flex items-center gap-2">
-          {Icon && <Icon className="w-3.5 h-3.5 text-slate-400" />}
-          <span className="text-xs font-semibold text-slate-700">{title}</span>
+          {Icon && <Icon className="w-3.5 h-3.5 uib-fg-faint" />}
+          <span className="text-xs font-semibold uib-fg">{title}</span>
         </div>
         {isOpen ? (
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+          <ChevronDown className="w-3.5 h-3.5 uib-fg-faint" />
         ) : (
-          <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+          <ChevronRight className="w-3.5 h-3.5 uib-fg-faint" />
         )}
       </button>
       {isOpen && <div className="px-4 pb-4 space-y-3">{children}</div>}
@@ -61,7 +61,7 @@ function Section({
 function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
-      <label className="w-20 shrink-0 text-xs text-slate-500">{label}</label>
+      <label className="w-20 shrink-0 text-xs uib-fg-muted">{label}</label>
       <div className="flex-1">{children}</div>
     </div>
   );
@@ -84,7 +84,7 @@ function TextInput({
       value={value}
       onChange={e => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 ${className}`}
+      className={`w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40 ${className}`}
     />
   );
 }
@@ -110,7 +110,7 @@ function NumberInput({
       min={min}
       max={max}
       step={step}
-      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+      className="w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
     />
   );
 }
@@ -128,14 +128,14 @@ function ColorInput({
         type="color"
         value={value || '#000000'}
         onChange={e => onChange(e.target.value)}
-        className="w-8 h-8 rounded border border-slate-200 cursor-pointer"
+        className="w-8 h-8 rounded border uib-border cursor-pointer"
       />
       <input
         type="text"
         value={value || ''}
         onChange={e => onChange(e.target.value)}
         placeholder="#000000"
-        className="flex-1 px-2 py-1.5 text-xs border border-slate-200 rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+        className="flex-1 px-2 py-1.5 text-xs border uib-border rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
       />
     </div>
   );
@@ -154,7 +154,7 @@ function SelectInput<T extends string>({
     <select
       value={value || ''}
       onChange={e => onChange(e.target.value as T)}
-      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 bg-white"
+      className="w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40 uib-surface"
     >
       <option value="">Select...</option>
       {options.map(opt => (
@@ -178,15 +178,15 @@ function ToggleInput({
       <button
         type="button"
         onClick={() => onChange(!value)}
-        className={`relative w-8 h-5 rounded-full transition-colors ${value ? 'bg-indigo-500' : 'bg-slate-300'
+        className={`relative w-8 h-5 rounded-full transition-colors ${value ? 'bg-rose-500' : 'uib-surface-2'
           }`}
       >
         <div
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${value ? 'left-3.5' : 'left-0.5'
+          className={`absolute top-0.5 w-4 h-4 rounded-full uib-surface shadow-sm transition-transform ${value ? 'left-3.5' : 'left-0.5'
             }`}
         />
       </button>
-      <span className="text-xs text-slate-600">{label}</span>
+      <span className="text-xs uib-fg-muted">{label}</span>
     </label>
   );
 }
@@ -203,12 +203,12 @@ export function UIBuilderProperties({
 }: UIBuilderPropertiesProps) {
   if (!element) {
     return (
-      <div className="w-64 bg-white border-l border-slate-200 flex flex-col h-full">
-        <div className="p-4 border-b border-slate-100">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Properties</div>
+      <div className="w-64 uib-surface border-l uib-border flex flex-col h-full">
+        <div className="p-4 border-b uib-border-subtle">
+          <div className="text-xs font-bold uib-fg-muted uppercase tracking-wider">Properties</div>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
-          <div className="text-center text-slate-400">
+          <div className="text-center uib-fg-faint">
             <Box className="w-8 h-8 mx-auto mb-2 opacity-50" />
             <p className="text-xs">Select an element to edit its properties</p>
           </div>
@@ -230,22 +230,22 @@ export function UIBuilderProperties({
   };
 
   return (
-    <div className="w-64 bg-white border-l border-slate-200 flex flex-col h-full">
+    <div className="w-64 uib-surface border-l uib-border flex flex-col h-full">
       {/* Header */}
-      <div className="p-4 border-b border-slate-100 bg-slate-50">
+      <div className="p-4 border-b uib-border-subtle uib-surface-2">
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Properties</div>
+          <div className="text-xs font-bold uib-fg-muted uppercase tracking-wider">Properties</div>
           <div className="flex items-center gap-1">
             <button
               onClick={onDuplicate}
-              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+              className="p-1.5 uib-fg-faint hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors"
               title="Duplicate"
             >
               <Copy className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={onDelete}
-              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+              className="p-1.5 uib-fg-faint hover:text-red-400 hover:bg-red-500/15 rounded transition-colors"
               title="Delete"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -253,7 +253,7 @@ export function UIBuilderProperties({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
+          <div className="w-8 h-8 rounded-lg bg-rose-500/15 flex items-center justify-center text-rose-500">
             <Box className="w-4 h-4" />
           </div>
           <div>
@@ -261,9 +261,9 @@ export function UIBuilderProperties({
               type="text"
               value={element.name || element.type}
               onChange={e => onUpdate({ name: e.target.value })}
-              className="w-full text-sm font-semibold text-slate-800 bg-transparent border-none p-0 focus:outline-none focus:ring-0"
+              className="w-full text-sm font-semibold uib-fg bg-transparent border-none p-0 focus:outline-none focus:ring-0"
             />
-            <div className="text-[10px] text-slate-400 font-mono">{element.type} #{element.id.slice(-6)}</div>
+            <div className="text-[10px] uib-fg-faint font-mono">{element.type} #{element.id.slice(-6)}</div>
           </div>
         </div>
       </div>
@@ -614,18 +614,18 @@ export function UIBuilderProperties({
           <div className="flex gap-2">
             <button
               onClick={onSendBackward}
-              className="flex-1 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              className="flex-1 py-1.5 text-xs font-medium uib-fg-muted border uib-border rounded-md uib-hover transition-colors"
             >
               Send Back
             </button>
             <button
               onClick={onBringForward}
-              className="flex-1 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+              className="flex-1 py-1.5 text-xs font-medium uib-fg-muted border uib-border rounded-md uib-hover transition-colors"
             >
               Bring Forward
             </button>
           </div>
-          <div className="text-[10px] text-slate-400 text-center">
+          <div className="text-[10px] uib-fg-faint text-center">
             Z-Index: {element.zIndex || 0}
           </div>
         </Section>

@@ -142,6 +142,43 @@ def _get_or_create_bus(kind: str, device: Optional[int] = None) -> MediaBus:
         return _buses[key]
 
 
+def find_subscriber_session(subscriber_id: str) -> Optional[Dict[str, Any]]:
+    """Find an active bus subscriber by session/subscriber id (for stop_capture fallback)."""
+    sid = str(subscriber_id or "").strip()
+    if not sid:
+        return None
+
+    with _audiovideo_lock:
+        av_info = _audiovideo_subscriptions.get(f"audiovideo:{sid}")
+        if av_info:
+            return {
+                "kind": "audiovideo",
+                "device": av_info.get("videoDevice"),
+                "audioDevice": av_info.get("audioDevice"),
+                "bus_mode": True,
+                "path": av_info.get("finalPath"),
+                "bus_id": av_info.get("busId"),
+            }
+
+    with _buses_lock:
+        buses = list(_buses.values())
+
+    for bus in buses:
+        with bus.subscribers_lock:
+            sub = bus.subscribers.get(sid)
+            if sub:
+                return {
+                    "kind": bus.kind,
+                    "device": bus.device,
+                    "bus_mode": True,
+                    "path": sub.recording_path,
+                    "bus_id": bus.bus_id,
+                    "recording_active": sub.recording_active,
+                }
+
+    return None
+
+
 def _capture_dir_for_kind(kind: str) -> str:
     if kind == "audio":
         return library_source_dir("audio-recordings")
@@ -171,6 +208,7 @@ def _audio_bus_worker(bus: MediaBus) -> None:
     except ImportError as e:
         bus.errors.append(f"Import error: {e}")
         bus.running = False
+        _remove_bus(bus.kind, bus.device)
         return
     
     print(f"[audio_bus] Starting bus '{bus.bus_id}' on device {bus.device}")
@@ -192,6 +230,7 @@ def _audio_bus_worker(bus: MediaBus) -> None:
         bus.errors.append(err_msg)
         print(f"[audio_bus] Error: {err_msg}")
         bus.running = False
+        _remove_bus(bus.kind, bus.device)
         return
 
     print(f"[audio_bus] Found {len(available_devices)} input device(s)")
@@ -258,6 +297,7 @@ def _audio_bus_worker(bus: MediaBus) -> None:
         bus.errors.append(err_msg)
         print(f"[audio_bus] Error: {err_msg}")
         bus.running = False
+        _remove_bus(bus.kind, bus.device)
         return
 
     def audio_callback(indata, frames, time_info, status):
@@ -347,11 +387,21 @@ def _audio_bus_worker(bus: MediaBus) -> None:
                             for sub in bus.subscribers.values():
                                 if sub.recording_active:
                                     sub.recorded_chunks.append(chunk)
-                                # Push to linked stream if set (include volumePercent)
+                                # Push to linked stream if set (include volumePercent +
+                                # PCM params so downstream transcription can build a WAV)
                                 if sub.stream_id:
                                     try:
                                         from . import streams as _streams_mod
-                                        _streams_mod.push_to_stream(sub.stream_id, chunk, metadata={"volumePercent": round(rms * 100, 2)})
+                                        _streams_mod.push_to_stream(
+                                            sub.stream_id,
+                                            chunk,
+                                            metadata={
+                                                "volumePercent": round(rms * 100, 2),
+                                                "sampleRate": int(bus.samplerate),
+                                                "channels": 1,
+                                                "pcmFormat": "float32",
+                                            },
+                                        )
                                     except Exception:
                                         pass
                                 
@@ -404,6 +454,7 @@ def _video_bus_worker(bus: MediaBus) -> None:
     except ImportError as e:
         bus.errors.append(f"Import error: {e}")
         bus.running = False
+        _remove_bus(bus.kind, bus.device)
         return
     
     print(f"[video_bus] Starting bus '{bus.bus_id}' on device {bus.device}")
@@ -422,6 +473,7 @@ def _video_bus_worker(bus: MediaBus) -> None:
     if not cap.isOpened():
         bus.errors.append("camera_open_failed")
         bus.running = False
+        _remove_bus(bus.kind, bus.device)
         return
     
     # Get properties
@@ -513,7 +565,10 @@ def _video_bus_worker(bus: MediaBus) -> None:
 def _start_bus(bus: MediaBus) -> None:
     """Start the bus capture thread if not already running."""
     if bus.running:
-        return
+        # Recover from stale running flag if the worker thread died unexpectedly.
+        if bus.thread and bus.thread.is_alive():
+            return
+        bus.running = False
     
     bus.running = True
     bus.started_at = time.time()

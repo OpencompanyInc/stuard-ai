@@ -155,6 +155,28 @@ interface InspectorPanelProps {
   onClose: () => void;
 }
 
+// Does this node emit a live stream (i.e. return a streamId)? Drives whether the
+// variable picker offers stream fields ({{id.streamId}}, {{id.text}}, {{id.chunk}},
+// {{id.fullText}}, {{id.volumePercent}}) on downstream nodes.
+function nodeProducesStream(node: any): boolean {
+  const tool = String(node?.tool || '');
+  const args = node?.args || {};
+  if (args.stream === true) return true;            // ai_inference, http, capture tools, …
+  if (String(args.mode || '') === 'stream') return true; // capture_* explicit stream mode
+  if (/^stream_(create|from_)/.test(tool)) return true;  // stream_create / stream_from_*
+  return false;
+}
+
+// Media kind for capture nodes — lets the picker add audio-only fields (volumePercent).
+function nodeMediaKind(node: any): string | undefined {
+  const tool = String(node?.tool || '');
+  const args = node?.args || {};
+  if (tool === 'capture_system_audio') return 'audio';
+  if (tool === 'capture_screen') return 'video';
+  if (tool === 'capture_media') return String(args.kind || '') || undefined;
+  return undefined;
+}
+
 // Find all upstream nodes by tracing wires backwards
 function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] {
   const visited = new Set<string>();
@@ -190,6 +212,8 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
           id: node.id,
           label: node.label || node.tool || 'Step',
           tool: node.tool,
+          hasStream: nodeProducesStream(node),
+          mediaKind: nodeMediaKind(node),
         });
         // Continue traversing upstream
         traverse(sourceId);
@@ -613,10 +637,15 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
                         {'{'}
                       </div>
                       <span className="text-xs font-medium wf-fg">{v.label}</span>
+                      {v.hasStream && (
+                        <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wide text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded-full px-1.5 py-0.5">
+                          <Activity className="w-2.5 h-2.5" /> stream
+                        </span>
+                      )}
 
                       {/* Tooltip */}
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] wf-bg-elevated wf-fg text-[10px] border wf-border-subtle rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                        ID: {v.id}
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[220px] wf-bg-elevated wf-fg text-[10px] border wf-border-subtle rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        ID: {v.id}{v.hasStream ? ' · streams: streamId, text, chunk, fullText' + (v.mediaKind === 'audio' || v.mediaKind === 'audiovideo' ? ', volumePercent' : '') : ''}
                       </div>
                     </div>
                   ))}

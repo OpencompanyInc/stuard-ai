@@ -15,7 +15,7 @@ import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreferen
 import { writeLog } from '../../utils/logger';
 
 // Core tools
-import { search_tools, search_workflow_nodes } from '../../tools/meta-tools';
+import { search_tools, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
 import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
 import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
@@ -170,8 +170,11 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
       createSearchWorkflowDocsTool({ seen: new Set<string>() }),
       'search_workflow_docs',
     ),
-    // 2. Search workflow nodes with schema metadata
-    search_workflow_nodes: createLoggedTool(search_workflow_nodes, 'search_workflow_nodes'),
+    // 2. Search workflow nodes — fresh dedup set per session (won't repeat same node)
+    search_workflow_nodes: createLoggedTool(
+      createSearchWorkflowNodesTool({ seen: new Set<string>() }),
+      'search_workflow_nodes',
+    ),
     // 3. Search tools (sis search)
     search_tools: createLoggedTool(search_tools, 'search_tools'),
     // 4. Get tool schema

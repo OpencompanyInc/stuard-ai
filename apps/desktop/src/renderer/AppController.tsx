@@ -685,14 +685,9 @@ export function useAppController() {
     };
   }, []);
 
-  // Global Hotkeys (F1, Ctrl+T)
+  // Global Hotkeys (Ctrl+T, Ctrl+W, Ctrl+Tab)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F1' || (e.key === '/' && e.ctrlKey)) {
-        if (showHotkeys) return;
-        e.preventDefault();
-        setShowPalette(true);
-      }
       // Ctrl+T for new tab + focus input
       if (e.key === 't' && e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
@@ -721,7 +716,7 @@ export function useAppController() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showHotkeys, addTab, closeTab, tabs, activeTabId, switchTab]);
+  }, [addTab, closeTab, tabs, activeTabId, switchTab]);
 
   // Agent Events (Approval, Canvas, Notifications)
   useEffect(() => {
@@ -1830,7 +1825,7 @@ export function useAppController() {
           await window.desktopAPI.startOverlayScreenSnip?.();
         }
       },
-      { id: 'show-hotkeys', title: 'Show hotkeys', description: 'View keyboard shortcuts', icon: <Keyboard className="w-5 h-5" />, shortcut: 'F1', run: () => setShowHotkeys(true) },
+      { id: 'show-hotkeys', title: 'Show hotkeys', description: 'View keyboard shortcuts', icon: <Keyboard className="w-5 h-5" />, run: () => setShowHotkeys(true) },
       { id: 'rerun-onboarding', title: 'Rerun onboarding', description: 'Start the welcome tour again', icon: <RefreshCw className="w-5 h-5" />, run: () => { setOnboardingComplete(false); setTourComplete(false); } },
       { id: 'hide-overlay', title: 'Hide overlay', description: 'Close Stuard window', icon: <Power className="w-5 h-5" />, shortcut: 'Esc', run: () => window.desktopAPI.hide() },
       { id: 'tone-concise', title: 'Tone: Concise', description: 'Set response tone', icon: <MessageSquare className="w-5 h-5" />, group: 'Tone & Persona', run: () => setTone('concise') },

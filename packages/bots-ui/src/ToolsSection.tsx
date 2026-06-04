@@ -4,6 +4,7 @@ import { clsx } from 'clsx';
 import { Check, Plus, Search, Wrench, X } from 'lucide-react';
 import { humanizeToolName } from './helpers';
 import { useBotsPlatform } from './BotsPlatformContext';
+import { useStudioThemeScope } from './theme-scope';
 
 export function ToolsSection({
   selected,
@@ -98,6 +99,7 @@ export function ToolsPickerModal({
   onClose: () => void;
   onApply: (next: string[]) => void;
 }) {
+  const themeScope = useStudioThemeScope();
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<Set<string>>(new Set(selected));
 
@@ -120,23 +122,24 @@ export function ToolsPickerModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-150"
+      data-wf-theme={themeScope}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150"
       onClick={onClose}
-      style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
+      style={{ WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)' }}
     >
       <div
         className="w-full max-w-lg overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
       >
-        <div className="border-b border-theme/15 p-4">
+        <div className="border-b border-[color:var(--dashboard-panel-border)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="font-stuard text-lg font-semibold text-theme-fg">Add tools</h2>
               <p className="mt-0.5 text-[12px] text-theme-muted">Pick exact extra tools for this agent. Empty = built-in tools only.</p>
             </div>
-            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">{draft.size} selected</span>
+            <span className="rounded-full bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] px-2.5 py-1 text-[11px] font-semibold text-[color:var(--primary)]">{draft.size} selected</span>
           </div>
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2">
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-[color:var(--dashboard-panel-border)] px-3 py-2">
             <Search className="h-3.5 w-3.5 text-theme-muted" />
             <input
               autoFocus
@@ -144,7 +147,7 @@ export function ToolsPickerModal({
               placeholder="Search tools…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="flex-1 bg-transparent text-[13px] text-theme-fg outline-none placeholder:text-theme-muted/60"
+              className="flex-1 bg-transparent text-[13px] text-theme-fg outline-none placeholder:text-[color:color-mix(in_srgb,var(--foreground-muted)_60%,transparent)]"
             />
             {search && (
               <button onClick={() => setSearch('')} className="rounded p-1 text-theme-muted hover:text-theme-fg">
@@ -167,12 +170,12 @@ export function ToolsPickerModal({
                   onClick={() => toggle(tool)}
                   className={clsx(
                     'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition',
-                    checked ? 'bg-primary/10 text-primary' : 'text-theme-fg hover:bg-theme-hover/40',
+                    checked ? 'bg-[color-mix(in_srgb,var(--primary)_10%,transparent)] text-[color:var(--primary)]' : 'text-theme-fg hover:bg-theme-hover',
                   )}
                 >
                   <div className={clsx(
                     'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                    checked ? 'border-primary bg-primary' : 'border-theme/30',
+                    checked ? 'border-[color:var(--primary)] bg-primary' : 'border-[color:var(--dashboard-panel-border)]',
                   )}>
                     {checked && <Check className="h-3 w-3 text-primary-fg" />}
                   </div>
@@ -183,7 +186,7 @@ export function ToolsPickerModal({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-theme/15 p-3">
+        <div className="flex items-center justify-between gap-2 border-t border-[color:var(--dashboard-panel-border)] p-3">
           <button
             onClick={() => setDraft(new Set())}
             className="rounded-full px-3 py-1.5 text-[12px] text-theme-muted transition hover:text-theme-fg"

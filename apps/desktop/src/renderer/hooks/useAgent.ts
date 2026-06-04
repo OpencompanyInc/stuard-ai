@@ -15,9 +15,9 @@ import {
 
 const DEFAULT_TAB_CHAT_MODE: ChatMode = 'auto';
 const DEFAULT_TAB_CHAT_MODELS: ChatModelsConfig = {
-  fast: { allowed: [], default: 'deepseek/deepseek-chat' },
-  balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
-  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  fast: { allowed: [], default: 'google/gemini-3.1-flash-lite' },
+  balanced: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  smart: { allowed: [], default: 'openai/gpt-5.4' },
 };
 const LOCALLY_STOPPED_REQUEST_TTL_MS = 10 * 60_000;
 

@@ -129,22 +129,22 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Tool Actions</div>
+        <div className="text-xs font-semibold uib-fg-muted uppercase tracking-wider">Tool Actions</div>
         <button
           onClick={() => setShowAdd(!showAdd)}
-          className="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200"
+          className="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/15 border border-emerald-500/30"
         >
           {showAdd ? 'Cancel' : '+ Add'}
         </button>
       </div>
 
       {showAdd && (
-        <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-200 flex flex-col gap-2">
+        <div className="uib-surface-2 rounded-lg p-2.5 border uib-border flex flex-col gap-2">
           {/* Trigger selector */}
           <select
             value={newTrigger}
             onChange={e => setNewTrigger(e.target.value as 'click' | 'load' | 'stateChange')}
-            className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+            className="w-full px-2 py-1 text-xs border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
           >
             <option value="click">On Button Click</option>
             <option value="load">On Page Load</option>
@@ -157,36 +157,36 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
             value={toolSearch}
             onChange={e => setToolSearch(e.target.value)}
             placeholder="Search tools..."
-            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+            className="w-full px-2 py-1.5 text-xs border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
             autoFocus
           />
 
           {/* Tool list */}
           <div className="max-h-48 overflow-y-auto scrollbar-minimal space-y-0.5">
             {filteredTools.length === 0 && (
-              <div className="text-[10px] text-slate-400 text-center py-2">No tools match "{toolSearch}"</div>
+              <div className="text-[10px] uib-fg-faint text-center py-2">No tools match "{toolSearch}"</div>
             )}
             {filteredTools.map(tool => (
               <button
                 key={tool.name}
                 onClick={() => addToolAction(tool)}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-emerald-50 transition-colors group"
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-emerald-500/15 transition-colors group"
               >
                 <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${
-                  tool.kind === 'cloud' ? 'bg-sky-50 text-sky-600' : 'bg-slate-100 text-slate-500'
+                  tool.kind === 'cloud' ? 'bg-sky-50 text-sky-600' : 'uib-surface-2 uib-fg-muted'
                 }`}>
                   {tool.kind === 'cloud' ? 'cloud' : 'local'}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-medium text-slate-700 truncate group-hover:text-emerald-700">{tool.label}</div>
-                  <div className="text-[9px] text-slate-400 font-mono truncate">{tool.name}</div>
+                  <div className="text-[11px] font-medium uib-fg truncate group-hover:text-emerald-400">{tool.label}</div>
+                  <div className="text-[9px] uib-fg-faint font-mono truncate">{tool.name}</div>
                 </div>
               </button>
             ))}
           </div>
 
           {!toolSearch && (
-            <div className="text-[9px] text-slate-400 text-center">
+            <div className="text-[9px] uib-fg-faint text-center">
               {ALL_TOOLS.length} tools available — type to search
             </div>
           )}
@@ -194,7 +194,7 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
       )}
 
       {toolActions.length === 0 && !showAdd && (
-        <div className="text-xs text-slate-400 text-center py-3">
+        <div className="text-xs uib-fg-faint text-center py-3">
           No tool actions yet. Add one to call tools from your UI.
         </div>
       )}
@@ -203,26 +203,26 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
         {toolActions.map(action => {
           const isExpanded = expandedId === action.id;
           return (
-            <div key={action.id} className="bg-white border border-slate-200 rounded-md overflow-hidden">
+            <div key={action.id} className="uib-surface border uib-border rounded-md overflow-hidden">
               {/* Header */}
               <div
-                className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-slate-50 transition-colors"
+                className="flex items-center gap-2 px-2 py-1.5 cursor-pointer uib-hover transition-colors"
                 onClick={() => setExpandedId(isExpanded ? null : action.id)}
               >
                 <span className={`text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${
-                  action.trigger === 'click' ? 'bg-emerald-50 text-emerald-600'
-                  : action.trigger === 'load' ? 'bg-amber-50 text-amber-600'
-                  : 'bg-blue-50 text-blue-600'
+                  action.trigger === 'click' ? 'bg-emerald-500/15 text-emerald-400'
+                  : action.trigger === 'load' ? 'bg-amber-500/15 text-amber-400'
+                  : 'bg-blue-500/15 text-blue-400'
                 }`}>
                   {action.trigger}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-slate-700 truncate">{action.name}</div>
-                  <div className="text-[10px] text-slate-400 font-mono truncate">{action.toolName}</div>
+                  <div className="text-xs font-medium uib-fg truncate">{action.name}</div>
+                  <div className="text-[10px] uib-fg-faint font-mono truncate">{action.toolName}</div>
                 </div>
                 <button
                   onClick={e => { e.stopPropagation(); handleDelete(action.id); }}
-                  className="text-slate-400 hover:text-red-500 text-xs p-0.5 rounded hover:bg-red-50 transition-colors"
+                  className="uib-fg-faint hover:text-red-400 text-xs p-0.5 rounded hover:bg-red-500/15 transition-colors"
                   title="Delete action"
                 >
                   ✕
@@ -231,21 +231,21 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
 
               {/* Expanded config */}
               {isExpanded && (
-                <div className="px-2 pb-2 pt-1 border-t border-slate-100 flex flex-col gap-2">
+                <div className="px-2 pb-2 pt-1 border-t uib-border-subtle flex flex-col gap-2">
                   {/* Args */}
-                  <div className="text-[10px] font-semibold text-slate-500 uppercase">Arguments</div>
+                  <div className="text-[10px] font-semibold uib-fg-muted uppercase">Arguments</div>
                   {Object.keys(action.args).length === 0 && (
-                    <div className="text-[10px] text-slate-400">No arguments needed</div>
+                    <div className="text-[10px] uib-fg-faint">No arguments needed</div>
                   )}
                   {Object.entries(action.args).map(([key, value]) => (
                     <div key={key} className="flex items-center gap-1">
-                      <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right truncate" title={key}>{key}:</label>
+                      <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right truncate" title={key}>{key}:</label>
                       <input
                         type="text"
                         value={String(value ?? '')}
                         onChange={e => handleArgChange(action.id, key, e.target.value)}
                         placeholder={`$state.varName or value`}
-                        className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none font-mono"
+                        className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none font-mono"
                       />
                       <button
                         onClick={() => {
@@ -253,7 +253,7 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                           delete newArgs[key];
                           handleUpdate(action.id, { args: newArgs });
                         }}
-                        className="text-slate-300 hover:text-red-400 text-[10px] shrink-0"
+                        className="uib-fg-faint hover:text-red-400 text-[10px] shrink-0"
                         title="Remove arg"
                       >
                         ✕
@@ -265,13 +265,13 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                   <AddArgRow onAdd={(key) => handleArgChange(action.id, key, '')} />
 
                   {/* Result binding */}
-                  <div className="text-[10px] font-semibold text-slate-500 uppercase mt-1">Result Binding</div>
+                  <div className="text-[10px] font-semibold uib-fg-muted uppercase mt-1">Result Binding</div>
                   <div className="flex items-center gap-1">
-                    <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right">Store in:</label>
+                    <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right">Store in:</label>
                     <select
                       value={action.resultVar || ''}
                       onChange={e => handleUpdate(action.id, { resultVar: e.target.value || undefined })}
-                      className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+                      className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
                     >
                       <option value="">— none —</option>
                       {stateVariables.map(v => (
@@ -280,11 +280,11 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                     </select>
                   </div>
                   <div className="flex items-center gap-1">
-                    <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right">Loading:</label>
+                    <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right">Loading:</label>
                     <select
                       value={action.loadingVar || ''}
                       onChange={e => handleUpdate(action.id, { loadingVar: e.target.value || undefined })}
-                      className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+                      className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
                     >
                       <option value="">— none —</option>
                       {stateVariables.filter(v => v.type === 'boolean').map(v => (
@@ -293,11 +293,11 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                     </select>
                   </div>
                   <div className="flex items-center gap-1">
-                    <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right">Error:</label>
+                    <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right">Error:</label>
                     <select
                       value={action.errorVar || ''}
                       onChange={e => handleUpdate(action.id, { errorVar: e.target.value || undefined })}
-                      className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+                      className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
                     >
                       <option value="">— none —</option>
                       {stateVariables.filter(v => v.type === 'string').map(v => (
@@ -309,20 +309,20 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                   {/* Trigger config for click — select which element triggers this */}
                   {action.trigger === 'click' && (
                     <>
-                      <div className="text-[10px] font-semibold text-slate-500 uppercase mt-1">Trigger Element</div>
+                      <div className="text-[10px] font-semibold uib-fg-muted uppercase mt-1">Trigger Element</div>
                       {clickableElements.length === 0 ? (
-                        <div className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1.5 rounded border border-amber-200">
-                          No elements with an <code className="font-mono bg-amber-100 px-1 rounded">id</code> found. Give your button an ID in the Actions/Content panel first.
+                        <div className="text-[10px] text-amber-400 bg-amber-500/15 px-2 py-1.5 rounded border border-amber-500/30">
+                          No elements with an <code className="font-mono bg-amber-500/15 px-1 rounded">id</code> found. Give your button an ID in the Actions/Content panel first.
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
-                          <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right">Button:</label>
+                          <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right">Button:</label>
                           <select
                             value={action.triggerConfig?.elementId || ''}
                             onChange={e => handleUpdate(action.id, {
                               triggerConfig: { ...action.triggerConfig, elementId: e.target.value || undefined }
                             })}
-                            className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+                            className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
                           >
                             <option value="">Select element...</option>
                             {clickableElements.map(el => {
@@ -337,7 +337,7 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                         </div>
                       )}
                       {action.triggerConfig?.elementId && (
-                        <div className="text-[9px] text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                        <div className="text-[9px] text-emerald-400 bg-emerald-500/15 px-2 py-1 rounded">
                           Clicking <code className="font-mono">#{action.triggerConfig.elementId}</code> will call <code className="font-mono">{action.toolName}</code>
                         </div>
                       )}
@@ -347,15 +347,15 @@ export function ToolActionPanel({ toolActions, stateVariables, onChange, current
                   {/* Trigger config for stateChange */}
                   {action.trigger === 'stateChange' && (
                     <>
-                      <div className="text-[10px] font-semibold text-slate-500 uppercase mt-1">Trigger Config</div>
+                      <div className="text-[10px] font-semibold uib-fg-muted uppercase mt-1">Trigger Config</div>
                       <div className="flex items-center gap-1">
-                        <label className="text-[10px] text-slate-500 w-16 shrink-0 text-right">Watch:</label>
+                        <label className="text-[10px] uib-fg-muted w-16 shrink-0 text-right">Watch:</label>
                         <select
                           value={action.triggerConfig?.stateVar || ''}
                           onChange={e => handleUpdate(action.id, {
                             triggerConfig: { ...action.triggerConfig, stateVar: e.target.value || undefined }
                           })}
-                          className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none"
+                          className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none"
                         >
                           <option value="">Select variable...</option>
                           {stateVariables.map(v => (
@@ -384,7 +384,7 @@ function AddArgRow({ onAdd }: { onAdd: (key: string) => void }) {
     return (
       <button
         onClick={() => setShow(true)}
-        className="text-[10px] text-emerald-500 hover:text-emerald-600 self-start"
+        className="text-[10px] text-emerald-400 hover:text-emerald-400 self-start"
       >
         + custom arg
       </button>
@@ -398,7 +398,7 @@ function AddArgRow({ onAdd }: { onAdd: (key: string) => void }) {
         value={key}
         onChange={e => setKey(e.target.value)}
         placeholder="arg name"
-        className="flex-1 px-1.5 py-0.5 text-[11px] border border-slate-200 rounded bg-white focus:border-emerald-400 focus:outline-none font-mono"
+        className="flex-1 px-1.5 py-0.5 text-[11px] border uib-border rounded uib-surface focus:border-emerald-400 focus:outline-none font-mono"
         autoFocus
         onKeyDown={e => {
           if (e.key === 'Enter' && key.trim()) {
@@ -411,7 +411,7 @@ function AddArgRow({ onAdd }: { onAdd: (key: string) => void }) {
       />
       <button
         onClick={() => { if (key.trim()) { onAdd(key.trim()); setKey(''); setShow(false); } }}
-        className="text-[10px] text-emerald-500 hover:text-emerald-600"
+        className="text-[10px] text-emerald-400 hover:text-emerald-400"
       >
         Add
       </button>

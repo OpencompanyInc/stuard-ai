@@ -266,7 +266,7 @@ function DashboardApp() {
   const billingRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preferences
-  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, terminalEnabled, setTerminalEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
+  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
   const [personaDraft, setPersonaDraft] = useState<string>(persona || "");
   useEffect(() => { setPersonaDraft(persona || ""); }, [persona]);
 
@@ -1578,18 +1578,10 @@ function DashboardApp() {
 
             {/* Right: live status + every primary CTA (white pills) */}
             <div className="flex items-center gap-2 shrink-0">
-              {userEmail && (
-                <>
-                  <span className="dashboard-badge hidden md:inline-flex">
-                    <span className="dashboard-badge-dot" />
-                    Online
-                  </span>
-                  {typeof creditsRemaining === 'number' && (
-                    <span className="dashboard-badge hidden lg:inline-flex">
-                      {creditsRemaining.toLocaleString()} credits
-                    </span>
-                  )}
-                </>
+              {userEmail && typeof creditsRemaining === 'number' && (
+                <span className="dashboard-badge hidden lg:inline-flex">
+                  {creditsRemaining.toLocaleString()} credits
+                </span>
               )}
               {effectiveHeaderActions.map((action) => {
                 const ActionIcon = action.icon;
@@ -1728,8 +1720,6 @@ function DashboardApp() {
                               setTranslucentMode={setTranslucentMode}
                               wakewordEnabled={wakewordEnabled}
                               setWakewordEnabled={setWakewordEnabled}
-                              terminalEnabled={terminalEnabled}
-                              setTerminalEnabled={setTerminalEnabled}
                               screenCaptureInvisible={screenCaptureInvisible}
                               setScreenCaptureInvisible={setScreenCaptureInvisible}
                               handleSaveTheme={handleSaveTheme}

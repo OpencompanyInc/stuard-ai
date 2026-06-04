@@ -5,6 +5,7 @@ import "./styles.css";
 import { OnboardingProvider } from "./components/onboarding";
 import { ConversationalOnboarding } from "./components/onboarding/ConversationalOnboarding";
 import { CoachingTour } from "./components/onboarding/CoachingTour";
+import { StudioIntro } from "./components/onboarding/StudioIntro";
 import { usePreferences } from "./hooks/usePreferences";
 
 // Toggle the Electron click-through state based on whether the cursor is over
@@ -50,12 +51,15 @@ function OnboardingApp() {
   const { setOnboardingComplete, setTourComplete } = usePreferences();
   useClickThroughTracker();
 
-  // Two phases inside this overlay: the welcome scenes, then the coaching demo
-  // (which replaces the old in-app InteractiveTour).
-  const [phase, setPhase] = useState<'welcome' | 'coaching'>('welcome');
+  // Three phases inside this overlay: the welcome scenes, the coaching demo
+  // (which replaces the old in-app InteractiveTour), then a Studio hand-off.
+  const [phase, setPhase] = useState<'welcome' | 'coaching' | 'studio'>('welcome');
 
   // Welcome "Open Stuard" hands off into the coaching demo — don't close yet.
   const handleWelcomeDone = () => setPhase('coaching');
+
+  // The coaching tour's last step now leads into the Studio intro, not the exit.
+  const handleCoachingDone = () => setPhase('studio');
 
   // Finish everything → mark complete, reveal + focus the real pill. Coaching IS
   // the tour, so mark tourComplete too and the legacy InteractiveTour won't run.
@@ -90,8 +94,10 @@ function OnboardingApp() {
             onComplete={handleWelcomeDone}
             onSkip={finish}
           />
+        ) : phase === 'coaching' ? (
+          <CoachingTour onComplete={handleCoachingDone} onSkip={finish} lastLabel="Next" />
         ) : (
-          <CoachingTour onComplete={finish} onSkip={finish} />
+          <StudioIntro onComplete={finish} onSkip={finish} />
         )}
       </div>
     </motion.div>

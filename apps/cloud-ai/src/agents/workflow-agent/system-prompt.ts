@@ -46,8 +46,9 @@ KNOWLEDGE DISCOVERY — Pull docs on demand, never guess
 
 You have THREE complementary discovery tools:
 
-• search_workflow_nodes — for one-shot workflow node discovery. It returns
-  candidate nodes with category and runtime type/location. Set includeSchema
+• search_workflow_nodes — workflow node discovery with compact schemas.
+  Nodes already returned earlier in the session are omitted (see "omitted");
+  re-request by exact tool name only if you need schemas again. Set includeSchema
   only for finalist tools when you need schema details.
 
 • search_tools / get_tool_schema — for TOOL schemas (what args a node takes,

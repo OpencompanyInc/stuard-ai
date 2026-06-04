@@ -991,6 +991,22 @@ button.input-status-float:not(:disabled) {
   border-color: var(--border);
 }
 
+/* ── Custom UI Builder chrome — theme-aware surfaces that follow app
+   `data-theme` (the builder portals to <body>, so these track light/dark).
+   Accents use Tailwind rose/semantic tints directly. ─────────────────────── */
+.uib-shell         { background-color: var(--background); color: var(--foreground); }
+.uib-surface       { background-color: var(--card-bg); }
+.uib-surface-2     { background-color: color-mix(in srgb, var(--card-bg) 55%, var(--background)); }
+.uib-sunken        { background-color: color-mix(in srgb, var(--background) 80%, #000); }
+.uib-fg            { color: var(--foreground); }
+.uib-fg-muted      { color: var(--foreground-muted); }
+.uib-fg-faint      { color: color-mix(in srgb, var(--foreground-muted) 62%, transparent); }
+.uib-border        { border-color: var(--border); }
+.uib-border-subtle { border-color: color-mix(in srgb, var(--border) 55%, transparent); }
+.uib-hover:hover    { background-color: var(--sidebar-item-hover); }
+.uib-fg-hover:hover { color: var(--foreground); }
+.uib-input         { background-color: var(--input-bg); border-color: var(--input-border); color: var(--foreground); }
+
 .border-theme {
   border-color: var(--border);
 }
@@ -1729,6 +1745,18 @@ button.input-status-float:not(:disabled) {
   --wf-wire-handle-bg: #ffffff;
   --primary:            #ff383c;
   --primary-foreground: #ffffff;
+  /* App theme-* utilities (ModelSelector, bots-ui modals, etc.) → workflow
+     palette. Portaled surfaces re-declare data-wf-theme so these reach them. */
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: var(--wf-bg-elevated);
+  --card-border: var(--wf-border);
+  --dashboard-panel-border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
 }
 
 [data-wf-theme='dark'] {
@@ -1771,12 +1799,14 @@ button.input-status-float:not(:disabled) {
   --wf-wire-handle-bg: #141414;
   --primary:            #ff4a4e;
   --primary-foreground: #ffffff;
-  /* App theme-* utilities (ModelSelector, etc.) → workflow palette */
+  /* App theme-* utilities (ModelSelector, bots-ui modals, etc.) → workflow
+     palette. Portaled surfaces re-declare data-wf-theme so these reach them. */
   --foreground: var(--wf-fg);
   --foreground-muted: var(--wf-fg-muted);
   --background: var(--wf-bg);
   --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 92%, #0d0d0f);
   --card-border: var(--wf-border);
+  --dashboard-panel-border: var(--wf-border);
   --sidebar-item-hover: var(--wf-hover);
   --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
   --input-bg: var(--wf-input-bg);

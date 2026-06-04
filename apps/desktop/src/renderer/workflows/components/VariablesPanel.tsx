@@ -22,7 +22,7 @@ const TYPE_OPTIONS = [
 ] as const;
 
 const SCOPE_OPTIONS = [
-  { value: 'workflow', label: 'Workflow', icon: Globe, description: 'Shared across all stuard files' },
+  { value: 'workflow', label: 'Workflow', icon: Globe, description: 'Global — shared across every stuard file in this project (main + imported)' },
   { value: 'local', label: 'Local', icon: FileText, description: 'Scoped to a single stuard file' },
 ] as const;
 

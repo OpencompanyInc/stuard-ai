@@ -387,6 +387,18 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     }
   }
 
+  // Some tools consume a stream INTERNALLY rather than chunk-by-chunk — e.g.
+  // ai_inference transcription drains a raw float32 audio stream itself (those
+  // numpy chunks can't even survive the reactive consumer's JSON serialization).
+  // For these, a stream wire is just a visual/semantic link: we inject the
+  // upstream streamId and run the step ONCE via the normal flow path so its own
+  // downstream edges (e.g. the transcript output stream) are handled normally.
+  function isSelfManagedStreamSink(step: StuardStep): boolean {
+    const tool = String((step as any)?.tool || '');
+    const args = (step as any)?.args || {};
+    return tool === 'ai_inference' && String(args.mode || '') === 'transcription';
+  }
+
   // Run a reactive stream consumer — polls stream and executes consumer step for each chunk
   // Chunk data is injected into ctx[sourceStepId] so consumer can use:
   //   {{sourceStepId.text}}       — chunk content (string)
@@ -399,6 +411,30 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     _streamCfg: StreamWireConfig,
     sourceStepId: string
   ): Promise<void> {
+    // ── Self-managed sink: run once with the upstream streamId injected ──
+    // The tool drains the stream itself; we don't poll it chunk-by-chunk.
+    if (isSelfManagedStreamSink(consumerStep)) {
+      const existing = (consumerStep as any).args?.audioStreamId;
+      const injected = {
+        ...consumerStep,
+        args: {
+          ...(consumerStep as any).args,
+          // Honor an explicit audioStreamId (e.g. a {{ }} template); else use the wire's stream.
+          audioStreamId: (typeof existing === 'string' && existing.trim()) ? existing : streamId,
+        },
+      } as StuardStep;
+      engineCtx.logFn(`[${consumerStep.id}] 📡 Self-managed stream sink — draining ${streamId} internally`);
+      emitStreamEvent(safe, sourceStepId, consumerStep.id, true);
+      try {
+        // runBranch executes the step AND wires up its downstream edges (incl. the
+        // transcript output stream → consumer), reusing all normal routing logic.
+        await runBranch(injected, baseCtx, sourceStepId);
+      } finally {
+        emitStreamEvent(safe, sourceStepId, consumerStep.id, false);
+      }
+      return;
+    }
+
     // Use long server-side blocking reads to minimize latency.
     // The Python agent's stream_read will block up to waitMs waiting for data,
     // so chunks are delivered as soon as they arrive without wasteful polling.
@@ -734,10 +770,18 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
     // Start the main branch
     await runBranch(current!, ctx, undefined);
 
-    // Wait for any stream consumers that were spawned during execution
+    // Wait for any stream consumers that were spawned during execution.
+    // Drain in batches: a consumer can spawn further consumers (e.g. a
+    // self-managed transcription sink spawns its transcript→consumer stream),
+    // so keep awaiting until the list stops growing.
     if (streamConsumerPromises.length > 0) {
       engineCtx.logFn(`Waiting for ${streamConsumerPromises.length} stream consumer(s) to finish...`);
-      await Promise.allSettled(streamConsumerPromises);
+      let awaited = 0;
+      while (awaited < streamConsumerPromises.length) {
+        const batch = streamConsumerPromises.slice(awaited);
+        awaited = streamConsumerPromises.length;
+        await Promise.allSettled(batch);
+      }
     }
 
     return hasReturn ? { ok: true, returnValue } : { ok: true };
@@ -747,6 +791,30 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
       if (set) {
         set.delete(controller);
         if (set.size === 0) activeRunControllers.delete(safe);
+      }
+    } catch { }
+
+    // When a run ENDS — stop, terminate, error, OR graceful completion (e.g. the
+    // blocking custom_ui was closed) — release any capture sessions + streams it
+    // started so the mic/bus and any cloud transcription loop don't keep running.
+    // A run owns the captures it started; closing the UI must kill the mic, not
+    // leave stream_read polling until maxDurationMs. Keyed on spec.id (the exact
+    // flowId capture_media records). The Python agent only stops the bus if no
+    // other subscriber is using it, and we skip if another run of this same flow
+    // is still active (shared captures). Best-effort; never blocks teardown.
+    try {
+      const stillRunning = (activeRunControllers.get(safe)?.size || 0) > 0;
+      if (!stillRunning) {
+        const cleanupFlowId = String((spec as any)?.id || safe);
+        // On GRACEFUL completion, leave `until_stop` captures running: a hotkey
+        // toggle (Wispr-style dictation) starts the recording in one run and
+        // stops it in a later run via stop_capture, so the mic must survive this
+        // run ending. On ABORT/stop we reap everything so the mic never leaks.
+        const excludeModes = controller.signal.aborted ? [] : ['until_stop'];
+        execLocalTool('stop_captures_by_flow', { flowId: cleanupFlowId, excludeModes }, engineCtx, 10000)
+          .then((r: any) => { if (r?.stopped > 0) engineCtx.logFn(`🎤 Released ${r.stopped} capture session(s) on run end`); })
+          .catch(() => {});
+        execLocalTool('close_all_streams', { flowId: cleanupFlowId }, engineCtx, 10000).catch(() => {});
       }
     } catch { }
 

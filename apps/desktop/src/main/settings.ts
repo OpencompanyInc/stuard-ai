@@ -20,7 +20,6 @@ export interface UserSettings {
   chatMode?: string;
   chatModels?: any;
   wakewordEnabled?: boolean;
-  terminalEnabled?: boolean;
   browserEnabled?: boolean;
   screenCaptureInvisible?: boolean;
   onboardingComplete?: boolean;
@@ -48,9 +47,9 @@ export interface ChatTierModelSettings {
 export type ChatModelsSettings = Record<ChatModelTier, ChatTierModelSettings>;
 
 export const DEFAULT_CHAT_MODELS_SETTINGS: ChatModelsSettings = {
-  fast: { allowed: [], default: 'deepseek/deepseek-chat' },
-  balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
-  smart: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  fast: { allowed: [], default: 'google/gemini-3.1-flash-lite' },
+  balanced: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  smart: { allowed: [], default: 'openai/gpt-5.4' },
 };
 
 function normalizeChatTierSettings(raw: any, fallback: ChatTierModelSettings): ChatTierModelSettings {
@@ -132,7 +131,7 @@ export function setTimezone(tz: string | null) {
 const RENDERER_PREF_KEYS = new Set<string>([
   'themeMode', 'themeDarkShade', 'themeLightShade', 'themeText',
   'translucentMode', 'tone', 'toneCustom', 'persona',
-  'chatMode', 'chatModels', 'wakewordEnabled', 'terminalEnabled',
+  'chatMode', 'chatModels', 'wakewordEnabled',
   'browserEnabled', 'screenCaptureInvisible', 'onboardingComplete',
   'tourComplete', 'timezoneOverride',
   'autoRefillCredits',

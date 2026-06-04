@@ -276,16 +276,16 @@ export function PageFlowBuilder({
   const canvasMinHeight = Math.max(600, ...nodes.map(n => n.y + NODE_HEIGHT + 100));
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="flex flex-col h-full uib-surface-2">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b uib-border uib-surface shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-rose-600 flex items-center justify-center">
             <GitBranch className="w-4 h-4 text-white" />
           </div>
           <div>
-            <h3 className="font-semibold text-slate-800 text-sm">Page Flow</h3>
-            <p className="text-[10px] text-slate-500">
+            <h3 className="font-semibold uib-fg text-sm">Page Flow</h3>
+            <p className="text-[10px] uib-fg-muted">
               {Object.keys(pages).length} pages • Drag nodes to reposition • Click arrow to connect
             </p>
           </div>
@@ -294,14 +294,14 @@ export function PageFlowBuilder({
           {isConnecting ? (
             <button
               onClick={() => { setIsConnecting(false); setConnectingFrom(null); }}
-              className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/15 rounded-lg transition-colors"
             >
               Cancel Connection
             </button>
           ) : (
             <button
               onClick={() => setShowAddPage(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               Add Page
@@ -377,7 +377,7 @@ export function PageFlowBuilder({
                   {/* Action label */}
                   <foreignObject x={midX - 35} y={midY - 12} width="70" height="24">
                     <div className="flex items-center justify-center">
-                      <span className="px-2 py-0.5 bg-white text-[10px] font-semibold text-indigo-600 rounded-full shadow-sm border border-indigo-100 whitespace-nowrap">
+                      <span className="px-2 py-0.5 uib-surface text-[10px] font-semibold text-rose-500 rounded-full shadow-sm border border-rose-500/30 whitespace-nowrap">
                         {conn.action}
                       </span>
                     </div>
@@ -430,23 +430,23 @@ export function PageFlowBuilder({
               onClick={(e) => handleNodeClick(node.id, e)}
             >
               <div
-                className={`bg-white rounded-xl border-2 transition-all ${
+                className={`uib-surface rounded-xl border-2 transition-all ${
                   isDragging
-                    ? 'border-indigo-500 shadow-xl ring-2 ring-indigo-200 scale-[1.02]'
+                    ? 'border-rose-500 shadow-xl ring-2 ring-rose-500/30 scale-[1.02]'
                     : isSelected
-                    ? 'border-indigo-500 shadow-lg ring-2 ring-indigo-100'
+                    ? 'border-rose-500 shadow-lg ring-2 ring-rose-500/20'
                     : isConnectingFromThis
-                    ? 'border-indigo-400 ring-2 ring-indigo-200 shadow-md'
-                    : 'border-slate-200 hover:border-indigo-300 shadow-sm hover:shadow-md'
+                    ? 'border-rose-500/50 ring-2 ring-rose-500/30 shadow-md'
+                    : 'uib-border hover:border-rose-500/40 shadow-sm hover:shadow-md'
                 }`}
               >
                 {/* Header */}
                 <div className={`flex items-center gap-2 px-2.5 py-2 border-b rounded-t-xl ${
-                  isStart ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100' : 'bg-slate-50 border-slate-100'
+                  isStart ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-500/30' : 'uib-surface-2 uib-border-subtle'
                 }`}>
-                  <GripVertical className="w-3 h-3 text-slate-400 cursor-grab shrink-0" />
+                  <GripVertical className="w-3 h-3 uib-fg-faint cursor-grab shrink-0" />
                   {isStart && (
-                    <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] font-bold rounded shrink-0">
+                    <span className="px-1.5 py-0.5 bg-emerald-500/150 text-white text-[8px] font-bold rounded shrink-0">
                       START
                     </span>
                   )}
@@ -461,14 +461,14 @@ export function PageFlowBuilder({
                           if (e.key === 'Enter') renamePage(node.id);
                           if (e.key === 'Escape') setEditingPage(null);
                         }}
-                        className="w-full text-xs font-medium px-1 py-0.5 border border-indigo-300 rounded"
+                        className="w-full text-xs font-medium px-1 py-0.5 border border-rose-500/40 rounded"
                         autoFocus
                         onClick={(e) => e.stopPropagation()}
                         onMouseDown={(e) => e.stopPropagation()}
                       />
                     ) : (
                       <span
-                        className="text-xs font-semibold text-slate-700 truncate block cursor-text"
+                        className="text-xs font-semibold uib-fg truncate block cursor-text"
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           setEditingPage(node.id);
@@ -486,8 +486,8 @@ export function PageFlowBuilder({
                     onMouseDown={(e) => e.stopPropagation()}
                     className={`p-1 rounded transition-colors shrink-0 ${
                       isConnectingFromThis
-                        ? 'text-indigo-600 bg-indigo-100'
-                        : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                        ? 'text-rose-500 bg-rose-500/15'
+                        : 'uib-fg-faint hover:text-rose-500 hover:bg-rose-500/10'
                     }`}
                     title="Create connection to another page"
                   >
@@ -500,7 +500,7 @@ export function PageFlowBuilder({
                   {/* Actions List */}
                   {node.connections.length > 0 && (
                     <div>
-                      <div className="text-[9px] text-slate-400 uppercase font-semibold mb-1">Connections</div>
+                      <div className="text-[9px] uib-fg-faint uppercase font-semibold mb-1">Connections</div>
                       <div className="flex flex-wrap gap-1">
                         {node.connections.map((conn, idx) => {
                           const target = nodes.find(n => n.id === conn.targetNodeId);
@@ -508,7 +508,7 @@ export function PageFlowBuilder({
                           return (
                             <span
                               key={idx}
-                              className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 text-[9px] rounded flex items-center gap-0.5"
+                              className="px-1.5 py-0.5 bg-rose-500/10 text-rose-500 text-[9px] rounded flex items-center gap-0.5"
                               title={`${conn.action} → ${targetPage?.name || target?.pageId || '?'}`}
                             >
                               {conn.action} → {(targetPage?.name || target?.pageId || '?').substring(0, 8)}
@@ -524,7 +524,7 @@ export function PageFlowBuilder({
                     <button
                       onClick={(e) => { e.stopPropagation(); onEditPage?.(page.id); }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="flex-1 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors flex items-center justify-center gap-1"
+                      className="flex-1 px-2 py-1 text-[10px] font-medium text-rose-500 hover:bg-rose-500/10 rounded-md transition-colors flex items-center justify-center gap-1"
                     >
                       <Edit3 className="w-3 h-3" />
                       Edit
@@ -532,7 +532,7 @@ export function PageFlowBuilder({
                     <button
                       onClick={(e) => { e.stopPropagation(); duplicatePage(node.id); }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                      className="p-1 uib-fg-faint uib-fg-hover uib-hover rounded transition-colors"
                       title="Duplicate page"
                     >
                       <Copy className="w-3 h-3" />
@@ -541,7 +541,7 @@ export function PageFlowBuilder({
                       <button
                         onClick={(e) => { e.stopPropagation(); handleSetStartPage(page.id); }}
                         onMouseDown={(e) => e.stopPropagation()}
-                        className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                        className="p-1 uib-fg-faint hover:text-emerald-400 hover:bg-emerald-500/15 rounded transition-colors"
                         title="Set as start page"
                       >
                         <Play className="w-3 h-3" />
@@ -553,7 +553,7 @@ export function PageFlowBuilder({
                         if (confirm(`Delete page "${page.name || page.id}"?`)) handleDeleteNode(node.id);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                      className="p-1 uib-fg-faint hover:text-red-400 hover:bg-red-500/15 rounded transition-colors"
                       title="Delete page"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -568,13 +568,13 @@ export function PageFlowBuilder({
         {/* Empty state */}
         {Object.keys(pages).length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center text-slate-400">
-              <FileText className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+            <div className="text-center uib-fg-faint">
+              <FileText className="w-12 h-12 mx-auto mb-3 uib-fg-faint" />
               <div className="text-sm font-medium mb-1">No pages yet</div>
               <div className="text-xs mb-4">Add pages to create a multi-step UI flow</div>
               <button
                 onClick={() => setShowAddPage(true)}
-                className="px-4 py-2 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+                className="px-4 py-2 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors"
               >
                 <Plus className="w-3.5 h-3.5 inline mr-1" />
                 Add First Page
@@ -587,12 +587,12 @@ export function PageFlowBuilder({
       {/* Add Page Modal */}
       {showAddPage && (
         <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-80" onClick={(e) => e.stopPropagation()}>
-            <h4 className="font-semibold text-slate-800 mb-4">Add New Page</h4>
+          <div className="uib-surface rounded-xl shadow-xl p-5 w-80" onClick={(e) => e.stopPropagation()}>
+            <h4 className="font-semibold uib-fg mb-4">Add New Page</h4>
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-slate-600 mb-1 block">Page Name</label>
+                <label className="text-xs font-medium uib-fg-muted mb-1 block">Page Name</label>
                 <input
                   type="text"
                   value={newPageName}
@@ -602,13 +602,13 @@ export function PageFlowBuilder({
                     if (e.key === 'Escape') setShowAddPage(false);
                   }}
                   placeholder="e.g. settings, confirm, success"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="w-full px-3 py-2 border uib-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-600 mb-1.5 block">Template</label>
+                <label className="text-xs font-medium uib-fg-muted mb-1.5 block">Template</label>
                 <div className="grid grid-cols-2 gap-2">
                   {PAGE_TEMPLATES.map(t => (
                     <button
@@ -616,8 +616,8 @@ export function PageFlowBuilder({
                       onClick={() => setSelectedTemplate(t.id)}
                       className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
                         selectedTemplate === t.id
-                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                          : 'border-slate-200 text-slate-600 hover:border-indigo-200'
+                          ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                          : 'uib-border uib-fg-muted hover:border-rose-500/30'
                       }`}
                     >
                       {t.name}
@@ -630,14 +630,14 @@ export function PageFlowBuilder({
             <div className="flex justify-end gap-2 mt-4">
               <button
                 onClick={() => { setShowAddPage(false); setNewPageName(''); }}
-                className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800"
+                className="px-3 py-1.5 text-sm uib-fg-muted uib-fg-hover"
               >
                 Cancel
               </button>
               <button
                 onClick={addPage}
                 disabled={!newPageName.trim()}
-                className="px-4 py-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-1.5 text-sm text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Add Page
               </button>
@@ -649,9 +649,9 @@ export function PageFlowBuilder({
       {/* Connection Name Input Modal */}
       {showConnectionInput && (
         <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-72" onClick={(e) => e.stopPropagation()}>
-            <h4 className="font-semibold text-slate-800 mb-1">Name this connection</h4>
-            <p className="text-xs text-slate-500 mb-3">
+          <div className="uib-surface rounded-xl shadow-xl p-5 w-72" onClick={(e) => e.stopPropagation()}>
+            <h4 className="font-semibold uib-fg mb-1">Name this connection</h4>
+            <p className="text-xs uib-fg-muted mb-3">
               This action name triggers navigation between pages.
             </p>
             <input
@@ -663,7 +663,7 @@ export function PageFlowBuilder({
                 if (e.key === 'Escape') setShowConnectionInput(null);
               }}
               placeholder="e.g. next, submit, cancel"
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-200 mb-2"
+              className="w-full px-3 py-2 border uib-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-rose-500/30 mb-2"
               autoFocus
             />
             <div className="flex flex-wrap gap-1 mb-3">
@@ -673,8 +673,8 @@ export function PageFlowBuilder({
                   onClick={() => setConnectionActionName(a)}
                   className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${
                     connectionActionName === a
-                      ? 'bg-indigo-100 text-indigo-700'
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      ? 'bg-rose-500/15 text-rose-500'
+                      : 'uib-surface-2 uib-fg-muted uib-hover'
                   }`}
                 >
                   {a}
@@ -684,14 +684,14 @@ export function PageFlowBuilder({
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setShowConnectionInput(null)}
-                className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800"
+                className="px-3 py-1.5 text-sm uib-fg-muted uib-fg-hover"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmConnection}
                 disabled={!connectionActionName.trim()}
-                className="px-4 py-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 transition-colors"
+                className="px-4 py-1.5 text-sm text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50 transition-colors"
               >
                 Connect
               </button>
@@ -702,7 +702,7 @@ export function PageFlowBuilder({
 
       {/* Instructions */}
       {isConnecting && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-indigo-600 text-white text-xs font-medium rounded-lg shadow-lg">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-rose-600 text-white text-xs font-medium rounded-lg shadow-lg">
           Click on another page node to create a connection
         </div>
       )}

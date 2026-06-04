@@ -853,79 +853,184 @@ export function compactSchemaSignature(schema: any, depth = 0): any {
     return jsonSchemaTypeName(node);
 }
 
-export const search_workflow_nodes = createTool({
-    id: 'search_workflow_nodes',
-    description: 'Search workflow node/tool types by semantic query or filters. Returns category, runtime type, and a compact input/output signature ({ field(?): "type (default/range) — description" }) per candidate in one call. For the full JSON Schema of a single tool, use get_tool_schema.',
-    inputSchema: z.object({
-        query: z.string().min(1).describe('Required free-text query for semantic node search.'),
-        category: z.string().optional().describe('Filter nodes to a specific category.'),
-        kind: z.string().optional().describe('Filter nodes to a specific kind (local, cloud, orchestration).'),
-        includeSchema: z.boolean().default(true).optional().describe('Whether to include input/output schema details. Defaults true so workflow-node discovery can return actionable schemas in one call.'),
-    }),
-    outputSchema: z.object({
-        nodes: z.array(z.object({
-            name: z.string(),
-            description: z.string(),
-            category: z.string(),
-            kind: z.string().optional(),
-            location: z.string().optional(),
-            inputSchema: z.any().optional(),
-            outputSchema: z.any().optional(),
-        })),
-    }),
-    execute: async (inputData) => {
-        const { query, category, kind, includeSchema = true } = inputData as {
-            query?: string;
-            category?: string;
-            kind?: string;
-            includeSchema?: boolean;
-        };
+// Per-session dedup for search_workflow_nodes (mirrors search_workflow_docs).
+const seenWorkflowNodesByRunObject = new WeakMap<object, Set<string>>();
 
-        const result = await (search_tools as any).execute({ query, category, kind });
-        const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
-        const registry = getToolRegistry();
+function resolveWorkflowNodesSeenSet(injected: Set<string> | undefined, ctx: any): Set<string> | null {
+    if (injected) return injected;
+    const runObj =
+        ctx && typeof ctx === 'object'
+            ? ctx.requestContext ?? ctx.runtimeContext ?? ctx.abortSignal ?? ctx.agent
+            : null;
+    if (runObj && typeof runObj === 'object') {
+        let set = seenWorkflowNodesByRunObject.get(runObj);
+        if (!set) {
+            set = new Set<string>();
+            seenWorkflowNodesByRunObject.set(runObj, set);
+        }
+        return set;
+    }
+    return null;
+}
 
-        const nodes = await Promise.all(tools.map(async (entry: any) => {
-            const name = String(entry?.name || '');
-            const registryTool = registry.get(name);
-            const metadata = getToolMetadata(name);
-            const resolvedCategory = String((metadata?.category && metadata.category !== 'Other') ? metadata.category : (entry?.category || metadata?.category || ''));
-            const resolvedLocation = (metadata?.category && metadata.category !== 'Other')
-                ? metadata.location
-                : getDefaultLocationForCategory(resolvedCategory);
+export interface SearchWorkflowNodesOptions {
+    /** Shared across calls on this tool instance — pass a fresh Set per agent session. */
+    seen?: Set<string>;
+}
 
-            let inputSchema: any = undefined;
-            let outputSchema: any = undefined;
+async function enrichWorkflowNodeFromSearchEntry(
+    entry: { name?: string; description?: string; category?: string },
+    includeSchema: boolean,
+) {
+    const name = String(entry?.name || '');
+    const registry = getToolRegistry();
+    const registryTool = registry.get(name);
+    const metadata = getToolMetadata(name);
+    const resolvedCategory = String(
+        metadata?.category && metadata.category !== 'Other'
+            ? metadata.category
+            : entry?.category || metadata?.category || '',
+    );
+    const resolvedLocation =
+        metadata?.category && metadata.category !== 'Other'
+            ? metadata.location
+            : getDefaultLocationForCategory(resolvedCategory);
 
-            if (includeSchema) {
-                if (registryTool) {
-                    inputSchema = registryTool.inputSchema ? compactSchemaSignature(zodToJsonSchema(registryTool.inputSchema)) : undefined;
-                    outputSchema = registryTool.outputSchema ? compactSchemaSignature(zodToJsonSchema(registryTool.outputSchema)) : undefined;
-                } else if (hasClientBridge()) {
-                    try {
-                        const info = await execLocalTool('get_tool_info', { name }) as any;
-                        if (info && !info.error) {
-                            inputSchema = compactSchemaSignature(info.args || info.inputSchema);
-                            outputSchema = compactSchemaSignature(info.outputSchema);
-                        }
-                    } catch {}
+    let inputSchema: any = undefined;
+    let outputSchema: any = undefined;
+
+    if (includeSchema) {
+        if (registryTool) {
+            inputSchema = registryTool.inputSchema
+                ? compactSchemaSignature(zodToJsonSchema(registryTool.inputSchema))
+                : undefined;
+            outputSchema = registryTool.outputSchema
+                ? compactSchemaSignature(zodToJsonSchema(registryTool.outputSchema))
+                : undefined;
+        } else if (hasClientBridge()) {
+            try {
+                const info = (await execLocalTool('get_tool_info', { name })) as any;
+                if (info && !info.error) {
+                    inputSchema = compactSchemaSignature(info.args || info.inputSchema);
+                    outputSchema = compactSchemaSignature(info.outputSchema);
                 }
+            } catch {}
+        }
+    }
+
+    return {
+        name,
+        description: String(entry?.description || registryTool?.description || ''),
+        category: resolvedCategory,
+        kind: metadata?.kind,
+        location: resolvedLocation,
+        inputSchema,
+        outputSchema,
+    };
+}
+
+export function createSearchWorkflowNodesTool(opts: SearchWorkflowNodesOptions = {}) {
+    return createTool({
+        id: 'search_workflow_nodes',
+        description:
+            'Search workflow node/tool types by semantic query or filters. Returns category, runtime type, and compact input/output signatures per candidate. Nodes already returned earlier in this session are omitted (see "omitted") — re-request by exact tool name only if you need full schemas again. For the full JSON Schema of one tool, use get_tool_schema.',
+        inputSchema: z.object({
+            query: z.string().min(1).describe('Required free-text query for semantic node search, or an exact tool name.'),
+            category: z.string().optional().describe('Filter nodes to a specific category.'),
+            kind: z.string().optional().describe('Filter nodes to a specific kind (local, cloud, orchestration).'),
+            includeSchema: z
+                .boolean()
+                .default(true)
+                .optional()
+                .describe('Whether to include input/output schema details. Defaults true.'),
+        }),
+        outputSchema: z.object({
+            nodes: z.array(
+                z.object({
+                    name: z.string(),
+                    description: z.string(),
+                    category: z.string(),
+                    kind: z.string().optional(),
+                    location: z.string().optional(),
+                    inputSchema: z.any().optional(),
+                    outputSchema: z.any().optional(),
+                }),
+            ),
+            omitted: z
+                .array(
+                    z.object({
+                        name: z.string(),
+                        description: z.string().optional(),
+                        category: z.string().optional(),
+                    }),
+                )
+                .optional(),
+            note: z.string().optional(),
+        }),
+        execute: async (inputData, ctx) => {
+            const { query, category, kind, includeSchema = true } = inputData as {
+                query?: string;
+                category?: string;
+                kind?: string;
+                includeSchema?: boolean;
+            };
+            const seen = resolveWorkflowNodesSeenSet(opts.seen, ctx);
+            const queryTrim = typeof query === 'string' ? query.trim() : '';
+
+            // Explicit tool name re-request bypasses dedup (same as docs section id).
+            const registry = getToolRegistry();
+            if (queryTrim && registry.has(queryTrim)) {
+                const node = await enrichWorkflowNodeFromSearchEntry(
+                    { name: queryTrim, description: registry.get(queryTrim)?.description },
+                    includeSchema,
+                );
+                seen?.add(node.name);
+                return { nodes: [node] };
+            }
+
+            const result = await (search_tools as any).execute({ query: queryTrim, category, kind });
+            const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
+
+            const nodes = await Promise.all(
+                tools.map((entry: any) => enrichWorkflowNodeFromSearchEntry(entry, includeSchema)),
+            );
+
+            const omitted: Array<{ name: string; description?: string; category?: string }> = [];
+            const fresh = nodes.filter((node) => {
+                if (seen && seen.has(node.name)) {
+                    omitted.push({
+                        name: node.name,
+                        description: node.description,
+                        category: node.category,
+                    });
+                    return false;
+                }
+                return true;
+            });
+
+            for (const node of fresh) {
+                seen?.add(node.name);
+            }
+
+            let note: string | undefined;
+            if (omitted.length > 0) {
+                note =
+                    fresh.length === 0
+                        ? `All ${omitted.length} match(es) for this query were already returned earlier in this session. Re-request by exact tool name only if you need schemas again.`
+                        : `${omitted.length} further match(es) were already returned earlier in this session (see "omitted").`;
             }
 
             return {
-                name,
-                description: String(entry?.description || ''),
-                category: resolvedCategory,
-                kind: metadata?.kind,
-                location: resolvedLocation,
-                inputSchema,
-                outputSchema,
+                nodes: fresh,
+                ...(omitted.length > 0 ? { omitted } : {}),
+                ...(note ? { note } : {}),
             };
-        }));
+        },
+    });
+}
 
-        return { nodes };
-    },
-});
+export const searchWorkflowNodes = createSearchWorkflowNodesTool();
+export const search_workflow_nodes = searchWorkflowNodes;
 
 registerTool(search_workflow_nodes, 'Workflow');
 

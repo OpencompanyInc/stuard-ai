@@ -26,7 +26,6 @@ const TIPS: Tip[] = [
   { keys: "Ctrl + Shift + Arrow", label: "Move the overlay faster" },
   { keys: "Enter", label: "Send your message" },
   { keys: "Shift + Enter", label: "New line in message" },
-  { keys: "F1", label: "Open command palette" },
 ];
 
 // ── Persistent state ──

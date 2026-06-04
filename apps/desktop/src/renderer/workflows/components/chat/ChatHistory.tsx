@@ -1122,7 +1122,7 @@ export function ChatHistory({
               {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
 
-            <div className={`flex flex-col gap-1.5 max-w-[90%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <div className={`flex flex-col gap-1.5 max-w-[90%] min-w-0 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
               {msg.images && msg.images.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-1 justify-end">
                   {msg.images.map((img, idx) => {
@@ -1156,11 +1156,11 @@ export function ChatHistory({
                 </div>
               )}
 
-              <div className={`px-4 py-3 rounded-3xl shadow-sm text-[13px] leading-relaxed
+              <div className={`px-4 py-3 rounded-3xl shadow-sm text-[13px] leading-relaxed break-words min-w-0 max-w-full
                 ${msg.role === 'user'
                   ? 'wf-bg-elevated wf-fg rounded-tr-sm border wf-border-subtle'
                   : 'wf-bg-sunken border wf-border-subtle wf-fg rounded-tl-sm'}`}>
-                <div className="markdown-body">
+                <div className="markdown-body min-w-0 break-words">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
@@ -1201,7 +1201,7 @@ export function ChatHistory({
                       code: ({ className, children, ...props }: any) => {
                         const isInline = !String(className).includes('language-');
                         return isInline ? (
-                          <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle" {...props}>
+                          <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle break-words" {...props}>
                             {children}
                           </code>
                         ) : (
@@ -1284,7 +1284,7 @@ export function ChatHistory({
               {(() => {
                 return streamItems.map((item, i) => (
                   item.type === 'reasoning' || item.type === 'tool' ? null : item.type === 'text' ? (
-                  <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm wf-bg-sunken border wf-border-subtle wf-fg shadow-sm text-[13px] leading-relaxed">
+                  <div key={i} className="px-4 py-3 rounded-3xl rounded-tl-sm wf-bg-sunken border wf-border-subtle wf-fg shadow-sm text-[13px] leading-relaxed break-words min-w-0 max-w-full">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
                       rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
@@ -1323,7 +1323,7 @@ export function ChatHistory({
                         );
                       },
                       code: ({ className, children, ...props }: any) => (
-                        <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle" {...props}>
+                        <code className="wf-bg-overlay wf-fg px-[6px] py-[2px] rounded-md text-[85%] font-mono font-medium border wf-border-subtle shadow-sm align-middle break-words" {...props}>
                           {children}
                         </code>
                       ),

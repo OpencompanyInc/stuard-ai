@@ -50,6 +50,7 @@ import {
   creditsFromUsd,
   preciseCreditsFromUsd,
   snapCredits,
+  sttCostUsd,
   monthlyCreditLimitForPlan,
   ALL_MODELS,
   PLAN_CONFIG,
@@ -93,14 +94,12 @@ describe('pricing module', () => {
     });
 
     it('should return correct default for balanced category', () => {
-      // Must match desktop's DEFAULT_CHAT_MODELS.balanced.default. Avoiding
-      // OpenAI here keeps the balanced tier reachable when an OpenAI key is
-      // out of quota — the regression that motivated this default.
-      expect(getDefaultModelForCategory('balanced')).toBe('xai/grok-4-1-fast');
+      // Must match desktop's DEFAULT_CHAT_MODELS.balanced.default.
+      expect(getDefaultModelForCategory('balanced')).toBe('google/gemini-3.1-pro-preview');
     });
 
     it('should return correct default for smart category', () => {
-      expect(getDefaultModelForCategory('smart')).toBe('google/gemini-3.1-pro-preview');
+      expect(getDefaultModelForCategory('smart')).toBe('openai/gpt-5.4');
     });
 
     it('should return correct default for research category', () => {
@@ -265,6 +264,42 @@ describe('pricing module', () => {
     it('should return 0 for invalid or negative values', () => {
       expect(preciseCreditsFromUsd(-10)).toBe(0);
       expect(preciseCreditsFromUsd(NaN)).toBe(0);
+    });
+  });
+
+  describe('sttCostUsd', () => {
+    it('prices known STT models per minute of audio', () => {
+      // whisper-1 @ $0.006/min: 60s → $0.006, 30s → $0.003
+      expect(sttCostUsd('openai/whisper-1', 60)).toBe(0.006);
+      expect(sttCostUsd('openai/whisper-1', 30)).toBe(0.003);
+      // gpt-4o-mini-transcribe @ $0.003/min
+      expect(sttCostUsd('openai/gpt-4o-mini-transcribe', 60)).toBe(0.003);
+      // ElevenLabs Scribe @ ~$0.0067/min
+      expect(sttCostUsd('elevenlabs/scribe_v1', 60)).toBe(0.0067);
+    });
+
+    it('falls back to the default per-minute rate for unknown models', () => {
+      // Default $0.006/min
+      expect(sttCostUsd('some/unknown-stt', 60)).toBe(0.006);
+    });
+
+    it('returns 0 for non-positive or invalid durations', () => {
+      expect(sttCostUsd('openai/whisper-1', 0)).toBe(0);
+      expect(sttCostUsd('openai/whisper-1', -5)).toBe(0);
+      expect(sttCostUsd('openai/whisper-1', NaN)).toBe(0);
+    });
+
+    it('respects the STT_PRICE_PER_MIN_USD override for unknown models', () => {
+      vi.stubEnv('STT_PRICE_PER_MIN_USD', '0.012');
+      expect(sttCostUsd('some/unknown-stt', 60)).toBe(0.012);
+    });
+
+    it('a short utterance costs far less than the 0.1-credit floor', () => {
+      // The bug: a ~1.5s window billed alone floors to 0.1 credits. Its true
+      // cost is a tiny fraction of a cent — proving per-window billing overcharges.
+      const usd = sttCostUsd('openai/whisper-1', 1.5);
+      expect(usd).toBeCloseTo(0.00015, 6);
+      expect(creditsFromUsd(usd)).toBe(0.1); // floored — must not bill per window
     });
   });
 

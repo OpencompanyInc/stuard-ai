@@ -231,15 +231,17 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (path: str
   const segments = path ? path.split('/').filter(Boolean) : [];
 
   return (
-    <div className="flex items-center gap-1 text-xs min-w-0 overflow-x-auto no-scrollbar">
+    <div className="dashboard-card-muted flex min-w-0 items-center gap-1 overflow-x-auto rounded-xl px-2 py-1.5 text-[13px] no-scrollbar">
       <button
         onClick={() => onNavigate('')}
         className={clsx(
-          "flex items-center gap-1 px-2 py-1 rounded-md transition-colors shrink-0",
-          !path ? "text-theme-fg font-bold bg-theme-hover/50" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/30"
+          "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-colors",
+          !path
+            ? "bg-[color:var(--dashboard-panel-solid)] font-semibold text-theme-fg"
+            : "text-theme-muted hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
         )}
       >
-        <Home className="w-3 h-3" />
+        <Home className="w-3.5 h-3.5" />
         <span>My Files</span>
       </button>
       {segments.map((seg, i) => {
@@ -247,12 +249,14 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (path: str
         const isLast = i === segments.length - 1;
         return (
           <React.Fragment key={segPath}>
-            <ChevronRight className="w-3 h-3 text-theme-muted/40 shrink-0" />
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-theme-muted" />
             <button
               onClick={() => onNavigate(segPath)}
               className={clsx(
-                "px-2 py-1 rounded-md transition-colors truncate max-w-[120px] shrink-0",
-                isLast ? "text-theme-fg font-bold bg-theme-hover/50" : "text-theme-muted hover:text-theme-fg hover:bg-theme-hover/30"
+                "max-w-[140px] shrink-0 truncate rounded-lg px-2.5 py-1.5 transition-colors",
+                isLast
+                  ? "bg-[color:var(--dashboard-panel-solid)] font-semibold text-theme-fg"
+                  : "text-theme-muted hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
               )}
             >
               {seg}
@@ -278,21 +282,21 @@ function UploadProgressBar({ queue }: { queue: UploadProgress[] }) {
   if (active.length === 0 && done.length === 0 && errors.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-theme/10 bg-theme-card overflow-hidden">
-      <div className="px-3 py-2 border-b border-theme/5 flex items-center justify-between">
+    <div className="dashboard-card overflow-hidden rounded-xl">
+      <div className="flex items-center justify-between border-b border-[color:var(--dashboard-panel-border)] px-3 py-2">
         <span className="text-[11px] font-bold text-theme-fg flex items-center gap-2">
           {active.length > 0 && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
           {active.length > 0 ? `Uploading ${active.length} file${active.length > 1 ? 's' : ''}...` : `${done.length} uploaded`}
           {errors.length > 0 && <span className="text-red-400">· {errors.length} failed</span>}
         </span>
       </div>
-      <div className="max-h-[120px] overflow-y-auto custom-scrollbar divide-y divide-theme/5">
+      <div className="custom-scrollbar max-h-[120px] divide-y divide-[color:var(--dashboard-panel-border)] overflow-y-auto">
         {queue.map((item, i) => (
           <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
             {item.status === 'uploading' && <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />}
             {item.status === 'done' && <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />}
             {item.status === 'error' && <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />}
-            {item.status === 'pending' && <div className="w-3 h-3 rounded-full border-2 border-theme-muted/30 shrink-0" />}
+            {item.status === 'pending' && <div className="h-3 w-3 shrink-0 rounded-full border-2 border-[color:var(--dashboard-panel-border)]" />}
             <span className="truncate text-theme-fg flex-1">{item.filename}</span>
             <span className="text-theme-muted shrink-0">
               {item.status === 'uploading' ? `${item.percent}%` : item.status === 'error' ? (item.error || 'Failed') : formatBytes(item.total)}
@@ -336,12 +340,12 @@ function ContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-50 min-w-[180px] py-1.5 bg-theme-card border border-theme/15 rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+      className="fixed z-50 min-w-[180px] animate-in fade-in zoom-in-95 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] py-1.5 shadow-2xl duration-100"
       style={{ left: adjustedX, top: adjustedY }}
     >
       {items.map((item, i) => (
         <React.Fragment key={i}>
-          {item.divider && <div className="my-1 border-t border-theme/10" />}
+          {item.divider && <div className="my-1 border-t border-[color:var(--dashboard-panel-border)]" />}
           <button
             onClick={() => { item.onClick(); onClose(); }}
             className={clsx(
@@ -472,10 +476,10 @@ function CompactDropZone({ onFiles, active, currentPath }: { onFiles: (files: Fi
   return (
     <div
       className={clsx(
-        "border-2 border-dashed rounded-xl px-4 py-3 text-center transition-all duration-200 cursor-pointer group",
+        "border border-dashed rounded-xl px-4 py-3 text-center transition-all duration-200 cursor-pointer group",
         dragging
-          ? "border-primary bg-primary/5 scale-[1.005]"
-          : "border-theme/10 hover:border-primary/25 hover:bg-primary/3"
+          ? "border-primary/50 bg-primary/8 scale-[1.005]"
+          : "border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)] hover:border-primary/30 hover:bg-primary/[0.06]"
       )}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
@@ -498,10 +502,10 @@ function CompactDropZone({ onFiles, active, currentPath }: { onFiles: (files: Fi
           <Upload className="w-4 h-4 text-primary" />
         </div>
         <div className="text-left">
-          <p className="text-xs font-bold text-theme-fg">
+          <p className="text-[13px] font-semibold text-theme-fg">
             {active ? 'Uploading...' : 'Drop files or click to upload'}
           </p>
-          <p className="text-[10px] text-theme-muted mt-0.5">
+          <p className="mt-0.5 text-[12px] text-theme-muted">
             {currentPath ? `Uploading to /${currentPath}` : 'Upload to root'}
           </p>
         </div>
@@ -535,19 +539,19 @@ function GridItem({
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
       className={clsx(
-        "group relative flex flex-col items-center gap-2 p-3 rounded-2xl border-2 transition-all duration-150 cursor-pointer select-none",
+        "group relative flex flex-col items-center gap-2 p-3 rounded-2xl border border-transparent transition-all duration-150 cursor-pointer select-none",
         selected
-          ? "border-primary/40 bg-primary/5 ring-1 ring-primary/20"
-          : "border-transparent hover:border-theme/15 hover:bg-theme-hover/40"
+          ? "border-primary/35 bg-primary/10"
+          : "hover:bg-[color:var(--dashboard-hover)]"
       )}
     >
-      <div className={clsx("w-12 h-12 rounded-2xl flex items-center justify-center transition-colors",
-        node.isFolder ? "bg-blue-500/10" : "bg-theme-hover/60"
+      <div className={clsx("flex h-12 w-12 items-center justify-center rounded-2xl transition-colors",
+        node.isFolder ? "bg-blue-500/15" : "bg-[color:var(--dashboard-hover)]"
       )}>
-        <Icon className={clsx("w-6 h-6", iconColor)} />
+        <Icon className={clsx("h-6 w-6", iconColor)} />
       </div>
 
-      <div className="w-full text-center min-w-0">
+      <div className="w-full min-w-0 text-center">
         {renaming ? (
           <RenameInput
             currentName={node.name}
@@ -555,11 +559,11 @@ function GridItem({
             onCancel={onRenameCancel}
           />
         ) : (
-          <p className="text-[11px] font-medium text-theme-fg truncate leading-tight" title={node.name}>
+          <p className="truncate text-[12px] font-semibold leading-tight text-theme-fg" title={node.name}>
             {node.name}
           </p>
         )}
-        <p className="text-[10px] text-theme-muted mt-0.5">
+        <p className="mt-0.5 text-[11px] text-theme-muted">
           {node.isFolder ? '' : formatBytes(node.size)}
         </p>
       </div>
@@ -599,29 +603,30 @@ function ListItem({
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
       className={clsx(
-        "group flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-100 cursor-pointer select-none",
+        "group relative flex cursor-pointer select-none items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-100",
         selected
-          ? "bg-primary/8 ring-1 ring-primary/15"
-          : "hover:bg-theme-hover/40"
+          ? "bg-primary/10 ring-1 ring-inset ring-primary/25"
+          : "hover:bg-[color:var(--dashboard-hover)]"
       )}
     >
+      {selected && <div className="absolute bottom-2 left-0 top-2 w-[3px] rounded-full bg-primary" />}
       {/* Checkbox area */}
       <div className={clsx(
-        "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors shrink-0",
-        selected ? "border-primary bg-primary" : "border-theme/20 group-hover:border-theme/40"
+        "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+        selected ? "border-primary bg-primary" : "border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)]"
       )}>
         {selected && <CheckCircle2 className="w-3 h-3 text-white" />}
       </div>
 
       {/* Icon */}
-      <div className={clsx("w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-        node.isFolder ? "bg-blue-500/10" : "bg-theme-hover/50"
+      <div className={clsx("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+        node.isFolder ? "bg-blue-500/15" : "bg-[color:var(--dashboard-hover)]"
       )}>
-        <Icon className={clsx("w-4 h-4", iconColor)} />
+        <Icon className={clsx("h-4 w-4", iconColor)} />
       </div>
 
       {/* Name */}
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0 flex-1">
         {renaming ? (
           <RenameInput
             currentName={node.name}
@@ -629,25 +634,25 @@ function ListItem({
             onCancel={onRenameCancel}
           />
         ) : (
-          <p className="text-xs font-medium text-theme-fg truncate">{node.name}</p>
+          <p className="truncate text-[13px] font-semibold text-theme-fg">{node.name}</p>
         )}
         {node.isFolder && !renaming && (
-          <p className="text-[10px] text-theme-muted">{formatBytes(node.size)} total</p>
+          <p className="text-[11px] text-theme-muted">{formatBytes(node.size)} total</p>
         )}
       </div>
 
       {/* Type badge */}
-      <span className="text-[10px] text-theme-muted font-medium w-12 text-right shrink-0 hidden sm:block">
+      <span className="hidden w-12 shrink-0 text-right text-[11px] font-medium text-theme-muted sm:block">
         {node.isFolder ? 'Folder' : extensionLabel(node.name)}
       </span>
 
       {/* Size */}
-      <span className="text-[11px] text-theme-muted tabular-nums w-16 text-right shrink-0">
+      <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-theme-muted">
         {node.isFolder ? '—' : formatBytes(node.size)}
       </span>
 
       {/* Date */}
-      <span className="text-[11px] text-theme-muted w-20 text-right shrink-0 hidden md:block">
+      <span className="hidden w-24 shrink-0 text-right text-[12px] text-theme-muted md:block">
         {timeAgo(node.updated)}
       </span>
 
@@ -685,10 +690,10 @@ function FolderTreeRow({
       <div
         onClick={() => onNavigate(node.fullPath)}
         className={clsx(
-          "group flex items-center gap-1 pr-2 py-1 rounded-md cursor-pointer text-xs transition-colors",
+          "group flex cursor-pointer items-center gap-1 rounded-lg py-1.5 pr-2 text-[13px] transition-colors",
           isActive
-            ? "bg-primary/10 text-primary font-bold"
-            : "text-theme-fg hover:bg-theme-hover/50"
+            ? "bg-primary/12 font-semibold text-primary"
+            : "text-theme-fg hover:bg-[color:var(--dashboard-hover)]"
         )}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
@@ -765,26 +770,26 @@ function FolderTreeSidebar({
   }, []);
 
   return (
-    <div className="flex flex-col h-full min-h-0 rounded-2xl border border-theme/10 bg-theme-card overflow-hidden">
-      <div className="px-3 py-2 border-b border-theme/8 flex items-center gap-2">
-        <Cloud className="w-3.5 h-3.5 text-primary" />
-        <span className="text-[10px] font-black uppercase tracking-wider text-theme-muted">Folders</span>
+    <div className="dashboard-card flex h-full min-h-0 flex-col overflow-hidden rounded-2xl">
+      <div className="flex items-center gap-2 border-b border-[color:var(--dashboard-panel-border)] px-3 py-2.5">
+        <Cloud className="h-4 w-4 text-primary" />
+        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-fg">Folders</span>
       </div>
       <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 space-y-0.5">
         <div
           onClick={() => onNavigate('')}
           className={clsx(
-            "flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer text-xs transition-colors",
+            "flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors",
             !currentPath
-              ? "bg-primary/10 text-primary font-bold"
-              : "text-theme-fg hover:bg-theme-hover/50"
+              ? "bg-primary/12 font-semibold text-primary"
+              : "text-theme-fg hover:bg-[color:var(--dashboard-hover)]"
           )}
         >
           <Home className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">My Files</span>
         </div>
         {tree.length === 0 ? (
-          <div className="px-2 py-3 text-[10px] text-theme-muted/50 italic">
+          <div className="px-2 py-3 text-[12px] italic text-theme-muted">
             No folders yet
           </div>
         ) : (
@@ -801,10 +806,10 @@ function FolderTreeSidebar({
           ))
         )}
       </div>
-      <div className="px-3 py-2 border-t border-theme/8 text-[10px] text-theme-muted">
+      <div className="border-t border-[color:var(--dashboard-panel-border)] px-3 py-2.5 text-[12px] text-theme-muted">
         <div className="flex justify-between">
           <span>{totalFiles} file{totalFiles === 1 ? '' : 's'}</span>
-          <span className="font-bold text-theme-fg">{formatBytes(totalSize)}</span>
+          <span className="font-semibold text-theme-fg">{formatBytes(totalSize)}</span>
         </div>
       </div>
     </div>
@@ -1093,7 +1098,7 @@ export function FileExplorer({
   return (
     <div className="space-y-3">
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="dashboard-card flex flex-wrap items-center gap-2 p-2.5">
         {/* Back button */}
         {currentPath && (
           <button
@@ -1103,7 +1108,7 @@ export function FileExplorer({
                 : '';
               navigateTo(parent);
             }}
-            className="p-2 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
+            className="dashboard-card-muted rounded-xl p-2 text-theme-muted transition-colors hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
             title="Go up"
           >
             <ArrowUp className="w-4 h-4" />
@@ -1111,18 +1116,18 @@ export function FileExplorer({
         )}
 
         {/* Breadcrumb */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <Breadcrumb path={currentPath} onNavigate={navigateTo} />
         </div>
 
         {/* Search */}
-        <div className="relative w-48">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-theme-muted" />
+        <div className="relative w-52">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
           <input
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search..."
-            className="w-full pl-7 pr-2 py-1.5 bg-theme-hover/50 border border-theme/10 rounded-lg text-[11px] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-primary/30"
+            placeholder="Search files..."
+            className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] py-2 pl-9 pr-8 text-[12px] text-theme-fg placeholder:text-theme-muted focus:border-primary/40 focus:outline-none"
           />
           {searchQuery && (
             <button
@@ -1135,12 +1140,14 @@ export function FileExplorer({
         </div>
 
         {/* View toggle */}
-        <div className="flex items-center bg-theme-hover/50 rounded-lg p-0.5">
+        <div className="dashboard-card-muted flex items-center rounded-lg p-0.5">
           <button
             onClick={() => setViewMode('list')}
             className={clsx(
-              "p-1.5 rounded-md transition-colors",
-              viewMode === 'list' ? "bg-theme-bg text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
+              "rounded-md p-1.5 transition-colors",
+              viewMode === 'list'
+                ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg"
+                : "text-theme-muted hover:text-theme-fg"
             )}
             title="List view"
           >
@@ -1149,8 +1156,10 @@ export function FileExplorer({
           <button
             onClick={() => setViewMode('grid')}
             className={clsx(
-              "p-1.5 rounded-md transition-colors",
-              viewMode === 'grid' ? "bg-theme-bg text-theme-fg shadow-sm" : "text-theme-muted hover:text-theme-fg"
+              "rounded-md p-1.5 transition-colors",
+              viewMode === 'grid'
+                ? "bg-[color:var(--dashboard-panel-solid)] text-theme-fg"
+                : "text-theme-muted hover:text-theme-fg"
             )}
             title="Grid view"
           >
@@ -1161,14 +1170,14 @@ export function FileExplorer({
         {/* Actions */}
         <button
           onClick={() => setCreatingFolder(true)}
-          className="p-2 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
+          className="dashboard-card-muted rounded-xl p-2 text-theme-muted transition-colors hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
           title="New folder"
         >
           <FolderPlus className="w-4 h-4" />
         </button>
         <button
           onClick={() => fetchFiles()}
-          className="p-2 rounded-xl hover:bg-theme-hover text-theme-muted hover:text-theme-fg transition-colors"
+          className="dashboard-card-muted rounded-xl p-2 text-theme-muted transition-colors hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -1272,27 +1281,27 @@ export function FileExplorer({
               if (droppedFiles.length > 0) handleUpload(droppedFiles);
             }}
             className={clsx(
-              "rounded-2xl border transition-all min-h-[300px]",
+              "min-h-[300px] rounded-2xl transition-all",
               areaDragging
-                ? "border-primary/30 bg-primary/3"
-                : "border-theme/10 bg-theme-card"
+                ? "border border-primary/30 bg-primary/3"
+                : "dashboard-card"
             )}
           >
         {/* List header (only in list view) */}
         {viewMode === 'list' && allItems.length > 0 && (
-          <div className="flex items-center gap-3 px-3 py-2 border-b border-theme/8 text-[10px] font-black text-theme-muted uppercase tracking-wider">
+          <div className="flex items-center gap-3 border-b border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)]/40 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-theme-muted">
             <div className="w-4 shrink-0" />
-            <div className="w-8 shrink-0" />
-            <button className="flex-1 flex items-center gap-1 hover:text-theme-fg transition-colors" onClick={() => toggleSort('name')}>
+            <div className="w-9 shrink-0" />
+            <button className="flex flex-1 items-center gap-1 hover:text-theme-fg transition-colors" onClick={() => toggleSort('name')}>
               Name {sortField === 'name' && (sortDir === 'asc' ? <SortAsc className="w-3 h-3" /> : <SortDesc className="w-3 h-3" />)}
             </button>
-            <button className="w-12 text-right hidden sm:flex items-center justify-end gap-1 hover:text-theme-fg transition-colors" onClick={() => toggleSort('type')}>
+            <button className="hidden w-12 items-center justify-end gap-1 text-right hover:text-theme-fg transition-colors sm:flex" onClick={() => toggleSort('type')}>
               Type {sortField === 'type' && (sortDir === 'asc' ? <SortAsc className="w-3 h-3" /> : <SortDesc className="w-3 h-3" />)}
             </button>
-            <button className="w-16 text-right flex items-center justify-end gap-1 hover:text-theme-fg transition-colors" onClick={() => toggleSort('size')}>
+            <button className="flex w-16 items-center justify-end gap-1 text-right hover:text-theme-fg transition-colors" onClick={() => toggleSort('size')}>
               Size {sortField === 'size' && (sortDir === 'asc' ? <SortAsc className="w-3 h-3" /> : <SortDesc className="w-3 h-3" />)}
             </button>
-            <button className="w-20 text-right hidden md:flex items-center justify-end gap-1 hover:text-theme-fg transition-colors" onClick={() => toggleSort('updated')}>
+            <button className="hidden w-24 items-center justify-end gap-1 text-right hover:text-theme-fg transition-colors md:flex" onClick={() => toggleSort('updated')}>
               Modified {sortField === 'updated' && (sortDir === 'asc' ? <SortAsc className="w-3 h-3" /> : <SortDesc className="w-3 h-3" />)}
             </button>
             <div className="w-7 shrink-0" />
@@ -1301,14 +1310,14 @@ export function FileExplorer({
 
         {/* Empty state */}
         {allItems.length === 0 && !loading && (
-          <div className="flex flex-col items-center justify-center py-16 px-4" data-bg-area="true">
-            <div className="w-16 h-16 rounded-3xl bg-theme-hover/50 flex items-center justify-center mb-4">
-              <FolderOpen className="w-8 h-8 text-theme-muted/30" />
+          <div className="flex flex-col items-center justify-center px-4 py-16" data-bg-area="true">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-primary/10">
+              <FolderOpen className="h-8 w-8 text-primary/70" />
             </div>
-            <p className="text-sm font-bold text-theme-muted mb-1">
+            <p className="mb-1 text-[15px] font-semibold text-theme-fg">
               {searchQuery ? 'No matches found' : 'This folder is empty'}
             </p>
-            <p className="text-xs text-theme-muted/60 text-center max-w-[260px]">
+            <p className="max-w-[280px] text-center text-[13px] text-theme-muted">
               {searchQuery
                 ? `No files matching "${searchQuery}" in this folder.`
                 : 'Drop files here, click the upload area above, or create a new folder.'}
@@ -1373,7 +1382,7 @@ export function FileExplorer({
 
         {/* Footer stats */}
         {allItems.length > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2 border-t border-theme/8 text-[10px] text-theme-muted">
+          <div className="flex items-center gap-3 border-t border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-hover)]/30 px-4 py-2.5 text-[12px] text-theme-muted">
             {totalFolders > 0 && <span>{totalFolders} folder{totalFolders > 1 ? 's' : ''}</span>}
             {totalFolders > 0 && totalFiles > 0 && <span>·</span>}
             {totalFiles > 0 && <span>{totalFiles} file{totalFiles > 1 ? 's' : ''}</span>}
@@ -1404,12 +1413,12 @@ export function FileExplorer({
       )}
 
       {/* ── Keyboard Shortcuts Hint ───────────────────────────────────────── */}
-      <div className="flex items-center gap-4 text-[10px] text-theme-muted/40 px-1">
-        <span><kbd className="px-1 py-0.5 rounded bg-theme-hover/50 text-theme-muted/60 font-mono text-[9px]">Ctrl+A</kbd> Select all</span>
-        <span><kbd className="px-1 py-0.5 rounded bg-theme-hover/50 text-theme-muted/60 font-mono text-[9px]">F2</kbd> Rename</span>
-        <span><kbd className="px-1 py-0.5 rounded bg-theme-hover/50 text-theme-muted/60 font-mono text-[9px]">Del</kbd> Delete</span>
-        <span><kbd className="px-1 py-0.5 rounded bg-theme-hover/50 text-theme-muted/60 font-mono text-[9px]">Backspace</kbd> Go up</span>
-        <span><kbd className="px-1 py-0.5 rounded bg-theme-hover/50 text-theme-muted/60 font-mono text-[9px]">Esc</kbd> Deselect</span>
+      <div className="flex flex-wrap items-center gap-4 px-1 text-[11px] text-theme-muted">
+        <span><kbd className="rounded border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-1.5 py-0.5 font-mono text-[10px] text-theme-fg">Ctrl+A</kbd> Select all</span>
+        <span><kbd className="rounded border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-1.5 py-0.5 font-mono text-[10px] text-theme-fg">F2</kbd> Rename</span>
+        <span><kbd className="rounded border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-1.5 py-0.5 font-mono text-[10px] text-theme-fg">Del</kbd> Delete</span>
+        <span><kbd className="rounded border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-1.5 py-0.5 font-mono text-[10px] text-theme-fg">Backspace</kbd> Go up</span>
+        <span><kbd className="rounded border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-1.5 py-0.5 font-mono text-[10px] text-theme-fg">Esc</kbd> Deselect</span>
       </div>
     </div>
   );

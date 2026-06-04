@@ -52,6 +52,20 @@ async def knowledge_add_fact(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "category, subtype, and text are required"}
 
     try:
+        # Core profile facts (name, timezone, occupation, …) are single-valued:
+        # overwrite-by-key so the identity profile stays clean instead of
+        # accumulating a duplicate row every time the same key is set.
+        if category == "personal" and subtype == "core" and attribute_key:
+            fact = kdb.upsert_core_fact(
+                attribute_key=str(attribute_key),
+                text=text,
+                vector=vector if isinstance(vector, list) else None,
+                source=source,
+                confidence=float(args.get("confidence", 1.0)),
+                source_conversation_id=args.get("source_conversation_id"),
+            )
+            return {"ok": True, "fact": fact.to_dict()}
+
         fact = kdb.append_fact(
             category=category,  # type: ignore
             subtype=subtype,  # type: ignore

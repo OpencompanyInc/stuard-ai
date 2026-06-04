@@ -914,7 +914,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   return (
     <div
       ref={containerRef}
-      className="w-full h-full flex-1 min-w-0 min-h-0 overflow-hidden relative bg-slate-100"
+      className="w-full h-full flex-1 min-w-0 min-h-0 overflow-hidden relative uib-surface-2"
     >
       <div className="w-full h-full flex items-center justify-center p-3">
         <div
@@ -925,7 +925,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           }}
         >
           <div
-            className="relative bg-white rounded-xl border border-slate-300 shadow-inner overflow-hidden"
+            className="relative uib-surface rounded-xl border uib-border shadow-inner overflow-hidden"
             style={{
               width: PREVIEW_SURFACE_WIDTH,
               height: PREVIEW_SURFACE_HEIGHT,
@@ -942,13 +942,13 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
               }}
             />
 
-            <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-white/90 text-[10px] font-mono text-slate-500 border border-slate-200 z-10">
+            <div className="absolute top-3 right-3 px-2 py-1 rounded-md uib-surface text-[10px] font-mono uib-fg-muted border uib-border z-10">
               preview surface {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
             </div>
 
             {/* The rendered custom UI window */}
             <div
-              className="absolute rounded-lg shadow-2xl overflow-hidden border border-slate-300"
+              className="absolute rounded-lg shadow-2xl overflow-hidden border uib-border"
               style={{
                 left: windowOffset.x,
                 top: windowOffset.y,
@@ -972,8 +972,8 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
               />
 
               {!iframeReady && (
-                <div className="absolute inset-0 bg-white flex items-center justify-center">
-                  <div className="text-slate-400 text-sm">Loading preview...</div>
+                <div className="absolute inset-0 uib-surface flex items-center justify-center">
+                  <div className="uib-fg-faint text-sm">Loading preview...</div>
                 </div>
               )}
             </div>
@@ -982,16 +982,16 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       </div>
 
       {/* Canvas Size Indicator */}
-      <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-white rounded-lg text-xs text-slate-600 border border-slate-200 shadow-sm z-20">
+      <div className="absolute bottom-4 left-4 px-3 py-1.5 uib-surface rounded-lg text-xs uib-fg-muted border uib-border shadow-sm z-20">
         <div>{safeCanvasWidth} × {safeCanvasHeight} @ {Math.round(zoom * 100)}%</div>
-        <div className="text-[10px] text-slate-500">
+        <div className="text-[10px] uib-fg-muted">
           position: {windowPosition}{windowPosition === 'custom' ? ` (${customX ?? 50}%, ${customY ?? 50}%)` : ''}
         </div>
       </div>
 
       {/* Preview Mode Indicator */}
       {previewMode && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-500 text-white text-xs font-semibold rounded-full shadow-lg z-50 pointer-events-none">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-500/150 text-white text-xs font-semibold rounded-full shadow-lg z-50 pointer-events-none">
           Preview Mode — Interactions Enabled
         </div>
       )}
@@ -999,7 +999,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       {/* Empty state */}
       {!html && !js && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-          <div className="text-center text-slate-400 bg-white/80 px-6 py-4 rounded-xl">
+          <div className="text-center uib-fg-faint uib-surface px-6 py-4 rounded-xl">
             <div className="text-lg font-medium mb-1">Empty Canvas</div>
             <div className="text-sm">Click components on the left to add them</div>
           </div>

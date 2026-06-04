@@ -1121,14 +1121,43 @@ MULTIMODAL — IMAGE / SCREEN / AUDIO / VIDEO / PDF:
       model: "google/gemini-3.1-pro-preview"
   }}
 
-TRANSCRIPTION MODE — dedicated Whisper STT path (audio → text only):
+TRANSCRIPTION MODE — dedicated STT path (audio → text only):
   { tool: "ai_inference", args: {
       mode: "transcription",
       sources: [{ path: "{{record.filePath}}" }],
       language: "en",                  // optional ISO-639-1, auto-detected if omitted
-      model: "openai/whisper-1"        // or any whisper-* OpenRouter slug
+      transcriptionModel: "openai/whisper-1"   // any OpenRouter STT slug or elevenlabs/*
   }}
   Output: { ok, text }   // text is the transcript
+
+STREAMING TRANSCRIPTION — real-time STT from a live mic stream (any model):
+  Connect capture_media (stream mode) → ai_inference with a STREAM wire. The audio
+  is sliced into utterance windows (flushed at silence gaps / a time cap) and each
+  window is transcribed one-shot, so EVERY STT model effectively "streams". With
+  stream:true the transcript is emitted to an output stream you consume downstream.
+  nodes: [
+    { id: "record", tool: "capture_media", args: { kind: "audio", mode: "stream", sessionId: "rec" } },
+    { id: "stt",    tool: "ai_inference",  args: {
+        mode: "transcription",
+        transcriptionModel: "openai/whisper-1",
+        stream: true,                  // emit a live transcript stream
+        windowMs: 8000,                // hard cap per window (silence flushes earlier)
+        maxDurationMs: 15000,          // optional: stop after 15s
+        stopSessionId: "rec"           // auto-stop the mic so the run ends
+    }},
+    { id: "log",    tool: "log", args: { message: "{{stt.text}}" } }
+  ]
+  wires: [
+    { from: "trig_0",  to: "record" },
+    { from: "record",  to: "stt", stream: { sourceField: "streamId", mode: "reactive" } }, // audio in
+    { from: "stt",     to: "log", stream: { sourceField: "streamId", mode: "reactive" } }  // transcript out
+  ]
+  Output: stream:true → { ok, streamId };  stream:false → { ok, text } (drains stream, returns joined transcript)
+  HOW IT WORKS: ai_inference transcription is a "self-managed" stream sink — the
+  engine injects the incoming audio streamId as audioStreamId and runs the node
+  ONCE (it drains the raw float32 audio itself; those numpy chunks can't ride the
+  normal per-chunk reactive path). You can also use a plain flow wire and set
+  audioStreamId: "{{record.streamId}}" explicitly — both work.
 
   // YouTube / direct media URL
   { tool: "ai_inference", args: {

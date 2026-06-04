@@ -48,6 +48,19 @@ vi.mock('../../stuards', () => ({
   stuards_save: stuardsSaveMock,
 }));
 
+// Stub variable project-scoping helpers (their real impl is unit-tested
+// separately in workflow-variables.project-scope.test.ts). resolveProjectId is
+// identity so the handler binds the sub-run to the parent flow.
+const registerFlowProjectMock = vi.fn();
+const unregisterFlowProjectMock = vi.fn();
+const clearFlowLocalVariablesMock = vi.fn();
+vi.mock('../../workflow-variables', () => ({
+  registerFlowProject: (...a: any[]) => registerFlowProjectMock(...a),
+  unregisterFlowProject: (...a: any[]) => unregisterFlowProjectMock(...a),
+  clearFlowLocalVariables: (...a: any[]) => clearFlowLocalVariablesMock(...a),
+  resolveProjectId: (id: string) => id,
+}));
+
 import {
   discoverWorkspaceFunctions,
   execCallWorkspaceFunction,

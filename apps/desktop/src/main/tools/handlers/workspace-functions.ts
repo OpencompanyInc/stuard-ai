@@ -10,6 +10,7 @@ import { getWorkspaceDir, readWorkflowModel, designerModelToStuardSpec, safeFlow
 import { runStuardEngine, EngineContext } from '../../engine';
 import { stuards_save } from '../../stuards';
 import { RouterContext } from '../types';
+import { registerFlowProject, unregisterFlowProject, resolveProjectId, clearFlowLocalVariables } from '../../workflow-variables';
 
 /** Info about a callable .stuard sub-workflow in a workspace */
 export interface WorkspaceFunction {
@@ -144,6 +145,13 @@ export async function execCallWorkspaceFunction(args: any, ctx: RouterContext): 
     // Generate a unique execution ID for this sub-workflow run
     const execId = `${parentFlowId}_sub_${Date.now().toString(36)}`;
 
+    // Bind this sub-run to the parent's PROJECT so `workflow.*` (global) vars are
+    // shared across main.stuard + all sibling .stuard files in the workspace.
+    // `local.*` still scopes to execId. Identity-default means top-level runs are
+    // unaffected. Resolve transitively so nested calls still point at the root.
+    const projectId = resolveProjectId(parentFlowId) || parentFlowId;
+    registerFlowProject(execId, projectId);
+
     // Convert to StuardSpec
     const spec = designerModelToStuardSpec(model, triggerId);
     spec.id = execId;
@@ -190,6 +198,11 @@ export async function execCallWorkspaceFunction(args: any, ctx: RouterContext): 
       };
     } catch (e: any) {
       return { ok: false, functionPath: resolvedPath, error: e?.message || 'execution failed' };
+    } finally {
+      // Drop the flow→project mapping and the sub-run's ephemeral local.* vars
+      // now the sub-run is done. Project-wide workflow.* vars are preserved.
+      clearFlowLocalVariables(execId);
+      unregisterFlowProject(execId);
     }
   } catch (e: any) {
     return { ok: false, error: e?.message || 'call_workspace_function failed' };

@@ -51,7 +51,7 @@ const STEPS: Step[] = [
 const PLACEHOLDER = 'Ask Stuard…';
 const HOME = { left: '50%', top: '30%' };
 
-export function CoachingTour({ onComplete, onSkip }: { onComplete: () => void; onSkip?: () => void }) {
+export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: { onComplete: () => void; onSkip?: () => void; lastLabel?: string }) {
   const [idx, setIdx] = useState(0);
   const step = STEPS[idx];
 
@@ -88,8 +88,17 @@ export function CoachingTour({ onComplete, onSkip }: { onComplete: () => void; o
         { left: '43%', top: '37%' }, { left: '43%', top: '30%' }, { left: '50%', top: '30%' },
       ];
       let i = 0;
-      const hop = () => { if (cancelled) return; setPos(spots[i % spots.length]); i++; after(hop, 950); };
-      after(hop, 250);
+      const hop = () => {
+        if (cancelled) return;
+        // Finished a full lap (last spot is HOME) — rest a beat before looping
+        // again so the pill isn't perpetually mid-glide when the user reads the
+        // card or clicks Next.
+        if (i >= spots.length) { i = 0; after(hop, 1700); return; }
+        setPos(spots[i]);
+        i++;
+        after(hop, 900);
+      };
+      after(hop, 400);
     } else if (step.id === 'context') {
       const full = '@Documents/report.pdf';
       const type = (n: number) => {
@@ -98,19 +107,22 @@ export function CoachingTour({ onComplete, onSkip }: { onComplete: () => void; o
         if (n < full.length) after(() => type(n + 1), 55);
         else {
           after(() => setChip(true), 150);
-          after(() => { setChip(false); setTyped(''); after(() => type(1), 650); }, 2400);
+          // Hold the attached chip, then clear and rest before retyping.
+          after(() => { setChip(false); setTyped(''); after(() => type(1), 1300); }, 2600);
         }
       };
       after(() => type(1), 500);
     } else if (step.id === 'expand') {
-      // demonstrate the drag-to-expand corner: grip pops, pill stretches, releases
+      // demonstrate the drag-to-expand corner: grip pops, pill stretches, holds
+      // at full size so the resize reads, then releases and rests before looping.
       const cycle = () => {
         if (cancelled) return;
         setMode('compact'); setCornerActive(false);
-        after(() => { setCornerActive(true); setMode('sidebar'); }, 600);
+        after(() => { setCornerActive(true); setMode('sidebar'); }, 700);
         after(() => setMode('window'), 1700);
-        after(() => { setCornerActive(false); setMode('compact'); }, 2900);
-        after(cycle, 3700);
+        after(() => setCornerActive(false), 3300);   // hold fully expanded, then let go
+        after(() => setMode('compact'), 3500);
+        after(cycle, 5200);                          // rest as a compact pill before repeating
       };
       cycle();
     } else if (step.id === 'dismiss') {
@@ -340,7 +352,7 @@ export function CoachingTour({ onComplete, onSkip }: { onComplete: () => void; o
             onClick={next}
             className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200/40 bg-rose-700/60 px-4 py-1.5 text-[12.5px] font-medium text-white shadow-[0_2px_16px_rgba(60,15,25,0.4)] transition-all hover:bg-rose-600/65 hover:border-rose-200/55 active:scale-95"
           >
-            {idx === STEPS.length - 1 ? 'Open Stuard' : 'Next'}
+            {idx === STEPS.length - 1 ? lastLabel : 'Next'}
             <ArrowRight size={13} className="text-rose-100/85" />
           </button>
         </div>

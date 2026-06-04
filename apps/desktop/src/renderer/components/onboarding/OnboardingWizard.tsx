@@ -135,7 +135,6 @@ export default function OnboardingWizard({ open, onClose }: { open: boolean; onC
       render: () => (
         <Card title="Master the shortcuts">
           <ul className="space-y-1">
-            <li className="bg-white/5 rounded px-3 py-1.5">Command palette: <span className="text-white/70">F1 or Ctrl + /</span></li>
             <li className="bg-white/5 rounded px-3 py-1.5">Send: <span className="text-white/70">Enter</span> • New line: <span className="text-white/70">Shift + Enter</span> • Hide: <span className="text-white/70">Esc</span></li>
           </ul>
         </Card>
@@ -186,8 +185,6 @@ export default function OnboardingWizard({ open, onClose }: { open: boolean; onC
         <div className="px-4 py-3 border-b border-white/10 text-[14px] font-semibold drag">Onboarding</div>
         <div className="absolute top-2 right-2 flex flex-wrap gap-1.5 justify-end no-drag">
           <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/80 shadow">Ctrl + Shift + Space</div>
-          <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/80 shadow">Ctrl + /</div>
-          <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/80 shadow">F1</div>
           <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/80 shadow">Ctrl + Arrow</div>
           <div className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/80 shadow">Ctrl + Shift + Arrow</div>
         </div>

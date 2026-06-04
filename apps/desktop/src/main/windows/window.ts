@@ -1,12 +1,12 @@
 
-import { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray, screen, powerMonitor, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, screen, powerMonitor, shell } from "electron";
 import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
 import logger from "../utils/logger";
 import { getGlobalHotkey, loadSettings, setRendererPrefs } from "../settings";
-import { updates_check } from "../services/updates";
 import { initOverlayHotkey } from "./overlay-hotkey";
+import { initTrayMenu, showTrayMenu, type TrayThemeMode } from "./tray-menu-window";
 
 let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
@@ -2207,15 +2207,8 @@ export function registerGlobalShortcuts() {
     logger.error("Failed to register ANY overlay shortcut!");
   }
 
-  try { globalShortcut.register("CommandOrControl+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("Control+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("CommandOrControl+Shift+/", () => openWorkflowsWindow()); } catch { }
-  try { globalShortcut.register("CommandOrControl+Divide", () => openWorkflowsWindow()); } catch { }
-
   logger.info("Global shortcuts registration complete");
 }
-
-type TrayThemeMode = "light" | "dark" | "custom";
 
 function getTrayIconImage(): Electron.NativeImage {
   const appPath = (() => { try { return app?.getAppPath?.() || ""; } catch { return ""; } })();
@@ -2254,12 +2247,6 @@ function getTrayIconImage(): Electron.NativeImage {
   ).resize({ width: 16, height: 16 });
 }
 
-function getFeedbackUrl(): string {
-  return isDev
-    ? "http://localhost:3000/dashboard/support/new"
-    : "https://stuard.ai/dashboard/support/new";
-}
-
 function getActiveThemeMode(): TrayThemeMode {
   const raw = String(loadSettings().themeMode || "light").toLowerCase();
   if (raw === "dark") return "dark";
@@ -2281,76 +2268,6 @@ function applyThemeFromTray(mode: TrayThemeMode) {
   }
 }
 
-function buildTrayContextMenu(): Menu {
-  const overlayVisible = !!(win && !win.isDestroyed() && win.isVisible());
-  const themeMode = getActiveThemeMode();
-
-  return Menu.buildFromTemplate([
-    {
-      label: overlayVisible ? "Hide Stuard" : "Show Stuard",
-      click: toggleWindow,
-    },
-    { type: "separator" },
-    {
-      label: "Dashboard",
-      click: () => openDashboardWindow(),
-    },
-    {
-      label: "Workflows",
-      click: () => openWorkflowsWindow(),
-    },
-    {
-      label: "Settings",
-      click: () => openDashboardWindow({ tab: "settings" }),
-    },
-    { type: "separator" },
-    {
-      label: "Theme",
-      submenu: [
-        {
-          label: "Light",
-          type: "radio",
-          checked: themeMode === "light",
-          click: () => applyThemeFromTray("light"),
-        },
-        {
-          label: "Dark",
-          type: "radio",
-          checked: themeMode === "dark",
-          click: () => applyThemeFromTray("dark"),
-        },
-        {
-          label: "Custom",
-          type: "radio",
-          checked: themeMode === "custom",
-          click: () => {
-            applyThemeFromTray("custom");
-            openDashboardWindow({ tab: "settings" });
-          },
-        },
-      ],
-    },
-    { type: "separator" },
-    {
-      label: "Send Feedback",
-      click: () => {
-        shell.openExternal(getFeedbackUrl()).catch((e) => logger.warn("Failed to open feedback URL", e));
-      },
-    },
-    {
-      label: "Check for Updates…",
-      click: () => {
-        updates_check().catch((e) => logger.warn("Tray update check failed", e));
-      },
-    },
-    { type: "separator" },
-    {
-      label: "Quit Stuard",
-      click: () => app.quit(),
-    },
-  ]);
-}
-
 export function createTray() {
   if (tray && !tray.isDestroyed()) {
     try { tray.destroy(); } catch { }
@@ -2360,9 +2277,20 @@ export function createTray() {
   const image = getTrayIconImage();
   tray = new Tray(image);
   tray.setToolTip(`Stuard AI v${app.getVersion()}`);
+  initTrayMenu({
+    getOverlayVisible: () => !!(win && !win.isDestroyed() && win.isVisible()),
+    toggleWindow,
+    openDashboard: openDashboardWindow,
+    openWorkflows: openWorkflowsWindow,
+    applyTheme: applyThemeFromTray,
+    getThemeMode: getActiveThemeMode,
+  });
+
   tray.on("click", toggleWindow);
   tray.on("right-click", () => {
-    try { tray?.popUpContextMenu(buildTrayContextMenu()); } catch { }
+    if (tray && !tray.isDestroyed()) {
+      try { showTrayMenu(tray); } catch (e) { logger.warn("Tray menu failed", e); }
+    }
   });
 }
 

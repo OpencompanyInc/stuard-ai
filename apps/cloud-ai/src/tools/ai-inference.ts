@@ -15,6 +15,8 @@ import {
   type MediaSource,
 } from './media-loader';
 import { transcribeAudio, DEFAULT_STT_MODEL } from '../media/transcription';
+import { runStreamingTranscription } from '../media/streaming-transcription';
+import { sttCostUsd } from '../pricing';
 
 // ── OpenRouter audio pre-processing ─────────────────────────────────────────
 // OpenRouter only accepts audio/mpeg (MP3) and audio/wav. When the user
@@ -206,7 +208,9 @@ export const aiInferenceTool = createTool({
   inputSchema: z.object({
     prompt: z
       .string()
-      .describe('The instruction/question for the AI. Be specific about what you want. For embedding mode, this is the text to embed.'),
+      .optional()
+      .default('')
+      .describe('The instruction/question for the AI. Be specific about what you want. For embedding mode, this is the text to embed. Not required for transcription mode.'),
     input: z
       .string()
       .optional()
@@ -231,6 +235,28 @@ export const aiInferenceTool = createTool({
       .string()
       .optional()
       .describe('Optional ISO-639-1 language code (e.g. "en", "ja") for transcription mode. Auto-detected when omitted.'),
+    audioStreamId: z
+      .string()
+      .optional()
+      .describe('For transcription mode: a live audio streamId (e.g. from capture_media stream mode, wired in as {{capture.streamId}}). Enables real-time streaming speech-to-text — the audio is windowed and transcribed continuously. Combine with stream:true to emit a transcript stream.'),
+    windowMs: z
+      .number()
+      .optional()
+      .default(8000)
+      .describe('Streaming transcription only: hard cap (ms) on each transcription window. Windows also flush early on a short silence gap so whole utterances are transcribed together. Default 8000.'),
+    maxDurationMs: z
+      .number()
+      .optional()
+      .default(0)
+      .describe('Streaming transcription only: stop after this many ms of audio (0 = run until the audio stream closes). When set with stopSessionId, the capture session is stopped automatically.'),
+    stopSessionId: z
+      .string()
+      .optional()
+      .describe('Streaming transcription only: capture_media sessionId to stop_capture when maxDurationMs elapses, so the workflow ends cleanly.'),
+    flowId: z
+      .string()
+      .optional()
+      .describe('Internal: owning workflow id (threaded by the engine). Scopes the transcript output stream so it is cleaned up when the run stops.'),
     schema: z
       .record(z.string(), z.any())
       .optional()
@@ -304,6 +330,11 @@ export const aiInferenceTool = createTool({
       injectMemory = false,
       memory: memoryConfig,
       language,
+      audioStreamId,
+      windowMs = 8000,
+      maxDurationMs = 0,
+      stopSessionId,
+      flowId,
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
@@ -318,6 +349,11 @@ export const aiInferenceTool = createTool({
       injectMemory?: boolean;
       memory?: { enabled: boolean; lenses?: Record<string, boolean>; maxFacts?: number; conversationHistory?: { role: string; content: string }[]; customFacts?: string[] };
       language?: string;
+      audioStreamId?: string;
+      windowMs?: number;
+      maxDurationMs?: number;
+      stopSessionId?: string;
+      flowId?: string;
     };
 
     const hasMedia = Array.isArray(sources) && sources.length > 0;
@@ -379,6 +415,34 @@ export const aiInferenceTool = createTool({
             ? modelId
             : DEFAULT_STT_MODEL;
 
+      // ── Streaming speech-to-text: consume a live audio stream window-by-window ──
+      // Works for any STT model (each window is a one-shot transcribe). With
+      // stream:true the transcript is emitted to an output stream in real time;
+      // otherwise the audio stream is drained and the joined transcript returned.
+      if (typeof audioStreamId === 'string' && audioStreamId.trim()) {
+        const streamResult = await runStreamingTranscription({
+          audioStreamId: audioStreamId.trim(),
+          sttModel,
+          language,
+          windowMs,
+          maxDurationMs,
+          stopSessionId,
+          flowId,
+          streamOut: !!streamMode,
+          writer,
+          logUsage: (model, usage) => logAiInferenceUsage(model, usage, 'ai_inference:transcription_stream'),
+        });
+        await safeToolWrite(writer, {
+          type: 'tool_event',
+          tool: 'ai_inference',
+          status: streamResult.ok ? (streamMode ? 'streaming' : 'completed') : 'error',
+          mode: 'transcription',
+          ...(streamResult.streamId ? { streamId: streamResult.streamId } : {}),
+          ...(streamResult.error ? { error: streamResult.error } : {}),
+        });
+        return streamResult;
+      }
+
       if (!Array.isArray(sources) || sources.length === 0) {
         const err = 'transcription mode requires at least one audio source';
         await safeToolWrite(writer, { type: 'tool_event', tool: 'ai_inference', status: 'error', error: err });
@@ -408,17 +472,27 @@ export const aiInferenceTool = createTool({
         const buffer = Buffer.from(audioPart.data, 'base64');
         const result = await transcribeAudio(buffer, audioPart.mediaType, language, sttModel);
 
-        // OpenRouter STT returns usage.cost in USD directly — pass it through
-        // as costUsd so logUsageEvent uses the exact billed amount.
+        // OpenRouter STT returns usage.cost in USD directly — pass it through as
+        // costUsd. When the provider reports only duration (ElevenLabs) or no
+        // usage at all, fall back to duration-based STT pricing so we bill the
+        // real audio cost instead of $0 / a mis-priced token estimate.
+        const providerCost = Number(result.usage?.cost);
+        const audioSec = Number(result.usage?.seconds ?? result.duration);
+        const billUsd =
+          Number.isFinite(providerCost) && providerCost > 0
+            ? providerCost
+            : Number.isFinite(audioSec) && audioSec > 0
+              ? sttCostUsd(sttModel, audioSec)
+              : undefined;
         await logAiInferenceUsage(
           result.model,
-          result.usage
+          result.usage || billUsd != null
             ? {
-                costUsd: result.usage.cost,
-                promptTokens: result.usage.input_tokens,
-                completionTokens: result.usage.output_tokens,
-                totalTokens: result.usage.total_tokens,
-                audioSeconds: result.usage.seconds,
+                ...(billUsd != null ? { costUsd: billUsd } : {}),
+                promptTokens: result.usage?.input_tokens,
+                completionTokens: result.usage?.output_tokens,
+                totalTokens: result.usage?.total_tokens,
+                audioSeconds: result.usage?.seconds,
               }
             : null,
           'ai_inference:transcription',

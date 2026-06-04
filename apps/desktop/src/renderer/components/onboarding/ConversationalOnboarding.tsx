@@ -33,6 +33,7 @@ interface Props {
 
 const DEFAULT_HOTKEY = ['Control', 'Shift', 'Space'];
 const SHORTCUT_MODIFIERS = ['Control', 'Alt', 'Shift', 'Command'];
+const AGENT_HTTP = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -52,6 +53,28 @@ function pickFirstName(name: string | null | undefined, fallback: string): strin
   const raw = (name || '').trim();
   if (!raw) return fallback;
   return raw.split(/\s+/)[0] || fallback;
+}
+
+// Persist the name the user gives at "What should I call you?" as a core
+// identity fact, so it lands in Dashboard → Memories → My Context and
+// personalizes the agent from the very first session. Fire-and-forget: the
+// name is also kept in localStorage, so a momentarily-unreachable agent is fine.
+async function saveNameToMemory(name: string): Promise<void> {
+  try {
+    await fetch(`${AGENT_HTTP}/v1/knowledge/facts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: 'personal',
+        subtype: 'core',
+        attribute_key: 'name',
+        text: name,
+        source: 'onboarding',
+      }),
+    });
+  } catch {
+    /* agent may not be up yet during onboarding — name persists in localStorage */
+  }
 }
 
 // ─── Light-develop reveal ───────────────────────────────────────────────────
@@ -534,6 +557,7 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
     const trimmed = name.trim();
     if (!trimmed) return;
     try { localStorage.setItem('stuard_user_name', trimmed); } catch {}
+    void saveNameToMemory(trimmed);
     setScene('story');
   };
 

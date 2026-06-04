@@ -471,8 +471,10 @@ function WorkflowsApp() {
     } else if (!options?.forTour) {
       // Open on the visual canvas + AI panel. Workspace projects no longer
       // hijack the view with the file explorer (Continue building, My Workflows, etc.).
+      // The AI panel's visibility is driven solely by viewMode; rightPanel only
+      // ever holds the docked-panel selection so toggling AI never wipes it.
       setViewMode('ai');
-      setRightPanel('ai');
+      setRightPanel('none');
     }
     // Load workspace metadata but stay on canvas — user can open the explorer from the header.
     if (res.isWorkspace) {
@@ -871,7 +873,7 @@ function WorkflowsApp() {
     if (!workflowId) return;
     setShowWorkspace(false);
     setViewMode("ai");
-    setRightPanel("ai");
+    setRightPanel("none");
     onboarding.beginAiTour();
     pendingAiDemoRef.current = { workflowId };
   }, [onboarding, create]);
@@ -1742,13 +1744,10 @@ function WorkflowsApp() {
         >
           <button
             onClick={() => {
-              if (viewMode === 'ai') {
-                setViewMode('none');
-                setRightPanel('none');
-              } else {
-                setViewMode('ai');
-                setRightPanel('ai');
-              }
+              // The AI panel is governed by viewMode alone. Toggling it must not
+              // touch rightPanel, so any open inspector/code/docs/logs panel is
+              // preserved (just hidden) and reappears when AI is closed.
+              setViewMode((vm) => (vm === 'ai' ? 'none' : 'ai'));
             }}
             className={`p-1.5 w-9 h-9 flex items-center justify-center shrink-0 rounded-[12px] transition-all ${viewMode === 'ai' ? 'wf-sidebar-btn-active' : 'wf-sidebar-btn'}`}
             title="Design with AI"
@@ -1779,6 +1778,7 @@ function WorkflowsApp() {
               if (!model?.locked) {
                 setRightPanel((p) => {
                   const next = p === 'logs' ? 'none' : 'logs';
+                  // Workspace and docked panels share one slot; AI sits beside them.
                   if (next !== 'none') setShowWorkspace(false);
                   return next;
                 });

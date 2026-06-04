@@ -46,15 +46,6 @@ export default function HotkeysHelp({ open, onClose }: { open: boolean; onClose:
               </li>
             </ul>
           </div>
-          <div>
-            <div className="text-white/70 mb-1 font-medium">Command palette</div>
-            <ul className="space-y-1">
-              <li className="flex items-center justify-between bg-white/5 rounded px-3 py-1.5">
-                <span>Open palette</span>
-                <span className="text-white/60">F1 or Ctrl + /</span>
-              </li>
-            </ul>
-          </div>
         </div>
         <div className="px-4 py-2 border-t border-white/10 text-[12px] text-white/60 flex items-center justify-between">
           <div>Tip: You can move the overlay even when it's not focused.</div>

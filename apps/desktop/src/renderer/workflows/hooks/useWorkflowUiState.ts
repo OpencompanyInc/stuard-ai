@@ -13,11 +13,13 @@ export function useWorkflowUiState() {
   const [aiLeftWidth, setAiLeftWidth] = useState(() => {
     try {
       const raw = window.localStorage.getItem("workflow.ai.leftPaneWidth");
-      const n = raw ? Number(raw) : 350;
-      if (!Number.isFinite(n)) return 350;
-      return Math.max(260, Math.min(520, n));
+      const n = raw ? Number(raw) : 380;
+      if (!Number.isFinite(n)) return 380;
+      // Keep the floor in sync with the panel's CSS minWidth (320) so resizing
+      // never enters a dead zone where state shrinks but the panel can't.
+      return Math.max(320, Math.min(640, n));
     } catch {
-      return 350;
+      return 380;
     }
   });
 
@@ -63,8 +65,11 @@ export function useWorkflowUiState() {
       const startWidth = aiLeftWidth;
 
       const onMove = (ev: MouseEvent) => {
-        const dx = ev.clientX - startX;
-        const next = Math.max(260, Math.min(520, startWidth + dx));
+        // The AI panel is anchored to the right and its resize grip sits on the
+        // LEFT edge, so dragging the grip left must widen the panel (and right
+        // must narrow it). Mirror the cursor delta to match that direction.
+        const dx = startX - ev.clientX;
+        const next = Math.max(320, Math.min(640, startWidth + dx));
         setAiLeftWidth(next);
       };
 

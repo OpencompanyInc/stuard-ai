@@ -30,6 +30,58 @@ def _capture_dir_for_kind(kind: str) -> str:
     return library_source_dir("misc")
 
 
+def _normalize_capture_mode(mode: str) -> str:
+    """Normalize capture mode strings from UI/workflows (e.g. 'Until Stop' -> 'until_stop')."""
+    normalized = str(mode or "fixed").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in ("until", "stop", "untilstop"):
+        return "until_stop"
+    return normalized
+
+
+def _register_bus_capture_session(
+    session_id: str,
+    *,
+    kind: str,
+    device: Any,
+    mode: str,
+    flow_id: str,
+    duration_ms: int = 0,
+    silence_threshold: float | None = None,
+    silence_duration_ms: int | None = None,
+    path: str | None = None,
+    bus_id: str | None = None,
+    stream_id: str | None = None,
+) -> None:
+    """Register a bus capture session before subscribe completes so stop_capture can find it."""
+    info: Dict[str, Any] = {
+        "path": path,
+        "kind": kind,
+        "device": device,
+        "bus_mode": True,
+        "bus_id": bus_id,
+        "started_at": time.time(),
+        "completed": False,
+        "error": None,
+        "mode": mode,
+        "duration_ms": duration_ms,
+        "silence_threshold": silence_threshold,
+        "silence_duration_ms": silence_duration_ms,
+        "flow_id": flow_id,
+        "status": "starting",
+    }
+    if stream_id:
+        info["stream_id"] = stream_id
+    with _sessions_lock:
+        _active_recordings[session_id] = info
+        _active_sessions.setdefault(session_id, threading.Event())
+
+
+def _unregister_capture_session(session_id: str) -> None:
+    with _sessions_lock:
+        _active_sessions.pop(session_id, None)
+        _active_recordings.pop(session_id, None)
+
+
 def _normalize_silence_threshold(value: float) -> float:
     """Convert silence threshold to RMS (0.0-1.0).
     
@@ -147,7 +199,7 @@ async def capture_media(
     """
     kind = str(args.get("kind") or "").strip().lower()
     device = args.get("device")
-    mode = str(args.get("mode") or "fixed").strip().lower()
+    mode = _normalize_capture_mode(str(args.get("mode") or "fixed"))
     if bool(args.get("stream", False)):
         mode = "stream"
     session_id = str(args.get("sessionId") or "").strip() or str(uuid.uuid4())[:8]
@@ -306,19 +358,33 @@ async def _capture_via_bus(
             "metadata": {"captureKind": kind, "device": device_idx},
         })
         stream_id = stream_result.get("streamId", "")
+
+        _register_bus_capture_session(
+            session_id,
+            kind=kind,
+            device=device_idx,
+            mode="stream",
+            flow_id=flow_id,
+            stream_id=stream_id,
+        )
         
         # Subscribe to the bus with stream linked (no file recording needed)
-        subscribe_result = await media_bus.subscribe_media_bus({
-            "kind": kind,
-            "device": device_idx,
-            "audioDevice": audio_device_idx,
-            "subscriberId": session_id,
-            "startRecording": False,
-            "mirror": mirror,
-        }, emit)
+        try:
+            subscribe_result = await media_bus.subscribe_media_bus({
+                "kind": kind,
+                "device": device_idx,
+                "audioDevice": audio_device_idx,
+                "subscriberId": session_id,
+                "startRecording": False,
+                "mirror": mirror,
+            }, emit)
+        except Exception:
+            _unregister_capture_session(session_id)
+            await _streams_mod.stream_close({"streamId": stream_id, "cleanup": True})
+            raise
         
         if not subscribe_result.get("ok"):
-            # Clean up stream
+            _unregister_capture_session(session_id)
             await _streams_mod.stream_close({"streamId": stream_id, "cleanup": True})
             raise RuntimeError(f"Failed to subscribe to media bus: {subscribe_result}")
         
@@ -332,21 +398,12 @@ async def _capture_via_bus(
                 if sub:
                     sub.stream_id = stream_id
         
-        # Store in active recordings for stop_capture cleanup
         with _sessions_lock:
-            _active_recordings[session_id] = {
-                "kind": kind,
-                "device": device_idx,
-                "bus_mode": True,
-                "bus_id": subscribe_result.get("busId"),
-                "stream_id": stream_id,
-                "started_at": time.time(),
-                "completed": False,
-                "error": None,
-                "mode": "stream",
-                "flow_id": flow_id,
-            }
-            _active_sessions[session_id] = threading.Event()
+            rec = _active_recordings.get(session_id)
+            if isinstance(rec, dict):
+                rec["bus_id"] = subscribe_result.get("busId")
+                rec["status"] = "streaming"
+                rec.pop("error", None)
         
         if emit:
             await emit("streaming", {
@@ -369,43 +426,51 @@ async def _capture_via_bus(
             "subscriberCount": subscribe_result.get("subscriberCount"),
         }
     
+    # Register before subscribe so stop_capture can find the session while the bus starts.
+    _register_bus_capture_session(
+        session_id,
+        kind=kind,
+        device=device_idx,
+        mode=mode,
+        flow_id=flow_id,
+        duration_ms=duration_ms,
+        silence_threshold=silence_threshold if mode == "silence" else None,
+        silence_duration_ms=silence_duration_ms if mode == "silence" else None,
+        path=explicit_path or None,
+    )
+
     # Subscribe to the bus (starts it if not running)
-    subscribe_result = await media_bus.subscribe_media_bus({
-        "kind": kind,
-        "device": device_idx,
-        "audioDevice": audio_device_idx,
-        "subscriberId": session_id,
-        "startRecording": True,
-        "filePath": explicit_path,
-        "silenceThreshold": silence_threshold if mode == "silence" else None,
-        "silenceDurationMs": silence_duration_ms if mode == "silence" else None,
-        "mirror": mirror,
-    }, emit)
-    
+    try:
+        subscribe_result = await media_bus.subscribe_media_bus({
+            "kind": kind,
+            "device": device_idx,
+            "audioDevice": audio_device_idx,
+            "subscriberId": session_id,
+            "startRecording": True,
+            "filePath": explicit_path,
+            "silenceThreshold": silence_threshold if mode == "silence" else None,
+            "silenceDurationMs": silence_duration_ms if mode == "silence" else None,
+            "mirror": mirror,
+        }, emit)
+    except Exception:
+        _unregister_capture_session(session_id)
+        raise
+
     if not subscribe_result.get("ok"):
+        _unregister_capture_session(session_id)
         raise RuntimeError(f"Failed to subscribe to media bus: {subscribe_result}")
     
     file_path = subscribe_result.get("filePath")
     
-    # Store bus subscription info in active recordings for stop_capture to find
     with _sessions_lock:
-        _active_recordings[session_id] = {
-            "path": file_path,
-            "kind": kind,
-            "device": device_idx,
-            "bus_mode": True,  # Flag to indicate this is a bus-based capture
-            "bus_id": subscribe_result.get("busId"),
-            "started_at": time.time(),
-            "completed": False,
-            "error": None,
-            "mode": mode,
-            "duration_ms": duration_ms,
-            "silence_threshold": silence_threshold if mode == "silence" else None,
-            "silence_duration_ms": silence_duration_ms if mode == "silence" else None,
-            "flow_id": flow_id,
-        }
-        # Also create a dummy stop event for compatibility
-        _active_sessions[session_id] = threading.Event()
+        rec = _active_recordings.get(session_id)
+        if isinstance(rec, dict):
+            rec.update({
+                "path": file_path,
+                "bus_id": subscribe_result.get("busId"),
+                "status": "recording",
+            })
+            rec.pop("error", None)
     
     if emit:
         await emit("recording", {
@@ -1048,8 +1113,19 @@ async def stop_capture(
     with _sessions_lock:
         stop_event = _active_sessions.get(session_id)
         recording_info = _active_recordings.get(session_id)
-        was_active = stop_event is not None
+        was_active = stop_event is not None or recording_info is not None
         print(f"[stop_capture] Found event: {stop_event is not None}, recording_info: {recording_info is not None}")
+
+    # Fallback: session may exist on the media bus even if the in-memory registry was lost
+    # (e.g. race during subscribe, or lookup before registration completed in older builds).
+    if not recording_info:
+        bus_match = media_bus.find_subscriber_session(session_id)
+        if bus_match:
+            print(f"[stop_capture] Found session {session_id} on media bus (registry fallback)")
+            recording_info = bus_match
+            was_active = True
+            with _sessions_lock:
+                _active_sessions.setdefault(session_id, threading.Event())
 
     if not was_active and not recording_info:
         try:
@@ -1179,19 +1255,32 @@ async def stop_captures_by_flow(
     
     Args:
         flowId: The workflow ID whose captures should be stopped
-    
+        excludeModes: Optional capture modes to leave running. The graceful
+            run-end cleanup passes ['until_stop'] so it only reaps ephemeral
+            captures (stream/fixed) — an 'until_stop' recording is deliberately
+            started in one run and stopped in a later run (e.g. a hotkey toggle:
+            press once to start, press again to stop_capture), so it must outlive
+            the run that started it. An explicit workflow stop/abort passes no
+            excludeModes and reaps everything, so the mic never leaks.
+
     Returns:
         { ok, stopped: int, sessions: string[] }
     """
     flow_id = str(args.get("flowId") or "").strip()
     if not flow_id:
         return {"ok": False, "error": "missing_flowId"}
-    
+
+    exclude_modes = args.get("excludeModes") or []
+    if isinstance(exclude_modes, str):
+        exclude_modes = [exclude_modes]
+    exclude_modes = {str(m) for m in exclude_modes}
+
     # Find sessions belonging to this workflow
     with _sessions_lock:
         matching_sids = [
             sid for sid, info in _active_recordings.items()
             if isinstance(info, dict) and info.get("flow_id") == flow_id
+            and str(info.get("mode") or "") not in exclude_modes
         ]
     
     if not matching_sids:

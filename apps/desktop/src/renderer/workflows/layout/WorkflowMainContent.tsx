@@ -255,6 +255,8 @@ export function WorkflowMainContent({
     openTabs,
     logs,
     rightPanel,
+    aiOpen: viewMode === "ai",
+    aiLeftWidth,
     manualRightWidth,
     errors,
     showWorkspace,
@@ -309,7 +311,7 @@ export function WorkflowMainContent({
               {...canvasAndPanelsProps}
               onSendLogsToChat={(text: string) => {
                 chat.sendMessage(text);
-                if (viewMode !== 'ai') onSetRightPanel("ai");
+                if (viewMode !== 'ai') onSetViewMode("ai");
               }}
             />
           </div>
@@ -341,7 +343,7 @@ export function WorkflowMainContent({
                   <button onClick={() => chat.setShowSessionHistory(!chat.showSessionHistory)} className="p-1.5 rounded-lg wf-fg-faint wf-hover-fg wf-hover-bg transition-colors" title="History">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
                   </button>
-                  <button onClick={() => { onSetViewMode('none'); onSetRightPanel('none'); }} className="p-1.5 rounded-lg wf-fg-faint hover:text-red-400 hover:bg-red-500/20 transition-colors ml-1" title="Close">
+                  <button onClick={() => onSetViewMode('none')} className="p-1.5 rounded-lg wf-fg-faint hover:text-red-400 hover:bg-red-500/20 transition-colors ml-1" title="Close">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                   </button>
                 </div>

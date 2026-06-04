@@ -228,27 +228,27 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
   const SectionHeader = ({ section, icon: Icon, title }: { section: Section; icon: any; title: string }) => (
     <button
       onClick={() => toggleSection(section)}
-      className="flex items-center justify-between w-full p-3 hover:bg-slate-50 rounded-lg transition-colors"
+      className="flex items-center justify-between w-full p-3 uib-hover rounded-lg transition-colors"
     >
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-          <Icon className="w-4 h-4 text-indigo-600" />
+        <div className="w-8 h-8 rounded-lg bg-rose-500/15 flex items-center justify-center">
+          <Icon className="w-4 h-4 text-rose-500" />
         </div>
-        <span className="font-medium text-slate-700">{title}</span>
+        <span className="font-medium uib-fg">{title}</span>
       </div>
       {expandedSections.has(section) ? (
-        <ChevronDown className="w-4 h-4 text-slate-400" />
+        <ChevronDown className="w-4 h-4 uib-fg-faint" />
       ) : (
-        <ChevronRight className="w-4 h-4 text-slate-400" />
+        <ChevronRight className="w-4 h-4 uib-fg-faint" />
       )}
     </button>
   );
 
   return (
-    <div className="w-full bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div className="w-full uib-surface rounded-xl border uib-border overflow-hidden">
       {/* Preview Card */}
-      <div className="p-4 border-b border-slate-200">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Preview</div>
+      <div className="p-4 border-b uib-border">
+        <div className="text-xs font-semibold uib-fg-muted uppercase tracking-wider mb-3">Preview</div>
         <div
           className="w-full h-32 rounded-lg shadow-inner flex items-center justify-center text-white font-medium"
           style={{
@@ -288,8 +288,8 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     }}
                     className={`flex flex-col items-center gap-1 p-2 rounded-lg border-2 text-xs transition-all ${
                       config.width === preset.width || (preset.width === -1 && config.width > 1000)
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-indigo-300 text-slate-600'
+                        ? 'border-rose-500 bg-rose-500/10 text-rose-500'
+                        : 'uib-border hover:border-rose-500/40 uib-fg-muted'
                     }`}
                   >
                     <preset.icon className="w-4 h-4" />
@@ -304,21 +304,21 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               {/* Custom Size */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-500 mb-1 block">Width (px)</label>
+                  <label className="text-xs uib-fg-muted mb-1 block">Width (px)</label>
                   <input
                     type="number"
                     value={config.width}
                     onChange={(e) => updateConfig('width', parseInt(e.target.value) || 400)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="w-full px-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500 mb-1 block">Height (px)</label>
+                  <label className="text-xs uib-fg-muted mb-1 block">Height (px)</label>
                   <input
                     type="number"
                     value={config.height}
                     onChange={(e) => updateConfig('height', parseInt(e.target.value) || 300)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="w-full px-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                   />
                 </div>
               </div>
@@ -329,9 +329,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   type="checkbox"
                   checked={config.resizable !== false}
                   onChange={(e) => updateConfig('resizable', e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                 />
-                <span className="text-sm text-slate-700">Allow resizing</span>
+                <span className="text-sm uib-fg">Allow resizing</span>
               </label>
             </div>
           )}
@@ -344,7 +344,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
             <div className="px-4 pb-4 space-y-4">
               {/* Visual screen position picker */}
               <div
-                className="relative w-full aspect-[16/10] bg-slate-100 rounded-xl border-2 border-slate-200 overflow-hidden cursor-pointer"
+                className="relative w-full aspect-[16/10] uib-surface-2 rounded-xl border-2 uib-border overflow-hidden cursor-pointer"
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   const xPct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
@@ -353,9 +353,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                 }}
               >
                 {/* Screen frame */}
-                <div className="absolute inset-2 rounded-lg border border-slate-300 bg-white/60">
+                <div className="absolute inset-2 rounded-lg border uib-border uib-surface">
                   {/* Taskbar */}
-                  <div className="absolute bottom-0 left-0 right-0 h-[8%] bg-slate-200/80 rounded-b-lg" />
+                  <div className="absolute bottom-0 left-0 right-0 h-[8%] uib-surface-2 rounded-b-lg" />
                 </div>
                 {/* Position dot */}
                 {(() => {
@@ -364,13 +364,13 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     : (POSITION_COORDS[config.position] || POSITION_COORDS.center);
                   return (
                     <div
-                      className="absolute w-5 h-4 -translate-x-1/2 -translate-y-1/2 rounded-sm bg-indigo-500 border-2 border-white shadow-lg ring-2 ring-indigo-300/50 transition-all duration-150"
+                      className="absolute w-5 h-4 -translate-x-1/2 -translate-y-1/2 rounded-sm bg-rose-500 border-2 border-white shadow-lg ring-2 ring-rose-500/50 transition-all duration-150"
                       style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                     />
                   );
                 })()}
                 {/* Label */}
-                <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[9px] font-medium text-slate-400">
+                <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[9px] font-medium uib-fg-faint">
                   Click to place window
                 </div>
               </div>
@@ -383,8 +383,8 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     onClick={() => updateConfig('position', pos.value as any)}
                     className={`px-2 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
                       config.position === pos.value
-                        ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-indigo-300 text-slate-500 hover:text-slate-700'
+                        ? 'border-rose-500/50 bg-rose-500/10 text-rose-500'
+                        : 'uib-border hover:border-rose-500/40 uib-fg-muted uib-fg-hover'
                     }`}
                   >
                     {pos.label}
@@ -394,25 +394,25 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
               {/* Custom position X/Y inputs */}
               {config.position === 'custom' && (
-                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="grid grid-cols-2 gap-3 p-3 uib-surface-2 rounded-lg border uib-border">
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">X Position (%)</label>
+                    <label className="text-[10px] uib-fg-muted mb-1 block">X Position (%)</label>
                     <input
                       type="number"
                       value={config.customX ?? 50}
                       onChange={(e) => updateConfig('customX', parseInt(e.target.value) || 0)}
-                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full px-2 py-1.5 text-xs border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       min="0"
                       max="100"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Y Position (%)</label>
+                    <label className="text-[10px] uib-fg-muted mb-1 block">Y Position (%)</label>
                     <input
                       type="number"
                       value={config.customY ?? 50}
                       onChange={(e) => updateConfig('customY', parseInt(e.target.value) || 0)}
-                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full px-2 py-1.5 text-xs border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       min="0"
                       max="100"
                     />
@@ -422,7 +422,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
               {/* Screen Edge Margin */}
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">
+                <label className="text-xs uib-fg-muted mb-1 block">
                   Screen Edge Margin: {config.margin ?? 20}px
                 </label>
                 <input
@@ -434,12 +434,12 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   onChange={(e) => updateConfig('margin', parseInt(e.target.value))}
                   className="w-full"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <div className="flex justify-between text-[10px] uib-fg-faint mt-1">
                   <span>0px (flush)</span>
                   <span>20px</span>
                   <span>60px</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Distance from screen edge when using position presets</p>
+                <p className="text-[10px] uib-fg-faint mt-1">Distance from screen edge when using position presets</p>
               </div>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -447,9 +447,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   type="checkbox"
                   checked={config.frameless === true}
                   onChange={(e) => updateConfig('frameless', e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                 />
-                <span className="text-sm text-slate-700">Frameless window (no title bar)</span>
+                <span className="text-sm uib-fg">Frameless window (no title bar)</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -457,9 +457,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   type="checkbox"
                   checked={config.alwaysOnTop === true}
                   onChange={(e) => updateConfig('alwaysOnTop', e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                 />
-                <span className="text-sm text-slate-700">Always on top</span>
+                <span className="text-sm uib-fg">Always on top</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -467,9 +467,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   type="checkbox"
                   checked={config.minimizable !== false}
                   onChange={(e) => updateConfig('minimizable', e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                 />
-                <span className="text-sm text-slate-700">Minimizable</span>
+                <span className="text-sm uib-fg">Minimizable</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -477,9 +477,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   type="checkbox"
                   checked={config.draggable !== false}
                   onChange={(e) => updateConfig('draggable', e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                 />
-                <span className="text-sm text-slate-700">Window is draggable</span>
+                <span className="text-sm uib-fg">Window is draggable</span>
               </label>
             </div>
           )}
@@ -491,7 +491,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
           {expandedSections.has('background') && (
             <div className="px-4 pb-4 space-y-4">
               {/* Background Type Tabs */}
-              <div className="flex p-1 bg-slate-100 rounded-lg">
+              <div className="flex p-1 uib-surface-2 rounded-lg">
                 {(['color', 'gradient', 'image', 'translucent', 'transparent'] as const).map((type) => (
                   <button
                     key={type}
@@ -513,8 +513,8 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     }}
                     className={`flex-1 px-2 py-1.5 text-[10px] font-medium rounded-md transition-all capitalize ${
                       config.backgroundType === type || (type === 'color' && !config.backgroundType)
-                        ? 'bg-white text-indigo-700 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-800'
+                        ? 'uib-surface text-rose-500 shadow-sm'
+                        : 'uib-fg-muted uib-fg-hover'
                     }`}
                   >
                     {type}
@@ -525,10 +525,10 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               {/* Translucent Background */}
               {config.backgroundType === 'translucent' && (
                 <div className="space-y-4">
-                  <div className="p-3 rounded-lg border border-indigo-200 bg-indigo-50/50">
+                  <div className="p-3 rounded-lg border border-rose-500/30 bg-rose-500/10">
                     <div className="text-center space-y-1">
-                      <div className="text-sm font-medium text-indigo-700">Translucent Background</div>
-                      <p className="text-[10px] text-indigo-500">
+                      <div className="text-sm font-medium text-rose-500">Translucent Background</div>
+                      <p className="text-[10px] text-rose-500">
                         Semi-transparent with backdrop blur. Content behind the window shows through.
                       </p>
                     </div>
@@ -536,7 +536,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
                   {/* Base Color */}
                   <div className="space-y-2">
-                    <label className="text-xs text-slate-500">Base Color</label>
+                    <label className="text-xs uib-fg-muted">Base Color</label>
                     <div className="flex items-center gap-3">
                       <input
                         type="color"
@@ -545,7 +545,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           ...config,
                           translucent: { ...config.translucent, color: e.target.value, opacity: config.translucent?.opacity ?? 0.7, blur: config.translucent?.blur ?? 12 },
                         })}
-                        className="w-10 h-10 rounded-lg cursor-pointer border-2 border-slate-200"
+                        className="w-10 h-10 rounded-lg cursor-pointer border-2 uib-border"
                       />
                       <input
                         type="text"
@@ -554,7 +554,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           ...config,
                           translucent: { ...config.translucent, color: e.target.value, opacity: config.translucent?.opacity ?? 0.7, blur: config.translucent?.blur ?? 12 },
                         })}
-                        className="flex-1 px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        className="flex-1 px-3 py-2 text-sm font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                         placeholder="#1a1a2e"
                       />
                     </div>
@@ -562,7 +562,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
                   {/* Opacity */}
                   <div>
-                    <label className="text-xs text-slate-500 mb-1 block">
+                    <label className="text-xs uib-fg-muted mb-1 block">
                       Opacity: {Math.round((config.translucent?.opacity ?? 0.7) * 100)}%
                     </label>
                     <input
@@ -576,7 +576,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       })}
                       className="w-full"
                     />
-                    <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                    <div className="flex justify-between text-[10px] uib-fg-faint mt-0.5">
                       <span>0% (invisible)</span>
                       <span>50%</span>
                       <span>100% (solid)</span>
@@ -585,7 +585,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
                   {/* Blur */}
                   <div>
-                    <label className="text-xs text-slate-500 mb-1 block">
+                    <label className="text-xs uib-fg-muted mb-1 block">
                       Backdrop Blur: {config.translucent?.blur ?? 12}px
                     </label>
                     <input
@@ -599,7 +599,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       })}
                       className="w-full"
                     />
-                    <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                    <div className="flex justify-between text-[10px] uib-fg-faint mt-0.5">
                       <span>0px (none)</span>
                       <span>25px</span>
                       <span>50px (heavy)</span>
@@ -611,9 +611,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       type="checkbox"
                       checked={config.frameless === true}
                       onChange={(e) => updateConfig('frameless', e.target.checked)}
-                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                     />
-                    <span className="text-xs text-slate-700">Frameless mode <span className="text-slate-400">(required for translucent)</span></span>
+                    <span className="text-xs uib-fg">Frameless mode <span className="uib-fg-faint">(required for translucent)</span></span>
                   </label>
                 </div>
               )}
@@ -621,10 +621,10 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               {/* Transparent Background */}
               {config.backgroundType === 'transparent' && (
                 <div className="space-y-3">
-                  <div className="p-4 rounded-lg border border-dashed border-slate-300" style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #fff 0% 50%)', backgroundSize: '16px 16px' }}>
+                  <div className="p-4 rounded-lg border border-dashed uib-border" style={{ backgroundImage: 'repeating-conic-gradient(#e2e8f0 0% 25%, #fff 0% 50%)', backgroundSize: '16px 16px' }}>
                     <div className="text-center space-y-1.5">
-                      <div className="text-sm font-medium text-slate-700">Transparent Background</div>
-                      <p className="text-xs text-slate-500">
+                      <div className="text-sm font-medium uib-fg">Transparent Background</div>
+                      <p className="text-xs uib-fg-muted">
                         Only the window background will be transparent. Your UI content remains fully visible.
                       </p>
                     </div>
@@ -634,9 +634,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       type="checkbox"
                       checked={config.frameless === true}
                       onChange={(e) => updateConfig('frameless', e.target.checked)}
-                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                     />
-                    <span className="text-xs text-slate-700">Enable frameless mode <span className="text-slate-400">(recommended)</span></span>
+                    <span className="text-xs uib-fg">Enable frameless mode <span className="uib-fg-faint">(recommended)</span></span>
                   </label>
                 </div>
               )}
@@ -644,19 +644,19 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               {/* Color Background */}
               {(config.backgroundType === 'color' || !config.backgroundType) && (
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">Background Color</label>
+                  <label className="text-xs uib-fg-muted">Background Color</label>
                   <div className="flex items-center gap-3">
                     <input
                       type="color"
                       value={config.backgroundColor || '#1a1a2e'}
                       onChange={(e) => updateConfig('backgroundColor', e.target.value)}
-                      className="w-12 h-12 rounded-lg cursor-pointer border-2 border-slate-200"
+                      className="w-12 h-12 rounded-lg cursor-pointer border-2 uib-border"
                     />
                     <input
                       type="text"
                       value={config.backgroundColor || '#1a1a2e'}
                       onChange={(e) => updateConfig('backgroundColor', e.target.value)}
-                      className="flex-1 px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="flex-1 px-3 py-2 text-sm font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       placeholder="#1a1a2e"
                     />
                   </div>
@@ -691,8 +691,8 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                         onClick={() => updateNested('gradient', 'type', type)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md border-2 transition-all capitalize ${
                           config.gradient?.type === type || (type === 'linear' && !config.gradient?.type)
-                            ? 'border-indigo-500 text-indigo-700 bg-indigo-50'
-                            : 'border-slate-200 text-slate-600 hover:border-indigo-300'
+                            ? 'border-rose-500 text-rose-500 bg-rose-500/10'
+                            : 'uib-border uib-fg-muted hover:border-rose-500/40'
                         }`}
                       >
                         {type}
@@ -703,7 +703,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   {/* Gradient Angle (for linear) */}
                   {(!config.gradient?.type || config.gradient?.type === 'linear') && (
                     <div>
-                      <label className="text-xs text-slate-500 mb-1 block">Angle: {config.gradient?.angle || 135}°</label>
+                      <label className="text-xs uib-fg-muted mb-1 block">Angle: {config.gradient?.angle || 135}°</label>
                       <input
                         type="range"
                         min="0"
@@ -718,7 +718,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   {/* Gradient Stops */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs text-slate-500">Color Stops</label>
+                      <label className="text-xs uib-fg-muted">Color Stops</label>
                       <button
                         onClick={() => {
                           const stops = config.gradient?.stops || [];
@@ -727,7 +727,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                             { color: '#ffffff', position: 50 },
                           ]);
                         }}
-                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700"
+                        className="flex items-center gap-1 text-xs text-rose-500 hover:text-rose-500"
                       >
                         <Plus className="w-3 h-3" />
                         Add Stop
@@ -757,13 +757,13 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           }}
                           className="flex-1"
                         />
-                        <span className="text-xs text-slate-500 w-10">{stop.position}%</span>
+                        <span className="text-xs uib-fg-muted w-10">{stop.position}%</span>
                         <button
                           onClick={() => {
                             const stops = (config.gradient?.stops || []).filter((_, i) => i !== index);
                             updateNested('gradient', 'stops', stops);
                           }}
-                          className="p-1 text-slate-400 hover:text-red-500"
+                          className="p-1 uib-fg-faint hover:text-red-400"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -777,19 +777,19 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               {config.backgroundType === 'image' && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-xs text-slate-500">Image URL</label>
+                    <label className="text-xs uib-fg-muted">Image URL</label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
-                        <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 uib-fg-faint" />
                         <input
                           type="text"
                           value={config.backgroundImage?.url || ''}
                           onChange={(e) => updateNested('backgroundImage', 'url', e.target.value)}
-                          className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          className="w-full pl-9 pr-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                           placeholder="https://example.com/image.jpg"
                         />
                       </div>
-                      <button className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors">
+                      <button className="px-3 py-2 uib-surface-2 uib-hover rounded-lg uib-fg-muted transition-colors">
                         <Upload className="w-4 h-4" />
                       </button>
                     </div>
@@ -797,11 +797,11 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs text-slate-500 mb-1 block">Fit</label>
+                      <label className="text-xs uib-fg-muted mb-1 block">Fit</label>
                       <select
                         value={config.backgroundImage?.fit || 'cover'}
                         onChange={(e) => updateNested('backgroundImage', 'fit', e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        className="w-full px-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       >
                         <option value="cover">Cover</option>
                         <option value="contain">Contain</option>
@@ -811,11 +811,11 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-slate-500 mb-1 block">Position</label>
+                      <label className="text-xs uib-fg-muted mb-1 block">Position</label>
                       <select
                         value={config.backgroundImage?.position || 'center'}
                         onChange={(e) => updateNested('backgroundImage', 'position', e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        className="w-full px-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       >
                         <option value="center">Center</option>
                         <option value="top">Top</option>
@@ -827,7 +827,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   </div>
 
                   <div>
-                    <label className="text-xs text-slate-500 mb-1 block">
+                    <label className="text-xs uib-fg-muted mb-1 block">
                       Opacity: {Math.round((config.backgroundImage?.opacity ?? 1) * 100)}%
                     </label>
                     <input
@@ -857,50 +857,50 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     type="checkbox"
                     checked={config.shadow?.enabled || false}
                     onChange={(e) => updateNested('shadow', 'enabled', e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                   />
-                  <span className="text-sm font-medium text-slate-700">Drop Shadow</span>
+                  <span className="text-sm font-medium uib-fg">Drop Shadow</span>
                 </label>
 
                 {config.shadow?.enabled && (
                   <div className="pl-6 space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">X Offset</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">X Offset</label>
                         <input
                           type="number"
                           value={config.shadow.x || 0}
                           onChange={(e) => updateNested('shadow', 'x', parseInt(e.target.value))}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">Y Offset</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">Y Offset</label>
                         <input
                           type="number"
                           value={config.shadow.y || 4}
                           onChange={(e) => updateNested('shadow', 'y', parseInt(e.target.value))}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">Blur</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">Blur</label>
                         <input
                           type="number"
                           value={config.shadow.blur || 12}
                           onChange={(e) => updateNested('shadow', 'blur', parseInt(e.target.value))}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">Spread</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">Spread</label>
                         <input
                           type="number"
                           value={config.shadow.spread || 0}
                           onChange={(e) => updateNested('shadow', 'spread', parseInt(e.target.value))}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         />
                       </div>
                     </div>
@@ -911,7 +911,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                         onChange={(e) => updateNested('shadow', 'color', e.target.value)}
                         className="w-8 h-8 rounded cursor-pointer"
                       />
-                      <span className="text-xs text-slate-500">Shadow Color</span>
+                      <span className="text-xs uib-fg-muted">Shadow Color</span>
                     </div>
                   </div>
                 )}
@@ -924,9 +924,9 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     type="checkbox"
                     checked={config.border?.enabled || false}
                     onChange={(e) => updateNested('border', 'enabled', e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="w-4 h-4 rounded uib-border text-rose-500 focus:ring-rose-500/50"
                   />
-                  <span className="text-sm font-medium text-slate-700">Border</span>
+                  <span className="text-sm font-medium uib-fg">Border</span>
                 </label>
 
                 {config.border?.enabled && (
@@ -938,24 +938,24 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                         onChange={(e) => updateNested('border', 'color', e.target.value)}
                         className="w-8 h-8 rounded cursor-pointer"
                       />
-                      <span className="text-xs text-slate-500">Border Color</span>
+                      <span className="text-xs uib-fg-muted">Border Color</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">Width (px)</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">Width (px)</label>
                         <input
                           type="number"
                           value={config.border.width || 1}
                           onChange={(e) => updateNested('border', 'width', parseInt(e.target.value))}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 mb-1 block">Style</label>
+                        <label className="text-[10px] uib-fg-muted mb-1 block">Style</label>
                         <select
                           value={config.border.style || 'solid'}
                           onChange={(e) => updateNested('border', 'style', e.target.value)}
-                          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                          className="w-full px-2 py-1.5 text-xs border uib-border rounded"
                         >
                           <option value="solid">Solid</option>
                           <option value="dashed">Dashed</option>
@@ -969,7 +969,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
               {/* Border Radius */}
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">
+                <label className="text-xs uib-fg-muted mb-1 block">
                   Corner Radius: {config.borderRadius || 0}px
                 </label>
                 <div className="flex items-center gap-3">
@@ -987,7 +987,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     max="200"
                     value={config.borderRadius || 0}
                     onChange={(e) => updateConfig('borderRadius', parseInt(e.target.value) || 0)}
-                    className="w-16 px-2 py-1 text-xs border border-slate-200 rounded text-center"
+                    className="w-16 px-2 py-1 text-xs border uib-border rounded text-center"
                   />
                 </div>
               </div>
@@ -1002,23 +1002,23 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
             <div className="px-4 pb-4 space-y-4">
               {/* Overflow / Scrollbar */}
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">Content Overflow</label>
+                <label className="text-xs uib-fg-muted mb-1 block">Content Overflow</label>
                 <select
                   value={config.overflow || 'auto'}
                   onChange={(e) => updateConfig('overflow', e.target.value as any)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="w-full px-3 py-2 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                 >
                   <option value="auto">Auto (scrollbar when needed)</option>
                   <option value="hidden">Hidden (no scrollbar, clip content)</option>
                   <option value="scroll">Scroll (always show scrollbar)</option>
                   <option value="visible">Visible (content can overflow)</option>
                 </select>
-                <p className="text-[10px] text-slate-400 mt-1">Controls how content behaves when it exceeds the window size</p>
+                <p className="text-[10px] uib-fg-faint mt-1">Controls how content behaves when it exceeds the window size</p>
               </div>
 
               {/* Content Padding */}
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">
+                <label className="text-xs uib-fg-muted mb-1 block">
                   Content Padding: {config.contentPadding || 24}px
                 </label>
                 <input
@@ -1030,7 +1030,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   onChange={(e) => updateConfig('contentPadding', parseInt(e.target.value))}
                   className="w-full"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <div className="flex justify-between text-[10px] uib-fg-faint mt-1">
                   <span>0px</span>
                   <span>32px</span>
                   <span>64px</span>
@@ -1039,10 +1039,10 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
 
               {/* Typography */}
               <div className="space-y-3">
-                <label className="text-xs font-medium text-slate-600">Default Typography</label>
+                <label className="text-xs font-medium uib-fg-muted">Default Typography</label>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Font Family</label>
+                    <label className="text-[10px] uib-fg-muted mb-1 block">Font Family</label>
                     <select
                       value={config.typography?.fontFamily || 'system'}
                       onChange={(e) => {
@@ -1052,7 +1052,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           typography: { ...config.typography, fontFamily: val === 'system' ? undefined : val },
                         });
                       }}
-                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full px-2 py-1.5 text-xs border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                     >
                       <optgroup label="System">
                         <option value="system">System Default</option>
@@ -1106,7 +1106,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Base Font Size</label>
+                    <label className="text-[10px] uib-fg-muted mb-1 block">Base Font Size</label>
                     <input
                       type="number"
                       value={config.typography?.fontSize || 14}
@@ -1116,14 +1116,14 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           typography: { ...config.typography, fontSize: parseInt(e.target.value) || 14 },
                         });
                       }}
-                      className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="w-full px-2 py-1.5 text-xs border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                       min="10"
                       max="24"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Default Text Color</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Default Text Color</label>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
@@ -1134,7 +1134,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           typography: { ...config.typography, color: e.target.value },
                         });
                       }}
-                      className="w-8 h-8 rounded cursor-pointer border-2 border-slate-200"
+                      className="w-8 h-8 rounded cursor-pointer border-2 uib-border"
                     />
                     <input
                       type="text"
@@ -1145,7 +1145,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                           typography: { ...config.typography, color: e.target.value },
                         });
                       }}
-                      className="flex-1 px-2 py-1.5 text-xs font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      className="flex-1 px-2 py-1.5 text-xs font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                     />
                   </div>
                 </div>
@@ -1162,11 +1162,11 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
             <div className="px-4 pb-4 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-500 mb-1 block">Open Animation</label>
+                  <label className="text-xs uib-fg-muted mb-1 block">Open Animation</label>
                   <select
                     value={config.animation?.open || 'fade'}
                     onChange={(e) => updateNested('animation', 'open', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    className="w-full px-3 py-2 text-sm border uib-border rounded-lg"
                   >
                     <option value="fade">Fade</option>
                     <option value="slide-up">Slide Up</option>
@@ -1178,11 +1178,11 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500 mb-1 block">Close Animation</label>
+                  <label className="text-xs uib-fg-muted mb-1 block">Close Animation</label>
                   <select
                     value={config.animation?.close || 'fade'}
                     onChange={(e) => updateNested('animation', 'close', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                    className="w-full px-3 py-2 text-sm border uib-border rounded-lg"
                   >
                     <option value="fade">Fade</option>
                     <option value="slide-up">Slide Up</option>
@@ -1196,7 +1196,7 @@ export function WindowPropertiesPanel({ config, onChange }: WindowPropertiesPane
               </div>
 
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">
+                <label className="text-xs uib-fg-muted mb-1 block">
                   Duration: {config.animation?.duration || 300}ms
                 </label>
                 <input

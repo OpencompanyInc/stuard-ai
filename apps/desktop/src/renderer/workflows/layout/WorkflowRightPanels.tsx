@@ -12,6 +12,10 @@ import type { RightPanel, WorkspaceInfo } from "./types";
 
 interface WorkflowRightPanelsProps {
   rightPanel: RightPanel;
+  /** True while the floating AI panel is open — docked panels dock to its left. */
+  aiOpen: boolean;
+  /** Current width of the AI panel, used to offset docked panels beside it. */
+  aiLeftWidth: number;
   manualRightWidth: number;
   onStartResizeManualRight: (e: React.MouseEvent) => void;
   onResetManualRightWidth: () => void;
@@ -38,6 +42,8 @@ interface WorkflowRightPanelsProps {
 
 export function WorkflowRightPanels({
   rightPanel,
+  aiOpen,
+  aiLeftWidth,
   manualRightWidth,
   onStartResizeManualRight,
   onResetManualRightWidth,
@@ -61,12 +67,18 @@ export function WorkflowRightPanels({
   onClearLogs,
   onSendLogsToChat,
 }: WorkflowRightPanelsProps) {
+  // The AI panel is pinned to the far right (its right-20 anchor = 80px). When
+  // it's open, docked panels and the workspace sit just to its left so both can
+  // be visible at once; otherwise they take the far-right slot themselves.
+  const FAR_RIGHT = 80;
+  const GAP = 12;
+  const dockedRight = aiOpen ? FAR_RIGHT + aiLeftWidth + GAP : FAR_RIGHT;
   return (
     <>
       {rightPanel !== "none" && rightPanel !== "ai" && (
         <div
-          className="absolute right-20 top-24 bottom-24 flex z-20 shadow-2xl rounded-xl overflow-hidden pointer-events-auto border wf-panel"
-          style={{ backdropFilter: 'var(--wf-glass-blur)', width: manualRightWidth }}
+          className="absolute top-24 bottom-24 flex z-20 shadow-2xl rounded-xl overflow-hidden pointer-events-auto border wf-panel"
+          style={{ backdropFilter: 'var(--wf-glass-blur)', width: manualRightWidth, right: dockedRight }}
         >
           <div
             className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize transition-colors z-30 wf-resize-handle"
@@ -131,8 +143,8 @@ export function WorkflowRightPanels({
 
       {showWorkspace && selectedId && rightPanel === "none" && (
         <div
-          className="absolute right-20 top-24 bottom-24 z-20 flex flex-col shrink-0 shadow-2xl rounded-xl overflow-hidden pointer-events-auto border wf-panel"
-          style={{ backdropFilter: 'var(--wf-glass-blur)', width: 280 }}
+          className="absolute top-24 bottom-24 z-20 flex flex-col shrink-0 shadow-2xl rounded-xl overflow-hidden pointer-events-auto border wf-panel"
+          style={{ backdropFilter: 'var(--wf-glass-blur)', width: 280, right: dockedRight }}
         >
           <PanelErrorBoundary name="Workspace">
             <WorkspaceExplorer

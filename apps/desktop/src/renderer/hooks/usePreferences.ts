@@ -43,49 +43,36 @@ export interface ModelMeta {
 }
 
 export const ALL_CHAT_MODEL_IDS: string[] = [
-  'xai/grok-4',
-  'xai/grok-4-1-fast',
-  'xai/grok-4-1-fast-non-reasoning',
-  'xai/grok-4-fast',
-  'xai/grok-4-fast-non-reasoning',
-  'xai/grok-3',
-  'xai/grok-3-fast',
-  'xai/grok-3-fast-latest',
-  'xai/grok-3-latest',
-  'xai/grok-3-mini',
-  'xai/grok-3-mini-fast',
-  'google/gemini-3-flash-preview',
+  // Curated native BYOK surface. Reconciled against the live models.dev
+  // catalog (2026-06) — older generations pruned, current flagships added.
+  // xAI: grok-3/grok-4 were retired upstream; this is the current Grok lineup.
+  'xai/grok-4.3',
+  'xai/grok-4.20-0309-reasoning',
+  'xai/grok-4.20-0309-non-reasoning',
+  // Google Gemini
   'google/gemini-2.5-flash',
   'google/gemini-2.5-flash-lite',
   'google/gemini-2.5-pro',
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-3.5-flash',
   'google/gemini-3.1-pro-preview',
-  'google/gemini-3-pro-preview',
-  'openai/gpt-4.1',
-  'openai/gpt-4.1-mini',
-  'openai/gpt-4.1-nano',
-  'openai/gpt-4o',
-  'openai/gpt-4o-mini',
-  'openai/gpt-5',
-  'openai/gpt-5-chat-latest',
-  'openai/gpt-5-codex',
-  'openai/gpt-5-mini',
-  'openai/gpt-5-nano',
-  'openai/gpt-5-pro',
-  'openai/gpt-5.1',
-  'openai/gpt-5.1-chat-latest',
-  'openai/gpt-5.1-codex',
-  'openai/gpt-5.1-codex-mini',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5.3-codex',
+  // OpenAI
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-mini',
   'openai/gpt-5.4',
   'openai/gpt-5.5',
+  'openai/gpt-5.5-pro',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.3-codex-spark',
+  // DeepSeek
   'deepseek/deepseek-chat',
   'deepseek/deepseek-reasoner',
-  'anthropic/claude-3-5-haiku-latest',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  // Anthropic
   'anthropic/claude-haiku-4-5',
-  'anthropic/claude-3-7-sonnet-latest',
-  'anthropic/claude-sonnet-4-5',
-  'anthropic/claude-opus-4-5',
+  'anthropic/claude-sonnet-4-6',
+  'anthropic/claude-opus-4-8',
   // Research models
   'perplexity/sonar',
   'perplexity/sonar-pro',
@@ -97,111 +84,87 @@ export const ALL_CHAT_MODEL_IDS: string[] = [
 ];
 
 const REASONING_MODEL_IDS = new Set<string>([
-  'deepseek/deepseek-reasoner',
-  'openai/gpt-5-pro',
-  'openai/gpt-5.1',
-  'openai/gpt-5.1-chat-latest',
+  'xai/grok-4.3',
+  'xai/grok-4.20-0309-reasoning',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+  'google/gemini-2.5-pro',
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-3.5-flash',
+  'google/gemini-3.1-pro-preview',
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-mini',
   'openai/gpt-5.4',
   'openai/gpt-5.5',
-  'google/gemini-3.1-pro-preview',
-  'google/gemini-3-pro-preview',
-  'google/gemini-2.5-pro',
-  'google/gemini-2.5-flash',
-  'xai/grok-4',
-  'xai/grok-4-1-fast',
-  'xai/grok-4-fast',
-  'xai/grok-3',
-  'xai/grok-3-fast',
-  'xai/grok-3-fast-latest',
-  'xai/grok-3-latest',
-  'xai/grok-3-mini',
-  'xai/grok-3-mini-fast',
-  'anthropic/claude-3-7-sonnet-latest',
-  'anthropic/claude-sonnet-4-5',
-  'anthropic/claude-opus-4-5',
+  'openai/gpt-5.5-pro',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.3-codex-spark',
+  'deepseek/deepseek-reasoner',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  'anthropic/claude-haiku-4-5',
+  'anthropic/claude-sonnet-4-6',
+  'anthropic/claude-opus-4-8',
 ]);
 
 const CONTEXT_WINDOWS: Record<string, number> = {
-  'google/gemini-3.1-pro-preview': 2000000,
-  'google/gemini-3-pro-preview': 2000000,
-  'google/gemini-3-flash-preview': 1000000,
-  'google/gemini-2.5-pro': 2000000,
-  'google/gemini-2.5-flash': 1000000,
-  'openai/gpt-5': 128000,
-  'openai/gpt-5-pro': 128000,
-  'openai/gpt-5.1': 128000,
-  'openai/gpt-4.1': 128000,
-  'openai/gpt-4.1-mini': 128000,
-  'openai/gpt-4o': 128000,
-  'openai/gpt-4o-mini': 128000,
-  'openai/gpt-5.2-codex': 700000,
-  'openai/gpt-5.3-codex': 1000000,
-  'openai/gpt-5.4': 400000,
-  'openai/gpt-5.5': 400000,
-  'xai/grok-4': 256000,
-  'xai/grok-4-fast': 2000000,
-  'xai/grok-3': 128000,
-  'deepseek/deepseek-chat': 128000,
-  'deepseek/deepseek-reasoner': 128000,
-  'anthropic/claude-3-5-haiku-latest': 200000,
+  'google/gemini-3.1-pro-preview': 1048576,
+  'google/gemini-3.5-flash': 1048576,
+  'google/gemini-3.1-flash-lite': 1048576,
+  'google/gemini-2.5-pro': 1048576,
+  'google/gemini-2.5-flash': 1048576,
+  'google/gemini-2.5-flash-lite': 1048576,
+  'openai/gpt-5.4': 1050000,
+  'openai/gpt-5.4-mini': 400000,
+  'openai/gpt-5.4-nano': 400000,
+  'openai/gpt-5.5': 1050000,
+  'openai/gpt-5.5-pro': 1050000,
+  'openai/gpt-5.3-codex': 400000,
+  'openai/gpt-5.3-codex-spark': 128000,
+  'xai/grok-4.3': 1000000,
+  'xai/grok-4.20-0309-reasoning': 2000000,
+  'xai/grok-4.20-0309-non-reasoning': 2000000,
+  'deepseek/deepseek-chat': 1000000,
+  'deepseek/deepseek-reasoner': 1000000,
+  'deepseek/deepseek-v4-flash': 1000000,
+  'deepseek/deepseek-v4-pro': 1000000,
   'anthropic/claude-haiku-4-5': 200000,
-  'anthropic/claude-3-7-sonnet-latest': 200000,
-  'anthropic/claude-sonnet-4-5': 200000,
-  'anthropic/claude-opus-4-5': 200000,
+  'anthropic/claude-sonnet-4-6': 1000000,
+  'anthropic/claude-opus-4-8': 1000000,
   // Research models
   'perplexity/sonar': 128000,
   'perplexity/sonar-pro': 200000,
   'perplexity/sonar-reasoning': 128000,
   'perplexity/sonar-reasoning-pro': 128000,
   'perplexity/sonar-deep-research': 128000,
-  'openai/o3-deep-research': 128000,
-  'openai/o4-mini-deep-research': 128000,
+  'openai/o3-deep-research': 200000,
+  'openai/o4-mini-deep-research': 200000,
 };
 
 const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
-  'xai/grok-4': 'smart',
-  'xai/grok-4-1-fast': 'balanced',
-  'xai/grok-4-1-fast-non-reasoning': 'balanced',
-  'xai/grok-4-fast': 'balanced',
-  'xai/grok-4-fast-non-reasoning': 'balanced',
-  'xai/grok-3': 'smart',
-  'xai/grok-3-fast': 'smart',
-  'xai/grok-3-fast-latest': 'smart',
-  'xai/grok-3-latest': 'smart',
-  'xai/grok-3-mini': 'fast',
-  'xai/grok-3-mini-fast': 'fast',
-  'google/gemini-3-flash-preview': 'fast',
+  'xai/grok-4.3': 'smart',
+  'xai/grok-4.20-0309-reasoning': 'smart',
+  'xai/grok-4.20-0309-non-reasoning': 'balanced',
   'google/gemini-2.5-flash': 'fast',
   'google/gemini-2.5-flash-lite': 'fast',
   'google/gemini-2.5-pro': 'smart',
+  'google/gemini-3.1-flash-lite': 'fast',
+  'google/gemini-3.5-flash': 'balanced',
   'google/gemini-3.1-pro-preview': 'smart',
-  'google/gemini-3-pro-preview': 'smart',
-  'openai/gpt-4.1': 'smart',
-  'openai/gpt-4.1-mini': 'balanced',
-  'openai/gpt-4.1-nano': 'fast',
-  'openai/gpt-4o': 'balanced',
-  'openai/gpt-4o-mini': 'fast',
-  'openai/gpt-5': 'smart',
-  'openai/gpt-5-chat-latest': 'smart',
-  'openai/gpt-5-codex': 'smart',
-  'openai/gpt-5-mini': 'balanced',
-  'openai/gpt-5-nano': 'fast',
-  'openai/gpt-5-pro': 'smart',
-  'openai/gpt-5.1': 'smart',
-  'openai/gpt-5.1-chat-latest': 'smart',
-  'openai/gpt-5.1-codex': 'smart',
-  'openai/gpt-5.1-codex-mini': 'balanced',
-  'openai/gpt-5.2-codex': 'smart',
-  'openai/gpt-5.3-codex': 'smart',
+  'openai/gpt-5.4-nano': 'fast',
+  'openai/gpt-5.4-mini': 'balanced',
   'openai/gpt-5.4': 'smart',
   'openai/gpt-5.5': 'smart',
+  'openai/gpt-5.5-pro': 'smart',
+  'openai/gpt-5.3-codex': 'smart',
+  'openai/gpt-5.3-codex-spark': 'balanced',
   'deepseek/deepseek-chat': 'fast',
   'deepseek/deepseek-reasoner': 'smart',
-  'anthropic/claude-3-5-haiku-latest': 'fast',
+  'deepseek/deepseek-v4-flash': 'balanced',
+  'deepseek/deepseek-v4-pro': 'smart',
   'anthropic/claude-haiku-4-5': 'fast',
-  'anthropic/claude-3-7-sonnet-latest': 'balanced',
-  'anthropic/claude-sonnet-4-5': 'smart',
-  'anthropic/claude-opus-4-5': 'smart',
+  'anthropic/claude-sonnet-4-6': 'smart',
+  'anthropic/claude-opus-4-8': 'smart',
   // Research models
   'perplexity/sonar': 'research',
   'perplexity/sonar-pro': 'research',
@@ -259,9 +222,10 @@ const DEFAULT_CHAT_MODE: ChatMode = 'auto';
 
 // Legacy config support (can be simplified later)
 export const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
-  fast: { allowed: [], default: 'deepseek/deepseek-chat' },
-  balanced: { allowed: [], default: 'xai/grok-4-1-fast' },
-  smart: { allowed: [], default: 'openai/gpt-5.1' },
+  // MUST match cloud-ai pricing.ts getDefaultModelForCategory.
+  fast: { allowed: [], default: 'google/gemini-3.1-flash-lite' },
+  balanced: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  smart: { allowed: [], default: 'openai/gpt-5.4' },
 };
 
 function normalizeChatMode(v: any, chatModels: ChatModelsConfig): ChatMode {
@@ -331,7 +295,6 @@ export function usePreferences() {
   const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
   const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
   const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => normalizeWakewordSensitivity(getLS<any>("wakeword_sensitivity", DEFAULT_WAKEWORD_SENSITIVITY)));
-  const [terminalEnabled, setTerminalEnabledState] = useState<boolean>(() => getLS<boolean>("terminal_enabled", false));
   const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
   const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
   const [chatModels, setChatModelsState] = useState<ChatModelsConfig>(() => getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
@@ -357,7 +320,6 @@ export function usePreferences() {
   useEffect(() => { setLS("translucent_mode", translucentMode); }, [translucentMode]);
   useEffect(() => { setLS("wakeword_enabled", wakewordEnabled); }, [wakewordEnabled]);
   useEffect(() => { setLS("wakeword_sensitivity", wakewordSensitivity); }, [wakewordSensitivity]);
-  useEffect(() => { setLS("terminal_enabled", terminalEnabled); }, [terminalEnabled]);
   useEffect(() => { setLS("browser_enabled", browserEnabled); }, [browserEnabled]);
   useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
   useEffect(() => {
@@ -420,7 +382,6 @@ export function usePreferences() {
           if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
           if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
           if (key === 'wakeword_sensitivity') setWakewordSensitivityState(normalizeWakewordSensitivity(val));
-          if (key === 'terminal_enabled') setTerminalEnabledState(val ?? false);
           if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
           if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
           if (key === 'chat_models') setChatModelsState(val ?? DEFAULT_CHAT_MODELS);
@@ -447,7 +408,6 @@ export function usePreferences() {
   const setTranslucentMode = useCallback((v: boolean) => { setTranslucentModeState(v); }, []);
   const setWakewordEnabled = useCallback((v: boolean) => { setWakewordEnabledState(v); }, []);
   const setWakewordSensitivity = useCallback((v: number) => { setWakewordSensitivityState(normalizeWakewordSensitivity(v)); }, []);
-  const setTerminalEnabled = useCallback((v: boolean) => { setTerminalEnabledState(v); }, []);
   const setBrowserEnabled = useCallback((v: boolean) => { setBrowserEnabledState(v); }, []);
   const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
   const setChatMode = useCallback((v: ChatMode) => { setChatModeState(v); }, []);
@@ -481,8 +441,6 @@ export function usePreferences() {
     setWakewordEnabled,
     wakewordSensitivity,
     setWakewordSensitivity,
-    terminalEnabled,
-    setTerminalEnabled,
     browserEnabled,
     setBrowserEnabled,
     screenCaptureInvisible,

@@ -126,12 +126,24 @@ export interface CodexStatus {
   lastSyncError: string | null;
 }
 
+const EMPTY_JWT: DecodedJwt = { email: null, accountId: null, planType: null, expiresAt: null };
+
 export function getCodexStatus(): CodexStatus {
   const installed = detectCodexBinary();
   const auth = readAuthJson();
   const tokens = auth?.tokens;
-  const idToken = tokens?.id_token || tokens?.access_token || '';
-  const decoded = idToken ? decodeJwt(idToken) : { email: null, accountId: null, planType: null, expiresAt: null };
+
+  // Decode both tokens — they serve different purposes and have very
+  // different lifetimes:
+  //   - id_token: short-lived (~1h) identity assertion. Best source for
+  //     profile claims (email, plan_type).
+  //   - access_token: the long-lived (~days) bearer credential cloud-ai
+  //     actually sends to chatgpt.com. Its expiry is what gates whether
+  //     inference still works — so the "expired" signal must come from here,
+  //     NOT the id_token (which would false-alarm within an hour of every
+  //     refresh). This mirrors syncCodexToCloud's expires_at computation.
+  const idDecoded = tokens?.id_token ? decodeJwt(tokens.id_token) : EMPTY_JWT;
+  const accessDecoded = tokens?.access_token ? decodeJwt(tokens.access_token) : EMPTY_JWT;
 
   // When was the token last refreshed/written? Prefer auth.json's own
   // `last_refresh` marker, fall back to the file mtime.
@@ -146,15 +158,15 @@ export function getCodexStatus(): CodexStatus {
     } catch {}
   }
 
-  const tokenExpiresAt = decoded.expiresAt;
+  const tokenExpiresAt = accessDecoded.expiresAt ?? idDecoded.expiresAt;
   const expMs = tokenExpiresAt ? Date.parse(tokenExpiresAt) : NaN;
   const tokenExpired = !Number.isNaN(expMs) && expMs < Date.now();
 
   return {
     installed,
     signedIn: !!(tokens?.access_token),
-    accountEmail: decoded.email,
-    planType: decoded.planType,
+    accountEmail: idDecoded.email ?? accessDecoded.email,
+    planType: idDecoded.planType ?? accessDecoded.planType,
     tokenExpiresAt,
     tokenExpired,
     lastRefreshAtMs,

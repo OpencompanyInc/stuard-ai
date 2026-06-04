@@ -4,8 +4,8 @@
  * CompactDemo — interactive marketing clone of Stuard desktop compact mode.
  *
  * Auto-plays a loop when scrolled into view (PDF summary, research, spreadsheet,
- * French-lesson callback, inbox triage). Typing or clicking pauses the loop so
- * visitors can try their own prompts.
+ * French-lesson callback, inbox triage, nav to Settings/Studio). Typing or
+ * clicking pauses the loop so visitors can try their own prompts.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,6 +32,11 @@ import {
   FolderOpen,
   Table2,
   Phone,
+  LayoutDashboard,
+  Settings,
+  Layers,
+  Paperclip,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -127,7 +132,81 @@ interface Scenario {
 }
 
 /** Scenarios cycled during the unattended demo loop. */
-const AUTO_DEMO_IDS = ['pdf', 'research', 'spreadsheet', 'french-call', 'x-post'] as const;
+const AUTO_DEMO_IDS = ['pdf', 'research', 'spreadsheet', 'french-call', 'x-post', 'nav'] as const;
+
+const NAV_DEMO = {
+  id: 'nav' as const,
+  label: 'Jump to Settings or Studio',
+  prompt: 'settings',
+};
+
+type DemoNavGroup = 'dashboard' | 'studio';
+
+interface DemoNavItem {
+  id: string;
+  group: DemoNavGroup;
+  title: string;
+  subtitle: string;
+  keywords: string[];
+  Icon: LucideIcon;
+  tile: string;
+}
+
+const DEMO_NAV: DemoNavItem[] = [
+  {
+    id: 'dash-overview',
+    group: 'dashboard',
+    title: 'Overview',
+    subtitle: 'Dashboard · overview & activity',
+    Icon: LayoutDashboard,
+    tile: '#2563EB',
+    keywords: ['overview', 'home', 'dashboard', 'dash', 'today', 'activity'],
+  },
+  {
+    id: 'dash-settings',
+    group: 'dashboard',
+    title: 'Settings',
+    subtitle: 'Dashboard · themes & preferences',
+    Icon: Settings,
+    tile: '#2563EB',
+    keywords: ['settings', 'setting', 'preferences', 'theme', 'config', 'account'],
+  },
+  {
+    id: 'studio-home',
+    group: 'studio',
+    title: 'Stuard Studio',
+    subtitle: 'Open the studio home',
+    Icon: Layers,
+    tile: '#7C3AED',
+    keywords: ['stuard', 'studio', 'workflow', 'workflows', 'automation', 'builder'],
+  },
+];
+
+function scoreDemoNavMatch(item: DemoNavItem, q: string): number {
+  const title = item.title.toLowerCase();
+  const subtitle = item.subtitle.toLowerCase();
+  if (title === q) return 100;
+  if (title.startsWith(q)) return 90;
+  if (title.includes(q)) return 80;
+  if (subtitle.includes(q)) return 70;
+  if (item.keywords.some((k) => k === q)) return 85;
+  if (item.keywords.some((k) => k.startsWith(q) || q.startsWith(k))) return 75;
+  if (item.keywords.some((k) => k.includes(q) || q.includes(k))) return 60;
+  if (item.group === 'dashboard' && (q.includes('dash') || q.includes('dashboard'))) return 40;
+  if (item.group === 'studio' && (q.includes('studio') || q.includes('workflow'))) return 35;
+  return 0;
+}
+
+function filterDemoNav(query: string, max = 6): DemoNavItem[] {
+  const q = (query || '').toLowerCase().trim();
+  if (!q || q.length < 2) return [];
+  return DEMO_NAV
+    .map((item) => ({ item, score: scoreDemoNavMatch(item, q) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .slice(0, max)
+    .map(({ item }) => item);
+}
 
 const AUTO_PAUSE_IDLE_MS = 1600;
 const AUTO_TYPE_MS = 38;
@@ -494,6 +573,8 @@ function DemoCaption({ label, visible }: { label: string; visible: boolean }) {
 
 function QuickActionsPanel({
   query,
+  attachments,
+  stuardNavItems,
   selectedIndex,
   onHoverIndex,
   onAskStuard,
@@ -502,6 +583,8 @@ function QuickActionsPanel({
   onSelectEngine,
 }: {
   query: string;
+  attachments: DemoAttachment[];
+  stuardNavItems: DemoNavItem[];
   selectedIndex: number;
   onHoverIndex: (i: number) => void;
   onAskStuard: () => void;
@@ -511,6 +594,11 @@ function QuickActionsPanel({
 }) {
   const trimmed = query.trim();
   const engine = SEARCH_ENGINES.find((e) => e.id === activeEngineId) ?? SEARCH_ENGINES[0];
+  const fileRowStart = 2;
+  const stuardRowStart = fileRowStart + attachments.length;
+
+  const fileTint = (kind: DemoAttachment['kind']) =>
+    kind === 'pdf' ? '#EA4335' : kind === 'sheet' ? '#22C55E' : '#60A5FA';
 
   return (
     <motion.div
@@ -621,6 +709,145 @@ function QuickActionsPanel({
               </button>
             </div>
           </div>
+
+          {stuardNavItems.length > 0 && (
+            <div className="flex flex-col" style={{ gap: 8 }}>
+              <div style={{ fontSize: 10, lineHeight: '14px', color: FG, fontWeight: 400 }}>
+                Stuard
+              </div>
+
+              {stuardNavItems.map((item, idx) => {
+                const Icon = item.Icon;
+                const rowIdx = stuardRowStart + idx;
+                const isSel = selectedIndex === rowIdx;
+                const prevGroup = idx > 0 ? stuardNavItems[idx - 1]?.group : undefined;
+                const showGroupLabel = item.group !== prevGroup;
+                return (
+                  <div key={item.id} className="flex flex-col" style={{ gap: 8 }}>
+                    {showGroupLabel && (
+                      <div
+                        style={{
+                          fontSize: 9,
+                          lineHeight: '12px',
+                          color: FG_MUTED,
+                          paddingLeft: 8,
+                          paddingTop: idx === 0 ? 0 : 2,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.06em',
+                        }}
+                      >
+                        {item.group === 'dashboard' ? 'Dashboard' : 'Studio'}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onMouseEnter={() => onHoverIndex(rowIdx)}
+                      className="w-full flex items-center text-left"
+                      style={{
+                        ...(isSel ? ROW_PRIMARY : ROW_BASE),
+                        padding: '6px 8px 6px 6px',
+                        gap: 6,
+                      }}
+                    >
+                      <div
+                        className="flex items-center justify-center shrink-0"
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 9,
+                          background: 'rgb(var(--compact-pill-fg) / 0.06)',
+                          color: FG_MUTED,
+                        }}
+                      >
+                        <Icon style={{ width: 15, height: 15 }} strokeWidth={1.75} />
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                        <div
+                          className="truncate"
+                          style={{ fontSize: 12, lineHeight: '16px', color: FG }}
+                        >
+                          {item.title}
+                        </div>
+                        <div
+                          className="truncate"
+                          style={{ fontSize: 10, lineHeight: '14px', color: FG_MUTED }}
+                        >
+                          {item.subtitle}
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 flex items-center justify-center"
+                        style={{ padding: '3px 6px', color: FG_MUTED }}
+                        title="Open"
+                      >
+                        <ExternalLink style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {attachments.length > 0 && (
+            <div className="flex flex-col" style={{ gap: 8 }}>
+              <div style={{ fontSize: 10, lineHeight: '14px', color: FG, fontWeight: 400 }}>
+                Files
+              </div>
+
+              {attachments.map((att, idx) => {
+                const rowIdx = fileRowStart + idx;
+                const isSel = selectedIndex === rowIdx;
+                const AttIcon = att.kind === 'pdf' ? FileText : att.kind === 'sheet' ? Table2 : File;
+                return (
+                  <button
+                    key={att.name}
+                    type="button"
+                    onMouseEnter={() => onHoverIndex(rowIdx)}
+                    className="w-full flex items-center text-left"
+                    style={{
+                      ...(isSel ? ROW_PRIMARY : ROW_BASE),
+                      padding: '6px 8px 6px 6px',
+                      gap: 6,
+                    }}
+                  >
+                    <div
+                      className="flex items-center justify-center shrink-0"
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 4,
+                        background: fileTint(att.kind),
+                      }}
+                    >
+                      <AttIcon style={{ width: 18, height: 18, color: '#fff' }} strokeWidth={1.75} />
+                    </div>
+                    <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                      <div
+                        className="truncate"
+                        style={{ fontSize: 12, lineHeight: '16px', color: FG }}
+                      >
+                        {att.name}
+                      </div>
+                      <div
+                        className="truncate"
+                        style={{ fontSize: 8, lineHeight: '14px', color: FG_MUTED }}
+                      >
+                        Attach to conversation
+                      </div>
+                    </div>
+                    <span
+                      className="shrink-0 flex items-center justify-center"
+                      style={{ padding: '3px 6px', color: FG_MUTED }}
+                      title="Attach"
+                    >
+                      <Paperclip style={{ width: 16, height: 16 }} strokeWidth={1.75} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <div style={{ fontSize: 10, lineHeight: '14px', color: FG, fontWeight: 400 }}>
             No workflows
@@ -755,6 +982,13 @@ export default function CompactDemo() {
 
   const showQuickActions = query.trim().length > 0 && !busy && !showResponse;
 
+  const stuardNavItems = useMemo(() => filterDemoNav(query), [query]);
+
+  const selectableCount = useMemo(() => {
+    if (!showQuickActions) return 0;
+    return 2 + attachments.length + stuardNavItems.length;
+  }, [showQuickActions, attachments.length, stuardNavItems.length]);
+
   const markInteracted = useCallback(() => {
     if (!interacted.current) {
       interacted.current = true;
@@ -875,6 +1109,24 @@ export default function CompactDemo() {
     while (autoToken.current === token && !interacted.current) {
       const id = AUTO_DEMO_IDS[autoIndex.current % AUTO_DEMO_IDS.length];
       autoIndex.current += 1;
+
+      if (id === 'nav') {
+        resetDemoState();
+        setAutoDemoLabel(NAV_DEMO.label);
+        await delay(AUTO_PAUSE_IDLE_MS);
+        if (autoToken.current !== token || interacted.current) break;
+
+        await autoTypePrompt(NAV_DEMO.prompt, token);
+        if (autoToken.current !== token || interacted.current) break;
+
+        await delay(AUTO_QUICK_ACTIONS_MS + 600);
+        if (autoToken.current !== token || interacted.current) break;
+
+        setQuery('');
+        await delay(AUTO_BETWEEN_MS);
+        continue;
+      }
+
       const scn = scenarioById(id);
       if (!scn) continue;
 
@@ -950,10 +1202,11 @@ export default function CompactDemo() {
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showQuickActions) {
+    if (showQuickActions && selectableCount > 0) {
+      const maxIdx = selectableCount - 1;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedAction((i) => Math.min(1, i + 1));
+        setSelectedAction((i) => Math.min(maxIdx, i + 1));
         return;
       }
       if (e.key === 'ArrowUp') {
@@ -1014,6 +1267,8 @@ export default function CompactDemo() {
           {showQuickActions && (
             <QuickActionsPanel
               query={query}
+              attachments={attachments}
+              stuardNavItems={stuardNavItems}
               selectedIndex={selectedAction}
               onHoverIndex={setSelectedAction}
               onAskStuard={() => submit()}

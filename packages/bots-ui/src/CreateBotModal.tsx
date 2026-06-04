@@ -2,16 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import {
-  Activity, AlertCircle, ArrowLeft, Brain, Check, ChevronDown, ChevronRight, Clock, Loader2,
-  Plus, Search, Wand2, Wrench, X,
+  Activity, AlertCircle, ArrowLeft, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Loader2,
+  MessageSquare, Rocket, Search, Wand2, Wrench, X,
 } from 'lucide-react';
 import { SCHEDULE_LABELS, type ScheduleInterval } from './proactive-types';
-import type { Bot, BotBlueprint, BlueprintStreamEvent, BlueprintPreflightStep, BlueprintTestRunStatus, BlueprintTrigger, BotTrigger } from './types';
+import type { Bot as BotType, BotBlueprint, BlueprintStreamEvent, BlueprintPreflightStep, BlueprintTestRunStatus, BlueprintTrigger, BotTrigger } from './types';
 import { COMMON_EMOJIS, TRIGGER_META } from './constants';
 import { buildBotBlueprint, streamBotBlueprintWithAi, submitBlueprintClarifyAnswers, runBlueprintPreflightStep } from './blueprint';
 import { compactWhitespace, describeTrigger, humanizeModelName, humanizeToolName } from './helpers';
 import { ToolsPickerModal } from './ToolsSection';
 import { useBotsPlatform } from './BotsPlatformContext';
+import { useStudioThemeScope } from './theme-scope';
 
 type Step = 'describe' | 'review';
 
@@ -62,8 +63,41 @@ type SetupPreflightResult = {
   checks: SetupPreflightCheck[];
 };
 
-export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated: (bot: Bot) => void }) {
+// ── Studio-native styling tokens ────────────────────────────────────────────
+// These keep the modal reading as one calm surface with brand-red only as an
+// accent. They use arbitrary `color-mix` values resolved off `--primary` /
+// `--foreground-muted` rather than `bg-primary/10`-style opacity utilities:
+// in the desktop app those don't generate any CSS (Tailwind v3 + `--primary` is
+// a hex var), so the shared accents silently drop their colour. The literal
+// arbitrary values below render correctly in the desktop studio/dashboard AND
+// on the website (where `--primary` is also defined) — the same approach the
+// studio uses to tint `--wf-accent`. Solid `bg-primary` / `text-primary-fg`
+// already work via hand-written rules, so those stay as-is.
+const HAIRLINE = 'border-[color:var(--dashboard-panel-border)]';
+const CARD_CLASS = 'rounded-2xl border border-[color:var(--dashboard-panel-border)]';
+const SECTION_LABEL_CLASS = 'mb-1.5 block text-[11px] font-medium uppercase tracking-[0.14em] text-theme-muted';
+const FIELD_CLASS =
+  'w-full rounded-xl border border-[color:var(--dashboard-panel-border)] text-theme-fg outline-none transition ' +
+  'placeholder:text-[color:color-mix(in_srgb,var(--foreground-muted)_60%,transparent)] ' +
+  'focus:border-[color:color-mix(in_srgb,var(--primary)_55%,transparent)] ' +
+  'focus:ring-2 focus:ring-[color-mix(in_srgb,var(--primary)_18%,transparent)] disabled:opacity-60';
+
+const ACCENT_TEXT = 'text-[color:var(--primary)]';
+const ACCENT_BG_6 = 'bg-[color-mix(in_srgb,var(--primary)_6%,transparent)]';
+const ACCENT_BG_10 = 'bg-[color-mix(in_srgb,var(--primary)_10%,transparent)]';
+const ACCENT_BG_12 = 'bg-[color-mix(in_srgb,var(--primary)_12%,transparent)]';
+const ACCENT_BAR = 'bg-[color-mix(in_srgb,var(--primary)_60%,transparent)]';
+const ACCENT_BORDER_20 = 'border-[color:color-mix(in_srgb,var(--primary)_20%,transparent)]';
+const ACCENT_RING_12 = 'ring-1 ring-[color-mix(in_srgb,var(--primary)_12%,transparent)]';
+const ACCENT_RING_15 = 'ring-1 ring-[color-mix(in_srgb,var(--primary)_15%,transparent)]';
+const ACCENT_EMOJI_HOVER =
+  'hover:border-[color:color-mix(in_srgb,var(--primary)_40%,transparent)] hover:bg-[color-mix(in_srgb,var(--primary)_6%,transparent)]';
+// Neutral translucent chip fill (real Tailwind colour → opacity works natively).
+const NEUTRAL_CHIP = 'bg-zinc-500/15';
+
+export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; onCreated: (bot: BotType) => void }) {
   const platform = useBotsPlatform();
+  const themeScope = useStudioThemeScope();
   const [step, setStep] = useState<Step>('describe');
 
   // Step 1 inputs
@@ -488,11 +522,14 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
     }
   };
 
+  const canGenerate = !!compactWhitespace(goal || name);
+
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-150"
+      data-wf-theme={themeScope}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-150"
       onClick={onClose}
-      style={{ WebkitBackdropFilter: 'blur(12px)', backdropFilter: 'blur(12px)' }}
+      style={{ WebkitBackdropFilter: 'blur(14px)', backdropFilter: 'blur(14px)' }}
     >
       <div
         className="flex w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-theme-card shadow-2xl animate-in zoom-in-95 duration-150"
@@ -500,32 +537,38 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-theme/15 px-6 pb-4 pt-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-theme-muted">
-              <span className={clsx('h-1.5 w-1.5 rounded-full', step === 'describe' ? 'bg-primary' : 'bg-emerald-500')} />
-              Step 1 of 2
-              <ChevronRight className="h-3 w-3" />
-              <span className={clsx('h-1.5 w-1.5 rounded-full', step === 'review' ? 'bg-primary' : 'bg-theme/40')} />
-              Step 2 of 2
+        <div className={clsx('flex-shrink-0 border-b px-6 pt-5 pb-4', HAIRLINE)}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl', ACCENT_BG_10, ACCENT_TEXT)}>
+                {step === 'describe' ? <Wand2 className="h-[18px] w-[18px]" /> : <Bot className="h-[18px] w-[18px]" />}
+              </span>
+              <div className="min-w-0">
+                <h2 className="font-stuard text-[17px] font-semibold leading-tight text-theme-fg">
+                  {step === 'describe' ? 'Describe your agent' : 'Review & launch'}
+                </h2>
+                <p className="mt-0.5 text-[12.5px] leading-snug text-theme-muted">
+                  {step === 'describe'
+                    ? 'Tell us what it should do — we’ll wire up tools, schedule, and prompt.'
+                    : 'Tweak anything now, or change it later in Settings.'}
+                </p>
+              </div>
             </div>
-            <h2 className="mt-1.5 font-stuard text-lg font-semibold text-theme-fg">
-              {step === 'describe' ? 'Describe your agent' : 'Review & launch'}
-            </h2>
-            <p className="mt-0.5 text-[12px] text-theme-muted">
-              {step === 'describe'
-                ? 'Tell us what you want it to do. We’ll set up tools, schedule, and prompt for you.'
-                : 'Looks good? You can tweak any of this now or later in Settings.'}
-            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="-mr-1 rounded-lg p-1.5 text-theme-muted transition hover:bg-theme-hover hover:text-theme-fg"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-theme-muted transition hover:bg-theme-hover/50 hover:text-theme-fg"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+
+          {/* Two-step progress — segmented, calm; red marks the active step. */}
+          <div className="mt-4 flex items-center gap-3">
+            <StepSegment label="Describe" index={1} state={step === 'describe' ? 'active' : 'done'} />
+            <StepSegment label="Review" index={2} state={step === 'review' ? 'active' : 'todo'} />
+          </div>
         </div>
 
         {/* Body */}
@@ -584,7 +627,7 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
         </div>
 
         {/* Footer */}
-        <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-theme/15 px-6 py-4">
+        <div className={clsx('flex flex-shrink-0 items-center justify-between gap-3 border-t px-6 py-4', HAIRLINE)}>
           {step === 'describe' ? (
             <>
               <button
@@ -607,8 +650,8 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  disabled={generating || !compactWhitespace(goal || name)}
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={generating || !canGenerate}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
                   {generating ? `Generating · ${generateElapsed}s` : 'Generate setup'}
@@ -639,9 +682,9 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
                   type="button"
                   onClick={handleCreate}
                   disabled={!compactWhitespace(name) || submitting}
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
                   Launch agent
                 </button>
               </div>
@@ -660,6 +703,39 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ─── Header step segment ──────────────────────────────────────────────────
+
+function StepSegment({ label, index, state }: { label: string; index: number; state: 'active' | 'done' | 'todo' }) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <span
+        className={clsx(
+          'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition-colors',
+          state === 'active' && 'bg-primary text-primary-fg',
+          state === 'done' && clsx(ACCENT_BG_12, ACCENT_TEXT),
+          state === 'todo' && clsx(NEUTRAL_CHIP, 'text-theme-muted'),
+        )}
+      >
+        {state === 'done' ? <Check className="h-3 w-3" /> : index}
+      </span>
+      <span
+        className={clsx(
+          'truncate text-[12px] font-medium transition-colors',
+          state === 'todo' ? 'text-theme-muted' : 'text-theme-fg',
+        )}
+      >
+        {label}
+      </span>
+      <span
+        className={clsx(
+          'ml-1 h-[3px] flex-1 rounded-full transition-colors',
+          state === 'todo' ? 'bg-zinc-500/25' : ACCENT_BAR,
+        )}
+      />
+    </div>
   );
 }
 
@@ -726,9 +802,7 @@ function DescribeStep({
   return (
     <div className="space-y-5">
       <div>
-        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">
-          What should it do?
-        </label>
+        <label className={SECTION_LABEL_CLASS}>What should it do?</label>
         <textarea
           autoFocus
           rows={5}
@@ -736,16 +810,16 @@ function DescribeStep({
           onChange={e => setGoal(e.target.value)}
           disabled={generating}
           placeholder="e.g. Watch GitHub issues for billing bugs, summarize what changed, and notify me when something needs a reply."
-          className="w-full resize-none rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3 text-[14px] leading-6 text-theme-fg outline-none transition focus:border-primary/60 disabled:opacity-60"
+          className={clsx(FIELD_CLASS, 'resize-none px-4 py-3 text-[14px] leading-6')}
         />
-        <p className="mt-1.5 text-[11px] text-theme-muted">
+        <p className="mt-1.5 text-[11px] leading-5 text-theme-muted">
           Be concrete: what to watch, what to do about it, and when you want to be told.
         </p>
       </div>
 
       <div>
-        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">
-          Name <span className="ml-1 text-theme-muted/60">(optional — we’ll suggest one)</span>
+        <label className={SECTION_LABEL_CLASS}>
+          Name <span className="ml-1 normal-case tracking-normal text-theme-muted">(optional — we’ll suggest one)</span>
         </label>
         <input
           type="text"
@@ -753,17 +827,18 @@ function DescribeStep({
           onChange={e => setName(e.target.value)}
           disabled={generating}
           placeholder="Twitter Update Agent"
-          className="w-full rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3 text-[14px] text-theme-fg outline-none transition focus:border-primary/60 disabled:opacity-60"
+          className={clsx(FIELD_CLASS, 'px-4 py-3 text-[14px]')}
         />
       </div>
 
       {/* Sticky stage banner. Always reflects what's actually happening right
           now, so the user never sees a frozen "Probe passed — continuing" while
-          the model is composing the final JSON. */}
+          the model is composing the final JSON. Opaque so feed scrolls cleanly
+          underneath it. */}
       {generating && (
-        <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl border border-primary/30 bg-primary/10 px-4 py-2.5 backdrop-blur-sm">
-          <div className="flex min-w-0 items-center gap-2">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+        <div className={clsx('sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl border bg-theme-card px-4 py-2.5 shadow-sm', HAIRLINE)}>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Loader2 className={clsx('h-4 w-4 shrink-0 animate-spin', ACCENT_TEXT)} />
             <div className="min-w-0">
               <div className="truncate text-[12.5px] font-semibold text-theme-fg">
                 {generateStage || 'Working'}
@@ -772,13 +847,13 @@ function DescribeStep({
                 <div className="text-[10.5px] text-theme-muted">
                   {probesDone}/{probesTotal} probe{probesTotal === 1 ? '' : 's'} complete
                   {probesFailed > 0 && (
-                    <span className="text-red-300"> · {probesFailed} failed</span>
+                    <span className="text-red-400"> · {probesFailed} failed</span>
                   )}
                 </div>
               )}
             </div>
           </div>
-          <span className="shrink-0 rounded-full bg-theme-card/70 px-2 py-0.5 text-[10.5px] tabular-nums text-theme-muted">
+          <span className={clsx('shrink-0 rounded-full px-2 py-0.5 text-[10.5px] tabular-nums text-theme-muted', NEUTRAL_CHIP)}>
             {generateElapsed}s
           </span>
         </div>
@@ -786,23 +861,33 @@ function DescribeStep({
 
       {/* Clarification panel rendered prominently right under the stage banner
           so it can't get buried under the probes feed. Auto-focuses the first
-          input. */}
+          input. Reads as a calm, studio-native question card — the agent is
+          asking, not alarming. */}
       {activeClarifyPanel && (
-        <div className="overflow-hidden rounded-2xl border border-amber-400/45 bg-amber-400/10 shadow-lg shadow-amber-500/10 ring-1 ring-amber-400/20">
-          <div className="flex items-center justify-between gap-3 border-b border-amber-400/25 px-4 py-2.5">
-            <div className="flex items-center gap-2 text-[12.5px] font-semibold text-amber-300">
-              <AlertCircle className="h-4 w-4" />
-              {activeClarifyPanel.blocking ? 'I need a few answers to continue' : 'A couple of quick details would help'}
+        <div className={clsx('overflow-hidden rounded-2xl border bg-theme-card shadow-sm', HAIRLINE, ACCENT_RING_15)}>
+          <div className={clsx('flex items-center gap-2.5 border-b px-4 py-3', HAIRLINE)}>
+            <span className={clsx('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', ACCENT_BG_10, ACCENT_TEXT)}>
+              <MessageSquare className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-theme-fg">
+                {activeClarifyPanel.blocking ? 'A couple of quick questions' : 'A couple of details would help'}
+              </div>
+              <div className="text-[11px] text-theme-muted">
+                {activeClarifyPanel.blocking
+                  ? 'Needed to finish setting up your agent'
+                  : 'Optional — answer to sharpen the setup'}
+              </div>
             </div>
-            <span className="text-[10.5px] tabular-nums text-theme-muted/70">{generateElapsed}s</span>
+            <span className="shrink-0 text-[10.5px] tabular-nums text-theme-muted">{generateElapsed}s</span>
           </div>
           <div className="space-y-3 px-4 py-3.5">
             {activeClarifyPanel.reason && (
-              <p className="text-[12px] leading-5 text-amber-200/85">{activeClarifyPanel.reason}</p>
+              <p className="text-[12px] leading-5 text-theme-muted">{activeClarifyPanel.reason}</p>
             )}
             {activeClarifyPanel.questions.map((question, idx) => (
               <label key={`${activeClarifyPanel.clarifyId}-${idx}`} className="block">
-                <span className="mb-1 block text-[12px] leading-4 text-theme-fg">{question}</span>
+                <span className="mb-1.5 block text-[12.5px] leading-5 text-theme-fg">{question}</span>
                 <input
                   ref={idx === 0 ? firstClarifyInputRef : undefined}
                   type="text"
@@ -810,17 +895,17 @@ function DescribeStep({
                   onChange={e => onClarifyAnswerChange(activeClarifyPanel.clarifyId, idx, e.target.value)}
                   disabled={activeClarifyPanel.status === 'submitting'}
                   placeholder="Your answer"
-                  className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/80 px-3 py-2 text-[13px] text-theme-fg outline-none transition focus:border-amber-400/60 disabled:opacity-60"
+                  className={clsx(FIELD_CLASS, 'px-3 py-2 text-[13px]')}
                 />
               </label>
             ))}
             {activeClarifyPanel.error && (
-              <p className="flex items-start gap-1.5 text-[11.5px] text-red-300">
+              <p className="flex items-start gap-1.5 text-[11.5px] text-red-400">
                 <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>{activeClarifyPanel.error}</span>
               </p>
             )}
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="flex items-center justify-end gap-1 pt-1">
               <button
                 type="button"
                 onClick={() => onClarifySkip(activeClarifyPanel.clarifyId)}
@@ -836,9 +921,9 @@ function DescribeStep({
                   activeClarifyPanel.status === 'submitting' ||
                   activeClarifyPanel.questions.every((_, idx) => !compactWhitespace(activeClarifyPanel.answers[idx] || ''))
                 }
-                className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/90 px-3.5 py-1.5 text-[12.5px] font-semibold text-zinc-900 shadow-sm transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-[12.5px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {activeClarifyPanel.status === 'submitting' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                {activeClarifyPanel.status === 'submitting' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                 Send answers
               </button>
             </div>
@@ -846,16 +931,16 @@ function DescribeStep({
         </div>
       )}
 
-      {/* Probes feed — prominent, autoscrolls to the latest entry so the user
-          actually watches probes execute. */}
+      {/* Probes feed — calm neutral rows, autoscrolls to the latest entry so the
+          user actually watches probes execute. */}
       {liveTestRuns.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-theme/40 bg-theme-card/60">
-          <div className="flex items-center justify-between border-b border-theme/30 px-4 py-2.5">
+        <div className={clsx(CARD_CLASS, 'overflow-hidden')}>
+          <div className={clsx('flex items-center justify-between border-b px-4 py-2.5', HAIRLINE)}>
             <div className="flex items-center gap-2 text-[12.5px] font-medium text-theme-fg">
-              <Activity className="h-4 w-4 text-primary" />
+              <Activity className={clsx('h-4 w-4', ACCENT_TEXT)} />
               <span>Verifying on your machine</span>
             </div>
-            <span className="text-[10.5px] tabular-nums text-theme-muted/70">
+            <span className="text-[10.5px] tabular-nums text-theme-muted">
               {probesDone}/{probesTotal} done{probesFailed > 0 && ` · ${probesFailed} failed`}
             </span>
           </div>
@@ -867,21 +952,17 @@ function DescribeStep({
                 run.status === 'fail' ? AlertCircle :
                 AlertCircle;
               const tone =
-                run.status === 'running' ? 'text-primary' :
+                run.status === 'running' ? ACCENT_TEXT :
                 run.status === 'pass' ? 'text-emerald-400' :
-                run.status === 'fail' ? 'text-red-300' :
-                'text-amber-300';
-              const bg =
-                run.status === 'running' ? 'bg-primary/5' :
-                run.status === 'fail' ? 'bg-red-500/5' :
-                undefined;
+                run.status === 'fail' ? 'text-red-400' :
+                'text-amber-400';
               return (
                 <li
                   key={run.runId}
                   className={clsx(
                     'flex items-start gap-3 px-4 py-3 text-[12.5px] transition-colors',
-                    bg,
-                    idx !== liveTestRuns.length - 1 && 'border-b border-theme/20',
+                    run.status === 'fail' && 'bg-red-500/[0.04]',
+                    idx !== liveTestRuns.length - 1 && clsx('border-b', HAIRLINE),
                   )}
                 >
                   <span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center', tone)}>
@@ -893,7 +974,7 @@ function DescribeStep({
                       <div className="mt-0.5 text-[11.5px] leading-4 text-theme-muted">{run.detail}</div>
                     )}
                   </div>
-                  <span className="ml-2 shrink-0 rounded-md border border-theme/30 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-theme-muted">
+                  <span className={clsx('ml-2 shrink-0 rounded-md border px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-theme-muted', HAIRLINE)}>
                     {run.probe.replace(/_/g, ' ')}
                   </span>
                 </li>
@@ -907,7 +988,7 @@ function DescribeStep({
           "Looked up tools / Searching the catalog" stream doesn't dominate the
           modal. The current stage banner above is enough for most users. */}
       {progressEvents.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-theme/30 bg-theme-card/40">
+        <div className={clsx(CARD_CLASS, 'overflow-hidden')}>
           <button
             type="button"
             onClick={() => setDetailsOpen(open => !open)}
@@ -916,19 +997,19 @@ function DescribeStep({
             <div className="flex items-center gap-2">
               <Activity className="h-3.5 w-3.5" />
               <span>Activity log</span>
-              <span className="rounded-full bg-theme-hover/60 px-1.5 py-0.5 text-[10px] tabular-nums">
+              <span className={clsx('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', NEUTRAL_CHIP)}>
                 {progressEvents.length}
               </span>
             </div>
             <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', detailsOpen && 'rotate-180')} />
           </button>
           {detailsOpen && (
-            <ul className="max-h-72 space-y-0 overflow-y-auto border-t border-theme/20 scrollbar-minimal">
+            <ul className={clsx('max-h-72 space-y-0 overflow-y-auto border-t scrollbar-minimal', HAIRLINE)}>
               {progressEvents.map((event, idx) => {
                 const IconCmp =
                   event.icon === 'search' ? Search :
                   event.icon === 'results' ? Check :
-                  event.icon === 'clarify' ? AlertCircle :
+                  event.icon === 'clarify' ? MessageSquare :
                   event.icon === 'step' ? Brain :
                   event.icon === 'phase' ? Activity :
                   event.icon === 'done' ? Check :
@@ -936,15 +1017,13 @@ function DescribeStep({
                 const iconTone =
                   event.icon === 'done' || event.icon === 'results'
                     ? 'text-emerald-400'
-                    : event.icon === 'clarify'
-                    ? 'text-amber-300'
-                    : 'text-primary';
+                    : ACCENT_TEXT;
                 return (
                   <li
                     key={event.id}
                     className={clsx(
                       'flex items-start gap-2.5 px-4 py-2.5 text-[12px]',
-                      idx !== progressEvents.length - 1 && 'border-b border-theme/15',
+                      idx !== progressEvents.length - 1 && clsx('border-b', HAIRLINE),
                     )}
                   >
                     <span className={clsx('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center', iconTone)}>
@@ -961,13 +1040,13 @@ function DescribeStep({
                             <span
                               key={t.name}
                               title={t.name}
-                              className="rounded-md border border-theme/40 bg-theme-card px-1.5 py-0.5 text-[10px] text-theme-fg"
+                              className={clsx('rounded-md border bg-theme-card px-1.5 py-0.5 text-[10px] text-theme-fg', HAIRLINE)}
                             >
                               {humanizeToolName(t.name)}
                             </span>
                           ))}
                           {event.tools.length > 10 && (
-                            <span className="rounded-md bg-theme-hover px-1.5 py-0.5 text-[10px] text-theme-muted">
+                            <span className={clsx('rounded-md px-1.5 py-0.5 text-[10px] text-theme-muted', NEUTRAL_CHIP)}>
                               +{event.tools.length - 10} more
                             </span>
                           )}
@@ -982,12 +1061,7 @@ function DescribeStep({
         </div>
       )}
 
-      {generateError && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-300">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">{generateError}</span>
-        </div>
-      )}
+      {generateError && <NoticeBanner message={generateError} />}
     </div>
   );
 }
@@ -1053,18 +1127,13 @@ function ReviewStep({
 }) {
   return (
     <div className="space-y-5">
-      {generateError && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-300">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">{generateError}</span>
-        </div>
-      )}
+      {generateError && <NoticeBanner message={generateError} />}
 
       {/* Identity row */}
       <div className="flex items-center gap-3">
         <button
           type="button"
-          className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-500/10 text-2xl transition hover:bg-zinc-500/20"
+          className={clsx('flex h-14 w-14 items-center justify-center rounded-2xl border bg-theme-card text-2xl transition', HAIRLINE, ACCENT_EMOJI_HOVER)}
           onClick={() => {
             const idx = COMMON_EMOJIS.indexOf(emoji);
             setEmoji(COMMON_EMOJIS[(idx + 1) % COMMON_EMOJIS.length]);
@@ -1079,21 +1148,23 @@ function ReviewStep({
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="Agent name"
-          className="flex-1 rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3 text-[14px] font-medium text-theme-fg outline-none transition focus:border-primary/60"
+          className={clsx(FIELD_CLASS, 'flex-1 px-4 py-3 text-[14px] font-medium')}
         />
       </div>
 
       {resolvedClarifications.length > 0 && (
-        <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-emerald-300">
-            <Check className="h-3.5 w-3.5" />
-            Already answered during setup
+        <div className={clsx(CARD_CLASS, 'px-4 py-3')}>
+          <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
+            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/12 text-emerald-400">
+              <Check className="h-3 w-3" />
+            </span>
+            Answered during setup
           </div>
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {resolvedClarifications.map((item, idx) => (
               <li key={`${item.question}-${idx}`} className="text-[12px] leading-5">
                 <span className="block text-theme-muted">{item.question}</span>
-                <span className="block text-theme-fg">{item.answer}</span>
+                <span className="block font-medium text-theme-fg">{item.answer}</span>
               </li>
             ))}
           </ul>
@@ -1103,21 +1174,23 @@ function ReviewStep({
       {(clarifyingQuestions.length > 0 || setupChecks.length > 0 || preflightSteps.length > 0) && (
         <div className="space-y-3">
           {clarifyingQuestions.length > 0 && (
-            <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3">
-              <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-amber-300">
-                <AlertCircle className="h-3.5 w-3.5" />
+            <div className={clsx(CARD_CLASS, 'px-4 py-3', ACCENT_RING_12)}>
+              <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
+                <span className={clsx('flex h-5 w-5 items-center justify-center rounded-md', ACCENT_BG_12, ACCENT_TEXT)}>
+                  <MessageSquare className="h-3 w-3" />
+                </span>
                 Clarify before unattended runs
               </div>
               <div className="space-y-2.5">
                 {clarifyingQuestions.map((question, idx) => (
                   <label key={`${question}-${idx}`} className="block">
-                    <span className="mb-1 block text-[11px] leading-4 text-theme-muted">{question}</span>
+                    <span className="mb-1 block text-[11.5px] leading-4 text-theme-muted">{question}</span>
                     <input
                       type="text"
                       value={clarifyingAnswers[idx] || ''}
                       onChange={e => setClarifyingAnswer(idx, e.target.value)}
                       placeholder="Answer or leave for the agent to ask later"
-                      className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/70 px-3 py-2 text-[12.5px] text-theme-fg outline-none transition focus:border-primary/60"
+                      className={clsx(FIELD_CLASS, 'px-3 py-2 text-[12.5px]')}
                     />
                   </label>
                 ))}
@@ -1126,11 +1199,11 @@ function ReviewStep({
           )}
 
           {preflightSteps.length > 0 && (
-            <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3">
+            <div className={clsx(CARD_CLASS, 'px-4 py-3')}>
               <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
-                <Activity className="h-3.5 w-3.5 text-primary" />
+                <Activity className={clsx('h-3.5 w-3.5', ACCENT_TEXT)} />
                 Preflight probes
-                {preflightRunning && <Loader2 className="ml-1 h-3 w-3 animate-spin text-primary" />}
+                {preflightRunning && <Loader2 className={clsx('ml-1 h-3 w-3 animate-spin', ACCENT_TEXT)} />}
               </div>
               <ul className="space-y-1.5">
                 {preflightSteps.map(step => {
@@ -1142,11 +1215,11 @@ function ReviewStep({
                     run.status === 'warn' ? AlertCircle :
                     Activity;
                   const tone =
-                    run.status === 'running' ? 'text-primary' :
+                    run.status === 'running' ? ACCENT_TEXT :
                     run.status === 'pass' ? 'text-emerald-400' :
-                    run.status === 'fail' ? 'text-red-300' :
-                    run.status === 'warn' ? 'text-amber-300' :
-                    'text-theme-muted/60';
+                    run.status === 'fail' ? 'text-red-400' :
+                    run.status === 'warn' ? 'text-amber-400' :
+                    'text-theme-muted';
                   return (
                     <li key={step.id} className="flex items-start gap-2 text-[12px] leading-5">
                       <span className={clsx('mt-1 flex h-4 w-4 shrink-0 items-center justify-center', tone)}>
@@ -1158,7 +1231,7 @@ function ReviewStep({
                           <div className="mt-0.5 text-theme-muted">{run.detail || step.rationale}</div>
                         )}
                       </div>
-                      <span className="ml-2 shrink-0 rounded-md border border-theme/30 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-theme-muted">
+                      <span className={clsx('ml-2 shrink-0 rounded-md border px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-theme-muted', HAIRLINE)}>
                         {step.probe.replace(/_/g, ' ')}
                       </span>
                     </li>
@@ -1169,7 +1242,7 @@ function ReviewStep({
           )}
 
           {setupChecks.length > 0 && (
-            <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3">
+            <div className={clsx(CARD_CLASS, 'px-4 py-3')}>
               <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
                 <Check className="h-3.5 w-3.5 text-emerald-400" />
                 Additional reminders
@@ -1177,7 +1250,7 @@ function ReviewStep({
               <ul className="space-y-1.5">
                 {setupChecks.map((check, idx) => (
                   <li key={`${check}-${idx}`} className="flex gap-2 text-[12px] leading-5 text-theme-muted">
-                    <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-theme-muted/60" />
+                    <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-zinc-500/60" />
                     <span>{check}</span>
                   </li>
                 ))}
@@ -1187,11 +1260,11 @@ function ReviewStep({
         </div>
       )}
 
-      <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3">
+      <div className={clsx(CARD_CLASS, 'px-4 py-3')}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
-              <Activity className="h-3.5 w-3.5 text-primary" />
+              <Activity className={clsx('h-3.5 w-3.5', ACCENT_TEXT)} />
               Test setup
             </div>
             <p className="mt-1 text-[11.5px] leading-5 text-theme-muted">
@@ -1202,17 +1275,17 @@ function ReviewStep({
             type="button"
             onClick={() => onTestSetup()}
             disabled={testRunning}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-theme/30 px-3 py-1.5 text-[11.5px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60"
+            className={clsx('inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-medium text-theme-fg transition hover:bg-theme-hover disabled:opacity-60', HAIRLINE)}
           >
             {testRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
             Run
           </button>
         </div>
         {testResult && (
-          <div className="mt-3 space-y-2 border-t border-theme/20 pt-3">
+          <div className={clsx('mt-3 space-y-2 border-t pt-3', HAIRLINE)}>
             <div className={clsx(
               'text-[12px] font-medium',
-              testResult.ok ? 'text-emerald-400' : 'text-red-300',
+              testResult.ok ? 'text-emerald-400' : 'text-red-400',
             )}>
               {testResult.summary}
             </div>
@@ -1223,8 +1296,8 @@ function ReviewStep({
                     <span className={clsx(
                       'mt-2 h-1.5 w-1.5 shrink-0 rounded-full',
                       check.status === 'pass' ? 'bg-emerald-400' :
-                      check.status === 'warn' ? 'bg-amber-300' :
-                      'bg-red-300',
+                      check.status === 'warn' ? 'bg-amber-400' :
+                      'bg-red-400',
                     )} />
                     <span className="min-w-0">
                       <span className="text-theme-fg">{check.label}</span>
@@ -1240,7 +1313,7 @@ function ReviewStep({
 
       {/* When it runs — triggers chosen by the builder, plus the editable cadence. */}
       <div>
-        <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-theme-muted">
+        <label className={clsx(SECTION_LABEL_CLASS, 'flex items-center gap-1.5')}>
           <Clock className="h-3 w-3" /> When it runs
         </label>
 
@@ -1256,16 +1329,16 @@ function ReviewStep({
                 return (
                   <div
                     key={`${trigger.type}-${idx}`}
-                    className="flex items-start gap-3 rounded-2xl border border-primary/25 bg-primary/5 px-4 py-3"
+                    className={clsx('flex items-start gap-3 rounded-2xl border px-4 py-3', ACCENT_BORDER_20, ACCENT_BG_6)}
                   >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <div className={clsx('flex h-8 w-8 shrink-0 items-center justify-center rounded-xl', ACCENT_BG_10, ACCENT_TEXT)}>
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="text-[13px] font-medium text-theme-fg">{meta?.label || trigger.type}</div>
                       <div className="truncate text-[12px] text-theme-muted">{desc}</div>
                       {trigger.rationale && (
-                        <div className="mt-0.5 text-[11px] leading-4 text-theme-muted/80">{trigger.rationale}</div>
+                        <div className="mt-0.5 text-[11px] leading-4 text-theme-muted">{trigger.rationale}</div>
                       )}
                     </div>
                   </div>
@@ -1273,15 +1346,15 @@ function ReviewStep({
               })}
 
               {hasInterval && (
-                <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5">
+                <div className={clsx(CARD_CLASS, 'px-3 py-2.5')}>
                   <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium text-theme-fg">
-                    <Clock className="h-3.5 w-3.5 text-primary" />
+                    <Clock className={clsx('h-3.5 w-3.5', ACCENT_TEXT)} />
                     {nonInterval.length > 0 ? 'Also on a schedule' : 'On a schedule'}
                   </div>
                   <select
                     value={interval}
                     onChange={e => setInterval(e.target.value as ScheduleInterval)}
-                    className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/70 px-3 py-2.5 text-[13.5px] text-theme-fg outline-none transition focus:border-primary/60"
+                    className={clsx(FIELD_CLASS, 'px-3 py-2.5 text-[13.5px]')}
                   >
                     {Object.entries(SCHEDULE_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>
@@ -1293,7 +1366,7 @@ function ReviewStep({
           );
         })()}
 
-        <p className="mt-1.5 text-[11px] text-theme-muted">
+        <p className="mt-1.5 text-[11px] leading-5 text-theme-muted">
           Fine-tune these or add more triggers after launch in Settings → When it runs. Any trigger firing wakes the agent.
         </p>
       </div>
@@ -1301,18 +1374,18 @@ function ReviewStep({
       {/* Tools */}
       <div>
         <div className="mb-1.5 flex items-center justify-between gap-3">
-          <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-theme-muted">
+          <label className={clsx(SECTION_LABEL_CLASS, 'mb-0 flex items-center gap-1.5')}>
             <Wrench className="h-3 w-3" /> Tools
           </label>
           <button
             type="button"
             onClick={openToolsPicker}
-            className="text-[11px] font-medium text-primary transition hover:opacity-80"
+            className={clsx('text-[11px] font-medium transition hover:opacity-80', ACCENT_TEXT)}
           >
             Edit tools
           </button>
         </div>
-        <div className="rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3">
+        <div className={clsx(CARD_CLASS, 'px-4 py-3')}>
           {selectedTools.length === 0 ? (
             <p className="text-[12px] text-theme-muted">
               No extra tools added — the agent will use its default toolkit.
@@ -1323,7 +1396,7 @@ function ReviewStep({
                 <span
                   key={tool}
                   title={tool}
-                  className="rounded-md border border-primary/25 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary"
+                  className={clsx('rounded-md border px-2 py-1 text-[11px] font-medium', ACCENT_BORDER_20, ACCENT_BG_10, ACCENT_TEXT)}
                 >
                   {humanizeToolName(tool)}
                 </span>
@@ -1334,7 +1407,7 @@ function ReviewStep({
       </div>
 
       {/* Advanced */}
-      <div className="border-t border-theme/15 pt-4">
+      <div className={clsx('border-t pt-4', HAIRLINE)}>
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
@@ -1346,32 +1419,41 @@ function ReviewStep({
         {showAdvanced && (
           <div className="mt-3 space-y-4">
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">
-                System prompt
-              </label>
+              <label className={SECTION_LABEL_CLASS}>System prompt</label>
               <textarea
                 rows={6}
                 value={systemPrompt}
                 onChange={e => setSystemPrompt(e.target.value)}
                 placeholder="Posts a weekly product update to X every Tuesday at 9am."
-                className="w-full resize-none rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3 text-[13px] leading-6 text-theme-fg outline-none transition focus:border-primary/60"
+                className={clsx(FIELD_CLASS, 'resize-none px-4 py-3 text-[13px] leading-6')}
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">
-                Per-run instructions
-              </label>
+              <label className={SECTION_LABEL_CLASS}>Per-run instructions</label>
               <textarea
                 rows={3}
                 value={instructions}
                 onChange={e => setInstructions(e.target.value)}
                 placeholder="At each wake-up, check the latest context, use tools, and only notify when useful."
-                className="w-full resize-none rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-4 py-3 text-[13px] leading-6 text-theme-fg outline-none transition focus:border-primary/60"
+                className={clsx(FIELD_CLASS, 'resize-none px-4 py-3 text-[13px] leading-6')}
               />
             </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Shared notice banner ──────────────────────────────────────────────────
+// Calm, low-saturation advisory (e.g. "couldn't reach the AI, used a local
+// setup"). Soft amber accent on a neutral surface — not an alarm block.
+
+function NoticeBanner({ message }: { message: string }) {
+  return (
+    <div className={clsx('flex items-start gap-2.5 rounded-xl border bg-amber-500/[0.06] px-3.5 py-2.5 text-[12px] leading-5', HAIRLINE)}>
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+      <span className="flex-1 text-theme-muted">{message}</span>
     </div>
   );
 }

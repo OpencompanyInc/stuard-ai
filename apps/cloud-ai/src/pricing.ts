@@ -109,9 +109,9 @@ export function registerDynamicPricing(modelId: string, inPerMTok: number, outPe
  * Mapping for legacy model IDs to the new system
  */
 const LEGACY_MAPPING: Record<string, string> = {
-  'gpt-4.1': 'xai/grok-4-1-fast',
-  'gpt-5-mini': 'deepseek/deepseek-chat',
-  'gpt-5': 'google/gemini-2.5-pro',
+  'gpt-4.1': 'google/gemini-3.1-pro-preview',
+  'gpt-5-mini': 'google/gemini-3.1-flash-lite',
+  'gpt-5': 'openai/gpt-5.4',
 };
 
 /**
@@ -122,16 +122,14 @@ const LEGACY_MAPPING: Record<string, string> = {
  * `DEFAULT_CHAT_MODELS` (apps/desktop/src/renderer/hooks/usePreferences.ts) so
  * a fresh user gets the same model whether their preferences propagate or not.
  *
- * `balanced` deliberately avoids OpenAI: GPT-5 family models cost more and
- * leave us exposed to provider-specific quota outages bringing down a tier
- * the user expects to be cheap and reliable.
+ * Tier defaults: flash-lite (fast), gemini-3.1-pro (balanced), gpt-5.4 (smart).
  */
 export function getDefaultModelForCategory(category: ModelCategory): string {
   const models = ALL_MODELS.filter(m => m.category === category);
   if (models.length > 0) {
     if (category === 'fast') return 'google/gemini-3.1-flash-lite';
-    if (category === 'balanced') return 'xai/grok-4-1-fast';
-    if (category === 'smart') return 'google/gemini-3.1-pro-preview';
+    if (category === 'balanced') return 'google/gemini-3.1-pro-preview';
+    if (category === 'smart') return 'openai/gpt-5.4';
     if (category === 'research') return 'perplexity/sonar-pro';
     return models[0].id;
   }
@@ -367,6 +365,43 @@ export function voiceCallCreditCost(
   const usd = Number(((perMinUsd * seconds) / 60).toFixed(6));
   const credits = snapCredits(preciseCreditsFromUsd(usd));
   return { credits, usd, seconds };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Speech-to-Text (STT) Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// STT providers bill by audio *duration*, not per transcription call or per
+// token. Mirror that here so streaming transcription — which slices audio into
+// many small windows — sums the real audio cost instead of hitting the 0.1
+// per-event credit floor on every utterance (the "0.1 per word" overcharge).
+// Rates are USD per minute of audio.
+//   • OpenAI / OpenRouter Whisper-1, gpt-4o-transcribe ≈ $0.006/min
+//   • gpt-4o-mini-transcribe                            ≈ $0.003/min
+//   • ElevenLabs Scribe (~$0.40/hr)                     ≈ $0.0067/min
+const STT_USD_PER_MIN: Record<string, number> = {
+  'openai/whisper-1': 0.006,
+  'openai/gpt-4o-transcribe': 0.006,
+  'openai/gpt-4o-mini-transcribe': 0.003,
+  'elevenlabs/scribe_v1': 0.0067,
+  'elevenlabs/scribe_v2': 0.0067,
+};
+
+const DEFAULT_STT_USD_PER_MIN = 0.006;
+
+/**
+ * Cost in USD for `audioSeconds` of speech-to-text on `model`. Used as the
+ * billing basis for transcription when the provider does not report an explicit
+ * cost. The per-minute default is overridable via STT_PRICE_PER_MIN_USD.
+ */
+export function sttCostUsd(model: string, audioSeconds: number): number {
+  const seconds = Number(audioSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  const perMin =
+    STT_USD_PER_MIN[String(model || '').trim()] ??
+    envNumber('STT_PRICE_PER_MIN_USD', DEFAULT_STT_USD_PER_MIN);
+  if (perMin <= 0) return 0;
+  return Math.max(0, Number(((perMin * seconds) / 60).toFixed(8)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -268,7 +268,7 @@ export const ChatInput = forwardRef<ChatInputRef, {
         )}
         <textarea
           ref={textareaRef}
-          className="w-full resize-none outline-none text-[13px] wf-fg placeholder:wf-fg-faint bg-transparent min-h-[44px] max-h-[140px] py-1 px-1 scrollbar-minimal"
+          className="w-full resize-none outline-none text-[13px] wf-fg placeholder:wf-fg-faint bg-transparent min-h-[44px] max-h-[140px] py-1 px-1 scrollbar-minimal [overflow-wrap:anywhere]"
           placeholder={busy ? "Working..." : "Tell Stuard what to do, or drop images here"}
           value={text}
           onChange={(e) => setText(e.target.value)}

@@ -187,17 +187,17 @@ function ElementPropertyEditor({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Element Header */}
-      <div className="p-3 border-b border-slate-200 space-y-2">
+      <div className="p-3 border-b uib-border space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[11px] font-semibold rounded-full capitalize">
+            <span className="px-2.5 py-1 bg-gradient-to-r from-rose-500 to-rose-500 text-white text-[11px] font-semibold rounded-full capitalize">
               {element.tagName}
             </span>
             {element.id && (
-              <span className="text-[10px] font-mono text-slate-400">#{element.id}</span>
+              <span className="text-[10px] font-mono uib-fg-faint">#{element.id}</span>
             )}
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">
+          <span className="text-[10px] uib-fg-faint font-mono">
             {Math.round(element.rect.width)}×{Math.round(element.rect.height)}
           </span>
         </div>
@@ -205,22 +205,22 @@ function ElementPropertyEditor({
         {/* Quick info badges */}
         <div className="flex flex-wrap gap-1">
           {hasDataBind && (
-            <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-medium rounded flex items-center gap-1">
+            <span className="px-1.5 py-0.5 bg-blue-500/15 text-blue-400 text-[9px] font-medium rounded flex items-center gap-1">
               <Database className="w-2.5 h-2.5" /> {attrs['data-bind']}
             </span>
           )}
           {hasDataAction && (
-            <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] font-medium rounded flex items-center gap-1">
+            <span className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400 text-[9px] font-medium rounded flex items-center gap-1">
               <Play className="w-2.5 h-2.5" /> {attrs['data-action']}
             </span>
           )}
           {hasDataNavigate && (
-            <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-medium rounded flex items-center gap-1">
+            <span className="px-1.5 py-0.5 bg-rose-500/10 text-rose-500 text-[9px] font-medium rounded flex items-center gap-1">
               <ArrowRight className="w-2.5 h-2.5" /> {attrs['data-navigate']}
             </span>
           )}
           {currentClass.includes('drag') && (
-            <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[9px] font-medium rounded flex items-center gap-1">
+            <span className="px-1.5 py-0.5 bg-amber-500/15 text-amber-400 text-[9px] font-medium rounded flex items-center gap-1">
               <Move className="w-2.5 h-2.5" /> Drag Handle
             </span>
           )}
@@ -235,7 +235,7 @@ function ElementPropertyEditor({
               iframe.contentWindow.postMessage({ type: 'deleteSelected' }, '*');
             }
           }}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors mt-2"
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium text-red-400 bg-red-500/15 hover:bg-red-500/15 border border-red-500/30 rounded-lg transition-colors mt-2"
         >
           <Trash2 className="w-3.5 h-3.5" />
           Delete Element
@@ -243,15 +243,15 @@ function ElementPropertyEditor({
       </div>
 
       {/* Section Tabs */}
-      <div className="flex border-b border-slate-200 bg-slate-50/50">
+      <div className="flex border-b uib-border uib-surface-2">
         {sections.map(s => (
           <button
             key={s.id}
             onClick={() => setActiveSection(s.id)}
             className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] font-semibold transition-all border-b-2 ${
               activeSection === s.id
-                ? 'text-indigo-700 border-indigo-500 bg-white'
-                : 'text-slate-500 border-transparent hover:text-slate-700'
+                ? 'text-rose-500 border-rose-500 uib-surface'
+                : 'uib-fg-muted border-transparent uib-fg-hover'
             }`}
           >
             <s.icon className="w-3 h-3" />
@@ -268,26 +268,26 @@ function ElementPropertyEditor({
             {/* Text Content */}
             {element.textContent && (
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Text Content</label>
+                <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">Text Content</label>
                 <input
                   type="text"
                   value={element.textContent}
                   onChange={(e) => onUpdateProperty({ textContent: e.target.value })}
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  className="w-full px-3 py-2 text-sm uib-surface border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                 />
               </div>
             )}
 
             {/* Element ID */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Element ID</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">Element ID</label>
               <div className="relative">
-                <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 uib-fg-faint" />
                 <input
                   type="text"
                   value={element.id || ''}
                   onChange={(e) => onUpdateProperty({ id: e.target.value })}
-                  className="w-full pl-8 pr-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                  className="w-full pl-8 pr-3 py-2 text-sm font-mono uib-surface border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                   placeholder="element-id"
                 />
               </div>
@@ -295,11 +295,11 @@ function ElementPropertyEditor({
 
             {/* CSS Classes */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS Classes</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">CSS Classes</label>
               <textarea
                 value={currentClass}
                 onChange={(e) => onUpdateProperty({ className: e.target.value })}
-                className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 resize-none"
+                className="w-full px-3 py-2 text-xs font-mono uib-surface border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40 resize-none"
                 rows={2}
                 placeholder="tailwind classes..."
               />
@@ -317,8 +317,8 @@ function ElementPropertyEditor({
                     }}
                     className={`px-1.5 py-0.5 text-[9px] font-mono rounded transition-all ${
                       currentClass.split(/\s+/).includes(cls)
-                        ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200'
-                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        ? 'bg-rose-500/15 text-rose-500 ring-1 ring-rose-500/30'
+                        : 'uib-surface-2 uib-fg-muted uib-hover'
                     }`}
                   >
                     {cls}
@@ -330,15 +330,15 @@ function ElementPropertyEditor({
             {/* Placeholder (for inputs) */}
             {(element.tagName === 'input' || element.tagName === 'textarea') && attrs.placeholder !== undefined && (
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Placeholder</label>
+                <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">Placeholder</label>
                 <input
                   type="text"
                   value={attrs.placeholder || ''}
                   readOnly
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-500"
+                  className="w-full px-3 py-2 text-sm uib-surface-2 border uib-border rounded-lg uib-fg-muted"
                   title="Edit in HTML code panel"
                 />
-                <p className="text-[9px] text-slate-400 mt-1">Edit placeholder in Code panel</p>
+                <p className="text-[9px] uib-fg-faint mt-1">Edit placeholder in Code panel</p>
               </div>
             )}
           </>
@@ -348,52 +348,52 @@ function ElementPropertyEditor({
         {activeSection === 'bindings' && (
           <>
             {/* Data Binding */}
-            <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-100 space-y-2">
+            <div className="p-3 bg-blue-500/15 rounded-lg border border-blue-500/30 space-y-2">
               <div className="flex items-center gap-2">
-                <Database className="w-3.5 h-3.5 text-blue-600" />
-                <label className="text-[11px] font-semibold text-blue-800">Data Binding</label>
+                <Database className="w-3.5 h-3.5 text-blue-400" />
+                <label className="text-[11px] font-semibold text-blue-400">Data Binding</label>
               </div>
-              <p className="text-[10px] text-blue-600">
+              <p className="text-[10px] text-blue-400">
                 Bind this element to a workflow data field. The value syncs automatically.
               </p>
               <input
                 type="text"
                 value={attrs['data-bind'] || ''}
                 onChange={(e) => updateAttribute('data-bind', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-blue-200 rounded-lg text-blue-700"
+                className="w-full px-3 py-2 text-sm font-mono uib-surface border border-blue-500/30 rounded-lg text-blue-400"
                 placeholder="field_name"
               />
               {hasDataHtml && (
-                <div className="flex items-center gap-1.5 text-[10px] text-blue-600">
+                <div className="flex items-center gap-1.5 text-[10px] text-blue-400">
                   <CheckSquare className="w-3 h-3" />
                   Renders as HTML (data-html)
                 </div>
               )}
-              <p className="text-[9px] text-blue-500">
-                Use <code className="bg-blue-100 px-1 rounded">data-bind="field"</code> in HTML to bind.
-                Access via <code className="bg-blue-100 px-1 rounded">{'{{field}}'}</code> in templates.
+              <p className="text-[9px] text-blue-400">
+                Use <code className="bg-blue-500/15 px-1 rounded">data-bind="field"</code> in HTML to bind.
+                Access via <code className="bg-blue-500/15 px-1 rounded">{'{{field}}'}</code> in templates.
               </p>
             </div>
 
             {/* Action */}
-            <div className="p-3 bg-emerald-50/50 rounded-lg border border-emerald-100 space-y-2">
+            <div className="p-3 bg-emerald-500/15 rounded-lg border border-emerald-500/30 space-y-2">
               <div className="flex items-center gap-2">
-                <Play className="w-3.5 h-3.5 text-emerald-600" />
-                <label className="text-[11px] font-semibold text-emerald-800">Action</label>
+                <Play className="w-3.5 h-3.5 text-emerald-400" />
+                <label className="text-[11px] font-semibold text-emerald-400">Action</label>
               </div>
-              <p className="text-[10px] text-emerald-600">
+              <p className="text-[10px] text-emerald-400">
                 Trigger an action when clicked. Built-in: submit, cancel, close, pick_file, pick_folder.
               </p>
               <input
                 type="text"
                 value={attrs['data-action'] || ''}
                 onChange={(e) => updateAttribute('data-action', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-emerald-200 rounded-lg text-emerald-700"
+                className="w-full px-3 py-2 text-sm font-mono uib-surface border border-emerald-500/30 rounded-lg text-emerald-400"
                 placeholder="action_name"
               />
               <div className="flex flex-wrap gap-1">
                 {['submit', 'cancel', 'close', 'pick_file', 'pick_folder'].map(a => (
-                  <span key={a} className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-mono rounded">
+                  <span key={a} className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400 text-[9px] font-mono rounded">
                     {a}
                   </span>
                 ))}
@@ -401,48 +401,48 @@ function ElementPropertyEditor({
             </div>
 
             {/* Navigation */}
-            <div className="p-3 bg-purple-50/50 rounded-lg border border-purple-100 space-y-2">
+            <div className="p-3 bg-rose-500/10 rounded-lg border border-rose-500/30 space-y-2">
               <div className="flex items-center gap-2">
-                <ArrowRight className="w-3.5 h-3.5 text-purple-600" />
-                <label className="text-[11px] font-semibold text-purple-800">Page Navigation</label>
+                <ArrowRight className="w-3.5 h-3.5 text-rose-500" />
+                <label className="text-[11px] font-semibold text-rose-500">Page Navigation</label>
               </div>
-              <p className="text-[10px] text-purple-600">
+              <p className="text-[10px] text-rose-500">
                 Navigate to another page in the multi-page SPA.
               </p>
               <input
                 type="text"
                 value={attrs['data-navigate'] || ''}
                 onChange={(e) => updateAttribute('data-navigate', e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-purple-200 rounded-lg text-purple-700"
+                className="w-full px-3 py-2 text-sm font-mono uib-surface border border-rose-500/30 rounded-lg text-rose-500"
                 placeholder="page_name"
               />
               {pages && Object.keys(pages).length > 0 && (
                 <div className="space-y-1">
-                  <div className="text-[9px] text-purple-500 font-medium">Available pages:</div>
+                  <div className="text-[9px] text-rose-500 font-medium">Available pages:</div>
                   <div className="flex flex-wrap gap-1">
                     {Object.keys(pages).map(p => (
-                      <span key={p} className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[9px] font-mono rounded">
+                      <span key={p} className="px-1.5 py-0.5 bg-rose-500/15 text-rose-500 text-[9px] font-mono rounded">
                         {p}
                       </span>
                     ))}
                   </div>
                 </div>
               )}
-              <p className="text-[9px] text-purple-500">
-                Use <code className="bg-purple-100 px-1 rounded">data-navigate="page"</code> or call <code className="bg-purple-100 px-1 rounded">navigateTo('page')</code> in JS.
+              <p className="text-[9px] text-rose-500">
+                Use <code className="bg-rose-500/15 px-1 rounded">data-navigate="page"</code> or call <code className="bg-rose-500/15 px-1 rounded">navigateTo('page')</code> in JS.
               </p>
             </div>
 
             {/* Stuard API Reference */}
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
-              <div className="text-[11px] font-semibold text-slate-700">Stuard API Reference</div>
-              <div className="space-y-1 text-[9px] font-mono text-slate-600">
-                <div><code className="bg-slate-100 px-1 rounded">stuard.submit(formData)</code> - Submit & close</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.close()</code> - Close window</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.callNode(idOrLabel, data)</code> - Call a visible sibling workflow node</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.navigate(page, data)</code> - Navigate</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.pickFile(opts)</code> - File picker</div>
-                <div><code className="bg-slate-100 px-1 rounded">stuard.notify(opts)</code> - Show notification</div>
+            <div className="p-3 uib-surface-2 rounded-lg border uib-border space-y-2">
+              <div className="text-[11px] font-semibold uib-fg">Stuard API Reference</div>
+              <div className="space-y-1 text-[9px] font-mono uib-fg-muted">
+                <div><code className="uib-surface-2 px-1 rounded">stuard.submit(formData)</code> - Submit & close</div>
+                <div><code className="uib-surface-2 px-1 rounded">stuard.close()</code> - Close window</div>
+                <div><code className="uib-surface-2 px-1 rounded">stuard.callNode(idOrLabel, data)</code> - Call a visible sibling workflow node</div>
+                <div><code className="uib-surface-2 px-1 rounded">stuard.navigate(page, data)</code> - Navigate</div>
+                <div><code className="uib-surface-2 px-1 rounded">stuard.pickFile(opts)</code> - File picker</div>
+                <div><code className="uib-surface-2 px-1 rounded">stuard.notify(opts)</code> - Show notification</div>
               </div>
             </div>
           </>
@@ -453,18 +453,18 @@ function ElementPropertyEditor({
           <>
             {/* Colors */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-2">Colors</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Colors</label>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={rgbToHex(element.styles.backgroundColor)}
                     onChange={(e) => onUpdateStyle('backgroundColor', e.target.value)}
-                    className="w-8 h-8 rounded-lg cursor-pointer border-2 border-slate-200 shrink-0"
+                    className="w-8 h-8 rounded-lg cursor-pointer border-2 uib-border shrink-0"
                   />
                   <div>
-                    <div className="text-[10px] text-slate-500">Background</div>
-                    <div className="text-[9px] font-mono text-slate-400">{rgbToHex(element.styles.backgroundColor)}</div>
+                    <div className="text-[10px] uib-fg-muted">Background</div>
+                    <div className="text-[9px] font-mono uib-fg-faint">{rgbToHex(element.styles.backgroundColor)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -472,11 +472,11 @@ function ElementPropertyEditor({
                     type="color"
                     value={rgbToHex(element.styles.color)}
                     onChange={(e) => onUpdateStyle('color', e.target.value)}
-                    className="w-8 h-8 rounded-lg cursor-pointer border-2 border-slate-200 shrink-0"
+                    className="w-8 h-8 rounded-lg cursor-pointer border-2 uib-border shrink-0"
                   />
                   <div>
-                    <div className="text-[10px] text-slate-500">Text</div>
-                    <div className="text-[9px] font-mono text-slate-400">{rgbToHex(element.styles.color)}</div>
+                    <div className="text-[10px] uib-fg-muted">Text</div>
+                    <div className="text-[9px] font-mono uib-fg-faint">{rgbToHex(element.styles.color)}</div>
                   </div>
                 </div>
               </div>
@@ -484,24 +484,24 @@ function ElementPropertyEditor({
 
             {/* Size */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-2">Size</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Size</label>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Width</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Width</label>
                   <input
                     type="number"
                     value={Math.round(element.rect.width)}
                     onChange={(e) => onUpdateStyle('width', e.target.value + 'px')}
-                    className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Height</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Height</label>
                   <input
                     type="number"
                     value={Math.round(element.rect.height)}
                     onChange={(e) => onUpdateStyle('height', e.target.value + 'px')}
-                    className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                   />
                 </div>
               </div>
@@ -509,23 +509,23 @@ function ElementPropertyEditor({
 
             {/* Typography */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-2">Typography</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Typography</label>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Font Size</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Font Size</label>
                   <input
                     type="number"
                     value={parsePixelValue(element.styles.fontSize)}
                     onChange={(e) => onUpdateStyle('fontSize', e.target.value + 'px')}
-                    className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Font Weight</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Font Weight</label>
                   <select
                     value={element.styles.fontWeight || '400'}
                     onChange={(e) => onUpdateStyle('fontWeight', e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                   >
                     <option value="300">Light</option>
                     <option value="400">Normal</option>
@@ -539,25 +539,25 @@ function ElementPropertyEditor({
 
             {/* Spacing */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-2">Spacing</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Spacing</label>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Padding</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Padding</label>
                   <input
                     type="text"
                     value={element.styles.padding || ''}
                     onChange={(e) => onUpdateStyle('padding', e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                     placeholder="8px"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Margin</label>
+                  <label className="text-[10px] uib-fg-muted mb-1 block">Margin</label>
                   <input
                     type="text"
                     value={element.styles.margin || ''}
                     onChange={(e) => onUpdateStyle('margin', e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                     placeholder="0px"
                   />
                 </div>
@@ -566,7 +566,7 @@ function ElementPropertyEditor({
 
             {/* Border Radius */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">
                 Border Radius: {parseInt(element.styles.borderRadius) || 0}px
               </label>
               <input
@@ -575,7 +575,7 @@ function ElementPropertyEditor({
                 max="50"
                 value={parseInt(element.styles.borderRadius) || 0}
                 onChange={(e) => onUpdateStyle('borderRadius', e.target.value + 'px')}
-                className="w-full accent-indigo-500"
+                className="w-full accent-rose-500"
               />
             </div>
           </>
@@ -585,16 +585,16 @@ function ElementPropertyEditor({
         {activeSection === 'layout' && (
           <>
             {/* Window Drag Handle */}
-            <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-100 mb-2">
+            <div className="p-3 bg-amber-500/15 rounded-lg border border-amber-500/30 mb-2">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2">
-                  <Move className="w-3.5 h-3.5 text-amber-600" />
+                  <Move className="w-3.5 h-3.5 text-amber-400" />
                   <div>
-                    <div className="text-[11px] font-semibold text-amber-800">Window Drag Handle</div>
-                    <div className="text-[9px] text-amber-600">Allow dragging the window via this element</div>
+                    <div className="text-[11px] font-semibold text-amber-400">Window Drag Handle</div>
+                    <div className="text-[9px] text-amber-400">Allow dragging the window via this element</div>
                   </div>
                 </div>
-                <div className={`w-8 h-4 rounded-full transition-colors relative ${currentClass.includes('drag') ? 'bg-amber-500' : 'bg-slate-200'}`}>
+                <div className={`w-8 h-4 rounded-full transition-colors relative ${currentClass.includes('drag') ? 'bg-amber-500/150' : 'uib-surface-2'}`}>
                   <input
                     type="checkbox"
                     className="opacity-0 absolute inset-0 w-full h-full cursor-pointer z-10"
@@ -607,14 +607,14 @@ function ElementPropertyEditor({
                       onUpdateProperty({ className: newClasses.join(' ') });
                     }}
                   />
-                  <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${currentClass.includes('drag') ? 'translate-x-4' : 'translate-x-0'}`} />
+                  <div className={`absolute top-0.5 left-0.5 w-3 h-3 uib-surface rounded-full shadow-sm transition-transform ${currentClass.includes('drag') ? 'translate-x-4' : 'translate-x-0'}`} />
                 </div>
               </label>
             </div>
 
             {/* Display */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-2">Display</label>
+              <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Display</label>
               <div className="grid grid-cols-3 gap-1.5">
                 {['block', 'flex', 'grid', 'inline', 'inline-flex', 'none'].map(d => (
                   <button
@@ -622,8 +622,8 @@ function ElementPropertyEditor({
                     onClick={() => onUpdateStyle('display', d)}
                     className={`px-2 py-1.5 text-[10px] font-medium rounded-md border transition-all ${
                       element.styles.display === d
-                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 text-slate-600 hover:border-indigo-200'
+                        ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                        : 'uib-border uib-fg-muted hover:border-rose-500/30'
                     }`}
                   >
                     {d}
@@ -636,7 +636,7 @@ function ElementPropertyEditor({
             {(element.styles.display === 'flex' || element.styles.display === 'inline-flex') && (
               <>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-2">Direction</label>
+                  <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Direction</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {['row', 'column', 'row-reverse', 'column-reverse'].map(d => (
                       <button
@@ -644,8 +644,8 @@ function ElementPropertyEditor({
                         onClick={() => onUpdateStyle('flexDirection', d)}
                         className={`px-2 py-1.5 text-[10px] font-medium rounded-md border transition-all ${
                           element.styles.flexDirection === d
-                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                            : 'border-slate-200 text-slate-600 hover:border-indigo-200'
+                            ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                            : 'uib-border uib-fg-muted hover:border-rose-500/30'
                         }`}
                       >
                         {d}
@@ -655,7 +655,7 @@ function ElementPropertyEditor({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-2">Align Items</label>
+                  <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Align Items</label>
                   <div className="grid grid-cols-3 gap-1.5">
                     {['flex-start', 'center', 'flex-end', 'stretch', 'baseline'].map(a => (
                       <button
@@ -663,8 +663,8 @@ function ElementPropertyEditor({
                         onClick={() => onUpdateStyle('alignItems', a)}
                         className={`px-2 py-1.5 text-[10px] font-medium rounded-md border transition-all ${
                           element.styles.alignItems === a
-                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                            : 'border-slate-200 text-slate-600 hover:border-indigo-200'
+                            ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                            : 'uib-border uib-fg-muted hover:border-rose-500/30'
                         }`}
                       >
                         {a.replace('flex-', '')}
@@ -674,7 +674,7 @@ function ElementPropertyEditor({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-2">Justify Content</label>
+                  <label className="block text-[11px] font-semibold uib-fg-muted mb-2">Justify Content</label>
                   <div className="grid grid-cols-3 gap-1.5">
                     {['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'].map(j => (
                       <button
@@ -682,8 +682,8 @@ function ElementPropertyEditor({
                         onClick={() => onUpdateStyle('justifyContent', j)}
                         className={`px-2 py-1.5 text-[10px] font-medium rounded-md border transition-all ${
                           element.styles.justifyContent === j
-                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                            : 'border-slate-200 text-slate-600 hover:border-indigo-200'
+                            ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                            : 'uib-border uib-fg-muted hover:border-rose-500/30'
                         }`}
                       >
                         {j.replace('flex-', '').replace('space-', '')}
@@ -693,12 +693,12 @@ function ElementPropertyEditor({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">Gap</label>
+                  <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">Gap</label>
                   <input
                     type="text"
                     value={element.styles.gap || ''}
                     onChange={(e) => onUpdateStyle('gap', e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="w-full px-2.5 py-1.5 text-sm font-mono border uib-border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                     placeholder="8px"
                   />
                 </div>
@@ -706,16 +706,16 @@ function ElementPropertyEditor({
             )}
 
             {/* Position Info */}
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="text-[11px] font-semibold text-slate-600 mb-2">Position</div>
+            <div className="p-3 uib-surface-2 rounded-lg border uib-border">
+              <div className="text-[11px] font-semibold uib-fg-muted mb-2">Position</div>
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">X:</span>
-                  <span className="font-mono text-slate-700">{Math.round(element.rect.x)}px</span>
+                  <span className="uib-fg-muted">X:</span>
+                  <span className="font-mono uib-fg">{Math.round(element.rect.x)}px</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Y:</span>
-                  <span className="font-mono text-slate-700">{Math.round(element.rect.y)}px</span>
+                  <span className="uib-fg-muted">Y:</span>
+                  <span className="font-mono uib-fg">{Math.round(element.rect.y)}px</span>
                 </div>
               </div>
             </div>
@@ -1205,29 +1205,29 @@ export function EnhancedUIBuilderModal({
   };
 
   return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[100] bg-slate-900/95 flex flex-col" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+    <div className="fixed inset-0 z-[100] uib-shell flex flex-col" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
       {/* ─── Header ─── */}
-      <div className="h-12 px-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0 relative z-10">
+      <div className="h-12 px-4 uib-surface border-b uib-border flex items-center justify-between shrink-0 relative z-10">
         {/* Left - Logo & Title */}
         <div className="flex items-center gap-3">
-          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${mode === 'update' ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-indigo-500 to-purple-600'}`}>
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${mode === 'update' ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-rose-500 to-rose-600'}`}>
             <Palette className="w-3.5 h-3.5 text-white" />
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-800">
+            <div className="text-sm font-semibold uib-fg">
               {mode === 'update' ? 'Update UI' : 'UI Builder'}
             </div>
           </div>
         </div>
 
         {/* Center - View Mode Tabs */}
-        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+        <div className="flex items-center gap-1 uib-surface-2 p-0.5 rounded-lg">
           <button
             onClick={() => setViewMode('design')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               viewMode === 'design'
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'uib-surface text-rose-500 shadow-sm'
+                : 'uib-fg-muted uib-fg-hover'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -1237,14 +1237,14 @@ export function EnhancedUIBuilderModal({
             onClick={() => setViewMode('flow')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               viewMode === 'flow'
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'uib-surface text-rose-500 shadow-sm'
+                : 'uib-fg-muted uib-fg-hover'
             }`}
           >
             <GitBranch className="w-3.5 h-3.5" />
             Pages
             {pages && Object.keys(pages).length > 0 && (
-              <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[10px] rounded-full leading-none">
+              <span className="px-1.5 py-0.5 uib-surface-2 uib-fg-muted text-[10px] rounded-full leading-none">
                 {Object.keys(pages).length}
               </span>
             )}
@@ -1253,8 +1253,8 @@ export function EnhancedUIBuilderModal({
             onClick={() => setViewMode('preview')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               viewMode === 'preview'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'uib-surface text-emerald-400 shadow-sm'
+                : 'uib-fg-muted uib-fg-hover'
             }`}
           >
             <Eye className="w-3.5 h-3.5" />
@@ -1264,8 +1264,8 @@ export function EnhancedUIBuilderModal({
             onClick={() => setViewMode('window')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
               viewMode === 'window'
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-800'
+                ? 'uib-surface text-rose-500 shadow-sm'
+                : 'uib-fg-muted uib-fg-hover'
             }`}
           >
             <Monitor className="w-3.5 h-3.5" />
@@ -1277,38 +1277,38 @@ export function EnhancedUIBuilderModal({
         <div className="flex items-center gap-2">
           {viewMode === 'design' && (
             <>
-              <div className="flex items-center gap-0.5 bg-slate-50 rounded-md border border-slate-200 p-0.5">
-                <button onClick={handleZoomOut} disabled={zoom <= 0.25} className="p-1 text-slate-500 hover:text-slate-700 hover:bg-white rounded disabled:opacity-40">
+              <div className="flex items-center gap-0.5 uib-surface-2 rounded-md border uib-border p-0.5">
+                <button onClick={handleZoomOut} disabled={zoom <= 0.25} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono text-slate-600 hover:bg-white rounded">
+                <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono uib-fg-muted uib-hover rounded">
                   {Math.round(zoom * 100)}%
                 </button>
-                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 text-slate-500 hover:text-slate-700 hover:bg-white rounded disabled:opacity-40">
+                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
               </div>
 
               <button
                 onClick={() => setShowGrid(!showGrid)}
-                className={`p-1.5 rounded-md transition-all ${showGrid ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                className={`p-1.5 rounded-md transition-all ${showGrid ? 'bg-rose-500/15 text-rose-500' : 'uib-fg-muted uib-hover'}`}
                 title="Toggle Grid"
               >
                 <Grid3x3 className="w-4 h-4" />
               </button>
 
-              <div className="w-px h-5 bg-slate-200" />
+              <div className="w-px h-5 uib-surface-2" />
             </>
           )}
 
           <button
             onClick={handleClose}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"
+            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg shadow-sm transition-all text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700"
           >
             Done
           </button>
 
-          <button onClick={handleClose} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg">
+          <button onClick={handleClose} className="p-1.5 uib-fg-faint uib-fg-hover uib-hover rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1320,17 +1320,17 @@ export function EnhancedUIBuilderModal({
           <>
             {/* Left Panel - Component Palette */}
             {!previewMode && (
-              <div className="w-56 shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+              <div className="w-56 shrink-0 uib-surface border-r uib-border flex flex-col overflow-hidden">
                 {/* Category Tabs */}
-                <div className="flex flex-wrap gap-1 p-2 border-b border-slate-200 bg-slate-50/50">
+                <div className="flex flex-wrap gap-1 p-2 border-b uib-border uib-surface-2">
                   {PALETTE_CATEGORIES.map(cat => (
                     <button
                       key={cat.id}
                       onClick={() => setPaletteCategory(cat.id)}
                       className={`flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded-md transition-all ${
                         paletteCategory === cat.id
-                          ? 'bg-indigo-100 text-indigo-700'
-                          : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                          ? 'bg-rose-500/15 text-rose-500'
+                          : 'uib-fg-muted uib-hover uib-fg-hover'
                       }`}
                     >
                       <cat.icon className="w-3 h-3" />
@@ -1353,18 +1353,18 @@ export function EnhancedUIBuilderModal({
                           onClick={() => addComponent(component.id)}
                           className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all cursor-grab active:cursor-grabbing text-left group ${
                             draggedComponent === component.id
-                              ? 'border-indigo-400 bg-indigo-50'
-                              : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
+                              ? 'border-rose-500/50 bg-rose-500/10'
+                              : 'uib-border hover:border-rose-500/40 uib-hover'
                           }`}
                           title={component.description}
                         >
-                          <div className="w-7 h-7 rounded-md bg-slate-100 group-hover:bg-indigo-100 flex items-center justify-center shrink-0 transition-colors">
-                            <Icon className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-600" />
+                          <div className="w-7 h-7 rounded-md uib-surface-2 group-hover:bg-rose-500/15 flex items-center justify-center shrink-0 transition-colors">
+                            <Icon className="w-3.5 h-3.5 uib-fg-muted group-hover:text-rose-500" />
                           </div>
                           <div className="min-w-0">
-                            <div className="text-[11px] font-medium text-slate-700 truncate">{component.name}</div>
+                            <div className="text-[11px] font-medium uib-fg truncate">{component.name}</div>
                             {component.description && (
-                              <div className="text-[9px] text-slate-400 truncate">{component.description}</div>
+                              <div className="text-[9px] uib-fg-faint truncate">{component.description}</div>
                             )}
                           </div>
                         </button>
@@ -1376,16 +1376,16 @@ export function EnhancedUIBuilderModal({
             )}
 
             {/* Canvas Area */}
-            <div className={`flex-1 min-w-0 flex flex-col min-h-0 transition-all ${isDragOver ? 'ring-4 ring-indigo-300 ring-inset bg-indigo-50/30' : ''}`}>
+            <div className={`flex-1 min-w-0 flex flex-col min-h-0 transition-all ${isDragOver ? 'ring-4 ring-rose-500/40 ring-inset bg-rose-500/10' : ''}`}>
               {/* Page Tabs */}
               {!previewMode && (
-                <div className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border-b border-slate-200 overflow-x-auto shrink-0">
+                <div className="flex items-center gap-1 px-3 py-1.5 uib-surface-2 border-b uib-border overflow-x-auto shrink-0">
                   <button
                     onClick={() => switchPage(null)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
                       currentPage === null
-                        ? 'bg-white text-indigo-700 border border-indigo-200 shadow-sm'
-                        : 'text-slate-600 hover:bg-white border border-transparent'
+                        ? 'uib-surface text-rose-500 border border-rose-500/30 shadow-sm'
+                        : 'uib-fg-muted uib-hover border border-transparent'
                     }`}
                   >
                     <FileText className="w-3.5 h-3.5" />
@@ -1398,20 +1398,20 @@ export function EnhancedUIBuilderModal({
                         onClick={() => switchPage(pageName)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
                           currentPage === pageName
-                            ? 'bg-white text-indigo-700 border border-indigo-200 shadow-sm'
-                            : 'text-slate-600 hover:bg-white border border-transparent'
+                            ? 'uib-surface text-rose-500 border border-rose-500/30 shadow-sm'
+                            : 'uib-fg-muted uib-hover border border-transparent'
                         }`}
                       >
                         <LayoutGrid className="w-3 h-3" />
                         {pageName}
                         {startPage === pageName && (
-                          <span className="text-[8px] bg-emerald-100 text-emerald-700 px-1 rounded font-bold">START</span>
+                          <span className="text-[8px] bg-emerald-500/15 text-emerald-400 px-1 rounded font-bold">START</span>
                         )}
                       </button>
                       {currentPage === pageName && (
                         <button
                           onClick={() => deletePage(pageName)}
-                          className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors ml-0.5"
+                          className="p-1 uib-fg-faint hover:text-red-400 rounded transition-colors ml-0.5"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -1431,20 +1431,20 @@ export function EnhancedUIBuilderModal({
                           if (e.key === 'Escape') { setShowAddPageInput(false); setNewPageName(''); }
                         }}
                         placeholder="page-name"
-                        className="w-28 px-2 py-1 text-xs border border-indigo-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-300 font-mono"
+                        className="w-28 px-2 py-1 text-xs border border-rose-500/40 rounded-md focus:outline-none focus:ring-1 focus:ring-rose-500/40 font-mono"
                         autoFocus
                       />
-                      <button onClick={handleAddPage} className="p-1 text-indigo-600 hover:bg-indigo-50 rounded">
+                      <button onClick={handleAddPage} className="p-1 text-rose-500 hover:bg-rose-500/10 rounded">
                         <Plus className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => { setShowAddPageInput(false); setNewPageName(''); }} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                      <button onClick={() => { setShowAddPageInput(false); setNewPageName(''); }} className="p-1 uib-fg-faint uib-fg-hover rounded">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => setShowAddPageInput(true)}
-                      className="flex items-center gap-1 px-2 py-1.5 text-xs text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors ml-1"
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs uib-fg-muted hover:text-rose-500 hover:bg-rose-500/10 rounded-md transition-colors ml-1"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       Page
@@ -1460,7 +1460,7 @@ export function EnhancedUIBuilderModal({
                 )}
                 {isDragOver && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-                    <div className="px-6 py-3 bg-indigo-500 text-white rounded-xl shadow-2xl font-semibold text-sm">
+                    <div className="px-6 py-3 bg-rose-500 text-white rounded-xl shadow-2xl font-semibold text-sm">
                       Drop to add component
                     </div>
                   </div>
@@ -1492,15 +1492,15 @@ export function EnhancedUIBuilderModal({
 
             {/* Right Panel - Properties / Code */}
             {!previewMode && (
-              <div className="w-80 shrink-0 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
+              <div className="w-80 shrink-0 uib-surface border-l uib-border flex flex-col overflow-hidden">
                 {/* Right Panel Tabs */}
-                <div className="flex border-b border-slate-200 shrink-0">
+                <div className="flex border-b uib-border shrink-0">
                   <button
                     onClick={() => setRightPanelTab('properties')}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-all border-b-2 ${
                       rightPanelTab === 'properties'
-                        ? 'text-indigo-700 border-indigo-500'
-                        : 'text-slate-500 border-transparent hover:text-slate-700'
+                        ? 'text-rose-500 border-rose-500'
+                        : 'uib-fg-muted border-transparent uib-fg-hover'
                     }`}
                   >
                     <Settings className="w-3.5 h-3.5" />
@@ -1510,8 +1510,8 @@ export function EnhancedUIBuilderModal({
                     onClick={() => setRightPanelTab('code')}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-all border-b-2 ${
                       rightPanelTab === 'code'
-                        ? 'text-indigo-700 border-indigo-500'
-                        : 'text-slate-500 border-transparent hover:text-slate-700'
+                        ? 'text-rose-500 border-rose-500'
+                        : 'uib-fg-muted border-transparent uib-fg-hover'
                     }`}
                   >
                     <Code2 className="w-3.5 h-3.5" />
@@ -1531,8 +1531,8 @@ export function EnhancedUIBuilderModal({
                     />
                   ) : (
                     <div className="flex-1 flex items-center justify-center p-6">
-                      <div className="text-center text-slate-400">
-                        <MousePointer2 className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                      <div className="text-center uib-fg-faint">
+                        <MousePointer2 className="w-10 h-10 mx-auto mb-3 uib-fg-faint" />
                         <div className="text-sm font-medium mb-1">Select an element</div>
                         <div className="text-xs">Click any element on the canvas to edit its properties</div>
                       </div>
@@ -1544,7 +1544,7 @@ export function EnhancedUIBuilderModal({
                 {rightPanelTab === 'code' && (
                   <div className="flex-1 overflow-auto scrollbar-minimal p-3 space-y-4">
                     {currentPage && (
-                      <div className="text-xs text-indigo-600 font-medium bg-indigo-50 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
+                      <div className="text-xs text-rose-500 font-medium bg-rose-500/10 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
                         <LayoutGrid className="w-3 h-3" />
                         Editing: {currentPage}
                       </div>
@@ -1552,33 +1552,33 @@ export function EnhancedUIBuilderModal({
 
                     {outputMode === 'react' ? (
                       <>
-                        <div className="text-[10px] text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                        <div className="text-[10px] uib-fg-faint uib-surface-2 px-2.5 py-1.5 rounded-lg">
                           Generated React component preview. Edit elements on the canvas — code updates on save.
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">React Component</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">React Component</label>
                           <textarea
                             value={generateReactComponent(getCurrentHtml(), getCurrentCss(), getCurrentJs())}
                             readOnly
-                            className="w-full h-72 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none text-slate-700"
+                            className="w-full h-72 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none uib-fg"
                             spellCheck={false}
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML (editable)</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">HTML (editable)</label>
                           <textarea
                             value={getCurrentHtml()}
                             onChange={(e) => { userMadeVisualEditsRef.current = true; updateCurrentHtml(e.target.value); }}
-                            className="w-full h-32 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            className="w-full h-32 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                             spellCheck={false}
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">CSS</label>
                           <textarea
                             value={getCurrentCss()}
                             onChange={(e) => updateCurrentCss(e.target.value)}
-                            className="w-full h-20 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            className="w-full h-20 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                             spellCheck={false}
                           />
                         </div>
@@ -1586,29 +1586,29 @@ export function EnhancedUIBuilderModal({
                     ) : (
                       <>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">HTML</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">HTML</label>
                           <textarea
                             value={getCurrentHtml()}
                             onChange={(e) => updateCurrentHtml(e.target.value)}
-                            className="w-full h-40 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            className="w-full h-40 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                             spellCheck={false}
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">CSS</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">CSS</label>
                           <textarea
                             value={getCurrentCss()}
                             onChange={(e) => updateCurrentCss(e.target.value)}
-                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                             spellCheck={false}
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">JavaScript</label>
+                          <label className="block text-[11px] font-semibold uib-fg-muted mb-1.5">JavaScript</label>
                           <textarea
                             value={getCurrentJs()}
                             onChange={(e) => updateCurrentJs(e.target.value)}
-                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono bg-slate-50 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
+                            className="w-full h-28 px-2.5 py-2 text-[11px] font-mono uib-surface-2 border uib-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
                             spellCheck={false}
                           />
                         </div>
@@ -1624,22 +1624,22 @@ export function EnhancedUIBuilderModal({
         {viewMode === 'preview' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Preview Toolbar */}
-            <div className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-200 shrink-0">
-              <div className="flex items-center gap-0.5 bg-white rounded-md border border-slate-200 p-0.5">
-                <button onClick={handleZoomOut} disabled={zoom <= 0.25} className="p-1 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded disabled:opacity-40">
+            <div className="flex items-center justify-center gap-2 px-4 py-2 uib-surface-2 border-b uib-border shrink-0">
+              <div className="flex items-center gap-0.5 uib-surface rounded-md border uib-border p-0.5">
+                <button onClick={handleZoomOut} disabled={zoom <= 0.25} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono text-slate-600 hover:bg-slate-50 rounded">
+                <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono uib-fg-muted uib-hover rounded">
                   {Math.round(zoom * 100)}%
                 </button>
-                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded disabled:opacity-40">
+                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <span className="text-[10px] text-slate-400 font-medium">Runtime Preview</span>
+              <span className="text-[10px] uib-fg-faint font-medium">Runtime Preview</span>
             </div>
             {/* Live Preview Canvas */}
-            <div className="flex-1 relative bg-slate-100">
+            <div className="flex-1 relative uib-surface-2">
               <UIBuilderCanvas
                 ref={canvasRef}
                 html={transformedComponentJs ? '' : getCurrentHtml()}
@@ -1667,7 +1667,7 @@ export function EnhancedUIBuilderModal({
 
         {viewMode === 'window' && (
           <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1 p-6 overflow-auto scrollbar-minimal bg-slate-50">
+            <div className="flex-1 p-6 overflow-auto scrollbar-minimal uib-surface-2">
               <div className="max-w-2xl mx-auto">
                 <WindowPropertiesPanel config={windowConfig} onChange={handleWindowConfigChange} />
               </div>
