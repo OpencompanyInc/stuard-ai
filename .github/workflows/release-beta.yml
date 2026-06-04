@@ -579,6 +579,10 @@ jobs:
           CACHE_ASSET="public, max-age=31536000, immutable"
           CACHE_MANIFEST="public, max-age=60"
           aws s3 cp apps/desktop/release/*.AppImage "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          # .deb package (Debian/Ubuntu). Guarded so a missing file doesn't fail the job.
+          for f in apps/desktop/release/*.deb; do
+            [ -e "$f" ] && aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          done
           aws s3 cp apps/desktop/release/latest-linux.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest-linux.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
       
       - name: Upload to R2 (Windows)

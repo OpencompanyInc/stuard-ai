@@ -193,8 +193,10 @@
     "linux": {
       "icon": "icons/icon-source.png",
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
+      "maintainer": "Stuard AI <support@stuard.ai>",
       "category": "Utility"
     },
     "publish": {
