@@ -255,6 +255,13 @@ jobs:
             -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"production\",\"status\":\"failed\",\"error_message\":\"Cloud Run deploy failed\"}"
 
   # 2. Deploy Website (Frontend) to Vercel Production
+  #
+  # Mirrors the working beta website job: the Vercel CLI runs from the REPO ROOT
+  # (the real pnpm monorepo root) with rootDirectory pinned to apps/website, so
+  # the @vercel/next builder resolves output to <repo-root>/apps/website/.next.
+  # Running the CLI *inside* apps/website made the builder treat that as the
+  # monorepo root and append the package path again -> apps/website/apps/website
+  # (.next ENOENT routes-manifest.json), which is why prod website deploys failed.
   deploy-prod-website:
     name: Website (Production)
     runs-on: ubuntu-latest
@@ -262,24 +269,36 @@ jobs:
     if: ${{ github.event.inputs.deploy_website == 'true' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
       - name: Pull Vercel environment (production)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Pin Root Directory to apps/website
+        run: |
+          echo "---- .vercel/project.json (pulled) ----"
+          cat .vercel/project.json || true
+          node -e "const fs=require('fs');const p='.vercel/project.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.settings=j.settings||{};j.settings.rootDirectory='apps/website';fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          echo "---- after ----"
+          cat .vercel/project.json || true
       - name: Build with Vercel (production)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel build --prod --token=${{ secrets.VERCEL_TOKEN }} || {
+            echo "=== build failed; locating Next output to compare vs the path Vercel expected ==="
+            find . -name routes-manifest.json -not -path '*/node_modules/*' 2>/dev/null || true
+            exit 1
+          }
       - name: Deploy prebuilt to Vercel (Prod)
-        working-directory: apps/website
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
