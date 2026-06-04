@@ -96,6 +96,14 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const cardRef = useRef<HTMLDivElement>(null);
   const keyhintRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Last measured height of the find-step dropdown, so we can keep reserving its
+  // space while it's briefly hidden between demo queries (keeps the coach card
+  // and its Next button from jumping up and down).
+  const dropdownHeightRef = useRef(0);
+  // The position rAF loop below only re-subscribes on step.target changes, so its
+  // closure can hold a stale `step`. Read the current step id from a live ref.
+  const stepIdRef = useRef(step.id);
+  stepIdRef.current = step.id;
 
   // Load the user's configured global hotkey (main-process settings are the
   // source of truth; fall back to the locally-cached value, then the default).
@@ -227,12 +235,18 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         ring.style.borderRadius = `${step.target === 'pill' ? 26 : step.target === 'corner' ? 26 : 12}px`;
 
         // card always hangs below the pill, centered — never over the input.
-        // When the find-step dropdown is open it extends below the pill, so
-        // anchor the card beneath the dropdown instead so they never overlap.
+        // When the find-step dropdown is open it extends below the pill, so we
+        // anchor the card beneath where the dropdown sits. The dropdown blinks
+        // on and off as the demo retypes each query, so we reserve its space at
+        // all times on the find step — otherwise the card (and its Next button)
+        // would bounce up and down and be hard to click.
         if (card) {
           const pr = pill.getBoundingClientRect();
           const dd = dropdownRef.current;
-          const anchorBottom = dd ? dd.getBoundingClientRect().bottom : pr.bottom;
+          if (dd) dropdownHeightRef.current = dd.getBoundingClientRect().height;
+          const dropdownReserve =
+            stepIdRef.current === 'find' ? 8 + (dropdownHeightRef.current || 150) : 0;
+          const anchorBottom = pr.bottom + dropdownReserve;
           const cw = card.offsetWidth, gap = 26;
           let left = pr.left + pr.width / 2 - cw / 2;
           let top = anchorBottom + gap;

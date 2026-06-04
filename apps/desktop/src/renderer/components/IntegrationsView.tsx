@@ -676,7 +676,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
             value={localDigits}
             onChange={handleLocalChange}
             onKeyDown={(e) => { if (e.key === 'Enter' && phoneValid) handleRequestCode(); }}
-            placeholder={countryCode === '+1' ? '(614) 380-9607' : '123456789'}
+            placeholder={countryCode === '+1' ? '(555) 123-4567' : '123456789'}
             autoComplete="tel-national"
             autoFocus={!editingCountry}
             className={clsx(

@@ -474,44 +474,19 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok && Array.isArray(res.results)) {
-        // Split results: apps vs files
-        const apps = res.results
-          .filter((r: any) => r.source === "app-discovery")
-          .slice(0, 5);
-        const files = res.results
-          .filter((r: any) => r.source !== "app-discovery" && String(r.kind || "").toLowerCase() !== "application")
-          .slice(0, 8);
+        // Split results: apps vs files. Kept identical to the compact dropdown
+        // (doQuickFileSearch in InputAreaImpl) so both surfaces show the same
+        // results. NOTE: no indexed "backfill" here on purpose — it used to run
+        // a second file_search that could land AFTER the semantic refine and
+        // clobber the hybrid (embedding) results back to plain quick matches,
+        // which is exactly why semantic results weren't showing in the launcher.
+        const apps = res.results.filter((r: any) => r.source === "app-discovery");
+        const files = res.results.filter((r: any) => (
+          r.source !== "app-discovery" && String(r.kind || "").toLowerCase() !== "application"
+        ));
         setAppResults(apps);
         setFileResults(files);
         setFileSearchMode("quick");
-
-        // Backfill indexed file results without delaying the instant app response.
-        if (api?.execTool) {
-          void (async () => {
-            try {
-              const indexed = await api.execTool("file_search", {
-                query: q,
-                mode: "quick",
-                limit: 8,
-                root_id: rootId || undefined,
-              });
-              if (searchReqIdRef.current !== reqId) return;
-              if (!indexed?.ok) return;
-
-              const indexedFiles = Array.isArray(indexed.results)
-                ? indexed.results
-                    .filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
-                    .slice(0, 8)
-                : [];
-              if (indexedFiles.length === 0) return;
-
-              setFileResults(indexedFiles);
-              setFileSearchMode("quick");
-            } catch {
-              // Keep the fast unified-search results if indexed backfill fails.
-            }
-          })();
-        }
       } else {
         setAppResults([]);
         setFileResults([]);
@@ -565,11 +540,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
         if (semanticReqIdRef.current !== reqId) return;
         if (res?.ok) {
+          // Match the compact dropdown: keep all hybrid hits (capped by the
+          // query limit of 10), don't re-slice to 8.
           setFileResults(
             Array.isArray(res.results)
-              ? res.results
-                  .filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
-                  .slice(0, 8)
+              ? res.results.filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
               : [],
           );
           setFileSearchMode("hybrid");
@@ -610,9 +585,16 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     }, 100);
 
     if (shouldRunLauncherSemanticSearch(q)) {
+      // Same debounce as the compact dropdown so semantic results appear at the
+      // same cadence in both surfaces.
       semanticDebounceRef.current = setTimeout(() => {
         doSemanticRefine(q, selectedRootId || undefined);
-      }, 900);
+      }, 650);
+    } else {
+      // Cancel any in-flight semantic request so quick results stay visible
+      // (mirrors the compact dropdown).
+      semanticReqIdRef.current += 1;
+      setFileSemanticLoading(false);
     }
 
     return () => {
@@ -1109,7 +1091,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     </button>
 
                     {appResults.length > 0 && (
-                      <div className="bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
+                      <div className="launcher-apps-panel bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                         <div className="flex items-center gap-2 mb-3">
                           <AppWindow className="w-4 h-4 text-blue-500" />
                           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">

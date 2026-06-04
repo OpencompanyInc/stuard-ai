@@ -1,52 +1,29 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React from 'react';
 import clsx from 'clsx';
-import { ListTodo, Inbox } from 'lucide-react';
-import { AgentTodoList, type AgentTodoItem, type AgentTodoListProps } from '../../../genui/AgentTodoList';
-
-interface TodoSnapshot {
-  items: AgentTodoItem[];
-  title?: string;
-  progress?: AgentTodoListProps['progress'];
-  timestamp: number;
-}
+import { ListTodo } from 'lucide-react';
+import { AgentTodoList } from '../../../genui/AgentTodoList';
+import { useAgentTodos } from './agentTodoStore';
 
 interface SidebarTodoPanelProps {
   className?: string;
 }
 
 export const SidebarTodoPanel: React.FC<SidebarTodoPanelProps> = ({ className }) => {
-  const [snapshot, setSnapshot] = useState<TodoSnapshot | null>(null);
-  const latestRef = useRef<TodoSnapshot | null>(null);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.items && Array.isArray(detail.items)) {
-        const snap: TodoSnapshot = {
-          items: detail.items,
-          title: detail.title,
-          progress: detail.progress,
-          timestamp: Date.now(),
-        };
-        latestRef.current = snap;
-        setSnapshot(snap);
-      }
-    };
-
-    window.addEventListener('agent-todo-update', handler);
-    return () => window.removeEventListener('agent-todo-update', handler);
-  }, []);
+  // Read from the shared store so the plan survives tab switches / remounts.
+  const snapshot = useAgentTodos();
 
   if (!snapshot || snapshot.items.length === 0) {
     return (
-      <div className={clsx('flex flex-col items-center justify-center gap-3 p-6', className)}>
-        <div className="p-3 rounded-2xl bg-theme-hover/50">
-          <Inbox className="w-8 h-8 text-theme-muted/50" />
+      <div className={clsx('flex flex-col items-center justify-center gap-3 px-6 py-10', className)}>
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[color:color-mix(in_srgb,var(--foreground)_6%,transparent)]">
+          <ListTodo className="h-5 w-5 text-theme-muted" strokeWidth={1.75} />
         </div>
         <div className="text-center">
-          <p className="text-sm font-semibold text-theme-muted">No active tasks</p>
-          <p className="text-xs text-theme-muted/60 mt-1">
-            Agent task progress will appear here automatically
+          <p className="text-[13px] font-semibold text-theme-fg">No active plan</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-theme-muted">
+            When the agent breaks a task into steps,
+            <br />
+            its live progress shows up here.
           </p>
         </div>
       </div>
@@ -55,13 +32,12 @@ export const SidebarTodoPanel: React.FC<SidebarTodoPanelProps> = ({ className })
 
   return (
     <div className={clsx('flex flex-col overflow-hidden', className)}>
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
-        <AgentTodoList
-          items={snapshot.items}
-          title={snapshot.title || 'Agent Plan'}
-          progress={snapshot.progress}
-        />
-      </div>
+      <AgentTodoList
+        items={snapshot.items}
+        title={snapshot.title || 'Agent Plan'}
+        progress={snapshot.progress}
+        variant="sidebar"
+      />
     </div>
   );
 };

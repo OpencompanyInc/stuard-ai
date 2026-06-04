@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getValidAccessToken } from "../../auth/authManager";
 import { getMarketplaceApi, type MarketplaceUpdate } from "../../utils/cloud";
 import { specToDesignerModel } from "../utils/conversions";
+import { unpackWorkspaceBundle, stripWorkspaceBundle } from "../utils/workspaceBundle";
 
 interface UseWorkflowMarketplaceProps {
   selectedId: string;
@@ -49,8 +50,9 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     try {
       const d = JSON.parse(importJson);
       const newId = d.id || "flow_" + Date.now().toString(36);
-      const m = specToDesignerModel({ ...d, id: newId });
+      const m = specToDesignerModel(stripWorkspaceBundle({ ...d, id: newId }));
       await (window as any).desktopAPI?.workflowsSave?.(newId, JSON.stringify(m, null, 2));
+      await unpackWorkspaceBundle(newId, d);
       await refresh();
       await load(newId);
       setShowImport(false);
@@ -64,8 +66,11 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     async (spec: any) => {
       try {
         const newId = spec.id || "flow_" + Date.now().toString(36);
-        const m = specToDesignerModel({ ...spec, id: newId });
+        // Keep the workspace bundle out of the saved main model, but unpack its
+        // files into the new workflow's workspace so it runs without manual setup.
+        const m = specToDesignerModel(stripWorkspaceBundle({ ...spec, id: newId }));
         await (window as any).desktopAPI?.workflowsSave?.(newId, JSON.stringify(m, null, 2));
+        await unpackWorkspaceBundle(newId, spec);
         await refresh();
         await load(newId);
       } catch (e: any) {
@@ -92,15 +97,17 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     }
 
     const spec = res.workflow.spec;
-    const newModel = specToDesignerModel({
+    const newModel = specToDesignerModel(stripWorkspaceBundle({
       ...spec,
       id,
       marketplaceSlug: update.slug,
       version: update.latestVersion,
       locked: res.workflow.locked || false,
-    });
+    }));
 
     await (window as any).desktopAPI?.workflowsSave?.(id, JSON.stringify(newModel, null, 2));
+    // Refresh the bundled workspace deps to match the new version.
+    await unpackWorkspaceBundle(id, spec);
 
     try {
       await api.download(update.slug);

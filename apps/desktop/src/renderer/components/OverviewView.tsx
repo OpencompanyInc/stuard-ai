@@ -35,7 +35,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const isCreditsLoading = !!creditsLoading && !creditsInfo;
   const planLabel = String(creditsInfo?.plan || profile?.plan || profile?.plan_name || 'Starter');
   const remaining = Math.max(0, creditsInfo?.remaining ?? creditsFallback?.remaining ?? 0);
-  const limit = Math.max(1, creditsInfo?.limit ?? creditsFallback?.limit ?? 0);
+  const limit = Math.max(1, creditsInfo?.limit || creditsFallback?.limit || 0);
   const used = Math.max(0, creditsInfo?.used ?? creditsFallback?.used ?? 0);
   const remainingPct = Math.min(100, Math.max(0, (remaining / Math.max(1, limit)) * 100));
   const remainingWidth = `${remainingPct}%`;
@@ -142,13 +142,15 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 <div className="text-[18px] font-semibold text-theme-fg tracking-tight">Monthly Activity</div>
               
               <div className="text-[50px] font-semibold text-theme-fg tracking-tight leading-none">
-                {usageCountLoading ? (
+                {isCreditsLoading ? (
                   <Loader2 className="w-10 h-10 animate-spin mx-auto text-theme-muted" />
                 ) : (
-                  usageCount
+                  used
                 )}
               </div>
-              <div className="text-base text-theme-muted font-medium">Events processed</div>
+              <div className="text-base text-theme-muted font-medium">
+                Credits used{!usageCountLoading && usageCount > 0 ? ` · ${usageCount} events` : ''}
+              </div>
             </div>
           </div>
 

@@ -1,5 +1,5 @@
 import { supabase } from "../lib/supabaseClient";
-import { AUTH_PAGE_URL } from "../config.public";
+import { getAuthPageUrl } from "../utils/cloud";
 
 /**
  * Generate a cryptographically secure random string using Web Crypto API
@@ -90,7 +90,7 @@ export async function startBrowserSignIn(timeoutMs = 120_000): Promise<{ ok: tru
 
   await channel.subscribe();
 
-  const url = new URL(AUTH_PAGE_URL);
+  const url = new URL(getAuthPageUrl());
   url.searchParams.set("cid", channelId);
   url.searchParams.set("nonce", nonce);
 

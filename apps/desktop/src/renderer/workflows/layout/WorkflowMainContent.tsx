@@ -5,6 +5,7 @@ import { ChatHistory } from "../components/chat/ChatHistory";
 import { ChatInput, ChatInputRef } from "../components/chat/ChatInput";
 import { DiscoverTips } from "../components/DiscoverTips";
 import { ToolPalette, ToolPaletteRef } from "../components/ToolPalette";
+import { createPaletteNode } from "../utils/paletteNode";
 import type { DesignerModel } from "../types";
 import type { ExecutionState, OpenFileTab, RightPanel, WorkspaceInfo } from "./types";
 import { WorkflowCanvasAndPanels } from "./WorkflowCanvasAndPanels";
@@ -237,6 +238,24 @@ export function WorkflowMainContent({
   const chatDrag = useDraggablePanel();
   const paletteDrag = useDraggablePanel();
 
+  // Click-to-add fallback for the toolbox: HTML5 drag-and-drop is unreliable on
+  // laptop trackpads / touch, so a plain click drops the item at the visible
+  // center of the canvas (cascaded so rapid clicks don't stack exactly).
+  const clickAddCascade = useRef(0);
+  const handlePaletteItemClick = useCallback((item: any) => {
+    if (!model || model.locked) return;
+    const el = canvasRef.current;
+    const n = clickAddCascade.current % 6;
+    clickAddCascade.current += 1;
+    let cx = 240;
+    let cy = 160;
+    if (el) {
+      cx = (el.scrollLeft + el.clientWidth / 2) / zoom;
+      cy = (el.scrollTop + el.clientHeight / 2) / zoom;
+    }
+    createPaletteNode(model, onUpdateModel, item, Math.max(0, cx - 80) + n * 28, Math.max(0, cy - 24) + n * 28);
+  }, [model, onUpdateModel, canvasRef, zoom]);
+
   const canvasAndPanelsProps = {
     model: model!,
     selectedId,
@@ -422,6 +441,7 @@ export function WorkflowMainContent({
                   e.dataTransfer.setData("text/plain", JSON.stringify(item));
                   e.dataTransfer.effectAllowed = "copy";
                 }}
+                onItemClick={handlePaletteItemClick}
                 disabled={model.locked}
                 onBuildIntegration={onBuildIntegration}
               />

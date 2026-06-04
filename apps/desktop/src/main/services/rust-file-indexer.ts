@@ -314,12 +314,29 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+// Memory strategy for the read daemon — keep search instant, cut resident RAM:
+//  - The daemon stays WARM during active use (no cold-spawn latency on search).
+//  - It only self-reclaims after a long idle window (the app left untouched),
+//    where a one-time ~800ms restart on the next search is unnoticeable.
+//  - The real footprint win is mmap (see env below + open_db in main.rs): hot
+//    DB pages are served from the SHARED OS page cache instead of a private,
+//    per-worker 256MB SQLite cache (which is what pushed it to ~350-420MB).
+const DAEMON_IDLE_SHUTDOWN_MS = 15 * 60_000;
+
+// Per-connection SQLite page cache is private heap RAM, duplicated per worker —
+// keep it small. The large mmap is shared across all workers and OS-reclaimable,
+// so reads stay fast. The current binary ignores unknown env; CACHE_MB/MMAP_MB
+// take effect once the Rust indexer is rebuilt (open_db now reads them).
+const DAEMON_CACHE_MB = process.env.STUARD_INDEXER_CACHE_MB || "16";
+const DAEMON_MMAP_MB = process.env.STUARD_INDEXER_MMAP_MB || "1024";
+
 class IndexerDaemon {
   private child: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<void> | null = null;
   private pending = new Map<string, Pending>();
   private buffer = "";
   private nextId = 1;
+  private idleTimer: NodeJS.Timeout | null = null;
 
   private async ensureStarted(): Promise<void> {
     if (this.child && !this.child.killed) return;
@@ -340,6 +357,18 @@ class IndexerDaemon {
         child = spawn(binary, ["daemon", "--db", dbPath], {
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
+          env: {
+            ...process.env,
+            // Low private cache + large shared mmap keeps reads fast while
+            // slashing resident RAM (effective once the indexer binary is built
+            // with the matching open_db pragmas).
+            STUARD_INDEXER_CACHE_MB: DAEMON_CACHE_MB,
+            STUARD_INDEXER_MMAP_MB: DAEMON_MMAP_MB,
+            // Cross-modal (text→image) cosine runs lower than text→text; 0.3 keeps
+            // correct image matches that a 0.4 floor silently dropped.
+            STUARD_INDEXER_SEMANTIC_MIN:
+              process.env.STUARD_INDEXER_SEMANTIC_MIN || '0.3',
+          },
         });
       } catch (err: any) {
         this.startPromise = null;
@@ -411,6 +440,7 @@ class IndexerDaemon {
   }
 
   private cleanup(err: Error) {
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
       p.reject(err);
@@ -419,11 +449,27 @@ class IndexerDaemon {
     this.child = null;
   }
 
+  // Restart the idle countdown. While the daemon is being used the timer is
+  // pushed back on every call, so it only fires after a long quiet period.
+  private armIdleTimer() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.pending.size === 0 && this.child && !this.child.killed) {
+        logger.info("[rust-file-indexer] daemon idle; shutting down to reclaim RAM");
+        this.shutdown();
+      }
+    }, DAEMON_IDLE_SHUTDOWN_MS);
+    // Don't let this timer keep the process alive at exit.
+    try { this.idleTimer.unref?.(); } catch { /* ignore */ }
+  }
+
   async call<T = any>(cmd: string, args: Record<string, any>, timeoutMs = 5000): Promise<T> {
     await this.ensureStarted();
     const child = this.child!;
     const id = String(this.nextId++);
     const payload = JSON.stringify({ id, cmd, args }) + "\n";
+    this.armIdleTimer();
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -448,6 +494,7 @@ class IndexerDaemon {
   }
 
   shutdown() {
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
     const child = this.child;
     this.cleanup(new Error("shutdown"));
     if (child) {

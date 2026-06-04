@@ -86,6 +86,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('sidebar:navigate', handler);
     return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
   },
+  // Relay the agent's live to-do plan from the main window into a detached
+  // sidebar window so a popped-out To-Do tab stays in sync.
+  broadcastAgentTodo: (detail: any) => ipcRenderer.invoke('sidebar:broadcastTodo', detail),
+  onSidebarTodoUpdate: (cb: (detail: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:todoUpdate', handler);
+    return () => { try { ipcRenderer.off('sidebar:todoUpdate', handler); } catch { } };
+  },
   onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('sidebar:expandedChange', handler);
@@ -595,6 +603,9 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('notification:dismiss', handler);
     return () => { try { ipcRenderer.off('notification:dismiss', handler); } catch { } };
   },
+  // Tell main the notification overlay has no visible toasts so it can close the
+  // window and reclaim the renderer's memory (it's re-created on the next toast).
+  notificationsIdle: () => { try { ipcRenderer.send('notifications:idle'); } catch { } },
   respondToPermission: (id: string, allow: boolean) => ipcRenderer.invoke('notification:respondToPermission', { id, allow }),
   respondToNotification: (payload: { responseId: string; type: string; value?: string }) => ipcRenderer.invoke('notification:respondToNotification', payload),
   onApprovalResponse: (cb: (data: { id: string; allow: boolean }) => void) => {

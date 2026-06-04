@@ -397,7 +397,7 @@ function DashboardApp() {
       if (k === 'enterprise') return 1000000;
       if (k === 'pro') return 2000; // ($25 - $5 profit) * 100
       if (k === 'ultra') return 5500; // ($60 - $5 profit) * 100
-      return 250; // free: $2.5 * 100
+      return 30; // free: 30 credits, just under $1 (≈33 credits = $1) — mirrors cloud-ai (offline fallback only; /v1/credits is authoritative)
     };
     try {
       const plan = planKey((profile?.plan || profile?.plan_name || 'free') as string);
@@ -523,10 +523,34 @@ function DashboardApp() {
           } catch { }
         }
       }
-      // Compute credits from supabase directly so Overview matches Billing settings
-      // (same query path BillingSettings uses — sums credit_grants.remaining_credits
-      // and counts billable usage_events within the current billing period).
+      // Credits: prefer the canonical server summary (GET /v1/credits) so the Plan
+      // card, Billing, and the header all show identical numbers. The server applies
+      // the free-plan monthly-limit fallback when there's no grant row — the direct
+      // Supabase math below does not, which is what collapsed free accounts to "0 / 1".
+      let creditsFromServer = false;
       try {
+        const resp = await fetch(`${CLOUD_AI_HTTP}/v1/credits`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const j: any = resp.ok ? await resp.json().catch(() => null) : null;
+        if (j && j.ok) {
+          const unlimited = !!j.unlimited;
+          setCreditsInfo({
+            ok: true,
+            plan: String(j.plan || 'Free'),
+            limit: unlimited ? 0 : Math.max(0, Math.ceil(Number(j.limit) || 0)),
+            used: Math.max(0, Math.ceil(Number(j.used) || 0)),
+            remaining: unlimited ? 0 : Math.max(0, Math.ceil(Number(j.remaining) || 0)),
+            unlimited,
+            creditsPerUsd: Number(j.creditsPerUsd) || undefined,
+          });
+          creditsFromServer = true;
+        }
+      } catch { /* fall through to the direct Supabase computation below */ }
+
+      // Fallback when the endpoint is unreachable: compute from Supabase directly
+      // (same query path BillingSettings uses).
+      if (!creditsFromServer) try {
         const [{ data: profileRow }, { data: rawGrants }] = await Promise.all([
           supabase
             .from('profiles')

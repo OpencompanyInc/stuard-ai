@@ -279,6 +279,12 @@
   border-color: transparent;
 }
 
+/* Launcher search — Applications block: no white hairline in dark mode */
+[data-theme='dark'] .launcher-compact-skin .launcher-apps-panel {
+  border-color: transparent;
+  box-shadow: none;
+}
+
 /* Launcher suggestion cards — rectangular outlined rows with rounded icon tiles */
 .launcher-suggestion-chip {
   background: color-mix(in srgb, var(--card-bg) 42%, transparent);

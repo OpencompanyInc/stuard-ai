@@ -14,10 +14,13 @@ export interface ToolPaletteRef {
 
 export const ToolPalette = forwardRef<ToolPaletteRef, {
   onDragStart: (e: React.DragEvent, item: any) => void;
+  /** Click-to-add fallback — adds the item to the canvas without dragging
+   *  (HTML5 drag is unreliable on trackpads / touch). */
+  onItemClick?: (item: any) => void;
   disabled?: boolean;
   workflowId?: string;
   onBuildIntegration?: () => void;
-}>(({ onDragStart, disabled, workflowId, onBuildIntegration }, ref) => {
+}>(({ onDragStart, onItemClick, disabled, workflowId, onBuildIntegration }, ref) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['installed', 'triggers', 'flow']));
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -386,6 +389,8 @@ export const ToolPalette = forwardRef<ToolPaletteRef, {
                         key={`${item.t}-${i}`}
                         draggable={!itemDisabled}
                         onDragStart={e => !itemDisabled && onDragStart(e, dragData)}
+                        onClick={() => !itemDisabled && onItemClick?.(dragData)}
+                        title={itemDisabled ? undefined : 'Drag onto the canvas, or click to add'}
                         className={`flex items-center gap-3 px-3 py-2 bg-transparent border wf-border-subtle rounded-lg transition-all group/item relative overflow-hidden ${itemDisabled
                           ? 'opacity-50 cursor-not-allowed'
                           : `cursor-grab wf-hover-bg hover:border-[var(--wf-border)] hover:shadow-sm hover:translate-x-1 active:cursor-grabbing`

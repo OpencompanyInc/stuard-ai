@@ -103,6 +103,8 @@ declare global {
       isSidebarExpanded: () => Promise<{ expanded: boolean }>;
       sidebarSetPresentation: (mode: 'full' | 'popup', tab?: SidebarTabId) => Promise<{ ok: boolean; mode?: 'full' | 'popup'; error?: string }>;
       onSidebarNavigate: (cb: (data: { tab: SidebarTabId }) => void) => () => void;
+      broadcastAgentTodo: (detail: any) => Promise<void>;
+      onSidebarTodoUpdate: (cb: (detail: any) => void) => () => void;
       onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => () => void;
       onSidebarSelectItem: (cb: (data: { type: 'space'; id: string }) => void) => () => void;
       closeOnboarding: () => Promise<void>;

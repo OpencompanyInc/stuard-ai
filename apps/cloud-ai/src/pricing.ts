@@ -221,8 +221,9 @@ export function monthlyCreditLimitForPlan(plan: string): number {
 
   // Legacy plan support
   if (key === 'FREE') {
-    const freeUsd = envNumber('PLAN_FREE_PRICE_USD', 0.5);
-    return creditsFromUsd(freeUsd);
+    // Free tier defaults to 30 credits — deliberately just under $1 (≈33 credits = $1).
+    // Override via PLAN_FREE_MONTHLY_CREDITS (checked at the top of this function).
+    return 30;
   }
   const priceKey = `PLAN_${key}_PRICE_USD`;
   const price = envNumber(priceKey, -1);

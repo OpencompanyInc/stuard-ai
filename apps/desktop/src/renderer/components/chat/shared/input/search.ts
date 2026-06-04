@@ -10,6 +10,10 @@ export const normalizeInputSearchText = (value: string): string =>
 export const shouldRunInputSemanticSearch = (query: string): boolean => {
   const normalized = normalizeInputSearchText(query);
   const compactLen = normalized.replace(/\s+/g, '').length;
-  const tokenCount = normalized ? normalized.split(' ').length : 0;
-  return tokenCount > 1 && compactLen >= 6;
+  // Keep this identical to the launcher (shouldRunLauncherSemanticSearch): fire on
+  // any reasonably-meaningful query, including a single concept word ("beach",
+  // "invoice", "selfie"). Query embedding is non-billable and debounced, so the
+  // only cost of the broader trigger is a little latency — worth it so meaning-
+  // based file/image results actually surface in compact quick search too.
+  return compactLen >= 4;
 };

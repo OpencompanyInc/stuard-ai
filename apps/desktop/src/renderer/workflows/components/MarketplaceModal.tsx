@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import { FUNCTION_NODE_ICONS, FUNCTION_NODE_COLORS } from "../constants/functionNodeStyle";
+import { withWorkspaceBundle } from "../utils/workspaceBundle";
 import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
@@ -29,6 +30,60 @@ async function getCurrentUserId(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// ─── Per-workflow marketplace link persistence ──────────────────────────────
+// After a publish/update we write the assigned slug + version back onto the
+// local workflow file. Without this the model never learns it's already on the
+// marketplace, so the next publish creates a brand-new listing instead of a new
+// version of the same one. This is the core of workflow version control.
+async function persistMarketplaceLink(
+  model: any,
+  slug: string | undefined,
+  version: string | undefined,
+): Promise<void> {
+  try {
+    if (!model?.id || !slug) return;
+    const updated = { ...model, marketplaceSlug: slug };
+    if (version) (updated as any).marketplaceVersion = version;
+    await (window as any).desktopAPI?.workflowsSave?.(model.id, JSON.stringify(updated, null, 2));
+    // Keep the in-memory object in sync so re-opening the modal sees the link.
+    model.marketplaceSlug = slug;
+    if (version) model.marketplaceVersion = version;
+  } catch (e) {
+    console.warn('[marketplace] failed to persist marketplace link', e);
+  }
+}
+
+// ─── Remembered creator profile ─────────────────────────────────────────────
+// The publisher's handle/name is remembered once across all publishes (it's the
+// same creator), but stays editable per-workflow. Stored locally so it's
+// pre-filled on the very first publish of every new workflow.
+const CREATOR_PROFILE_KEY = 'stuard_marketplace_creator_profile';
+
+function loadSavedCreatorProfile(): Partial<MarketplaceCreatorProfile> {
+  try {
+    const raw = localStorage.getItem(CREATOR_PROFILE_KEY);
+    if (raw) return JSON.parse(raw) as Partial<MarketplaceCreatorProfile>;
+  } catch { /* ignore */ }
+  return {};
+}
+
+function saveCreatorProfile(profile: Partial<MarketplaceCreatorProfile>): void {
+  try {
+    // Only persist the identity fields worth remembering across workflows.
+    const slim: Partial<MarketplaceCreatorProfile> = {
+      display_name: profile.display_name,
+      handle: profile.handle,
+      bio: profile.bio,
+      website_url: profile.website_url,
+      avatar_url: profile.avatar_url,
+      hero_image_url: profile.hero_image_url,
+    };
+    if (slim.handle || slim.display_name) {
+      localStorage.setItem(CREATOR_PROFILE_KEY, JSON.stringify(slim));
+    }
+  } catch { /* ignore */ }
 }
 
 async function uploadMarketplaceAsset(file: File, kind: 'thumbnail' | 'cover' | 'media'): Promise<string> {
@@ -603,14 +658,16 @@ export function PublishModal({
   const [thumbnailUrl, setThumbnailUrl] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>([]);
-  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>({
+  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>(() => ({
     display_name: "",
     handle: "",
     bio: "",
     website_url: "",
     avatar_url: "",
     hero_image_url: "",
-  });
+    // Remember the creator across workflows (editable per-workflow below).
+    ...loadSavedCreatorProfile(),
+  }));
   const [uploadingAsset, setUploadingAsset] = useState<'thumbnail' | 'cover' | 'media' | null>(null);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [fetchingCats, setFetchingCats] = useState(true);
@@ -818,9 +875,13 @@ export function PublishModal({
       // (so installers/security analyzer can read spec.nodes directly). The
       // `kind: 'function'` marker lets consumers tell them apart from
       // event-driven workflows.
-      const spec = publishAs === 'function'
+      const baseSpec = publishAs === 'function'
         ? { ...model, kind: 'function', functionNode }
         : model;
+      // Make the published workflow self-contained: bundle its workspace
+      // dependencies (imported sub-workflows, functions, scripts, config) so
+      // downloaders don't have to wire anything up by hand.
+      const spec = await withWorkspaceBundle(model.id, baseSpec);
 
       const res = await api.publish({
         name,
@@ -840,6 +901,11 @@ export function PublishModal({
       if (res.ok) {
         setPublishPhase('done');
         setSuccess(true);
+        // Link the local workflow to its new marketplace listing so the next
+        // publish updates THIS listing (a new version) instead of creating a
+        // duplicate. Also remember the creator for future publishes.
+        await persistMarketplaceLink(model, res.workflow?.slug, res.workflow?.version);
+        saveCreatorProfile(creatorProfile);
         try { (window as any).desktopAPI?.notify?.('Published!', `${name} is now live on the marketplace.`); } catch { }
         onSuccess();
         setTimeout(() => onClose(), 1200);
@@ -1650,11 +1716,14 @@ export function UpdateWorkflowModal({
 
       const api = getMarketplaceApi(() => token);
 
+      // Re-bundle workspace deps so each published version stays self-contained.
+      const bundledSpec = await withWorkspaceBundle(newSpec?.id, newSpec);
+
       const res = await api.update(workflow.slug, {
         name: name !== workflow.name ? name : undefined,
         description: description !== workflow.description ? description : undefined,
         shortDescription: shortDescription !== (workflow.short_description || "") ? shortDescription : undefined,
-        spec: newSpec,
+        spec: bundledSpec,
         category: category !== workflow.category ? category : undefined,
         tags: JSON.stringify(tags) !== JSON.stringify(workflow.tags) ? tags : undefined,
         thumbnailUrl: thumbnailUrl !== (workflow.thumbnail_url || "") ? thumbnailUrl : undefined,
@@ -1668,6 +1737,10 @@ export function UpdateWorkflowModal({
       if (res.ok) {
         setUpdatePhase('done');
         setSuccess(true);
+        // Keep the local workflow pinned to this listing + its new version so
+        // the version history stays accurate and the next edit updates in place.
+        await persistMarketplaceLink(newSpec, workflow.slug, res.workflow?.version);
+        saveCreatorProfile(creatorProfile);
         try { (window as any).desktopAPI?.notify?.('Updated!', `${name} v${res.workflow?.version} is now live.`); } catch { }
         onSuccess();
         setTimeout(() => onClose(), 1200);

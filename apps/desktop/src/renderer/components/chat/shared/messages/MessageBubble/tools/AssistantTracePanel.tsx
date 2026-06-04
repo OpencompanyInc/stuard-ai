@@ -16,6 +16,7 @@ import type { ToolCall, StreamChunk } from '../../../../../../hooks/useAgent';
 import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '../constants';
 import {
   assignDelegationChildrenToTasks,
+  buildDelegationStep,
   buildDelegationTaskStep,
   buildExecutionGroupFallbackChildren,
   buildExecutionGroupStep,
@@ -288,7 +289,7 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
                 taskAssignments.forEach((assignment, taskIndex) => {
                   items.push({
                     type: 'delegation',
-                    step: buildDelegationTaskStep(step, tasks[taskIndex], taskIndex, assignment.children),
+                    step: buildDelegationTaskStep(step, tasks[taskIndex], taskIndex, assignment.children, isStreaming),
                     idx: i,
                     children: assignment.children,
                     lastChildIdx: assignment.lastChildIdx >= 0 ? assignment.lastChildIdx : i,
@@ -298,7 +299,7 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
                 const children = childEntries.map(({ step: child }) => child);
                 items.push({
                   type: 'delegation',
-                  step,
+                  step: buildDelegationStep(step, children, isStreaming),
                   idx: i,
                   children,
                   lastChildIdx,

@@ -4,6 +4,7 @@ import { FolderKanban, GripVertical, ListTodo, Maximize2, Minimize2, Terminal, X
 import { XTerminalPanel } from '../../../XTerminalPanel';
 import { SidebarTodoPanel } from './SidebarTodoPanel';
 import { SidebarProjectsPanel } from './SidebarProjectsPanel';
+import { useAgentTodoActivity } from './agentTodoStore';
 
 type SidebarTabId = 'terminal' | 'todo' | 'projects';
 
@@ -34,23 +35,9 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
   isExpanded = false,
   onToggleExpand,
 }) => {
-  const [hasTodoActivity, setHasTodoActivity] = useState(false);
+  const hasTodoActivity = useAgentTodoActivity();
   const [hasTerminalActivity, setHasTerminalActivity] = useState(false);
   const [hoveredTab, setHoveredTab] = useState<SidebarTabId | null>(null);
-
-  useEffect(() => {
-    let resetTimer: ReturnType<typeof setTimeout> | null = null;
-    const handler = () => {
-      setHasTodoActivity(true);
-      if (resetTimer) clearTimeout(resetTimer);
-      resetTimer = setTimeout(() => setHasTodoActivity(false), 15000);
-    };
-    window.addEventListener('agent-todo-update', handler);
-    return () => {
-      if (resetTimer) clearTimeout(resetTimer);
-      window.removeEventListener('agent-todo-update', handler);
-    };
-  }, []);
 
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;

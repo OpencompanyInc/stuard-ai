@@ -1,6 +1,7 @@
 import { isRedundantStreamingUpdate, mergeStreamingText } from '../../../../../../utils/streamMerge';
 import type { ToolCall, StreamChunk } from '../../../../../../hooks/useAgent';
 import type { AssistantTraceStepData, TraceStatus } from '../types';
+import { isDelegationToolCall } from './delegation';
 import { truncatePreviewText } from './payload';
 
 export function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
@@ -70,10 +71,18 @@ export function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): Ass
 }
 
 export function mapTraceStatus(tool: ToolCall, isStreaming?: boolean): TraceStatus {
-  if (tool.status === 'completed') return 'complete';
   if (tool.status === 'error') return 'error';
   if (tool.status === 'running') return 'active';
-  if (tool.status === 'called') return 'pending';
+  if (tool.status === 'called') {
+    if (isDelegationToolCall(tool)) return 'active';
+    return 'pending';
+  }
+  if (tool.status === 'completed') {
+    // Delegation tools return as soon as the subagent is spawned; while the
+    // assistant turn is still streaming, keep the rectangle in the active state.
+    if (isStreaming && isDelegationToolCall(tool)) return 'active';
+    return 'complete';
+  }
   return isStreaming ? 'active' : 'pending';
 }
 

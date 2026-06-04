@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DesignerModel } from "../types";
 import type { AlignmentGuide } from "../utils/alignment";
 import { calculateSnapPosition, snapToGrid } from "../utils/alignment";
+import { createPaletteNode } from "../utils/paletteNode";
 import type { WorkflowContextMenu } from "../layout/types";
 
 interface UseWorkflowCanvasInteractionsProps {
@@ -108,76 +109,9 @@ export function useWorkflowCanvasInteractions({
       const rawY = (e.clientY - (rect?.top || 0) + (canvasRef.current?.scrollTop || 0)) / zoom;
       const x = snapToGrid(Math.max(0, rawX));
       const y = snapToGrid(Math.max(0, rawY));
-      const safeKind = String(d.k || "step").replace(/\./g, "_");
-      const id = `${safeKind}_${Date.now().toString(36)}`;
 
-      // Trigger drop → straight onto the triggers track.
-      if (d.k === "trigger") {
-        updateModel({
-          ...model,
-          triggers: [...model.triggers, { id, type: d.t, label: d.label, args: d.args || {}, position: { x, y } }],
-        });
-        return;
-      }
-
-      // Dropping an installed top-level function → materialize it as an
-      // internal sub-workflow inside this workspace, then wire a
-      // call_workspace_function node. This makes the dragged-in function part
-      // of the project rather than a fragile reference to a separate workflow.
-      if (typeof d.sourceWorkflowId === 'string' && d.sourceWorkflowId && d.sourceWorkflowId !== model.id) {
-        const importApi = (window as any).desktopAPI?.workflowsImportAsWorkspaceFunction;
-        if (typeof importApi === 'function') {
-          (async () => {
-            try {
-              const res = await importApi(model.id, d.sourceWorkflowId);
-              if (!res?.ok || !res.path) {
-                console.warn('[canvas] importAsWorkspaceFunction failed:', res?.error || 'unknown');
-                return;
-              }
-              const inputParams = Array.isArray(res.inputParams) ? res.inputParams : [];
-              const inputs = Object.fromEntries(
-                inputParams
-                  .filter((p: any) => p?.name)
-                  .map((p: any) => [String(p.name), p?.defaultValue ?? p?.default ?? ''])
-              );
-              const designed = res.functionNode || null;
-              const designedLabel = designed && typeof designed.label === 'string' && designed.label.trim()
-                ? designed.label.trim()
-                : (res.name || d.label);
-              const newNode: any = {
-                id,
-                type: 'local.tool',
-                tool: 'call_workspace_function',
-                label: designedLabel,
-                args: { path: res.path, inputs },
-                position: { x, y },
-              };
-              const iconName = (designed && typeof designed.icon === 'string' ? designed.icon : d.iconName) || undefined;
-              const colorKey = (designed && typeof designed.color === 'string' ? designed.color : d.colorKey) || undefined;
-              if (iconName) newNode.iconName = iconName;
-              if (colorKey) newNode.colorKey = colorKey;
-              updateModel({
-                ...model,
-                nodes: [...model.nodes, newNode],
-              });
-            } catch (err) {
-              console.warn('[canvas] importAsWorkspaceFunction threw:', err);
-            }
-          })();
-          return;
-        }
-        // Fall through to the regular drop path if the IPC isn't wired.
-      }
-
-      const newNode: any = { id, type: d.k, tool: d.t, label: d.label, args: d.args || {}, position: { x, y } };
-      // Carry the publisher's chosen design (set when dragging an installed
-      // marketplace function) so the canvas node renders with that icon/color.
-      if (typeof d.iconName === 'string' && d.iconName) newNode.iconName = d.iconName;
-      if (typeof d.colorKey === 'string' && d.colorKey) newNode.colorKey = d.colorKey;
-      updateModel({
-        ...model,
-        nodes: [...model.nodes, newNode],
-      });
+      // Shared with click-to-add (toolbox drag is unreliable on trackpads).
+      createPaletteNode(model, updateModel, d, x, y);
     },
     [canvasRef, model, updateModel, zoom]
   );

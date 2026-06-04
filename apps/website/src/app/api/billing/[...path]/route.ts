@@ -91,6 +91,22 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
     try {
       if (path.length === 1) {
+        // Prefer the canonical cloud-ai summary so the website matches the desktop
+        // exactly (both apply the same plan-limit fallback). Fall back to the local
+        // Supabase computation below if cloud-ai is unreachable.
+        try {
+          const upstream = await fetch(`${getCloudApiBase()}/v1/credits${req.nextUrl.search}`, {
+            headers: { Authorization: authHeader || '', Accept: 'application/json' },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(8000),
+          });
+          if (upstream.ok) {
+            const j = await upstream.json().catch(() => null);
+            if (j && j.ok) return NextResponse.json(j);
+          }
+        } catch {
+          // fall through to the local Supabase summary
+        }
         const summary = await getCreditSummary(user.id);
         return NextResponse.json({ ok: true, ...summary });
       }

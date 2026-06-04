@@ -460,7 +460,29 @@ export async function checkBrowserUseForUpdate(): Promise<BrowserUseUpdateInfo> 
   const remoteSize = remoteSizeRaw ? Number(remoteSizeRaw) : null;
 
   if (!meta) {
-    return { ok: true, updateAvailable: true, reason: 'no-local-meta', remoteEtag, remoteLastModified, remoteSize, url };
+    // No install metadata — e.g. a bundled binary (copied by the installer, never
+    // downloaded, so it has no install-meta.json). Don't blindly claim an update
+    // (that nagged users on the latest version forever). Compare the local file's
+    // actual size to the remote artifact instead; only flag an update when we can
+    // compare and the sizes genuinely differ.
+    let localSize: number | null = null;
+    try {
+      const candidates = [
+        getIntegrationsBinaryPath(),
+        path.join(process.resourcesPath, 'agent', process.platform === 'win32' ? 'stuard-browser.exe' : 'stuard-browser'),
+      ];
+      for (const c of candidates) {
+        if (c && fs.existsSync(c)) { localSize = fs.statSync(c).size; break; }
+      }
+    } catch {}
+    const canCompare = remoteSize != null && localSize != null;
+    const updateAvailable = canCompare ? remoteSize !== localSize : false;
+    return {
+      ok: true,
+      updateAvailable,
+      reason: updateAvailable ? 'size-mismatch' : 'up-to-date',
+      remoteEtag, remoteLastModified, remoteSize, url,
+    };
   }
 
   if (remoteEtag && meta.etag && remoteEtag !== meta.etag) {

@@ -27,7 +27,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
   const tool = step.tool!;
   const status = step.status;
   const tasks = useMemo(() => extractDelegationTasks(tool), [tool]);
-  const isRunning = status === 'active';
+  const isRunning = status === 'active' || status === 'pending';
   const isError = status === 'error';
   const isComplete = status === 'complete';
 
@@ -98,15 +98,15 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
       : `Done · ${toolChildCount} action${toolChildCount === 1 ? '' : 's'}`;
 
   const borderColor = isError
-    ? 'color-mix(in srgb, var(--destructive) 35%, transparent)'
+    ? 'color-mix(in srgb, var(--destructive) 40%, transparent)'
     : isRunning
-      ? 'color-mix(in srgb, var(--primary) 35%, transparent)'
+      ? 'color-mix(in srgb, var(--primary) 55%, transparent)'
       : 'color-mix(in srgb, var(--foreground-muted) 18%, transparent)';
 
   return (
     <div className={clsx('w-full', isLast ? 'mb-0' : 'mb-4')}>
       <div
-        className="rounded-xl border overflow-hidden"
+        className="rounded-xl border overflow-hidden transition-colors duration-150"
         style={{
           backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
           borderColor,

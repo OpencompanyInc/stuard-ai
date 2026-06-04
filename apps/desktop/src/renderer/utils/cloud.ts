@@ -13,6 +13,44 @@ export function getCloudAiHttp(): string {
   }
 }
 
+/**
+ * Resolve the public website base for the environment this build targets.
+ *
+ * Derived from the cloud-ai API base so that sign-in and every integration
+ * redirect always share one environment and can never diverge:
+ *   prod build (api.stuard.ai)        → https://stuard.ai
+ *   beta build (beta-api.stuard.ai)   → https://beta.stuard.ai
+ *   staging   (staging-api.stuard.ai) → https://staging.stuard.ai
+ *   dev       (127.0.0.1:8082)        → http://localhost:3000
+ */
+export function getWebsiteBase(): string {
+  // Explicit build/embed override wins.
+  try {
+    const envUrl =
+      (import.meta as any).env?.VITE_WEBSITE_URL ||
+      (window as any).__WEBSITE_URL__;
+    if (typeof envUrl === 'string' && envUrl.trim().startsWith('http')) {
+      return envUrl.trim().replace(/\/+$/, '');
+    }
+  } catch { /* noop */ }
+
+  try {
+    const u = new URL(getCloudAiHttp());
+    const host = u.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3000';
+    // api.stuard.ai → stuard.ai ; beta-api.stuard.ai → beta.stuard.ai
+    const webHost = host.replace(/^api\./, '').replace(/-api\./, '.');
+    return `${u.protocol}//${webHost}`;
+  } catch {
+    return 'https://stuard.ai';
+  }
+}
+
+/** Public website auth page that brokers Supabase sign-in for the desktop app. */
+export function getAuthPageUrl(): string {
+  return `${getWebsiteBase()}/auth`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED SPACES API
 // ═══════════════════════════════════════════════════════════════════════════════

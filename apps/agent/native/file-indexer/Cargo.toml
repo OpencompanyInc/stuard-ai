@@ -2,6 +2,12 @@
 name = "stuard-file-indexer"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+# Windows-only: embeds the Stuard icon + "Stuard AI" version metadata into the
+# .exe so it shows up branded in Task Manager / file properties. No-op elsewhere.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

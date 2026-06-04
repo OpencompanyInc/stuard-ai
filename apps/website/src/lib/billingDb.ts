@@ -83,6 +83,38 @@ export async function getAuthedUser(authHeader: string | null): Promise<{ id: st
   return { id: data.user.id, email: data.user.email };
 }
 
+function envNumber(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (v == null || v === '') return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function creditsPerUsd(): number {
+  return envNumber('CREDITS_PER_USD', 33);
+}
+
+// Mirrors apps/cloud-ai/src/pricing.ts `monthlyCreditLimitForPlan` for the plans
+// the website needs. Returns -1 for unlimited (BYOK). Used as the included-credit
+// fallback when a user has no subscription_cycle grant (e.g. fresh free accounts),
+// so the website shows the plan's monthly allotment instead of collapsing to 0.
+const PLAN_BUDGET_USD: Record<string, number> = {
+  free_trial: 0.45,
+  starter: 6.5,
+  pro: 31.5,
+  power: 75,
+};
+export function monthlyCreditLimitForPlan(plan: string): number {
+  const key = String(plan || '').trim().toLowerCase();
+  const direct = envNumber(`PLAN_${key.toUpperCase()}_MONTHLY_CREDITS`, -1);
+  if (direct >= 0) return direct;
+  if (key === 'byok') return -1;
+  const budget = PLAN_BUDGET_USD[key];
+  if (budget != null) return Math.round(budget * creditsPerUsd());
+  // free / unknown → 30 credits, just under $1 (≈33 credits = $1)
+  return 30;
+}
+
 export type CreditSummary = {
   plan: string;
   limit: number;
@@ -163,17 +195,30 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     }
   }
 
-  const totalLimit = Math.max(0, includedCredits + addonCredits);
-  const remaining = Math.max(0, includedRemaining + addonRemaining);
+  // Apply the plan-limit fallback (mirrors cloud-ai getCreditSummary): when there
+  // is no subscription_cycle grant, fall back to the plan's monthly allotment so
+  // free accounts show e.g. "0 / 50" instead of "0 / 0".
+  const limit = monthlyCreditLimitForPlan(plan);
+  const unlimited = limit < 0;
+  const fallbackIncludedCredits = unlimited ? 0 : Math.max(0, limit);
+  const fallbackIncludedRemaining = unlimited ? 0 : Math.max(0, limit - used);
+  const effectiveIncludedCredits = includedCredits > 0 ? includedCredits : fallbackIncludedCredits;
+  const grantBasedRemaining = (includedCredits > 0 || includedRemaining > 0)
+    ? Math.max(0, includedRemaining)
+    : fallbackIncludedRemaining;
+  const usageBasedRemaining = Math.max(0, effectiveIncludedCredits - used);
+  const effectiveIncludedRemaining = Math.min(grantBasedRemaining, usageBasedRemaining);
+  const remaining = unlimited ? -1 : Math.max(0, effectiveIncludedRemaining + addonRemaining);
+  const totalLimit = unlimited ? -1 : Math.max(0, effectiveIncludedCredits + addonCredits);
 
   return {
     plan,
     limit: totalLimit,
     used,
     remaining,
-    unlimited: false,
-    includedCredits,
-    includedRemaining,
+    unlimited,
+    includedCredits: effectiveIncludedCredits,
+    includedRemaining: effectiveIncludedRemaining,
     addonCredits,
     addonRemaining,
     currentPeriodStart: currentPeriodStart || billingStart.toISOString(),

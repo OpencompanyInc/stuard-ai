@@ -441,11 +441,34 @@ fn open_db(path: &str) -> rusqlite::Result<Connection> {
     // Speed up repeated small queries (search, stats) by hinting to SQLite
     // that pages can live in memory. This matters a lot on a million-row DB.
     conn.pragma_update(None, "temp_store", "MEMORY")?;
-    // ~256MB per connection. The user's home-dir index is 1.3GB+ so 64MB only
-    // covered ~5% of the DB; common terms like "taxes" hit thousands of rows
-    // and re-paged repeatedly. 256MB × 4 daemon workers = 1GB cache, enough
-    // to keep the FTS posting lists hot for typical workloads.
-    conn.pragma_update(None, "cache_size", &-256_000i64)?;
+
+    // Memory strategy: fast reads without a huge private footprint.
+    //
+    // The old approach was a 256MB *private* page cache per connection — and the
+    // daemon runs 4 worker connections, so up to ~1GB of private RAM that the OS
+    // can never reclaim while the process lives. That's what made the indexer sit
+    // at ~350-420MB resident.
+    //
+    // Instead: keep a SMALL private cache and lean on a LARGE memory-map. With
+    // mmap, SQLite reads pages straight from the file mapping, which is served by
+    // the SHARED OS page cache — so hot FTS posting lists stay at memory speed,
+    // the mapping is shared across all 4 workers (not duplicated), and the OS can
+    // reclaim it under pressure. Net: same search latency, a fraction of the RSS.
+    let cache_mb: i64 = std::env::var("STUARD_INDEXER_CACHE_MB")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(16)
+        .clamp(2, 512);
+    // Negative cache_size is in KiB of memory.
+    conn.pragma_update(None, "cache_size", &-(cache_mb * 1024))?;
+
+    let mmap_mb: i64 = std::env::var("STUARD_INDEXER_MMAP_MB")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(1024)
+        .clamp(0, 8192);
+    // mmap_size is in bytes; SQLite caps the actual mapping at the DB size.
+    conn.pragma_update(None, "mmap_size", &(mmap_mb * 1024 * 1024))?;
     // Don't block forever if another connection (e.g. a concurrent scan)
     // holds a lock; surface as a clean error after 2s.
     conn.busy_timeout(std::time::Duration::from_millis(2000))?;
@@ -1816,7 +1839,20 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
 
 /// Minimum cosine similarity for vector-only semantic hits. Matches below this
 /// are dropped so hybrid/semantic search does not surface unrelated files.
-const SEMANTIC_SIMILARITY_MIN: f64 = 0.4;
+///
+/// Default 0.3, NOT 0.4: cross-modal similarity (a TEXT query against an IMAGE
+/// embedding) runs systematically lower than text→text, so genuinely-correct
+/// image matches land around 0.30–0.42 (e.g. a white-shirt photo scored 0.34 for
+/// the query "white shirt"). A 0.4 floor silently dropped those correct hits.
+/// The clearly-irrelevant floor sits ~0.24, so 0.3 keeps good separation.
+/// Override via STUARD_INDEXER_SEMANTIC_MIN to tune without a rebuild.
+fn semantic_similarity_min() -> f64 {
+    std::env::var("STUARD_INDEXER_SEMANTIC_MIN")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| (0.0..=1.0).contains(v))
+        .unwrap_or(0.3)
+}
 
 /// Brute-force vector search over the embedded subset. Cheap in practice
 /// because embedding is opt-in + credit-capped, so only a bounded number of
@@ -1853,9 +1889,10 @@ fn vector_collect(
             build_file_result(row, cos, "vector")
         },
     )?;
+    let min_score = semantic_similarity_min();
     let mut out: Vec<FileResult> = Vec::new();
     for r in rows.flatten() {
-        if r.score >= SEMANTIC_SIMILARITY_MIN {
+        if r.score >= min_score {
             out.push(r);
         }
     }

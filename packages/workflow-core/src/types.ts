@@ -6,6 +6,8 @@ export interface WorkflowItem {
   isRunning?: boolean;
   version?: string;
   marketplaceSlug?: string;
+  /** Last published marketplace version for this workflow (drives version control). */
+  marketplaceVersion?: string;
   triggers?: string[];
   /** When true, this workflow is locked - code hidden, AI cannot modify, edits disabled */
   locked?: boolean;
@@ -165,6 +167,9 @@ export interface DesignerModel {
   locked?: boolean;
   /** Slug of the marketplace workflow this was imported from (for tracking locked status) */
   marketplaceSlug?: string;
+  /** Last published marketplace version, written back on publish/update so the
+   *  next publish updates this listing in place instead of creating a duplicate. */
+  marketplaceVersion?: string;
   /** Output schema for workflow return value (for workflow-as-function use) */
   outputSchema?: WorkflowOutputField[];
   /** 'function' = published as a reusable callable building block. Undefined or

@@ -212,9 +212,31 @@ export const NotificationApp = () => {
 const NotificationOverlayHandler = () => {
     const { notifications } = useNotification();
     const lastIgnoreRef = useRef<boolean | null>(null);
+    const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Filter out ghost notifications (empty title + very short duration used for dismissal)
     const visibleCount = notifications.filter(n => !!(n.title || n.message || n.structuredContent)).length;
+
+    // When there are no visible toasts (sticky duration:0 prompts keep this > 0),
+    // ask main to close the overlay window after a short grace period so its
+    // renderer process is freed. It's re-created on the next notification.
+    useEffect(() => {
+        if (idleTimerRef.current) {
+            clearTimeout(idleTimerRef.current);
+            idleTimerRef.current = null;
+        }
+        if (visibleCount === 0) {
+            idleTimerRef.current = setTimeout(() => {
+                (window as any).desktopAPI?.notificationsIdle?.();
+            }, 20000);
+        }
+        return () => {
+            if (idleTimerRef.current) {
+                clearTimeout(idleTimerRef.current);
+                idleTimerRef.current = null;
+            }
+        };
+    }, [visibleCount]);
 
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {

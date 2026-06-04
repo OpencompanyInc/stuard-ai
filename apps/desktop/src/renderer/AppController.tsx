@@ -7,6 +7,7 @@ import HotkeysHelp from './components/HotkeysHelp';
 import { PermissionDialog } from './components/PermissionDialog';
 import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
 import InputArea from './components/chat/shared/input/InputArea';
+import { clearTodoSnapshot } from './components/chat/shared/sidebar/agentTodoStore';
 import type { ContextItem } from './components/FileNavigator';
 import { usePreferences } from './hooks/usePreferences';
 import { useModelRegistry } from './hooks/useModelRegistry';
@@ -950,6 +951,8 @@ export function useAppController() {
     newChat();
     setChatMenuOpen(false);
     setConversationTitle(null);
+    // Drop the previous chat's agent plan so the To-Do panel starts clean.
+    clearTodoSnapshot();
   }, [newChat]);
 
   const handleSelectConversation = useCallback((id: string) => {
@@ -959,6 +962,9 @@ export function useAppController() {
     } catch { }
     loadConversation(id);
     setChatMenuOpen(false);
+    // The agent plan is session-scoped and ephemeral — don't carry it into a
+    // different conversation.
+    clearTodoSnapshot();
   }, [convList, loadConversation]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
@@ -1556,8 +1562,12 @@ export function useAppController() {
     if (overlayMode !== 'window' && overlayMode !== 'sidebar') return;
 
     const openSidebarToTab = async (tab: 'terminal' | 'todo') => {
-      setActiveSidebarTab(tab);
+      // Only claim the tab when we actually open the panel. Once it's open the
+      // SidebarTabsPanel owns tab switching (once per burst, respecting manual
+      // choice) — re-setting it on every streamed update would yank the user
+      // back to this tab repeatedly.
       if (internalSidebarOpen) return;
+      setActiveSidebarTab(tab);
       try {
         const result = await (window.desktopAPI as any).toggleInternalSidebar?.(true, internalSidebarWidthRef.current);
         if (result) {
@@ -1614,7 +1624,9 @@ export function useAppController() {
   // Determine if AI is currently streaming (for stop button)
   const isStreaming = useMemo(() => {
     const p = (ai?.phase || '').toString().toLowerCase();
-    return p === 'routing' || p === 'responding' || p === 'tool';
+    // Include delegated-subagent phases so the delegation rectangle stays
+    // in the active (red) state after the orchestrator turn ends.
+    return p === 'routing' || p === 'responding' || p === 'tool' || p.includes('subagent');
   }, [ai]);
 
   // Project Mode — resolve the project stamped on the current conversation

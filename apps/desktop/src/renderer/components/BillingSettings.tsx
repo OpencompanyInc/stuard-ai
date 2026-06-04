@@ -524,25 +524,54 @@ export const BillingSettings: React.FC = () => {
     const grantRemaining = includedRemaining + addonRemaining;
     const used = Math.max(0, totalCredits - grantRemaining);
 
-    return {
-      user,
-      summary: {
-        plan: String((profile as any)?.plan || "Free"),
-        limit: Math.ceil(totalCredits),
-        used: Math.ceil(used),
-        remaining: Math.ceil(grantRemaining),
-        unlimited: false,
-        includedCredits: Math.ceil(includedCredits),
-        includedRemaining: Math.ceil(includedRemaining),
-        addonCredits: Math.ceil(addonCredits),
-        addonRemaining: Math.ceil(addonRemaining),
-        currentPeriodStart: (profile as any)?.current_period_start || periodStart.toISOString(),
-        currentPeriodEnd: (profile as any)?.current_period_end || null,
-        billingCustomerId: (profile as any)?.billing_customer_id || null,
-        billingSubscriptionId: (profile as any)?.billing_subscription_id || null,
-        billingSubscriptionStatus: (profile as any)?.billing_subscription_status || null,
-      } as CreditSummary,
-    };
+    const summary = {
+      plan: String((profile as any)?.plan || "Free"),
+      limit: Math.ceil(totalCredits),
+      used: Math.ceil(used),
+      remaining: Math.ceil(grantRemaining),
+      unlimited: false,
+      includedCredits: Math.ceil(includedCredits),
+      includedRemaining: Math.ceil(includedRemaining),
+      addonCredits: Math.ceil(addonCredits),
+      addonRemaining: Math.ceil(addonRemaining),
+      currentPeriodStart: (profile as any)?.current_period_start || periodStart.toISOString(),
+      currentPeriodEnd: (profile as any)?.current_period_end || null,
+      billingCustomerId: (profile as any)?.billing_customer_id || null,
+      billingSubscriptionId: (profile as any)?.billing_subscription_id || null,
+      billingSubscriptionStatus: (profile as any)?.billing_subscription_status || null,
+    } as CreditSummary;
+
+    // Prefer the canonical server summary (GET /v1/credits) for the credit numbers
+    // so Billing matches the dashboard Overview exactly. The server applies the
+    // free-plan monthly-limit fallback when there's no grant row (the direct
+    // Supabase math above collapses grant-less free accounts to 0). Billing IDs
+    // stay from the profile row (the endpoint doesn't return them).
+    try {
+      const apiBase = getApiEndpoint().replace(/\/+$/, "");
+      const creditsResp = session?.access_token
+        ? await fetch(`${apiBase}/v1/credits`, {
+            headers: { Authorization: `Bearer ${session.access_token}`, Accept: "application/json" },
+            signal: AbortSignal.timeout(15_000),
+          })
+        : null;
+      const j: any = creditsResp?.ok ? await creditsResp.json().catch(() => null) : null;
+      if (j && j.ok) {
+        const unlimited = !!j.unlimited;
+        summary.plan = String(j.plan || summary.plan);
+        summary.unlimited = unlimited;
+        summary.limit = unlimited ? 0 : Math.max(0, Math.ceil(Number(j.limit) || 0));
+        summary.used = Math.max(0, Math.ceil(Number(j.used) || 0));
+        summary.remaining = unlimited ? 0 : Math.max(0, Math.ceil(Number(j.remaining) || 0));
+        summary.includedCredits = Math.max(0, Math.ceil(Number(j.includedCredits) || 0));
+        summary.includedRemaining = Math.max(0, Math.ceil(Number(j.includedRemaining) || 0));
+        summary.addonCredits = Math.max(0, Math.ceil(Number(j.addonCredits) || 0));
+        summary.addonRemaining = Math.max(0, Math.ceil(Number(j.addonRemaining) || 0));
+        if (j.currentPeriodStart) summary.currentPeriodStart = String(j.currentPeriodStart);
+        if (j.currentPeriodEnd) summary.currentPeriodEnd = String(j.currentPeriodEnd);
+      }
+    } catch { /* offline — keep the local Supabase-derived summary */ }
+
+    return { user, summary };
   }, []);
 
   const loadBillingPrefs = useCallback(async (uid: string) => {

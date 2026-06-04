@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "path";
 import { Readable } from "node:stream";
 import { initEnv } from "./env";
-import { createWindow, registerGlobalShortcuts, createTray, showWindow, openNotificationWindow } from "./windows/index";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
 import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService, startProactiveScheduler, stopProactiveScheduler, startBotTriggerDispatcher, stopBotTriggerDispatcher } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
-import { initCustomUiIpc, shutdownAllBrowserUseServers, prewarmBrowserUseServer } from "./tools/index";
+import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
 import { shutdownWakewordListener } from "./tools/handlers/wakeword";
 import logger from "./utils/logger";
 import { migrateLegacyCaptureFiles, syncAgentMediaPathConfig } from "./services/media-library";
@@ -233,58 +233,11 @@ app.whenReady().then(async () => {
   logger.info("Log file:", logger.getLogPath());
   logger.info("App ready, initializing...");
 
-  try {
-    logger.info("Initializing updates...");
-    initUpdates();
-    logger.info("Updates initialized");
-  } catch (e) {
-    logger.error("Failed to init updates:", e);
-  }
-
-  try {
-    logger.info("Starting agent...");
-    syncAgentMediaPathConfig();
-    void migrateLegacyCaptureFiles().catch((error) => {
-      logger.warn('[media-library] Legacy capture migration failed:', error);
-    });
-    await startAgentIfNeeded();
-    logger.info("Agent start requested");
-  } catch (e) {
-    logger.error("Failed to start agent:", e);
-  }
-
-  try {
-    logger.info("Starting local webhook server...");
-    startLocalWebhookServer();
-    logger.info("Webhook server started");
-  } catch (e) {
-    logger.error("Failed to start webhook server:", e);
-  }
-
-  try {
-    logger.info("Starting browser extension server...");
-    // startBrowserExtensionServer(); // TODO: export missing from services
-    logger.info("Browser extension server started");
-  } catch (e) {
-    logger.error("Failed to start browser extension server:", e);
-  }
-
-  try {
-    logger.info("Pre-warming packaged browser server...");
-    // Fire-and-forget — best-effort warm-up so the first browser_use_*
-    // tool call doesn't pay a 5-10s spawn cost.
-    prewarmBrowserUseServer().catch((e) => logger.warn("Browser pre-warm failed:", e));
-  } catch (e) {
-    logger.warn("Failed to schedule browser pre-warm:", e);
-  }
-
-try {
-    logger.info("Running stuards autostart...");
-    stuards_autostart();
-    logger.info("Stuards autostart done");
-  } catch (e) {
-    logger.error("Failed stuards autostart:", e);
-  }
+  // Updates, the Python agent, browser pre-warm, webhook/cloud servers, the
+  // schedulers, app discovery and file indexing are all started AFTER the window
+  // is up, in a deferred + staggered phase (see the background scheduler below).
+  // Spawning those heavy child processes before first paint is what made the
+  // cursor freeze on launch.
 
   // Allow the renderer to call `navigator.mediaDevices.getDisplayMedia(...)`.
   // Used by voice-mode screen-share: we hand back the primary display so the
@@ -319,7 +272,10 @@ try {
   try {
     logger.info("Creating window...");
     createWindow();
-    openNotificationWindow();
+    // The notification overlay is a full-screen, always-on-top transparent
+    // renderer process. It's now created lazily on the first notification
+    // (see openNotificationWindow callers) instead of being kept resident for
+    // the whole session — that idle renderer was ~50-80MB of RAM for nothing.
     logger.info("Window created");
   } catch (e) {
     logger.error("Failed to create window:", e);
@@ -372,92 +328,57 @@ try {
     logger.error("Failed to initialize custom UI IPC:", e);
   }
 
-  // Note: The window will auto-show after the renderer finishes loading
-  // via the 'did-finish-load' handler in window.ts. This ensures
-  // the transparent overlay is visible (has content painted) when shown.
+  // Note: The window auto-shows after the renderer finishes loading via the
+  // 'did-finish-load' handler in window.ts, so it's visible with content painted.
 
-  // Run workflows autostart AFTER window, shortcuts, and IPC are fully initialized
-  // This ensures globalShortcut is ready for workflow hotkeys
-  try {
-    logger.info("Running workflows autostart...");
-    workflows_autostart();
-    logger.info("Workflows autostart done");
-  } catch (e) {
-    logger.error("Failed workflows autostart:", e);
-  }
+  logger.info("=== UI ready; scheduling background services ===");
 
-  logger.info("=== Initialization complete ===");
+  // ── Deferred, staggered background startup ────────────────────────────────
+  // These spawn heavy child processes (Python agent, packaged browser) and do
+  // disk / registry scans (installed-app discovery, file indexing). We start
+  // them AFTER the window is up and stagger them so no single tick saturates
+  // CPU/disk while the user's first interaction is happening — that contention
+  // is what froze the cursor on launch. Trade-off (explicitly accepted): these
+  // features warm up a few seconds later in exchange for a smooth startup.
+  const startStep = (label: string, fn: () => void | Promise<void>, delayMs: number) => {
+    setTimeout(() => {
+      try {
+        logger.info(`[startup] ${label}...`);
+        void Promise.resolve(fn()).catch((e) => logger.error(`[startup] ${label} failed:`, e));
+      } catch (e) {
+        logger.error(`[startup] ${label} failed:`, e);
+      }
+    }, delayMs);
+  };
 
-  // Start the offline reminder scheduler (works without internet)
-  try {
-    startReminderScheduler();
-    logger.info("Reminder scheduler started");
-  } catch (e) {
-    logger.error("Failed to start reminder scheduler:", e);
-  }
+  startStep("updates", () => { initUpdates(); }, 150);
+  startStep("agent", async () => {
+    syncAgentMediaPathConfig();
+    void migrateLegacyCaptureFiles().catch((e) => logger.warn('[media-library] Legacy capture migration failed:', e));
+    await startAgentIfNeeded();
+  }, 300);
+  startStep("local webhook server", () => { startLocalWebhookServer(); }, 600);
+  startStep("stuards autostart", () => { stuards_autostart(); }, 800);
+  // Workflows autostart needs globalShortcut (registered above) for hotkeys.
+  startStep("workflows autostart", () => { workflows_autostart(); }, 1000);
+  startStep("reminder scheduler", () => { startReminderScheduler(); }, 1200);
+  startStep("sms inbox", () => { startSmsInbox(); }, 1400);
+  // Persistent main WS to cloud-ai (`/ws?client=desktop`): per-user tool/context
+  // bridge for text chat and voice mode.
+  startStep("cloud webhooks WS", () => { startCloudWebhooks(); }, 1700);
+  startStep("voice bridge", () => { startVoiceBridgeService(); }, 1900);
+  startStep("proactive scheduler", () => { startProactiveScheduler(); }, 2200);
+  startStep("bot trigger dispatcher", () => { startBotTriggerDispatcher(); }, 2400);
+  // Heaviest / least time-sensitive last: installed-app scan and the file-index
+  // sweep. Browser pre-warm was removed from startup entirely — it spawned a
+  // ~150MB Chromium server on every launch for anyone who'd ever used browser
+  // tools, just to save first-call latency. The server now starts lazily on the
+  // first browser tool call (ensureReady/setupBrowserUse), reclaiming that RAM
+  // at idle in exchange for a one-time ~5-10s spawn on first use.
+  startStep("app discovery", () => refreshAppCache(), 3500);
+  startStep("file indexing", () => runStartupIndexing(), 8000);
 
-  // Start SMS inbox queue consumer (picks up messages routed to desktop)
-  try {
-    startSmsInbox();
-    logger.info("SMS inbox started");
-  } catch (e) {
-    logger.error("Failed to start SMS inbox:", e);
-  }
-
-  // Open the persistent main WS to cloud-ai (`/ws?client=desktop`). This is
-  // the connection the cloud uses as the per-user tool/context bridge for
-  // both text chat and voice mode. Without it, voice has no way to load
-  // knowledge facts or run local tools.
-  try {
-    startCloudWebhooks();
-    logger.info("Cloud webhooks main WS started");
-  } catch (e) {
-    logger.error("Failed to start cloud webhooks:", e);
-  }
-
-  // Start voice bridge listener (opens per-call WS bridges on demand for
-  // telnyx/discord — browser voice now reuses the main WS above).
-  try {
-    startVoiceBridgeService();
-    logger.info("Voice bridge service started");
-  } catch (e) {
-    logger.error("Failed to start voice bridge service:", e);
-  }
-
-  // Start the proactive (bots) scheduler. The scheduler itself early-returns
-  // for any bot whose config is disabled or in 'manual' interval mode, so
-  // starting it is always safe — it just means scheduled bots will actually
-  // fire on time instead of only running when manually triggered.
-  try {
-    startProactiveScheduler();
-    logger.info("Proactive scheduler started");
-  } catch (e) {
-    logger.error("Failed to start proactive scheduler:", e);
-  }
-
-  // Start the bot trigger dispatcher (cron jobs, future cloud webhook
-  // registrations). Cheap to run; reads bots.json on start and registers
-  // node-cron jobs for any running bot with cron triggers.
-  try {
-    startBotTriggerDispatcher();
-    logger.info("Bot trigger dispatcher started");
-  } catch (e) {
-    logger.error("Failed to start bot trigger dispatcher:", e);
-  }
-
-  // Run file indexing in the background after a short delay
-  // This allows the agent to fully initialize first
-  setTimeout(() => {
-    logger.info("Starting background file indexing...");
-    runStartupIndexing()
-      .then(() => logger.info("Background file indexing complete"))
-      .catch((e) => logger.error("Background file indexing failed:", e));
-  }, 5000); // 5 second delay to let agent fully start
-
-  // Discover installed applications immediately (no agent dependency)
-  refreshAppCache().catch((e) => {
-    logger.warn("Background app discovery failed:", e);
-  });
+  logger.info("=== Background startup scheduled ===");
 });
 
 let shutdownCleanupPromise: Promise<void> | null = null;

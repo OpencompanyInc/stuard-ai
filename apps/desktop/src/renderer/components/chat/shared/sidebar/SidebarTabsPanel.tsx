@@ -4,6 +4,7 @@ import { ArrowLeft, FolderKanban, ListTodo, Maximize2, Terminal, X, type LucideI
 import { XTerminalPanel } from "../../../XTerminalPanel";
 import { SidebarTodoPanel } from "./SidebarTodoPanel";
 import { SidebarProjectsPanel } from "./SidebarProjectsPanel";
+import { useAgentTodoActivity } from "./agentTodoStore";
 
 type SidebarTabId = "terminal" | "todo" | "projects";
 
@@ -43,34 +44,17 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
 
   const [showTabPicker, setShowTabPicker] = useState(false);
 
-  const [hasTodoActivity, setHasTodoActivity] = useState(false);
+  // Todo activity comes from the shared store (single listener + timer);
+  // terminal activity is a local window event not tracked by the store.
+  const hasTodoActivity = useAgentTodoActivity();
   const [hasTerminalActivity, setHasTerminalActivity] = useState(false);
-  const todoAutoSwitchedRef = useRef(false);
-  const terminalAutoSwitchedRef = useRef(false);
 
-  useEffect(() => {
-    let resetTimer: ReturnType<typeof setTimeout> | null = null;
-    const handler = () => {
-      setHasTodoActivity(true);
-      if (resetTimer) clearTimeout(resetTimer);
-      resetTimer = setTimeout(() => setHasTodoActivity(false), 15000);
-    };
-    window.addEventListener('agent-todo-update', handler);
-    return () => {
-      if (resetTimer) clearTimeout(resetTimer);
-      window.removeEventListener('agent-todo-update', handler);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (hasTodoActivity && !todoAutoSwitchedRef.current && activeTab !== "todo") {
-      todoAutoSwitchedRef.current = true;
-      onSwitchTab("todo");
-    }
-    if (!hasTodoActivity) {
-      todoAutoSwitchedRef.current = false;
-    }
-  }, [hasTodoActivity, activeTab, onSwitchTab]);
+  // Auto-switch guards. `autoSwitchedRef` lets at most one feed claim the tab
+  // per idle→active burst; `userPinnedRef` makes a manual choice win outright.
+  // Both reset only once everything goes idle, so we never yank the user away
+  // from a tab they're actively reading.
+  const autoSwitchedRef = useRef(false);
+  const userPinnedRef = useRef(false);
 
   useEffect(() => {
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -87,18 +71,28 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    if (hasTerminalActivity && !terminalAutoSwitchedRef.current && activeTab !== "terminal") {
-      terminalAutoSwitchedRef.current = true;
+    if (!hasTodoActivity && !hasTerminalActivity) {
+      // Idle — let the next burst auto-switch again.
+      autoSwitchedRef.current = false;
+      userPinnedRef.current = false;
+      return;
+    }
+    if (userPinnedRef.current || autoSwitchedRef.current) return;
+
+    // Prefer the agent plan when both feeds light up at once.
+    if (hasTodoActivity && activeTab !== "todo") {
+      autoSwitchedRef.current = true;
+      onSwitchTab("todo");
+    } else if (hasTerminalActivity && activeTab !== "terminal") {
+      autoSwitchedRef.current = true;
       onSwitchTab("terminal");
     }
-    if (!hasTerminalActivity) {
-      terminalAutoSwitchedRef.current = false;
-    }
-  }, [hasTerminalActivity, activeTab, onSwitchTab]);
+  }, [hasTodoActivity, hasTerminalActivity, activeTab, onSwitchTab]);
 
   const currentTab = SIDEBAR_TABS.find((t) => t.id === activeTab);
 
   const handleSelectTab = (id: SidebarTabId) => {
+    userPinnedRef.current = true;
     onSwitchTab(id);
     setShowTabPicker(false);
   };

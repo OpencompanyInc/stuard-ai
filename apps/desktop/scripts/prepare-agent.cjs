@@ -137,18 +137,13 @@ function main() {
   const browserCopied = false;
   console.log(`[prepare-agent] Browser binary: SKIPPED (downloaded on demand from R2)`);
 
-  // 3. MediaPipe service binary (optional — not all builds include it)
-  const mediapipeCopied = copyServiceBinary(distDir, outDir, {
-    winName: "stuard-mediapipe.exe",
-    macName: "stuard-mediapipe-macos",
-    linuxName: "stuard-mediapipe-linux",
-    destName: process.platform === "win32" ? "stuard-mediapipe.exe" : "stuard-mediapipe",
-  });
-  if (mediapipeCopied) {
-    console.log(`[prepare-agent] MediaPipe binary: OK`);
-  } else {
-    console.log(`[prepare-agent] MediaPipe binary: NOT FOUND (optional — will install on demand)`);
-  }
+  // 3. MediaPipe service binary — no longer bundled in the app.
+  // Like browser-use, it's downloaded on demand from R2 into
+  // userData/integrations/mediapipe/ at runtime (see mediapipe-service.ts).
+  // Bundling the ~hundreds-of-MB native binary into every installer is a waste
+  // for a feature most users never touch, so we intentionally skip it here.
+  const mediapipeCopied = false;
+  console.log(`[prepare-agent] MediaPipe binary: SKIPPED (downloaded on demand from R2)`);
 
   // 4. Wakeword listener binary (optional in dev, included in release builds)
   const wakewordCopied = copyServiceBinary(distDir, outDir, {

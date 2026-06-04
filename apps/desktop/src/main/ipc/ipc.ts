@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -368,14 +368,48 @@ export function setupIpc() {
   ipcMain.handle('spaces:close', () => closeSpacesWindow());
   ipcMain.handle('spaces:toggle', () => toggleSpacesWindow());
 
+  // Latest agent to-do plan, cached so a freshly-opened detached sidebar
+  // window can render the current plan immediately instead of waiting for the
+  // next agent update.
+  let lastAgentTodoDetail: any = null;
+  const replayTodoToSidebar = () => {
+    if (!lastAgentTodoDetail) return;
+    const sidebar = getSidebarWindow();
+    if (!sidebar || sidebar.isDestroyed()) return;
+    const send = () => {
+      try { sidebar.webContents.send('sidebar:todoUpdate', lastAgentTodoDetail); } catch { }
+    };
+    if (sidebar.webContents.isLoading()) {
+      sidebar.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+  };
+
   // Sidebar window (new unified sidebar with Spaces, Canvas, Terminal)
-  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => openSidebarWindow(options));
+  ipcMain.handle('sidebar:open', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => {
+    const r = openSidebarWindow(options);
+    replayTodoToSidebar();
+    return r;
+  });
   ipcMain.handle('sidebar:close', () => closeSidebarWindow());
-  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => toggleSidebarWindow(options));
+  ipcMain.handle('sidebar:toggle', (_e, options?: { tab?: 'terminal' | 'todo'; expanded?: boolean }) => {
+    const r = toggleSidebarWindow(options);
+    replayTodoToSidebar();
+    return r;
+  });
   ipcMain.handle('sidebar:navigate', (_e, tab: 'terminal' | 'todo') => {
     const sidebar = getSidebarWindow();
     if (sidebar && !sidebar.isDestroyed()) {
       sidebar.webContents.send('sidebar:navigate', { tab });
+    }
+  });
+  // Relay the agent's live to-do plan into a detached sidebar window (if open).
+  ipcMain.handle('sidebar:broadcastTodo', (_e, detail: any) => {
+    lastAgentTodoDetail = detail;
+    const sidebar = getSidebarWindow();
+    if (sidebar && !sidebar.isDestroyed()) {
+      sidebar.webContents.send('sidebar:todoUpdate', detail);
     }
   });
   ipcMain.handle('sidebar:toggleExpanded', () => {
@@ -738,9 +772,20 @@ export function setupIpc() {
         duration,
       };
 
+      // Open the overlay lazily (it's not created at startup anymore). If the
+      // window is still loading its first frame, wait for it so the toast isn't
+      // dropped — same pattern as electron.ts deliverNotification.
+      openNotificationWindow();
       const notifWin = getNotificationWindow();
       if (notifWin && !notifWin.isDestroyed()) {
-        notifWin.webContents.send('notification:show', config);
+        const send = () => {
+          try { notifWin.webContents.send('notification:show', config); } catch {}
+        };
+        if (notifWin.webContents.isLoadingMainFrame()) {
+          notifWin.webContents.once('did-finish-load', send);
+        } else {
+          send();
+        }
       } else {
         // Fallback to native
         if (Notification && typeof (Notification as any).isSupported === 'function' && Notification.isSupported()) {
@@ -752,6 +797,17 @@ export function setupIpc() {
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e || 'failed') };
     }
+  });
+
+  // The notification overlay renderer reports it has no visible toasts. Close the
+  // window to reclaim its memory; it's re-created lazily on the next notification.
+  ipcMain.on('notifications:idle', () => {
+    try {
+      const w = getNotificationWindow();
+      if (w && !w.isDestroyed()) {
+        w.close(); // the 'closed' handler resets the module-level ref to null
+      }
+    } catch { }
   });
 
   ipcMain.handle("system:dismissNotification", (_e, id: string) => {

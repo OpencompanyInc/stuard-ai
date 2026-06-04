@@ -72,6 +72,7 @@ export function getStepLabelText(label: React.ReactNode): string {
 
 export function deriveDelegationStatus(parentStatus: TraceStatus, childSteps: AssistantTraceStepData[]): TraceStatus {
   if (childSteps.some((child) => child.status === 'error')) return 'error';
+  if (childSteps.some((child) => child.status === 'active' || child.status === 'pending')) return 'active';
 
   const terminalLabel = childSteps
     .map((child) => getStepLabelText(child.label).toLowerCase())
@@ -79,8 +80,38 @@ export function deriveDelegationStatus(parentStatus: TraceStatus, childSteps: As
 
   if (terminalLabel?.includes('error') || terminalLabel?.includes('cancelled')) return 'error';
   if (terminalLabel?.includes('finished')) return 'complete';
-  if (childSteps.some((child) => child.status === 'active' || child.status === 'pending')) return 'active';
+  if (parentStatus === 'pending' || parentStatus === 'active') return 'active';
   return parentStatus;
+}
+
+function finalizeDelegationStatus(
+  parentStep: AssistantTraceStepData,
+  childSteps: AssistantTraceStepData[],
+  isStreaming?: boolean,
+): TraceStatus {
+  const status = deriveDelegationStatus(parentStep.status, childSteps);
+  const tool = parentStep.tool;
+  if (!isStreaming || !tool || !isDelegationToolCall(tool) || status !== 'complete') {
+    return status;
+  }
+  const terminal = childSteps.some((child) => {
+    const label = getStepLabelText(child.label).toLowerCase();
+    return label.includes('subagent finished')
+      || label.includes('subagent hit an error')
+      || label.includes('subagent cancelled');
+  });
+  return terminal ? status : 'active';
+}
+
+export function buildDelegationStep(
+  parentStep: AssistantTraceStepData,
+  childSteps: AssistantTraceStepData[],
+  isStreaming?: boolean,
+): AssistantTraceStepData {
+  return {
+    ...parentStep,
+    status: finalizeDelegationStatus(parentStep, childSteps, isStreaming),
+  };
 }
 
 /** Derive wrapper status from child branch steps (mirrors delegation cards). */
@@ -199,6 +230,7 @@ export function buildDelegationTaskStep(
   task: DelegationTask,
   taskIndex: number,
   childSteps: AssistantTraceStepData[],
+  isStreaming?: boolean,
 ): AssistantTraceStepData {
   const parentTool = parentStep.tool!;
   const { tasks: _tasks, ...restArgs } = (parentTool.args || {}) as Record<string, any>;
@@ -213,11 +245,14 @@ export function buildDelegationTaskStep(
     },
   };
 
-  return {
+  const taskStep: AssistantTraceStepData = {
     ...parentStep,
     id: `${parentStep.id}:task-${taskIndex}`,
-    status: deriveDelegationStatus(parentStep.status, childSteps),
     tool: taskTool,
+  };
+  return {
+    ...taskStep,
+    status: finalizeDelegationStatus(taskStep, childSteps, isStreaming),
   };
 }
 

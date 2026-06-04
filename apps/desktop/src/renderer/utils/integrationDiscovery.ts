@@ -2,14 +2,7 @@
  * Deep links and actions when users can't find an integration or toolbox node.
  */
 
-function getWebsiteBase(): string {
-  const env = (import.meta as any).env?.VITE_WEBSITE_URL;
-  if (typeof env === 'string' && env.trim().startsWith('http')) {
-    return env.trim().replace(/\/$/, '');
-  }
-  const dev = !!(import.meta as any).env?.DEV;
-  return dev ? 'http://localhost:3000' : 'https://stuard.ai';
-}
+import { getWebsiteBase } from './cloud';
 
 /** Support ticket URL prefilled for an integration request. */
 export function getIntegrationRequestUrl(searchQuery?: string): string {
