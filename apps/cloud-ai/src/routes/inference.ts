@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { generateText, generateObject, streamText, embed, embedMany, stepCountIs, tool } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google, buildProviderEmbeddingModel, buildProviderModel, buildProviderModelForUser } from '../utils/models';
+import { userHasUserFundedInference } from '../byok/keys';
 import { z } from 'zod';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { CORS_ALLOWED_ORIGINS, IS_DEVELOPMENT } from '../utils/config';
@@ -66,10 +67,16 @@ async function logInferenceUsage(
   } catch {}
 }
 
-/** Check if user has credits before running inference. Returns error string or null if OK. */
-async function requireCredits(userId: string | null): Promise<string | null> {
+/**
+ * Check if user has credits before running inference. Returns error string or
+ * null if OK. When `modelSource` is a real BYOK key / ChatGPT subscription the
+ * user funds their own inference, so the Stuard credit balance is not required
+ * (verified server-side; the client's claim alone can't bypass the gate).
+ */
+async function requireCredits(userId: string | null, modelSource?: unknown): Promise<string | null> {
   if (!userId) return 'unauthorized';
   try {
+    if (await userHasUserFundedInference(userId, modelSource)) return null;
     const access = await checkAccess(userId);
     if (!access.allowed) return access.reason || 'credit_limit_exceeded';
   } catch {
@@ -2009,17 +2016,19 @@ Filename: ${filename}`;
         writeJson(res, 401, { error: { message: 'unauthorized', type: 'auth_error' } }, corsOrigin);
         return true;
       }
-      const creditErr = await requireCredits(chatUserId);
-      if (creditErr) {
-        writeJson(res, 403, { error: { message: creditErr, type: 'credit_error' } }, corsOrigin);
-        return true;
-      }
-
       const body = await readJsonBody(req);
       const messages = Array.isArray(body?.messages) ? body.messages : [];
       const modelRaw = String(body?.model || 'gemini-3-flash-preview').trim();
       const modelSource = typeof body?.modelSource === 'string' ? String(body.modelSource).trim() : undefined;
       const temperature = typeof body?.temperature === 'number' ? body.temperature : 0.3;
+
+      // Credit gate AFTER parsing modelSource so BYOK / subscription requests
+      // backed by a real user credential bypass the Stuard credit balance.
+      const creditErr = await requireCredits(chatUserId, modelSource);
+      if (creditErr) {
+        writeJson(res, 403, { error: { message: creditErr, type: 'credit_error' } }, corsOrigin);
+        return true;
+      }
 
       if (messages.length === 0) {
         writeJson(res, 400, { error: { message: 'messages is required', type: 'invalid_request_error' } }, corsOrigin);

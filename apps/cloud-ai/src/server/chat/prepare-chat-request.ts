@@ -24,6 +24,7 @@ import {
   getExternalAccount,
   getConversationMessages,
 } from '../../supabase';
+import { userHasUserFundedInference } from '../../byok/keys';
 import { verifyVMToken } from '../../services/vm-tokens';
 import { resolveVMSecret } from '../../services/vm-command';
 import { getSkillsFromContext } from '../../tools/skill-tools';
@@ -160,6 +161,11 @@ export async function prepareChatRequest({
 
   if (authUser) {
     const accessPromise = checkAccess(authUser.userId);
+    // Users paying for their own inference (BYOK key or ChatGPT/Codex
+    // subscription) must not be gated by their Stuard credit balance. Verify the
+    // credential server-side (not the client's modelSource claim) in parallel
+    // with the credit check so it adds no latency to the common path.
+    const userFundedPromise = userHasUserFundedInference(authUser.userId, msg?.modelSource);
     integrationsPromise = loadIntegrations(authUser.userId);
     if (needsHydration) {
       hydrationPromise = getConversationMessages(authUser.userId, hydrationConvId, 100).catch(() => null);
@@ -177,8 +183,11 @@ export async function prepareChatRequest({
     void Promise.resolve(incrementDailyRequestCounter(authUser.userId)).catch(() => {});
 
     // GATE: enforce credit access before any further work or stream open.
-    const access = await accessPromise;
-    if (!access.allowed) {
+    // BYOK / subscription requests backed by a real user credential bypass the
+    // credit balance (their inference isn't Stuard-billed); see
+    // userHasUserFundedInference.
+    const [access, userFunded] = await Promise.all([accessPromise, userFundedPromise]);
+    if (!access.allowed && !userFunded) {
       send(ws, {
         type: 'error',
         message: access.reason || 'access_denied',
