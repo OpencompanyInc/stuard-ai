@@ -1,18 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { AudioLines, Plus, ArrowRight, X } from 'lucide-react';
+import { AudioLines, Plus, ArrowRight, X, LayoutDashboard, Settings, type LucideIcon } from 'lucide-react';
+import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_KBD } from '../chat/shared/input/styles';
+import { HighlightMatch } from '../chat/shared/input/HighlightMatch';
 
 // Post-welcome coaching: the real compact pill performs each core gesture
-// (summon · move · context · expand · dismiss) on a transparent backdrop, so it
-// looks exactly like the real app on the user's desktop. A single coach card —
-// always anchored below the pill so it never covers the input — carries the
-// copy and the Back / Next controls. No atmospheric glow: this is the normal UI.
+// (summon · find · move · context · expand · dismiss) on a transparent backdrop,
+// so it looks exactly like the real app on the user's desktop. A single coach
+// card — always anchored below the pill so it never covers the input — carries
+// the copy and the Back / Next controls. No atmospheric glow: this is the
+// normal UI.
 
 type PillMode = 'compact' | 'sidebar' | 'window';
 type Target = 'pill' | 'attach' | 'corner';
 
 interface Step {
-  id: 'summon' | 'move' | 'context' | 'expand' | 'dismiss';
+  id: 'summon' | 'find' | 'move' | 'context' | 'expand' | 'dismiss';
   eyebrow: string;
   title: string;
   body: string;
@@ -23,8 +26,15 @@ interface Step {
 const STEPS: Step[] = [
   {
     id: 'summon', eyebrow: 'Meet Stuard', title: 'This is me.',
+    // keys here are a fallback only — the summon step renders the user's own
+    // saved global hotkey (see hotkeyKeys), not this hardcoded default.
     body: 'I sit on top of everything, one shortcut away. Call me up from anywhere — tap the hotkey, or just say “Hey Stuard.”',
     keys: ['Ctrl', 'Shift', 'Space'], target: 'pill',
+  },
+  {
+    id: 'find', eyebrow: 'Find anything', title: 'Jump straight there.',
+    body: 'Just start typing. Search to open your Dashboard, Settings, or Stuard Studio — plus your apps, files, and workflows.',
+    keys: ['type to search'], target: 'pill',
   },
   {
     id: 'move', eyebrow: 'Move me', title: 'Put me anywhere.',
@@ -51,6 +61,18 @@ const STEPS: Step[] = [
 const PLACEHOLDER = 'Ask Stuard…';
 const HOME = { left: '50%', top: '30%' };
 
+// The "find" step cycles these three searches to show how the compact-mode
+// dropdown surfaces Stuard's own destinations. Titles / subtitles / grouping
+// mirror the real navigation entries (see utils/compactStuardNav.ts) so the
+// cloned dropdown reads exactly like the live one.
+interface NavDemoItem { group: 'dashboard' | 'studio'; title: string; subtitle: string; icon: LucideIcon }
+const NAV_DEMO: Record<string, NavDemoItem[]> = {
+  dashboard: [{ group: 'dashboard', title: 'Overview', subtitle: 'Dashboard · overview & activity', icon: LayoutDashboard }],
+  settings: [{ group: 'dashboard', title: 'Settings', subtitle: 'Dashboard · themes & preferences', icon: Settings }],
+  studio: [{ group: 'studio', title: 'Stuard Studio', subtitle: 'Open the studio home', icon: LayoutDashboard }],
+};
+const NAV_SEQUENCE = ['dashboard', 'settings', 'studio'];
+
 export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: { onComplete: () => void; onSkip?: () => void; lastLabel?: string }) {
   const [idx, setIdx] = useState(0);
   const step = STEPS[idx];
@@ -62,6 +84,10 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const [chip, setChip] = useState(false);
   const [keyhint, setKeyhint] = useState(false);
   const [cornerActive, setCornerActive] = useState(false);
+  const [navQuery, setNavQuery] = useState('dashboard');
+  // The user's real global hotkey, shown on the summon step instead of a
+  // hardcoded Ctrl+Shift+Space. Falls back to the default until it loads.
+  const [hotkeyKeys, setHotkeyKeys] = useState<string[]>(['Ctrl', 'Shift', 'Space']);
 
   const pillRef = useRef<HTMLDivElement>(null);
   const attachRef = useRef<HTMLButtonElement>(null);
@@ -69,6 +95,34 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const ringRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const keyhintRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load the user's configured global hotkey (main-process settings are the
+  // source of truth; fall back to the locally-cached value, then the default).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let accel = '';
+      try {
+        const r = await (window as any).desktopAPI?.getGlobalHotkey?.();
+        if (r?.ok && r.hotkey) accel = String(r.hotkey);
+      } catch {}
+      if (!accel) { try { accel = localStorage.getItem('stuard_global_hotkey') || ''; } catch {} }
+      if (!accel) accel = 'Control+Shift+Space';
+      const keys = accel
+        .split('+')
+        .map(k => k.trim())
+        .filter(Boolean)
+        .map(k =>
+          k === 'Control' || k === 'Ctrl' || k === 'CommandOrControl' ? 'Ctrl'
+          : k === 'Command' || k === 'Cmd' || k === 'Meta' || k === 'Super' ? '⌘'
+          : k === 'Option' ? 'Alt'
+          : k,
+        );
+      if (!cancelled && keys.length) setHotkeyKeys(keys);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── per-step performance loop ──
   useEffect(() => {
@@ -81,6 +135,28 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     if (step.id === 'summon') {
       setGone(true);
       after(() => setGone(false), 220);
+    } else if (step.id === 'find') {
+      // Cycle through the three destinations, typing each query so the cloned
+      // dropdown updates live — teaching how to reach Dashboard, Settings, and
+      // Stuard Studio from the compact pill.
+      let qi = 0;
+      const runQuery = () => {
+        if (cancelled) return;
+        const q = NAV_SEQUENCE[qi];
+        setNavQuery(q);
+        const typeChar = (n: number) => {
+          if (cancelled) return;
+          setTyped(q.slice(0, n));
+          if (n < q.length) after(() => typeChar(n + 1), 75);
+          else after(() => {
+            setTyped('');
+            qi = (qi + 1) % NAV_SEQUENCE.length;
+            after(runQuery, 650);
+          }, 2200);
+        };
+        typeChar(1);
+      };
+      after(runQuery, 450);
     } else if (step.id === 'move') {
       setKeyhint(true);
       const spots = [
@@ -150,12 +226,16 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         ring.style.height = `${r.height + pad * 2}px`;
         ring.style.borderRadius = `${step.target === 'pill' ? 26 : step.target === 'corner' ? 26 : 12}px`;
 
-        // card always hangs below the pill, centered — never over the input
+        // card always hangs below the pill, centered — never over the input.
+        // When the find-step dropdown is open it extends below the pill, so
+        // anchor the card beneath the dropdown instead so they never overlap.
         if (card) {
           const pr = pill.getBoundingClientRect();
+          const dd = dropdownRef.current;
+          const anchorBottom = dd ? dd.getBoundingClientRect().bottom : pr.bottom;
           const cw = card.offsetWidth, gap = 26;
           let left = pr.left + pr.width / 2 - cw / 2;
-          let top = pr.bottom + gap;
+          let top = anchorBottom + gap;
           left = Math.max(16, Math.min(left, window.innerWidth - cw - 16));
           top = Math.max(16, Math.min(top, window.innerHeight - card.offsetHeight - 16));
           card.style.left = `${left}px`;
@@ -174,6 +254,12 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const back = () => { if (idx > 0) setIdx(i => i - 1); };
 
   const isCompact = mode === 'compact';
+  const showCursor = step.id === 'context' || step.id === 'find';
+  const showNavDropdown = step.id === 'find' && typed.trim().length >= 2;
+  const navItems = NAV_DEMO[navQuery] ?? [];
+  // The summon step reflects the user's real hotkey; every other step keeps its
+  // own literal keycaps.
+  const displayKeys = step.id === 'summon' ? hotkeyKeys : step.keys;
 
   return (
     <div data-theme="dark" className="fixed inset-0 z-[9998] pointer-events-none font-stuard">
@@ -248,7 +334,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                   style={{ color: `rgb(var(--compact-pill-fg) / ${typed ? 0.92 : 0.45})` }}
                 >
                   {typed || PLACEHOLDER}
-                  {typed && step.id === 'context' && (
+                  {typed && showCursor && (
                     <span className="inline-block align-[-2px] ml-px" style={{ width: 1.5, height: '1em', background: 'rgb(var(--compact-pill-fg) / 0.7)', animation: 'coach-blink 1s infinite' }} />
                   )}
                 </span>
@@ -276,6 +362,96 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
               </svg>
             </div>
           </div>
+
+          {/* find-step: an accurate clone of the real compact-mode search
+              dropdown (Quick Actions + Stuard navigation), hung below the pill */}
+          {showNavDropdown && (
+            <div
+              ref={dropdownRef}
+              className="absolute left-1/2 -translate-x-1/2"
+              style={{ top: '100%', marginTop: 8, width: 380, zIndex: 7 }}
+            >
+              <div
+                className="overflow-hidden flex flex-col"
+                style={{ background: 'rgb(var(--compact-pill-bg))', borderRadius: 12, boxShadow: 'var(--compact-pill-shadow)', color: 'rgb(var(--compact-pill-fg))' }}
+              >
+                <div className="flex flex-col" style={{ padding: 16, gap: 12 }}>
+                  {/* QUICK ACTIONS */}
+                  <div className="flex flex-col" style={{ gap: 8 }}>
+                    <div style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg))', fontWeight: 400 }}>
+                      Quick Actions
+                    </div>
+                    <div className="w-full flex items-center" style={{ ...FIGMA_ROW_BASE, gap: 10 }}>
+                      <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
+                        <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
+                          &ldquo;{typed.trim()}&rdquo;
+                        </div>
+                        <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
+                          Ask Stuard
+                        </div>
+                      </div>
+                      <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>Enter</span>
+                    </div>
+                    <div className="w-full flex items-center" style={{ ...FIGMA_ROW_BASE, gap: 10 }}>
+                      <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
+                        <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
+                          &ldquo;{typed.trim()}&rdquo;
+                        </div>
+                        <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
+                          Search the web
+                        </div>
+                      </div>
+                      <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>Ctrl + Enter</span>
+                    </div>
+                  </div>
+
+                  {/* STUARD — dashboard & studio navigation */}
+                  {navItems.length > 0 && (
+                    <div className="flex flex-col" style={{ gap: 8 }}>
+                      <div style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg))', fontWeight: 400 }}>
+                        Stuard
+                      </div>
+                      {navItems.map((c, i) => {
+                        const Icon = c.icon;
+                        const isSel = i === 0;
+                        return (
+                          <React.Fragment key={c.title}>
+                            <div
+                              style={{
+                                fontSize: 9, lineHeight: '12px', color: 'rgb(var(--compact-pill-fg-muted))',
+                                paddingLeft: 8, textTransform: 'uppercase', letterSpacing: '0.06em',
+                              }}
+                            >
+                              {c.group === 'dashboard' ? 'Dashboard' : 'Studio'}
+                            </div>
+                            <div
+                              className="w-full flex items-center text-left"
+                              style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
+                            >
+                              <div
+                                className="flex items-center justify-center shrink-0"
+                                style={{ width: 30, height: 30, borderRadius: 9, background: 'rgb(var(--compact-pill-fg) / 0.06)', color: 'rgb(var(--compact-pill-fg-muted))' }}
+                              >
+                                <Icon className="w-[15px] h-[15px]" strokeWidth={1.75} />
+                              </div>
+                              <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                                <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
+                                  <HighlightMatch text={c.title} query={typed} />
+                                </div>
+                                <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
+                                  {c.subtitle}
+                                </div>
+                              </div>
+                            </div>
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -326,7 +502,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         <h3 className="text-[16px] font-medium text-white mb-1.5 tracking-[-0.01em]">{step.title}</h3>
         <p className="text-[13px] leading-relaxed font-light text-white/80">{step.body}</p>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {step.keys.map((k, i) => (
+          {displayKeys.map((k, i) => (
             <kbd key={i} className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-[3px] text-[11.5px] font-medium rounded-md bg-stone-900/80 border border-rose-200/20 text-rose-50/90 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
               {k}
             </kbd>

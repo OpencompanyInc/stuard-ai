@@ -257,16 +257,6 @@ export default function DashboardPage() {
                 ? `${stats.activeWorkflows} ${stats.activeWorkflows === 1 ? 'thread' : 'threads'} so far`
                 : 'Start a conversation to see it here'
           }
-          actions={
-            <>
-              <Link href="/dashboard/cloud" className="dash-card-button dash-card-button--ghost">
-                New Chat
-              </Link>
-              <Link href="/dashboard/cloud" className="dash-card-button dash-card-button--primary">
-                Open Chat
-              </Link>
-            </>
-          }
         />
 
         {/* Recent Activity — spans 2 rows on lg */}

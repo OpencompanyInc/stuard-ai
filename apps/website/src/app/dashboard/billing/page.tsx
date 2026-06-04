@@ -979,7 +979,7 @@ export default function BillingPage() {
                       <button
                         onClick={handleUpdateSubscriptionAmount}
                         disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
-                        className="w-full py-2.5 text-[13px] font-semibold text-[#0A0A0A] bg-white rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="dash-card-button dash-card-button--accent w-full !flex-none py-2.5 text-[13px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isUpdatingSubscription ? 'Redirecting…' : subscription?.amount === Math.round(amount * 100) ? `Current amount — $${amount}/mo` : `Switch to $${amount}/mo`}
                       </button>
@@ -1024,7 +1024,7 @@ export default function BillingPage() {
                     <button
                       onClick={handleCheckoutSubscription}
                       disabled={!user || loading}
-                      className="w-full py-2.5 text-[13px] font-semibold text-[#0A0A0A] bg-white rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="dash-card-button dash-card-button--accent w-full !flex-none py-2.5 text-[13px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {`Subscribe $${amount}/mo`}
                     </button>

@@ -215,6 +215,18 @@ body.dashboard-shell {
   background: #F5F5F5;
 }
 
+/* Brand CTA — use instead of bg-white on dashboard (bg-white is remapped to dark glass) */
+.dash-card-button--accent {
+  background: #FF383C;
+  border: 0.4px solid rgba(255, 56, 60, 0.45);
+  color: #FFFFFF;
+}
+
+.dash-card-button--accent:hover {
+  background: #D31519;
+  border-color: rgba(211, 21, 25, 0.55);
+}
+
 .dash-badge {
   display: inline-flex;
   align-items: center;
