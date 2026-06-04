@@ -150,16 +150,12 @@ function AuthPageContent() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setError('');
-    try {
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: buildAuthRedirectUrl() },
-      });
-      if (oauthError) setError(oauthError.message);
-    } catch {
-      setError('Google sign-in failed');
+  const handleGoogleSuccess = () => {
+    // With a desktop handoff, the SIGNED_IN listener publishes tokens to the
+    // app and drives the publishing/done UI — don't navigate away. Otherwise
+    // this is a normal web sign-in, so head to the dashboard.
+    if (!hasDesktopHandoff) {
+      window.location.href = '/dashboard';
     }
   };
 
@@ -204,7 +200,10 @@ function AuthPageContent() {
         error={error}
         isSubmitting={status === 'submitting'}
         onSubmit={handlePasswordSignIn}
-        onGoogle={handleGoogleSignIn}
+        onGoogleSuccess={handleGoogleSuccess}
+        onGoogleError={setError}
+        googleRedirectTo={buildAuthRedirectUrl()}
+        enableGoogleOneTap
       />
     </AuthBackdrop>
   );

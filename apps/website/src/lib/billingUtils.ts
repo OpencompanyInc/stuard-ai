@@ -198,19 +198,30 @@ export function normalizeUsageLogEntry(entry: any): UsageLogEntry {
   };
 }
 
-export const CATEGORY_CONFIG: Record<UsageCategory, { label: string; hex: string }> = {
-  subagent: { label: 'Delegated Agents', hex: '#8b5cf6' },
-  compute: { label: 'Cloud Compute', hex: '#f59e0b' },
-  storage: { label: 'Storage', hex: '#14b8a6' },
-  messaging: { label: 'Messaging', hex: '#f43f5e' },
-  voice: { label: 'Voice Calls', hex: '#f97316' },
-  inference: { label: 'AI Inference', hex: '#3b82f6' },
-};
-
-const MODEL_COLORS = [
-  '#3b82f6', '#da7756', '#10a37f', '#6366f1', '#06b6d4', '#f59e0b',
-  '#8b5cf6', '#10b981', '#0ea5e9', '#d946ef', '#84cc16', '#fb7185',
+/**
+ * Stuard brand chart palette — a warm, red-led ramp used for every dashboard
+ * chart (category + model pies, usage bars). Cohesive and on-brand: no blue,
+ * green, violet, or cyan. Ordered for adjacent-slice contrast.
+ */
+export const BRAND_CHART_COLORS = [
+  '#FF383C', // Stuard red
+  '#F59E0B', // amber
+  '#FF7849', // coral
+  '#D26A78', // dusty rose
+  '#E5B53C', // gold
+  '#9C8B7E', // warm gray
+  '#C96A3A', // burnt orange
+  '#B59B86', // sand
 ];
+
+export const CATEGORY_CONFIG: Record<UsageCategory, { label: string; hex: string }> = {
+  inference: { label: 'AI Inference', hex: '#FF383C' },
+  subagent: { label: 'Delegated Agents', hex: '#FF7849' },
+  compute: { label: 'Cloud Compute', hex: '#F59E0B' },
+  voice: { label: 'Voice Calls', hex: '#E5B53C' },
+  messaging: { label: 'Messaging', hex: '#D26A78' },
+  storage: { label: 'Storage', hex: '#9C8B7E' },
+};
 
 const modelColorCache = new Map<string, string>();
 let modelColorIdx = 0;
@@ -218,7 +229,7 @@ let modelColorIdx = 0;
 function getModelColor(category: string): string {
   let hex = modelColorCache.get(category);
   if (!hex) {
-    hex = MODEL_COLORS[modelColorIdx % MODEL_COLORS.length];
+    hex = BRAND_CHART_COLORS[modelColorIdx % BRAND_CHART_COLORS.length];
     modelColorCache.set(category, hex);
     modelColorIdx += 1;
   }

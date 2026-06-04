@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { EyeIcon, GoogleIcon } from './authIcons';
 import { AuthCard } from './AuthCard';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 export interface SignInCardProps {
   title?: string;
@@ -12,7 +13,13 @@ export interface SignInCardProps {
   isSubmitting?: boolean;
   success?: boolean;
   onSubmit: (email: string, password: string) => void | Promise<void>;
-  onGoogle: () => void | Promise<void>;
+  /** Called once Supabase has a session from the Google ID-token flow. */
+  onGoogleSuccess?: () => void;
+  onGoogleError?: (message: string) => void;
+  /** Return target for the redirect-flow fallback (when GIS is unavailable). */
+  googleRedirectTo?: string;
+  /** Show Google One Tap to logged-out visitors. */
+  enableGoogleOneTap?: boolean;
   showCreateAccount?: boolean;
 }
 
@@ -23,7 +30,10 @@ export function SignInCard({
   isSubmitting = false,
   success = false,
   onSubmit,
-  onGoogle,
+  onGoogleSuccess,
+  onGoogleError,
+  googleRedirectTo,
+  enableGoogleOneTap = false,
   showCreateAccount = true,
 }: SignInCardProps) {
   const [email, setEmail] = useState('');
@@ -49,14 +59,15 @@ export function SignInCard({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => void onGoogle()}
-          className="auth-btn-ghost"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </button>
+        <GoogleSignInButton
+          label="Continue with Google"
+          className="auth-btn-ghost w-full"
+          icon={<GoogleIcon />}
+          redirectTo={googleRedirectTo}
+          enableOneTap={enableGoogleOneTap}
+          onSuccess={onGoogleSuccess}
+          onError={onGoogleError}
+        />
 
         <div className="auth-divider">
           <span>or</span>

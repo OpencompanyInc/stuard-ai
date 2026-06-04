@@ -80,30 +80,24 @@ function parseLauncherView(value: string | null | undefined): LauncherView | und
 }
 
 function WorkflowsApp() {
-  const { themeMode, modelSource, setModelSource, themeDarkShade, themeLightShade, themeText } = usePreferences();
-  const isDark = themeMode === 'dark' || themeMode === 'custom';
+  const { themeMode, modelSource, setModelSource } = usePreferences();
+  const isDark = themeMode === 'dark';
 
   // Workflows is a separate BrowserWindow — sync app theme tokens so theme-* utilities
   // (ModelSelector, etc.) are readable on wf dark surfaces.
   useEffect(() => {
     const root = document.documentElement;
-    if (themeMode === 'dark' || themeMode === 'custom') {
+    if (themeMode === 'dark') {
       root.setAttribute('data-theme', 'dark');
       root.classList.add('dark');
     } else {
       root.setAttribute('data-theme', 'light');
       root.classList.remove('dark');
     }
-    if (themeMode === 'custom') {
-      root.style.setProperty('--custom-gradient-start', themeDarkShade);
-      root.style.setProperty('--custom-gradient-end', themeLightShade);
-      root.style.setProperty('--custom-text-color', themeText === 'white' ? '#ffffff' : '#000000');
-    } else {
-      root.style.removeProperty('--custom-gradient-start');
-      root.style.removeProperty('--custom-gradient-end');
-      root.style.removeProperty('--custom-text-color');
-    }
-  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
+    root.style.removeProperty('--custom-gradient-start');
+    root.style.removeProperty('--custom-gradient-end');
+    root.style.removeProperty('--custom-text-color');
+  }, [themeMode]);
   const { items, folders, loading, refresh, updates } = useWorkflows();
   const { logs, setLogs, executionState, runningIds, setRunningIds } = useWorkflowRuntime();
   const [selectedId, setSelectedId] = useState("");

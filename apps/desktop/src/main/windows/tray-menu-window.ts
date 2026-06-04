@@ -9,10 +9,10 @@ import path from "path";
 import fs from "fs";
 import logger from "../utils/logger";
 import { getGlobalHotkey } from "../settings";
-import { updates_check } from "../services/updates";
+import { showUpdateCheckFeedback, updates_check } from "../services/updates";
 import { isDev } from "../env";
 
-export type TrayThemeMode = "light" | "dark" | "custom";
+export type TrayThemeMode = "light" | "dark";
 
 export interface TrayMenuDeps {
   getOverlayVisible: () => boolean;
@@ -28,7 +28,9 @@ let trayMenuWin: BrowserWindow | null = null;
 let ipcRegistered = false;
 
 const MENU_WIDTH = 272;
-const MENU_BASE_HEIGHT = 420;
+/** Fallback until the loaded page reports its true height. */
+const MENU_MIN_HEIGHT = 360;
+const MENU_MAX_HEIGHT = 560;
 
 function esc(s: string): string {
   return s
@@ -100,15 +102,10 @@ function buildMenuHTML(state: {
   }
   body { padding: 6px; }
   .panel {
-    background: rgba(18, 18, 20, 0.97);
-    backdrop-filter: blur(28px);
-    -webkit-backdrop-filter: blur(28px);
-    border: 1px solid rgba(255,255,255,0.09);
+    background: #161618;
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 14px;
-    box-shadow:
-      0 0 0 1px rgba(0,0,0,0.35),
-      0 16px 48px rgba(0,0,0,0.55),
-      0 4px 12px rgba(0,0,0,0.35);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.22);
     color: #f4f4f5;
     overflow: hidden;
     animation: popIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
@@ -337,7 +334,6 @@ function buildMenuHTML(state: {
     <div class="theme-row">
       ${themeChip("light", "Light")}
       ${themeChip("dark", "Dark")}
-      ${themeChip("custom", "Custom")}
     </div>
 
     <div class="sep"></div>
@@ -398,36 +394,93 @@ function htmlFilePath(): string {
   return path.join(app.getPath("userData"), "_tray-menu.html");
 }
 
-function computeMenuPosition(tray: Tray, height: number): { x: number; y: number } {
-  const menuW = MENU_WIDTH;
-  const menuH = height;
-
-  let anchor = { x: 0, y: 0, width: 0, height: 0 };
+function getTrayAnchor(tray: Tray): { x: number; y: number; width: number; height: number } {
   try {
     const b = tray.getBounds();
-    if (b && typeof b.x === "number") anchor = b;
+    if (b && typeof b.x === "number") {
+      return { x: b.x, y: b.y, width: b.width || 0, height: b.height || 0 };
+    }
   } catch { }
+  return { x: 0, y: 0, width: 0, height: 0 };
+}
 
+function getWorkAreaNearTray(tray: Tray) {
+  const anchor = getTrayAnchor(tray);
   const point = { x: anchor.x + Math.round(anchor.width / 2), y: anchor.y };
-  const display = screen.getDisplayNearestPoint(point);
-  const { workArea } = display;
+  return screen.getDisplayNearestPoint(point).workArea;
+}
+
+function computeMenuPosition(
+  tray: Tray,
+  height: number,
+  workArea = getWorkAreaNearTray(tray),
+): { x: number; y: number } {
+  const menuW = MENU_WIDTH;
+  const menuH = height;
+  const anchor = getTrayAnchor(tray);
+  const margin = 8;
+  const workTop = workArea.y + margin;
+  const workBottom = workArea.y + workArea.height - margin;
+  const workLeft = workArea.x + margin;
+  const workRight = workArea.x + workArea.width - margin;
 
   let x = anchor.x + anchor.width - menuW;
-  let y = anchor.y - menuH - 4;
+  const spaceAbove = anchor.y - workTop;
+  const spaceBelow = workBottom - (anchor.y + anchor.height);
 
+  // Prefer opening above the tray when the taskbar is along the bottom edge.
+  let y: number;
   if (process.platform === "win32") {
-    const taskbarNearBottom = workArea.y + workArea.height - anchor.y < 120;
-    if (taskbarNearBottom) {
-      y = anchor.y - menuH - 8;
+    const taskbarNearBottom = workBottom - anchor.y < 120;
+    if (taskbarNearBottom && spaceAbove >= menuH) {
+      y = anchor.y - menuH - margin;
+    } else if (!taskbarNearBottom && spaceBelow >= menuH) {
+      y = anchor.y + anchor.height + margin;
+    } else if (spaceAbove >= spaceBelow) {
+      y = anchor.y - menuH - margin;
     } else {
-      y = anchor.y + anchor.height + 8;
+      y = anchor.y + anchor.height + margin;
     }
+  } else {
+    y = spaceAbove >= menuH || spaceAbove >= spaceBelow
+      ? anchor.y - menuH - margin
+      : anchor.y + anchor.height + margin;
   }
 
-  x = Math.max(workArea.x + 8, Math.min(x, workArea.x + workArea.width - menuW - 8));
-  y = Math.max(workArea.y + 8, Math.min(y, workArea.y + workArea.height - menuH - 8));
+  // Keep the full menu inside the usable work area.
+  if (y + menuH > workBottom) {
+    y = workBottom - menuH;
+  }
+  if (y < workTop) {
+    y = workTop;
+  }
+
+  x = Math.max(workLeft, Math.min(x, workRight - menuW));
 
   return { x: Math.round(x), y: Math.round(y) };
+}
+
+async function measureTrayMenuHeight(win: BrowserWindow, workAreaHeight: number): Promise<number> {
+  try {
+    const raw = await win.webContents.executeJavaScript(
+      `(() => {
+        const el = document.documentElement;
+        const body = document.body;
+        return Math.max(
+          el?.scrollHeight || 0,
+          el?.offsetHeight || 0,
+          body?.scrollHeight || 0,
+          body?.offsetHeight || 0,
+        );
+      })()`,
+      true,
+    );
+    const measured = Math.ceil(Number(raw) || 0);
+    const maxH = Math.max(MENU_MIN_HEIGHT, workAreaHeight - 16);
+    return Math.min(Math.max(measured, MENU_MIN_HEIGHT), Math.min(MENU_MAX_HEIGHT, maxH));
+  } catch {
+    return Math.min(MENU_MAX_HEIGHT, Math.max(MENU_MIN_HEIGHT, workAreaHeight - 16));
+  }
 }
 
 export function closeTrayMenu(): void {
@@ -463,7 +516,17 @@ function ensureIPC(): void {
         );
         break;
       case "updates":
-        updates_check().catch((e) => logger.warn("Tray update check failed", e));
+        void (async () => {
+          try {
+            await updates_check();
+            await showUpdateCheckFeedback({
+              openSettings: () => deps?.openDashboard({ tab: "settings" }),
+            });
+          } catch (e) {
+            logger.warn("Tray update check failed", e);
+            await showUpdateCheckFeedback();
+          }
+        })();
         break;
       case "quit":
         app.quit();
@@ -476,12 +539,8 @@ function ensureIPC(): void {
   ipcMain.on("tray-menu:theme", (_evt, mode: string) => {
     if (!deps) return;
     const m = String(mode || "").toLowerCase();
-    if (m === "light" || m === "dark" || m === "custom") {
+    if (m === "light" || m === "dark") {
       deps.applyTheme(m as TrayThemeMode);
-      if (m === "custom") {
-        closeTrayMenu();
-        deps.openDashboard({ tab: "settings" });
-      }
     }
   });
 
@@ -526,12 +585,13 @@ export function showTrayMenu(tray: Tray): void {
     return;
   }
 
-  const height = MENU_BASE_HEIGHT;
-  const { x, y } = computeMenuPosition(tray, height);
+  const workArea = getWorkAreaNearTray(tray);
+  const initialHeight = Math.min(MENU_MAX_HEIGHT, Math.max(MENU_MIN_HEIGHT, workArea.height - 16));
+  const { x, y } = computeMenuPosition(tray, initialHeight, workArea);
 
   trayMenuWin = new BrowserWindow({
     width: MENU_WIDTH,
-    height,
+    height: initialHeight,
     x,
     y,
     show: false,
@@ -558,10 +618,19 @@ export function showTrayMenu(tray: Tray): void {
   trayMenuWin.setMenu(null);
   trayMenuWin.loadFile(filePath);
 
-  trayMenuWin.once("ready-to-show", () => {
-    if (trayMenuWin && !trayMenuWin.isDestroyed()) {
-      trayMenuWin.show();
-      trayMenuWin.focus();
+  trayMenuWin.once("ready-to-show", async () => {
+    const win = trayMenuWin;
+    if (!win || win.isDestroyed()) return;
+    try {
+      const height = await measureTrayMenuHeight(win, workArea.height);
+      const { x, y } = computeMenuPosition(tray, height, workArea);
+      win.setBounds({ x, y, width: MENU_WIDTH, height });
+    } catch (e) {
+      logger.warn("Tray menu resize failed", e);
+    }
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
     }
   });
 

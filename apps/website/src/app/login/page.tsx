@@ -8,7 +8,7 @@ import { SignInCard } from '@/components/auth/SignInCard';
 export const dynamic = 'force-dynamic';
 
 export default function LoginPage() {
-  const { signIn, signInWithGoogle } = useAuthContext();
+  const { signIn } = useAuthContext();
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -31,18 +31,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleGoogle = async () => {
-    setError('');
-    try {
-      const result = await signInWithGoogle();
-      if (!result.success) {
-        setError(result.error || 'Google sign-in failed');
-      }
-    } catch {
-      setError('Google sign-in failed');
-    }
-  };
-
   return (
     <AuthBackdrop>
       <SignInCard
@@ -50,7 +38,10 @@ export default function LoginPage() {
         isSubmitting={isSubmitting}
         success={success}
         onSubmit={handleSubmit}
-        onGoogle={handleGoogle}
+        onGoogleSuccess={() => { window.location.href = '/dashboard'; }}
+        onGoogleError={setError}
+        googleRedirectTo={typeof window !== 'undefined' ? `${window.location.origin}/auth` : undefined}
+        enableGoogleOneTap
       />
     </AuthBackdrop>
   );

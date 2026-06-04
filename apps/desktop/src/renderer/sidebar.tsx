@@ -8,7 +8,7 @@ import { SidebarView } from './components/chat/shared/sidebar/SidebarView';
 type SidebarTabId = 'terminal' | 'todo' | 'projects';
 
 function SidebarApp() {
-  const { translucentMode, themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
+  const { translucentMode, themeMode } = usePreferences();
 
   // Parse URL params for initial tab and expanded state
   const urlParams = new URLSearchParams(window.location.search);
@@ -52,7 +52,7 @@ function SidebarApp() {
   useEffect(() => {
     const root = document.documentElement;
 
-    if (themeMode === 'dark' || themeMode === 'custom') {
+    if (themeMode === 'dark') {
       root.setAttribute('data-theme', 'dark');
       root.classList.add('dark');
     } else {
@@ -60,16 +60,10 @@ function SidebarApp() {
       root.classList.remove('dark');
     }
 
-    if (themeMode === 'custom') {
-      root.style.setProperty('--custom-gradient-start', themeDarkShade);
-      root.style.setProperty('--custom-gradient-end', themeLightShade);
-      root.style.setProperty('--custom-text-color', themeText === 'white' ? '#ffffff' : '#000000');
-    } else {
-      root.style.removeProperty('--custom-gradient-start');
-      root.style.removeProperty('--custom-gradient-end');
-      root.style.removeProperty('--custom-text-color');
-    }
-  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
+    root.style.removeProperty('--custom-gradient-start');
+    root.style.removeProperty('--custom-gradient-end');
+    root.style.removeProperty('--custom-text-color');
+  }, [themeMode]);
 
   // Listen for theme broadcasts from main App window
   useEffect(() => {

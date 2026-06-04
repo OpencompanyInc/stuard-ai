@@ -932,7 +932,7 @@ export function setupIpc() {
   ipcMain.handle('prefs:applyTheme', (_e, data: any) => {
     try {
       const raw = String(data?.themeMode || '').toLowerCase();
-      const mode = (raw === 'custom') ? 'custom' : (raw === 'dark' ? 'dark' : 'light');
+      const mode = (raw === 'dark' || raw === 'custom') ? 'dark' : 'light';
       const dark = typeof data?.themeDarkShade === 'string' ? data.themeDarkShade : undefined;
       const light = typeof data?.themeLightShade === 'string' ? data.themeLightShade : undefined;
       const txt = (data?.themeText === 'black' || data?.themeText === 'white') ? data.themeText : undefined;
@@ -1985,51 +1985,8 @@ export function setupIpc() {
     }
   });
 
-  // Polar Billing (lazy-loaded to avoid barrel resolution issues)
-  ipcMain.handle('billing:createCheckout', async (_e, options: any) => {
-    try {
-      const { createCheckout } = require('../services/polar');
-      return await createCheckout(options);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('billing:getCustomer', async (_e, email: string) => {
-    try {
-      const { getCustomer } = require('../services/polar');
-      return await getCustomer(email);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('billing:listProducts', async () => {
-    try {
-      const { listProducts } = require('../services/polar');
-      return await listProducts();
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('billing:openPortal', async (_e, customerId: string) => {
-    try {
-      const { openCustomerPortal } = require('../services/polar');
-      return await openCustomerPortal(customerId);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
-
-  ipcMain.handle('billing:purchaseCredits', async (_e, options: any) => {
-    try {
-      const { purchaseCredits } = require('../services/polar');
-      return await purchaseCredits(options);
-    } catch (e: any) {
-      return { ok: false, error: String(e?.message || e) };
-    }
-  });
+  // Polar billing is handled server-side via cloud-ai (/v1/billing/*); the
+  // desktop no longer holds a Polar client or access token.
 
   // Quick Shortcuts / Bookmarks
   const bookmarksPath = () => {

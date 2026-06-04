@@ -271,12 +271,11 @@ function normalizeWakewordSensitivity(v: any): number {
 }
 
 export type TonePreset = "concise" | "friendly" | "formal" | "technical" | "custom";
-export type ThemeMode = "light" | "dark" | "custom";
+export type ThemeMode = "light" | "dark";
 
 function normalizeThemeMode(v: any): ThemeMode {
   const s = String(v || '').toLowerCase();
-  if (s === 'dark') return 'dark';
-  if (s === 'custom') return 'custom';
+  if (s === 'dark' || s === 'custom') return 'dark';
   // Back-compat for legacy values
   if (s === 'default' || s === 'light') return 'light';
   return 'light';
@@ -351,17 +350,10 @@ export function usePreferences() {
         root.removeAttribute('data-translucent');
       }
 
-      let cardBg = '#E3E3E3';
-      if (themeMode === 'dark') {
-        cardBg = '#D0D0D0';
-      }
-      if (themeMode === 'custom') {
-        cardBg = `linear-gradient(180deg, ${themeLightShade} 0%, #E3E3E3 100%)`;
-      }
-
+      const cardBg = themeMode === 'dark' ? '#D0D0D0' : '#E3E3E3';
       root.style.setProperty('--stuard-card-bg', cardBg);
     } catch { }
-  }, [themeMode, themeLightShade]);
+  }, [themeMode]);
 
   // Listen for changes from other windows (e.g. onboarding wizard)
   useEffect(() => {

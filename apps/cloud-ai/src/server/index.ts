@@ -1,4 +1,11 @@
+import dns from 'node:dns';
 import { createHttpServer } from './http/app';
+
+// api.polar.sh (and other Cloudflare-fronted hosts) return IPv6 records ahead of
+// IPv4. On a host without working IPv6 egress, Node's fetch can die with a bare
+// "TypeError: fetch failed" instead of falling back to IPv4 — which surfaced as
+// Polar checkout failures from the VM. Prefer IPv4 to sidestep the IPv6 trap.
+dns.setDefaultResultOrder('ipv4first');
 import { createChatWebSocketServer, createManagedWebSocketServer } from './socket/server';
 import { ensureExecutionToolsRegistered } from '../orchestrator/execution-tools-bootstrap';
 import { handleSpeechConnection } from '../routes/speech';

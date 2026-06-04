@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout, BookOpen, BookText } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { VoiceMorphPill } from '../../../voice/VoiceMorphPill';
 import type { VoiceToolEvent } from '../../../../hooks/useVoiceMode';
@@ -24,7 +24,9 @@ import googleLogo from '../../../../assets/icons/google.png';
 import bingLogo from '../../../../assets/icons/bing.png';
 import duckduckgoLogo from '../../../../assets/icons/duckduckgo.png';
 import youtubeLogo from '../../../../assets/icons/youtube.png';
-import githubLogo from '../../../../assets/icons/github.png';
+import githubLogo from '../../../../assets/icons/github.svg';
+import wikipediaLogo from '../../../../assets/icons/wikipedia.png';
+import merriamWebsterLogo from '../../../../assets/icons/merriam-webster.png';
 
 import type { UrgencyLevel } from '../../../../hooks/usePlannerData';
 import { useStatusCarousel, type StatusItem } from '../../../../hooks/useStatusCarousel';
@@ -1714,8 +1716,8 @@ const InputArea = forwardRef(function InputArea(
     { id: 'duckduckgo', name: 'DuckDuckGo', icon: <img src={duckduckgoLogo} className="w-5 h-5 object-contain" alt="DuckDuckGo" />, color: 'text-orange-500', bg: 'bg-orange-500', ring: 'ring-orange-500/20', url: (q: string) => compactSearchUrl('duckduckgo', q) },
     { id: 'youtube', name: 'YouTube', icon: <img src={youtubeLogo} className="w-5 h-5 object-contain" alt="YouTube" />, color: 'text-red-500', bg: 'bg-red-500', ring: 'ring-red-500/20', url: (q: string) => compactSearchUrl('youtube', q) },
     { id: 'github', name: 'GitHub', icon: <img src={githubLogo} className="w-5 h-5 object-contain" alt="GitHub" />, color: 'text-purple-500', bg: 'bg-purple-500', ring: 'ring-purple-500/20', url: (q: string) => compactSearchUrl('github', q) },
-    { id: 'merriam', name: 'Merriam-Webster', icon: <BookOpen className="w-5 h-5" strokeWidth={1.75} style={{ color: '#D4373E' }} />, color: 'text-rose-500', bg: 'bg-rose-500', ring: 'ring-rose-500/20', url: (q: string) => compactSearchUrl('merriam', q) },
-    { id: 'wikipedia', name: 'Wikipedia', icon: <BookText className="w-5 h-5" strokeWidth={1.75} style={{ color: '#A2A9B1' }} />, color: 'text-slate-300', bg: 'bg-slate-500', ring: 'ring-slate-500/20', url: (q: string) => compactSearchUrl('wikipedia', q) },
+    { id: 'merriam', name: 'Merriam-Webster', icon: <img src={merriamWebsterLogo} className="w-5 h-5 object-contain" alt="Merriam-Webster" />, color: 'text-rose-500', bg: 'bg-rose-500', ring: 'ring-rose-500/20', url: (q: string) => compactSearchUrl('merriam', q) },
+    { id: 'wikipedia', name: 'Wikipedia', icon: <img src={wikipediaLogo} className="w-5 h-5 object-contain" alt="Wikipedia" />, color: 'text-slate-300', bg: 'bg-slate-500', ring: 'ring-slate-500/20', url: (q: string) => compactSearchUrl('wikipedia', q) },
   ];
 
   const activeEngine = searchEngines.find(e => e.id === defaultEngineId) || searchEngines[0];

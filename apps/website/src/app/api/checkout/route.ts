@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Polar } from "@polar-sh/sdk";
+import { polar, POLAR_SERVER } from "@/lib/polar";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const accessToken = process.env.POLAR_ACCESS_TOKEN || "";
-  const mode = process.env.POLAR_MODE === "production" ? "production" : "sandbox";
   const products = url.searchParams.getAll("products");
 
   try {
-    if (!accessToken) {
+    if (!process.env.POLAR_ACCESS_TOKEN) {
       console.error("Missing POLAR_ACCESS_TOKEN");
       return NextResponse.json({ error: "Missing POLAR_ACCESS_TOKEN" }, { status: 500 });
     }
-
-    const polar = new Polar({
-      accessToken: accessToken.trim(),
-      server: mode,
-    });
 
     if (products.length === 0) {
       console.error("No products found in URL query params");
@@ -42,16 +35,21 @@ export async function GET(req: NextRequest) {
     console.log("Polar checkout created");
     return NextResponse.redirect(result.url);
   } catch (error: any) {
+    // undici reports real network failures as "fetch failed" and stashes the
+    // actual reason (ENOTFOUND / ECONNREFUSED / ETIMEDOUT / cert) on .cause.
+    const cause = error?.cause?.code || error?.cause?.message || null;
     console.error("Polar checkout failed", {
+      server: POLAR_SERVER,
       statusCode: error?.statusCode,
       message: error?.message,
+      cause,
       body: error?.body,
     });
 
     return NextResponse.json(
       {
         error: "Polar checkout failed",
-        message: error?.message,
+        message: cause ? `${error?.message} (${cause})` : error?.message,
         details: error?.body,
       },
       { status: 500 },

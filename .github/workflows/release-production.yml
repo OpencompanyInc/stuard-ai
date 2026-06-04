@@ -217,7 +217,8 @@ jobs:
           SECRETS="$SECRETS,INTEGRATION_STATE_SECRET=INTEGRATION_STATE_SECRET:latest"
           # Per-user envelope encryption key for OAuth tokens in external_accounts
           SECRETS="$SECRETS,TOKEN_ENCRYPTION_PEPPER=TOKEN_ENCRYPTION_PEPPER:latest"
-          # Billing — Polar.sh webhook signing secret
+          # Billing — Polar.sh API + webhook
+          SECRETS="$SECRETS,POLAR_ACCESS_TOKEN=POLAR_ACCESS_TOKEN:latest"
           SECRETS="$SECRETS,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest"
           # IndexNow — ping Bing/Yandex/etc. when workflows publish for fast search-engine discovery
           SECRETS="$SECRETS,INDEXNOW_KEY=INDEXNOW_KEY:latest"

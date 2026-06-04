@@ -21,6 +21,7 @@ import { useAuthContext } from '@/components/providers/AuthProvider';
 import { getBillingAuthToken } from '@/lib/billingApi';
 import { supabase } from '@/lib/supabaseClient';
 import {
+  BRAND_CHART_COLORS,
   categorizeModelForUsage,
   displayModelName,
   formatModel,
@@ -181,6 +182,12 @@ export default function BillingPage() {
     : null;
 
   const isSubscribed = !!(subscription && subscription.status === 'active' && subscription.id);
+
+  // The Polar customer portal only exists once the user has actually transacted
+  // with Polar — an active/cancelling subscription OR a one-time add-on pack
+  // (both create a Polar customer record). A pure free user who never paid has
+  // no customer, so /api/polar/portal 404s. Hide "Manage in Polar" for them.
+  const hasPolarRelationship = !!subscription || (creditSummary?.addonCredits ?? 0) > 0;
 
   // ---------- Loaders ----------
   const loadCredits = useCallback(async () => {
@@ -478,10 +485,7 @@ export default function BillingPage() {
 
   const totalLogsPages = Math.max(1, Math.ceil(logsTotal / LOGS_PER_PAGE));
 
-  const MODEL_PIE_COLORS = [
-    '#3b82f6', '#da7756', '#10a37f', '#6366f1', '#06b6d4', '#f59e0b',
-    '#8b5cf6', '#10b981', '#0ea5e9', '#d946ef', '#84cc16', '#fb7185',
-  ];
+  const MODEL_PIE_COLORS = BRAND_CHART_COLORS;
   const modelTotal = modelBreakdown.reduce((s, b) => s + b.credits, 0);
   const modelPieData = modelBreakdown.slice(0, 8).map((item, i) => ({
     name: displayModelName(item.model),
@@ -629,9 +633,9 @@ export default function BillingPage() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700 flex items-center justify-between">
+        <div className="dash-alert dash-alert--error flex items-center justify-between">
           <span>{error}</span>
-          <div className="flex items-center gap-2 ml-4">
+          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
             <button onClick={() => { setError(null); loadCredits(); }} className="underline font-medium">retry</button>
             <button onClick={() => setError(null)} className="underline">dismiss</button>
           </div>
@@ -649,8 +653,8 @@ export default function BillingPage() {
         <div className="dash-card p-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-lg bg-gray-900">
-                <CreditCard className="w-5 h-5 text-white" />
+              <div className="p-3 rounded-xl bg-[#FF383C]/12 border border-[#FF383C]/25">
+                <CreditCard className="w-5 h-5 text-[#FF6063]" />
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-0.5">
@@ -679,13 +683,15 @@ export default function BillingPage() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={handleManagePortal}
-              disabled={!user || isManaging || loading}
-              className="dash-card-button dash-card-button--ghost !flex-none px-4 py-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {isManaging ? 'Loading...' : 'Manage in Polar'}
-            </button>
+            {hasPolarRelationship && (
+              <button
+                onClick={handleManagePortal}
+                disabled={!user || isManaging || loading}
+                className="dash-card-button dash-card-button--ghost !flex-none px-4 py-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isManaging ? 'Loading...' : 'Manage in Polar'}
+              </button>
+            )}
           </div>
 
           {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
@@ -743,19 +749,14 @@ export default function BillingPage() {
           ['overview', 'Overview'],
           ['usage', 'Usage'],
           ['logs', 'History'],
-          ['settings', 'Settings'],
         ] as const).map(([id, label]) => (
           <button
             key={id}
-            onClick={() => id !== 'settings' && setActiveTab(id)}
-            disabled={id === 'settings'}
-            title={id === 'settings' ? 'Coming soon' : undefined}
+            onClick={() => setActiveTab(id)}
             className={`px-4 py-2 text-[13px] font-medium rounded-md transition-colors whitespace-nowrap ${
-              id === 'settings'
-                ? 'text-neutral-600 cursor-not-allowed opacity-50'
-                : activeTab === id
-                  ? 'bg-neutral-800 text-white shadow-sm border border-neutral-700'
-                  : 'text-neutral-400 hover:text-neutral-200'
+              activeTab === id
+                ? 'bg-neutral-800 text-white shadow-sm border border-neutral-700'
+                : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
             {label}
@@ -899,7 +900,7 @@ export default function BillingPage() {
                     </div>
                     <div className="text-right">
                       <p className={`text-xl font-semibold ${tier.color}`}>{tier.name}</p>
-                      <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-gray-900 text-[11px] font-medium text-white">
+                      <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700 text-[11px] font-medium text-neutral-200">
                         {tier.badge}
                       </span>
                     </div>
@@ -912,7 +913,7 @@ export default function BillingPage() {
                       step={1}
                       value={amount}
                       onChange={(e) => setAmount(Number(e.target.value))}
-                      className="w-full accent-gray-900"
+                      className="w-full accent-[#FF383C]"
                     />
                     <div className="relative mt-1 h-4 text-[11px] text-gray-400">
                       {MONTHLY_AMOUNT_MARKERS.map((marker) => {
@@ -938,8 +939,8 @@ export default function BillingPage() {
                       onClick={() => setAmount(preset)}
                       className={`rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-colors ${
                         amount === preset
-                          ? 'border-gray-900 bg-gray-900 text-white'
-                          : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                          ? 'border-[#FF383C] bg-[#FF383C] text-white'
+                          : 'border-neutral-700 text-neutral-300 hover:border-neutral-600 hover:bg-neutral-800/60'
                       }`}
                     >
                       {`$${preset}`}
@@ -957,10 +958,10 @@ export default function BillingPage() {
               </div>
 
               <div className="lg:col-span-2 flex flex-col">
-                <div className="rounded-lg bg-gray-900 p-5 text-white mb-5">
-                  <p className="text-[12px] text-gray-400">Monthly credits</p>
-                  <p className="text-3xl font-bold mt-0.5">{credits.toLocaleString()}</p>
-                  <p className="text-[12px] text-gray-400 mt-1">{`$${amount}/mo · credits roll over 30 days`}</p>
+                <div className="rounded-xl border border-[#FF383C]/25 bg-gradient-to-br from-[#FF383C]/15 via-[#FF383C]/5 to-transparent p-5 mb-5">
+                  <p className="text-[12px] text-neutral-300">Monthly credits</p>
+                  <p className="text-3xl font-bold mt-0.5 text-white">{credits.toLocaleString()}</p>
+                  <p className="text-[12px] text-neutral-400 mt-1">{`$${amount}/mo · credits roll over 30 days`}</p>
                 </div>
                 <div className="space-y-3 text-[13px] mb-5">
                   <div className="flex justify-between">
@@ -978,7 +979,7 @@ export default function BillingPage() {
                       <button
                         onClick={handleUpdateSubscriptionAmount}
                         disabled={isUpdatingSubscription || (subscription?.amount === Math.round(amount * 100))}
-                        className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="w-full py-2.5 text-[13px] font-semibold text-[#0A0A0A] bg-white rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isUpdatingSubscription ? 'Redirecting…' : subscription?.amount === Math.round(amount * 100) ? `Current amount — $${amount}/mo` : `Switch to $${amount}/mo`}
                       </button>
@@ -1023,7 +1024,7 @@ export default function BillingPage() {
                     <button
                       onClick={handleCheckoutSubscription}
                       disabled={!user || loading}
-                      className="w-full py-2.5 text-[13px] font-medium text-white bg-gray-900 rounded-lg hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="w-full py-2.5 text-[13px] font-semibold text-[#0A0A0A] bg-white rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {`Subscribe $${amount}/mo`}
                     </button>
@@ -1051,7 +1052,7 @@ export default function BillingPage() {
                   key={pack.id}
                   onClick={() => handleAddonPurchase(pack)}
                   disabled={!user || !!addonLoading}
-                  className="p-4 rounded-xl border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-all text-left group disabled:opacity-50"
+                  className="p-4 rounded-xl border border-neutral-800 hover:border-[#FF383C]/40 hover:bg-neutral-800/40 transition-all text-left group disabled:opacity-50"
                 >
                   <div className="text-xl font-bold text-gray-900 group-hover:text-primary transition-colors">{pack.label}</div>
                   <div className="text-[12px] text-gray-500 mt-0.5">{pack.credits} credits</div>
@@ -1351,15 +1352,6 @@ export default function BillingPage() {
               )}
             </>
           )}
-        </div>
-      )}
-
-      {!BILLING_SETTINGS_UI_ENABLED && (
-        <div className="dash-card p-6 opacity-50 pointer-events-none select-none">
-          <p className="text-[13px] font-medium text-gray-500">Billing settings</p>
-          <p className="text-[12px] text-gray-400 mt-1">
-            Auto-refill, metered overage, and spend limits are temporarily unavailable.
-          </p>
         </div>
       )}
 

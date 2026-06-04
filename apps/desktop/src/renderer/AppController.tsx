@@ -549,7 +549,7 @@ export function useAppController() {
       try {
         const m = data?.themeMode;
         if (m === 'light' || m === 'dark' || m === 'custom' || m === 'default') {
-          setThemeMode(m === 'default' ? 'light' : m);
+          setThemeMode(m === 'dark' || m === 'custom' ? 'dark' : 'light');
         }
         if (typeof data?.themeDarkShade === 'string') setThemeDarkShade(data.themeDarkShade);
         if (typeof data?.themeLightShade === 'string') setThemeLightShade(data.themeLightShade);
@@ -562,7 +562,7 @@ export function useAppController() {
   // Apply theme to document element
   useEffect(() => {
     const root = document.documentElement;
-    if (themeMode === 'dark' || themeMode === 'custom') {
+    if (themeMode === 'dark') {
       root.setAttribute('data-theme', 'dark');
       root.classList.add('dark');
     } else {
@@ -570,16 +570,9 @@ export function useAppController() {
       root.classList.remove('dark');
     }
 
-    // Apply custom theme colors if in custom mode
-    if (themeMode === 'custom') {
-      root.style.setProperty('--custom-gradient-start', themeDarkShade);
-      root.style.setProperty('--custom-gradient-end', themeLightShade);
-      root.style.setProperty('--custom-text-color', themeText === 'white' ? '#ffffff' : '#000000');
-    } else {
-      root.style.removeProperty('--custom-gradient-start');
-      root.style.removeProperty('--custom-gradient-end');
-      root.style.removeProperty('--custom-text-color');
-    }
+    root.style.removeProperty('--custom-gradient-start');
+    root.style.removeProperty('--custom-gradient-end');
+    root.style.removeProperty('--custom-text-color');
 
     // Also broadcast theme change to other windows if needed
     try { (window as any).desktopAPI?.broadcastTheme?.({ themeMode, themeDarkShade, themeLightShade, themeText }); } catch { }

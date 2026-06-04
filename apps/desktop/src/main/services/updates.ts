@@ -1,4 +1,4 @@
-import { BrowserWindow, app, net } from "electron";
+import { BrowserWindow, app, dialog, net } from "electron";
 import { autoUpdater, UpdateInfo } from "electron-updater";
 import * as path from "path";
 import * as fs from "fs";
@@ -547,6 +547,85 @@ export async function updates_check(): Promise<{ ok: boolean; error?: string }> 
   } catch (e: any) {
     setState({ status: "error", error: e.message });
     return { ok: false, error: e.message };
+  }
+}
+
+/** User-visible summary after a manual "Check for updates" (tray, settings, etc.). */
+export async function showUpdateCheckFeedback(options?: {
+  openSettings?: () => void;
+}): Promise<void> {
+  const s = updates_getState();
+  const current = s.currentVersion || safeGetVersion();
+  const channelLabel = s.channel === "stable" ? "Stable" : s.channel === "beta" ? "Beta" : "Staging";
+
+  let type: "none" | "info" | "error" = "info";
+  let message = "";
+  let detail: string | undefined;
+  let buttons = ["OK"];
+
+  switch (s.status) {
+    case "checking":
+      message = "Still checking for updates";
+      detail = "Try again in a moment.";
+      break;
+    case "up-to-date":
+      message = "You're up to date";
+      detail = `Stuard v${current} is the latest release on the ${channelLabel} channel.`;
+      break;
+    case "available":
+      message = `Update available (v${s.latestVersion})`;
+      detail = `You're on v${current}. Open Settings → Updates to download and install.`;
+      buttons = ["Open Settings", "OK"];
+      break;
+    case "downloading":
+      message = "Update is downloading";
+      detail = s.latestVersion
+        ? `Version v${s.latestVersion} — open Settings → Updates for progress.`
+        : "Open Settings → Updates for progress.";
+      buttons = ["Open Settings", "OK"];
+      break;
+    case "downloaded":
+      message = "Update ready to install";
+      detail = s.latestVersion
+        ? `Version v${s.latestVersion} has been downloaded. Install from Settings → Updates.`
+        : "Install from Settings → Updates.";
+      buttons = ["Open Settings", "OK"];
+      break;
+    case "installing":
+      message = "Installing update";
+      detail = "Stuard will restart when the installer finishes.";
+      break;
+    case "error":
+      type = "error";
+      message = "Could not check for updates";
+      detail = s.error || "Check your connection and try again.";
+      break;
+    default:
+      message = `Current version: v${current}`;
+      detail = `${channelLabel} channel`;
+      break;
+  }
+
+  const { response } = await dialog.showMessageBox({
+    type,
+    title: "Stuard Updates",
+    message,
+    detail,
+    buttons,
+    defaultId: 0,
+    cancelId: buttons.length - 1,
+    noLink: true,
+  });
+
+  const wantsSettings =
+    (s.status === "available" ||
+      s.status === "downloading" ||
+      s.status === "downloaded") &&
+    response === 0 &&
+    buttons[0] === "Open Settings";
+
+  if (wantsSettings && options?.openSettings) {
+    options.openSettings();
   }
 }
 

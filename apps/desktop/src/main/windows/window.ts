@@ -2249,20 +2249,13 @@ function getTrayIconImage(): Electron.NativeImage {
 
 function getActiveThemeMode(): TrayThemeMode {
   const raw = String(loadSettings().themeMode || "light").toLowerCase();
-  if (raw === "dark") return "dark";
-  if (raw === "custom") return "custom";
+  if (raw === "dark" || raw === "custom") return "dark";
   return "light";
 }
 
 function applyThemeFromTray(mode: TrayThemeMode) {
-  const settings = loadSettings();
   setRendererPrefs({ themeMode: mode });
   const payload: Record<string, string> = { themeMode: mode };
-  if (mode === "custom") {
-    if (typeof settings.themeDarkShade === "string") payload.themeDarkShade = settings.themeDarkShade;
-    if (typeof settings.themeLightShade === "string") payload.themeLightShade = settings.themeLightShade;
-    if (settings.themeText === "black" || settings.themeText === "white") payload.themeText = settings.themeText;
-  }
   for (const w of BrowserWindow.getAllWindows()) {
     try { w.webContents.send("prefs:themeUpdated", payload); } catch { }
   }

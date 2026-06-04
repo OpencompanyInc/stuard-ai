@@ -22,14 +22,29 @@ function getCloudApiBase(): string {
   return configured.endsWith('/') ? configured.slice(0, -1) : configured;
 }
 
-async function proxyToCloud(req: NextRequest, path: string[]): Promise<NextResponse> {
+const CLOUD_BILLING_POST_PATHS = new Set(['billing/checkout', 'billing/portal']);
+
+async function proxyToCloud(
+  req: NextRequest,
+  path: string[],
+  options?: { method?: string; body?: string },
+): Promise<NextResponse> {
   const authHeader = req.headers.get('authorization') || '';
+  const method = options?.method || req.method;
+  const headers: Record<string, string> = {
+    Authorization: authHeader,
+    Accept: 'application/json',
+  };
+  if (options?.body != null) {
+    headers['Content-Type'] = 'application/json';
+  }
   try {
     const upstream = await fetch(
       `${getCloudApiBase()}/v1/${path.join('/')}${req.nextUrl.search}`,
       {
-        method: 'GET',
-        headers: { Authorization: authHeader, Accept: 'application/json' },
+        method,
+        headers,
+        body: options?.body,
         cache: 'no-store',
         signal: AbortSignal.timeout(15_000),
       },
@@ -111,4 +126,21 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
   }
 
   return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+}
+
+export async function POST(req: NextRequest, { params }: RouteContext) {
+  const { path = [] } = await params;
+  const authHeader = req.headers.get('authorization');
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  }
+
+  const cloudPath = path.join('/');
+  if (!CLOUD_BILLING_POST_PATHS.has(cloudPath)) {
+    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+  }
+
+  const body = await req.text();
+  return proxyToCloud(req, path, { method: 'POST', body });
 }

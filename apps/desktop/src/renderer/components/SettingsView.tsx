@@ -1296,12 +1296,6 @@ const CloudSyncSettings: React.FC = () => {
 interface GeneralTabProps {
   themeMode: ThemeMode;
   setThemeMode: (v: ThemeMode) => void;
-  themeDarkShade: string;
-  setThemeDarkShade: (v: string) => void;
-  themeLightShade: string;
-  setThemeLightShade: (v: string) => void;
-  themeText: "white" | "black";
-  setThemeText: (v: "white" | "black") => void;
   translucentMode: boolean;
   setTranslucentMode: (v: boolean) => void;
   wakewordEnabled: boolean;
@@ -1324,9 +1318,6 @@ interface GeneralTabProps {
 
 function GeneralTab({
   themeMode, setThemeMode,
-  themeDarkShade, setThemeDarkShade,
-  themeLightShade, setThemeLightShade,
-  themeText, setThemeText,
   translucentMode, setTranslucentMode,
   wakewordEnabled, setWakewordEnabled,
   screenCaptureInvisible, setScreenCaptureInvisible,
@@ -1348,37 +1339,10 @@ function GeneralTab({
                 options={[
                   { value: "light", label: "Light" },
                   { value: "dark", label: "Dark" },
-                  { value: "custom", label: "Custom" },
                 ]}
                 onChange={(v) => setThemeMode(v as ThemeMode)}
               />
             </div>
-
-            {themeMode === "custom" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-theme-hover/50 rounded-xl border border-theme">
-                <ColorField
-                  label="Gradient start"
-                  value={themeDarkShade}
-                  onChange={setThemeDarkShade}
-                />
-                <ColorField
-                  label="Gradient end"
-                  value={themeLightShade}
-                  onChange={setThemeLightShade}
-                />
-                <div className="md:col-span-2">
-                  <label className="block text-[11px] font-semibold text-theme-muted mb-2 tracking-tight">Text contrast</label>
-                  <SegmentedControl
-                    value={themeText}
-                    options={[
-                      { value: "white", label: "White text" },
-                      { value: "black", label: "Black text" },
-                    ]}
-                    onChange={(v) => setThemeText(v as "white" | "black")}
-                  />
-                </div>
-              </div>
-            )}
 
             <ToggleRow
               icon={<Palette className="w-4 h-4" />}

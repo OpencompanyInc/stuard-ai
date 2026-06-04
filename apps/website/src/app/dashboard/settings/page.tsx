@@ -4,10 +4,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 
 export default function SettingsPage() {
-    const { user, userData, updateUserData } = useAuthContext();
+    const { user, userData, updateUserData, resetPassword } = useAuthContext();
     const [phoneNumber, setPhoneNumber] = useState('');
     const [loading, setLoading] = useState(false);
     const [marketingEmailEnabled, setMarketingEmailEnabled] = useState(false);
+    const [pwStatus, setPwStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
     useEffect(() => {
         if (userData) {
@@ -36,13 +37,42 @@ export default function SettingsPage() {
         }
     };
 
+    const handleChangePassword = async () => {
+        if (!user?.email || pwStatus === 'sending' || pwStatus === 'sent') return;
+        setPwStatus('sending');
+        try {
+            const res = await resetPassword(user.email);
+            setPwStatus(res.success ? 'sent' : 'error');
+        } catch {
+            setPwStatus('error');
+        }
+    };
+
+    const displayName = userData?.displayName || user?.email?.split('@')[0] || 'User';
+    const initial = displayName.charAt(0).toUpperCase();
+    const planLabel = String(userData?.plan || 'free');
+    const planDisplay = planLabel.charAt(0).toUpperCase() + planLabel.slice(1);
+
     return (
-        <div className="space-y-8 max-w-3xl">
+        <div className="space-y-6 max-w-3xl">
             <div>
                 <h1 className="dash-page-title">Settings</h1>
                 <p className="dash-page-subtitle">Manage your account preferences.</p>
             </div>
 
+            {/* Account summary */}
+            <div className="dash-card p-5 flex items-center gap-4">
+                <div className="h-14 w-14 flex-shrink-0 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 flex items-center justify-center text-[20px] font-semibold text-neutral-900">
+                    {initial}
+                </div>
+                <div className="min-w-0 flex-1">
+                    <p className="text-[15px] font-semibold text-white truncate">{displayName}</p>
+                    <p className="text-[13px] text-neutral-400 truncate">{user?.email || ''}</p>
+                </div>
+                <span className="dash-badge flex-shrink-0">{planDisplay} plan</span>
+            </div>
+
+            {/* Profile */}
             <div className="dash-card">
                 <div className="dash-section-header">
                     <h2 className="dash-section-title">Profile</h2>
@@ -73,27 +103,40 @@ export default function SettingsPage() {
                         </div>
                     </div>
                     <div className="pt-1">
-                        <button className="dash-card-button dash-card-button--ghost !flex-none px-3.5 py-2">
-                            Change Password
+                        <button
+                            onClick={handleChangePassword}
+                            disabled={!user?.email || pwStatus === 'sending' || pwStatus === 'sent'}
+                            className="dash-card-button dash-card-button--ghost !flex-none px-3.5 py-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {pwStatus === 'sending' ? 'Sending…' : pwStatus === 'sent' ? 'Reset link sent' : 'Change Password'}
                         </button>
+                        {pwStatus === 'sent' && (
+                            <p className="text-[12px] text-neutral-500 mt-2">
+                                Check <span className="text-neutral-300">{user?.email}</span> for a secure link to set a new password.
+                            </p>
+                        )}
+                        {pwStatus === 'error' && (
+                            <p className="text-[12px] text-[#FCA5A5] mt-2">Couldn&apos;t send the reset link. Please try again.</p>
+                        )}
                     </div>
                 </div>
             </div>
 
+            {/* Notifications */}
             <div className="dash-card">
                 <div className="dash-section-header">
                     <h2 className="dash-section-title">Notifications</h2>
                     <p className="dash-section-desc">Choose how you want to be notified.</p>
                 </div>
                 <div className="px-6 py-5 space-y-6">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-4">
                         <div>
                             <p className="text-[13px] font-medium text-white">Email Notifications</p>
                             <p className="text-[12px] text-neutral-500 mt-0.5">Receive weekly summaries and billing alerts.</p>
                         </div>
                         <button
                             onClick={() => handleUpdatePreference('marketingEmails', !marketingEmailEnabled)}
-                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${
                                 marketingEmailEnabled ? 'bg-[#FF383C]' : 'bg-neutral-700'
                             }`}
                             aria-pressed={marketingEmailEnabled}
@@ -129,6 +172,7 @@ export default function SettingsPage() {
                 </div>
             </div>
 
+            {/* Danger zone */}
             <div className="dash-alert dash-alert--danger rounded-xl p-6">
                 <h3 className="dash-alert__title">Delete Account</h3>
                 <p className="dash-alert__desc">

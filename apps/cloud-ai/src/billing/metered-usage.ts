@@ -76,16 +76,15 @@ type OverageProfile = {
   current_period_end?: string | null;
 };
 
+// Polar is always production — no sandbox path.
 function getPolarClient(): Polar | null {
   const accessToken = (process.env.POLAR_ACCESS_TOKEN || '').trim();
   if (!accessToken) return null;
-  const mode = String(process.env.POLAR_MODE || '').toLowerCase().startsWith('sand') ? 'sandbox' : 'production';
-  return new Polar({ accessToken, server: mode });
+  return new Polar({ accessToken, server: 'production' });
 }
 
 function getPolarApiBase(): string {
-  const mode = String(process.env.POLAR_MODE || '').toLowerCase().startsWith('sand') ? 'sandbox' : 'production';
-  return mode === 'sandbox' ? 'https://sandbox-api.polar.sh' : 'https://api.polar.sh';
+  return 'https://api.polar.sh';
 }
 
 async function fetchOverageProfile(userId: string): Promise<OverageProfile | null> {

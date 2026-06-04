@@ -25,11 +25,11 @@ interface BorderPayload {
 }
 
 function useVoiceBorderTheme() {
-  const { themeMode, themeDarkShade, themeLightShade, themeText } = usePreferences();
+  const { themeMode } = usePreferences();
 
   useEffect(() => {
     const root = document.documentElement;
-    if (themeMode === "dark" || themeMode === "custom") {
+    if (themeMode === "dark") {
       root.setAttribute("data-theme", "dark");
       root.classList.add("dark");
     } else {
@@ -37,16 +37,10 @@ function useVoiceBorderTheme() {
       root.classList.remove("dark");
     }
 
-    if (themeMode === "custom") {
-      root.style.setProperty("--custom-gradient-start", themeDarkShade);
-      root.style.setProperty("--custom-gradient-end", themeLightShade);
-      root.style.setProperty("--custom-text-color", themeText === "white" ? "#ffffff" : "#000000");
-    } else {
-      root.style.removeProperty("--custom-gradient-start");
-      root.style.removeProperty("--custom-gradient-end");
-      root.style.removeProperty("--custom-text-color");
-    }
-  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
+    root.style.removeProperty("--custom-gradient-start");
+    root.style.removeProperty("--custom-gradient-end");
+    root.style.removeProperty("--custom-text-color");
+  }, [themeMode]);
 
   useEffect(() => {
     const unsub = (window as any).desktopAPI?.onThemeUpdated?.(() => {

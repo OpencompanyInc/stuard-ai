@@ -94,8 +94,8 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0(ai@6.0.182)(zod@4.4.3)
       '@polar-sh/sdk':
-        specifier: ^0.46.7
-        version: 0.46.7
+        specifier: ^0.47.1
+        version: 0.47.1
       '@stuardai/bots-core':
         specifier: workspace:*
         version: link:../../packages/bots-core
@@ -179,9 +179,6 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@polar-sh/sdk':
-        specifier: ^0.42.1
-        version: 0.42.1
       '@radix-ui/react-dropdown-menu':
         specifier: ^2.1.16
         version: 2.1.16(@types/react-dom@18.2.7)(@types/react@18.2.21)(react-dom@18.2.0)(react@18.2.0)
@@ -528,8 +525,8 @@ importers:
         specifier: ^0.9.3
         version: 0.9.3(next@16.0.8)
       '@polar-sh/sdk':
-        specifier: ^0.42.1
-        version: 0.42.1
+        specifier: ^0.47.1
+        version: 0.47.1
       '@stripe/stripe-js':
         specifier: ^7.8.0
         version: 7.9.0
@@ -3395,8 +3392,8 @@ packages:
       zod: 4.3.6
     dev: false
 
-  /@polar-sh/sdk@0.46.7:
-    resolution: {integrity: sha512-g8/goRQFfnik9Ood2Ej5AsbEXv2rohzhVlmW7wjkCuwdc8i59FWhdBjolX2tUwcXXjugziXrhCZJLivY3W6ytQ==}
+  /@polar-sh/sdk@0.47.1:
+    resolution: {integrity: sha512-fkz7wPLbqfuDmY9LxuXpE2uP2TAV6J0q/YN5hJ4UBxpjbkB0hKM6c4R35N89t83dfzMlG6EOlqOn+Rd1T6XrJQ==}
     dependencies:
       standardwebhooks: 1.0.0
       zod: 4.4.3

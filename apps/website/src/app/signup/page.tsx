@@ -5,13 +5,12 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { useAuthContext } from '@/components/providers/AuthProvider';
+import { GoogleSignInButton } from '@/components/auth/GoogleSignInButton';
 
 export const dynamic = 'force-dynamic';
 
 export default function SignUpPage() {
   const router = useRouter();
-  const { signInWithGoogle } = useAuthContext();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -60,16 +59,6 @@ export default function SignUpPage() {
       setError('Something went wrong. Please try again.');
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleGoogle = async () => {
-    setError('');
-    try {
-      const result = await signInWithGoogle();
-      if (!result.success) setError(result.error || 'Google sign-up failed');
-    } catch {
-      setError('Google sign-up failed');
     }
   };
 
@@ -136,19 +125,19 @@ export default function SignUpPage() {
             )}
 
             {/* Google */}
-            <button
-              type="button"
-              onClick={handleGoogle}
+            <GoogleSignInButton
+              label="Sign up with Google"
               className="
                 flex h-11 w-full items-center justify-center gap-2
                 rounded-xl border border-[#737373]/80 bg-[#171717]/85
                 text-[14px] font-medium text-white
                 hover:bg-[#1f1f1f] transition-colors
               "
-            >
-              <GoogleIcon />
-              Sign up with Google
-            </button>
+              icon={<GoogleIcon />}
+              redirectTo={typeof window !== 'undefined' ? `${window.location.origin}/auth` : undefined}
+              onSuccess={() => router.push('/dashboard')}
+              onError={setError}
+            />
 
             <div className="text-center text-[13px] font-medium leading-5 text-white">OR</div>
 

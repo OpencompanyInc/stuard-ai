@@ -524,15 +524,6 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     return () => { try { ipcRenderer.off('file-index:embed-progress', handler); } catch { } };
   },
 
-  // Billing (Polar)
-  billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) =>
-    ipcRenderer.invoke('billing:createCheckout', options),
-  billingGetCustomer: (email: string) => ipcRenderer.invoke('billing:getCustomer', email),
-  billingListProducts: () => ipcRenderer.invoke('billing:listProducts'),
-  billingOpenPortal: (customerId: string) => ipcRenderer.invoke('billing:openPortal', customerId),
-  billingPurchaseCredits: (options: { productId: string; email: string; userId?: string }) =>
-    ipcRenderer.invoke('billing:purchaseCredits', options),
-
   // Quick Shortcuts / Bookmarks
   bookmarksList: () => ipcRenderer.invoke('bookmarks:list'),
   bookmarksSave: (bookmarks: any[]) => ipcRenderer.invoke('bookmarks:save', bookmarks),

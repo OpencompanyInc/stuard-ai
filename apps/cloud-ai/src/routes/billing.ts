@@ -26,10 +26,19 @@ const CHECKOUT_PRODUCT_ALLOWLIST = new Set([
   '5516a18c-b03b-4ada-8b6a-599f2cc5b7e9',
 ].filter((value): value is string => Boolean(value)));
 
+// Polar is always production — no sandbox path.
 function getPolarClient(): Polar | null {
-  const accessToken = process.env.POLAR_ACCESS_TOKEN || '';
+  const accessToken = (process.env.POLAR_ACCESS_TOKEN || '').trim();
   if (!accessToken) return null;
-  return new Polar({ accessToken });
+  return new Polar({ accessToken, server: 'production' });
+}
+
+// undici wraps real network failures as "fetch failed" and hides the reason on
+// error.cause — surface it so a checkout 500 is actually diagnosable.
+function describePolarError(e: any): string {
+  const base = e?.message || 'Failed to create checkout';
+  const cause = e?.cause?.code || e?.cause?.message;
+  return cause ? `${base} (${cause})` : base;
 }
 
 function reply(res: ServerResponse, status: number, data: any) {
@@ -179,7 +188,7 @@ export async function handleBillingRoutes(req: IncomingMessage, res: ServerRespo
     if (!user) return true;
 
     const body = await readBody(req);
-    const { productId } = body;
+    const productId = typeof body?.productId === 'string' ? body.productId : '';
     if (!productId) {
       reply(res, 400, { ok: false, error: 'productId required' });
       return true;
@@ -189,18 +198,47 @@ export async function handleBillingRoutes(req: IncomingMessage, res: ServerRespo
       return true;
     }
 
+    // Optional pay-what-you-want amount (cents) for the subscription product.
+    let amount: number | undefined;
+    if (body?.amount != null) {
+      const n = Math.round(Number(body.amount));
+      if (!Number.isFinite(n) || n < 500) {
+        reply(res, 400, { ok: false, error: 'invalid_amount', message: 'Minimum $5 (500 cents).' });
+        return true;
+      }
+      amount = n;
+    }
+
+    // Identity is ALWAYS taken from the authed user, never the client body.
+    // A small set of extra metadata keys is accepted (coerced to strings).
+    const extra = body?.metadata && typeof body.metadata === 'object' ? body.metadata : {};
+    const metadata: Record<string, string> = { userId: user.userId };
+    for (const k of ['type', 'packId', 'replacesSubscriptionId']) {
+      if (extra[k] != null) metadata[k] = String(extra[k]);
+    }
+
+    // Success URL is derived server-side (never trust a client redirect target).
+    const websiteBase = (process.env.WEBSITE_BASE_URL || 'https://stuard.ai').replace(/\/+$/, '');
+    const successUrl = process.env.POLAR_SUCCESS_URL || `${websiteBase}/billing/success?checkout_id={CHECKOUT_ID}`;
+
     try {
       const result = await polar.checkouts.create({
         products: [productId],
-        successUrl: process.env.POLAR_SUCCESS_URL || 'https://stuard.ai/billing/success?checkout_id={CHECKOUT_ID}',
+        successUrl,
         customerEmail: user.email,
         externalCustomerId: user.userId,
-        metadata: { userId: user.userId },
+        metadata,
+        ...(amount != null ? { amount } : {}),
       });
 
       reply(res, 200, { ok: true, url: result.url || null });
     } catch (e: any) {
-      reply(res, 500, { ok: false, error: e?.message || 'Failed to create checkout' });
+      console.error('[billing] checkout create failed', {
+        message: e?.message,
+        cause: e?.cause?.code || e?.cause?.message,
+        statusCode: e?.statusCode,
+      });
+      reply(res, 500, { ok: false, error: describePolarError(e) });
     }
     return true;
   }

@@ -242,13 +242,6 @@ declare global {
         error?: string;
       }>;
 
-      // Billing (Polar)
-      billingCreateCheckout: (options: { productId: string; customerEmail?: string; userId?: string; successUrl?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-      billingGetCustomer: (email: string) => Promise<{ ok: boolean; customer?: { id: string; email: string; subscriptions: Array<{ id: string; status: string; productId: string; productName: string; currentPeriodEnd?: string }>; orders: Array<{ id: string; amount: number; currency: string; createdAt: string }> }; error?: string }>;
-      billingListProducts: () => Promise<{ ok: boolean; products?: Array<{ id: string; name: string; description: string; prices: Array<{ id: string; amount: number; currency: string; type: string; recurringInterval?: string }>; isRecurring: boolean; benefits: string[] }>; error?: string }>;
-      billingOpenPortal: (customerId: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
-      billingPurchaseCredits: (options: { productId: string; email: string; userId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-
       // Terminal (PTY-based)
       terminalCreate: (options?: { shell?: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
       terminalWrite: (sessionId: string, data: string) => Promise<{ ok: boolean; error?: string }>;

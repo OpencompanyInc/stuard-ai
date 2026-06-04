@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { supabase } from '@/lib/supabaseClient';
 import {
+  BRAND_CHART_COLORS,
   displayModelName,
   formatRelativeTime,
   isInferenceModel,
@@ -202,19 +203,22 @@ export default function DashboardPage() {
   const maxCredits = Math.max(...stats.usageSeries.map((p) => p.credits), 1);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Welcome header */}
-      <div>
-        <h1 className="text-[18px] sm:text-[20px] font-semibold text-white">
-          Welcome back, <span className="text-neutral-300 font-medium">{userName}</span>
-        </h1>
-        <p className="text-[12px] text-neutral-500 mt-0.5">
-          Here&apos;s what&apos;s happening with your account.
-        </p>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-[20px] sm:text-[22px] font-semibold tracking-tight text-white">
+            Welcome back, <span className="text-neutral-400 font-medium">{userName}</span>
+          </h1>
+          <p className="text-[12.5px] text-neutral-500 mt-1">
+            Here&apos;s what&apos;s happening with your account.
+          </p>
+        </div>
+        <span className="hidden sm:inline-flex dash-badge flex-shrink-0">{planName} plan</span>
       </div>
 
       {/* Top row: Available Credits | Total Conversations | Recent Activity (spans 2 rows) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Available Credits */}
         <StatCard
           title="Available Credits"
@@ -245,7 +249,7 @@ export default function DashboardPage() {
           value={loading ? '—' : stats.activeWorkflows.toLocaleString()}
           subtitle="Active threads"
           progressPercent={Math.min(100, stats.activeWorkflows * 5)}
-          accent="#10b981"
+          accent="#F59E0B"
           footnote={
             loading
               ? ''
@@ -293,7 +297,7 @@ export default function DashboardPage() {
               <ul className="divide-y divide-neutral-800/70">
                 {stats.recentActivity.map((item, i) => (
                   <li key={i} className="py-2.5 flex items-start gap-2.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
+                    <div className="w-1.5 h-1.5 rounded-full bg-neutral-600 mt-1.5 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-[12px] font-medium text-neutral-100 truncate">{item.action}</p>
                       <p className="text-[10px] text-neutral-500 mt-0.5">{item.target}</p>
@@ -319,7 +323,10 @@ export default function DashboardPage() {
         {/* Credit Usage chart — spans 2 cols */}
         <div className="dash-card lg:col-span-2 p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[13px] font-semibold text-white">Credit Usage</h2>
+            <div>
+              <h2 className="text-[13px] font-semibold text-white">Credit Usage</h2>
+              <p className="text-[10px] text-neutral-500 mt-0.5">Last {DAYS_RANGE} days</p>
+            </div>
             <span className="dash-badge">{planName}</span>
           </div>
 
@@ -475,7 +482,7 @@ function ModelBars({
 }: {
   topModels: Array<{ model: string; credits: number; count: number }>;
 }) {
-  const MODEL_COLORS = ['#FF383C', '#FF8A4C', '#10b981', '#6366f1', '#06b6d4'];
+  const MODEL_COLORS = BRAND_CHART_COLORS;
   const modelTotal = topModels.reduce((s, m) => s + m.credits, 0);
 
   return (
