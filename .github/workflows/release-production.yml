@@ -67,6 +67,13 @@ jobs:
         run: pnpm turbo run typecheck --filter=stuard-ai-website
       - name: Build (Website)
         if: ${{ github.event.inputs.deploy_website == 'true' }}
+        env:
+          # NEXT_PUBLIC_* are inlined at build time and supabaseClient.ts throws
+          # if they're missing, which breaks static prerender. This is a throwaway
+          # validation build (the real deploy uses Vercel-managed env), so feed it
+          # harmless placeholders just so prerender can evaluate the module.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
         run: pnpm turbo run build --filter=stuard-ai-website
       - name: Unit Tests (Website)
         if: ${{ github.event.inputs.deploy_website == 'true' }}
@@ -441,6 +448,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOUD_PUBLIC_URL: "https://api.stuard.ai"
+          # This desktop build uses `npm install` (flat node_modules), so the vite
+          # renderer build needs preserveSymlinks to resolve the symlinked
+          # @stuardai/* workspace packages' transitive imports (e.g.
+          # @stuardai/chat-ui/ui from packages/vm-chat). Without this the prod
+          # build fails: "Rollup failed to resolve import @stuardai/chat-ui/ui".
+          # The pnpm-based gate/local builds must NOT set this.
+          STUARD_DESKTOP_NPM_BUILD: "1"
           # NOTE: PostHog is NOT enabled in production (privacy-first)
           # VITE_PUBLIC_POSTHOG_KEY and VITE_PUBLIC_POSTHOG_HOST intentionally omitted
           # macOS code signing (optional - uncomment when ready)
