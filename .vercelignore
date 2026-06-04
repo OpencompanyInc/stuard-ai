@@ -15,3 +15,9 @@ apps/agent/test-temp-pytest/
 apps/agent/tests/_tmp_docs/
 apps/agent/_tmp_ws_forward_tests/
 apps/agent/%TEMP%/
+# apps/agent is a Python project (no package.json) — not a JS workspace member and
+# not needed by the website build. Prune the whole tree so Vercel never scandirs
+# its process-locked pytest temp dirs (the recurring EPERM source).
+apps/agent/
+**/.pytest_cache/
+**/.codex-pytest-tmp/
