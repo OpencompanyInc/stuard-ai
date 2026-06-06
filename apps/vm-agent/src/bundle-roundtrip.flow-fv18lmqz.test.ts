@@ -89,7 +89,8 @@ const dir = findWorkflowDir();
 const maybe = dir ? describe : describe.skip;
 
 maybe(`workspace bundle round-trip — ${WORKFLOW_ID}`, () => {
-  const workflowDir = dir as string;
+  if (!dir) return;
+  const workflowDir = dir;
   const mainModel = JSON.parse(fs.readFileSync(path.join(workflowDir, 'main.stuard'), 'utf-8'));
 
   it('main spec calls the sub-workflow via call_workspace_function', () => {
