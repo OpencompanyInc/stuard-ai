@@ -6,6 +6,7 @@ import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
 import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
+import * as notionTools from './notion-tools';
 import * as discordTools from './discord-tools';
 import * as redditTools from './reddit-tools';
 import * as xTools from './x-tools';
@@ -627,6 +628,7 @@ if (outlookTools.outlook_send_mail) {
 }
 
 Object.values(githubTools).forEach(t => registerTool(t, 'GitHub'));
+Object.values(notionTools).forEach(t => registerTool(t, 'Notion'));
 if (DISCORD_INTEGRATION_ENABLED) {
 Object.values(discordTools).forEach(t => registerTool(t, 'Discord'));
 }

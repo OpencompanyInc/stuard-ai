@@ -37,6 +37,7 @@ function normalizeFeedbackItem(row: FeedbackRow): Record<string, unknown> {
     priority: normalizePriority(row),
     title: row.title,
     description: row.description,
+    screenshots: Array.isArray(row.screenshots) ? row.screenshots : [],
     reporter_email: reporterEmail,
     assigned_to: assignedTo,
     created_at: row.created_at,

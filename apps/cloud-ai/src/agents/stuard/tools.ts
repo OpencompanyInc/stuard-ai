@@ -25,6 +25,7 @@ import {
   WHATSAPP_INTEGRATION_ENABLED,
 } from '../../../../../shared/integration-flags';
 import * as xTools from '../../tools/x-tools';
+import * as notionTools from '../../tools/notion-tools';
 import { ffmpeg_status, ffmpeg_setup, ffmpeg_run, ffmpeg_convert_media, ffmpeg_extract_audio, ffmpeg_trim_media, ffmpeg_probe_media, ffmpeg_extract_frames, folder_permission_add, folder_permission_remove, folder_permission_list, folder_permission_set_enabled, folder_permission_check, get_datetime, math_eval, generate_uuid, random_number, random_choice, get_env_var, get_system_info, hash_string, base64_encode, base64_decode, json_parse, json_stringify, sleep, regex_match, regex_replace } from '../../tools/device-tools';
 import { data_analysis_status, data_analysis_setup, data_analysis_uninstall, data_load, describe_data, correlate_data, plot_line, plot_bar, plot_scatter, plot_hist, plot_pie, plot_heatmap, plot_box, run_data_python } from '../../tools/device-tools';
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
@@ -325,6 +326,8 @@ const RAW_ALL_TOOLS = {
   whatsapp_send_template,
   // X/Twitter
   ...xTools,
+  // Notion
+  ...notionTools,
   // Data analysis (pandas/numpy/scipy/matplotlib/seaborn in a dedicated venv)
   data_analysis_status,
   data_analysis_setup,
@@ -524,6 +527,11 @@ export function getTools(
   if (enabledIntegrations.includes('github')) {
     for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
       if (name.startsWith('github_')) tools[name] = tool;
+    }
+  }
+  if (enabledIntegrations.includes('notion')) {
+    for (const [name, tool] of Object.entries(ALL_TOOLS as any)) {
+      if (name.startsWith('notion_')) tools[name] = tool;
     }
   }
   if (enabledIntegrations.includes('telnyx')) {

@@ -11,7 +11,7 @@ import {
   Scale,
   Globe,
 } from 'lucide-react';
-import type { ModelMeta, ModelSourcePreference, ReasoningLevel } from '../hooks/usePreferences';
+import type { ModelMeta, ModelSourcePreference, ReasoningLevel, ReasoningEffort, ReasoningControl } from '../hooks/usePreferences';
 import { useModelRegistry } from '../hooks/useModelRegistry';
 import { useByokStatus } from '../hooks/useByokStatus';
 import { clsx } from 'clsx';
@@ -32,15 +32,44 @@ interface ModelSelectorProps {
   panelWidth?: number;
 }
 
-const PROVIDER_FALLBACK_ICONS: Record<string, React.ReactNode> = {
-  'OpenAI': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-emerald-500 text-white rounded">O</span>,
-  'Google': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-blue-500 text-white rounded">G</span>,
-  'xAI': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-black text-white rounded italic">x</span>,
-  'DeepSeek': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-blue-600 text-white rounded">D</span>,
-  'Perplexity': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-cyan-500 text-white rounded">P</span>,
-  'Anthropic': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-orange-500 text-white rounded">A</span>,
-  'OpenRouter': <span className="w-4 h-4 flex items-center justify-center text-[9px] font-semibold bg-purple-500 text-white rounded">R</span>,
+// ── Surface tokens ─────────────────────────────────────────────────────────
+// The desktop `theme-*` / `primary` classes are plain CSS utilities, so Tailwind
+// opacity modifiers on them (e.g. `bg-theme-hover/60`, `bg-primary/[0.08]`) are
+// dead no-ops. Tints must go through arbitrary `color-mix` values on the CSS
+// vars — which also auto-adapt across surfaces: inside `.launcher-compact-skin`
+// and the workflow panel, `--foreground`/`--primary` remap to the compact-pill /
+// studio palette (primary = brand red), so the same string reads correctly in
+// compact, launcher, window, and Studio.
+const ROW_HOVER = 'hover:bg-[color:color-mix(in_srgb,var(--foreground)_6%,transparent)]';
+const ROW_ACTIVE = 'bg-[color:color-mix(in_srgb,var(--foreground)_9%,transparent)]';
+const ROW_SELECTED = 'bg-[color:color-mix(in_srgb,var(--primary)_10%,transparent)] ring-1 ring-inset ring-[color:color-mix(in_srgb,var(--primary)_30%,transparent)]';
+const ACCENT_TEXT = 'text-[color:var(--primary)]';
+const ACCENT_SOFT_TILE = 'bg-[color:color-mix(in_srgb,var(--primary)_13%,transparent)]';
+const NEUTRAL_TILE = 'bg-[color:color-mix(in_srgb,var(--foreground)_7%,transparent)]';
+const SEG_TRACK = 'bg-[color:color-mix(in_srgb,var(--foreground)_6%,transparent)]';
+
+/** Calm, monochrome provider fallback chip (letter on a neutral tile). Logos
+ *  load for nearly every model; this only shows when one is missing, so it stays
+ *  quiet rather than introducing a saturated brand color into the list. */
+const PROVIDER_FALLBACK_LETTER: Record<string, string> = {
+  OpenAI: 'O',
+  Google: 'G',
+  xAI: 'x',
+  DeepSeek: 'D',
+  Perplexity: 'P',
+  Anthropic: 'A',
+  OpenRouter: 'R',
 };
+
+function providerFallbackIcon(provider: string | undefined): React.ReactNode {
+  const letter = provider ? PROVIDER_FALLBACK_LETTER[provider] : undefined;
+  if (letter) {
+    return (
+      <span className="text-[11px] font-semibold text-theme-muted leading-none">{letter}</span>
+    );
+  }
+  return <Cpu className="w-3.5 h-3.5 text-theme-muted" />;
+}
 
 const TIER_DEFAULTS: Record<'fast' | 'balanced' | 'smart' | 'research', string> = {
   fast: 'google/gemini-3.1-flash-lite',
@@ -85,6 +114,54 @@ function formatContextWindow(n: number): string {
     return `${Number.isInteger(m) ? m : +m.toFixed(1)}M`;
   }
   return `${Math.round(n / 1000)}k`;
+}
+
+// ── Per-model thinking ("reasoning") controls ──────────────────────────────
+
+const REASONING_LADDER: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+
+const REASONING_LABEL: Record<ReasoningLevel, string> = {
+  none: 'Off',
+  minimal: 'Min',
+  low: 'Low',
+  medium: 'Med',
+  high: 'High',
+  xhigh: 'Max',
+};
+
+/** What the Thinking control should offer for the selected model. */
+interface ResolvedReasoning {
+  show: boolean;        // render the control at all
+  canDisable: boolean;  // offer an "Off" choice
+  levels: ReasoningEffort[];
+  default: ReasoningEffort;
+}
+
+const GENERIC_REASONING: ResolvedReasoning = { show: true, canDisable: true, levels: ['low', 'medium', 'high'], default: 'high' };
+const NO_REASONING: ResolvedReasoning = { show: false, canDisable: true, levels: [], default: 'high' };
+
+function resolveReasoningFor(model: ModelMeta | null | undefined, selectedModelId: string | 'auto'): ResolvedReasoning {
+  // Auto routes to a server-picked model; offer the common tiers.
+  if (selectedModelId === 'auto') return GENERIC_REASONING;
+  const ctrl: ReasoningControl | undefined = model?.reasoningControl;
+  if (ctrl && typeof ctrl.supported === 'boolean') {
+    if (!ctrl.supported || ctrl.levels.length === 0) return NO_REASONING;
+    return { show: true, canDisable: ctrl.canDisable, levels: ctrl.levels, default: ctrl.default || 'high' };
+  }
+  // No capability from the registry yet: fall back to the coarse reasoning flag.
+  return model?.isReasoning ? GENERIC_REASONING : NO_REASONING;
+}
+
+/** Clamp a (possibly stale) global level to what the current model supports. */
+function clampReasoning(level: ReasoningLevel, r: ResolvedReasoning): ReasoningLevel {
+  if (!r.show) return level;
+  if (level === 'none') return r.canDisable ? 'none' : r.default;
+  if (r.levels.includes(level as ReasoningEffort)) return level;
+  const idx = REASONING_LADDER.indexOf(level as ReasoningEffort);
+  for (let i = idx; i >= 0; i--) {
+    if (r.levels.includes(REASONING_LADDER[i])) return REASONING_LADDER[i];
+  }
+  return r.levels[0];
 }
 
 function dedupeBrowseModels(models: ModelMeta[]): ModelMeta[] {
@@ -206,9 +283,9 @@ function dedupeAcrossSources(
 }
 
 const SectionHeader: React.FC<{ icon: React.ReactNode; label: string; extra?: React.ReactNode }> = ({ icon, label, extra }) => (
-  <div className="flex items-center gap-1.5 px-2 mb-1">
-    <span className="text-theme-muted/70 flex-shrink-0">{icon}</span>
-    <span className="text-[10px] font-semibold text-theme-muted/80 uppercase tracking-wider">{label}</span>
+  <div className="flex items-center gap-1.5 px-2.5 mb-1 mt-0.5">
+    <span className="flex-shrink-0">{icon}</span>
+    <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-[0.14em]">{label}</span>
     {extra && <div className="ml-auto flex items-center min-w-0 truncate">{extra}</div>}
   </div>
 );
@@ -303,15 +380,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     };
   }, [align, open, panelWidth, portal, side]);
 
-  useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 50);
-      setActiveIndex(0);
-    } else {
-      setSearch('');
-    }
-  }, [open]);
-
   // Collapse native ↔ Stuard-served twins to one row each, then keep only the
   // models the user can actually route to: the Stuard-served catalog (always)
   // plus native ids unlocked by a BYOK key / ChatGPT plan.
@@ -384,6 +452,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return items;
   }, [grouped, search, filteredModels]);
 
+  // On open, focus the search and jump the highlight to the model that's already
+  // selected so it's visible (and scrolled into view) rather than always landing
+  // on the first row.
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+      const idx = allVisibleItems.findIndex((it) => it.id === selectedModelId);
+      setActiveIndex(idx >= 0 ? idx : 0);
+    } else {
+      setSearch('');
+    }
+    // Intentionally only on open/close — re-running while typing would yank the
+    // keyboard highlight around.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   const selectedModel = useMemo(() => {
     if (selectedModelId === 'auto') return null;
     return ALL_MODELS.find(m => m.id === selectedModelId);
@@ -398,8 +482,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     ? sourceBadgeForModel(selectedModel, modelSource, byokStatus)
     : null;
 
-  // Reasoning only meaningfully applies to reasoning-capable models (or 'auto')
-  const reasoningApplies = selectedModelId === 'auto' || !!selectedModel?.isReasoning;
+  // Thinking controls adapt to the selected model: which tiers it exposes,
+  // whether it can be turned off, and what a stale global level resolves to.
+  const reasoning = useMemo(
+    () => resolveReasoningFor(selectedModel, selectedModelId),
+    [selectedModel, selectedModelId],
+  );
+  const effectiveReasoning = useMemo(
+    () => clampReasoning(reasoningLevel, reasoning),
+    [reasoningLevel, reasoning],
+  );
+  const reasoningButtons = useMemo<ReasoningLevel[]>(
+    () => [...(reasoning.canDisable ? (['none'] as ReasoningLevel[]) : []), ...reasoning.levels],
+    [reasoning],
+  );
 
   const handleSelect = (id: string | 'auto') => {
     if (id === 'auto' && modelSource !== 'stuard') {
@@ -490,13 +586,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     },
   ]), [selectedModel, selectedModelId, byokStatus]);
 
-  const reasoningOptions: Array<{ level: ReasoningLevel; label: string }> = [
-    { level: 'none', label: 'Off' },
-    { level: 'low', label: 'Low' },
-    { level: 'medium', label: 'Med' },
-    { level: 'high', label: 'High' },
-  ];
-
   const wfSurfaceTheme = useMemo(() => {
     if (typeof document === 'undefined') return undefined;
     const attr = document.querySelector('[data-wf-theme]')?.getAttribute('data-wf-theme');
@@ -510,9 +599,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className={clsx(
-          "model-selector-trigger flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors cursor-pointer outline-none group hover:bg-theme-hover/60",
-          open && "bg-theme-hover/80",
-          className
+          'model-selector-trigger flex items-center gap-1.5 pl-1.5 pr-2 py-1.5 rounded-[12px] transition-colors cursor-pointer outline-none group',
+          'hover:bg-[color:color-mix(in_srgb,var(--foreground)_8%,transparent)]',
+          open && 'bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)]',
+          className,
         )}
       >
         <div className="relative w-5 h-5 flex items-center justify-center flex-shrink-0">
@@ -525,15 +615,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             />
           ) : (
             selectedModel ? (
-              PROVIDER_FALLBACK_ICONS[selectedModel.provider] || <Cpu className="w-3.5 h-3.5 text-neutral-500" />
+              providerFallbackIcon(selectedModel.provider)
             ) : (
-              <Wand2 className="w-3.5 h-3.5 text-primary" />
+              <Wand2 className={clsx('w-3.5 h-3.5', ACCENT_TEXT)} />
             )
           )}
           {selectedSource && (
             <span
               className={clsx(
-                "absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-theme-card",
+                'absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-[color:var(--card-bg)]',
                 selectedSource === 'byok' ? 'bg-emerald-500' : 'bg-cyan-500',
               )}
               title={selectedSource === 'byok'
@@ -542,23 +632,23 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             />
           )}
         </div>
-        <span className="text-[12px] font-medium text-theme-fg/80 truncate max-w-[110px] group-hover:text-theme-fg">
+        <span className="text-[12px] font-medium text-theme-muted truncate max-w-[110px] group-hover:text-theme-fg transition-colors">
           {selectedModelName}
         </span>
-        {reasoningLevel !== 'high' && (
+        {reasoning.show && effectiveReasoning !== 'high' && (
           <span
             className={clsx(
-              "text-[9px] font-semibold uppercase tracking-wider px-1 py-0.5 rounded leading-none",
-              reasoningLevel === 'none'
-                ? "text-theme-muted/80 bg-theme-hover"
-                : "text-purple-600 dark:text-purple-400 bg-purple-500/10",
+              'text-[9px] font-semibold uppercase tracking-wider px-1 py-0.5 rounded-md leading-none',
+              effectiveReasoning === 'none'
+                ? 'text-theme-muted bg-[color:color-mix(in_srgb,var(--foreground)_8%,transparent)]'
+                : clsx(ACCENT_TEXT, 'bg-[color:color-mix(in_srgb,var(--primary)_12%,transparent)]'),
             )}
-            title={`Thinking: ${reasoningLevel}`}
+            title={`Thinking: ${effectiveReasoning}`}
           >
-            {reasoningLevel === 'none' ? 'Off' : reasoningLevel === 'low' ? 'Low' : 'Med'}
+            {REASONING_LABEL[effectiveReasoning]}
           </span>
         )}
-        <ChevronDown className={clsx("w-3 h-3 text-theme-muted/70 transition-transform duration-200", open && "rotate-180")} />
+        <ChevronDown className={clsx('w-3 h-3 text-theme-muted transition-transform duration-200', open && 'rotate-180')} />
       </button>
 
       {open && (() => {
@@ -571,14 +661,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               // Tailwind JIT missing the arbitrary min()/calc() value). Non-portal
               // (launcher + window) uses that cap; portal callers override it with
               // an inline maxHeight computed from the available viewport space.
-              "z-[10005] model-selector-panel rounded-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 shadow-2xl",
+              'z-[10005] model-selector-panel rounded-[20px] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 shadow-2xl',
               variant === 'glass'
-                ? "bg-theme-card/90 backdrop-blur-2xl"
-                : "bg-theme-card/98 backdrop-blur-xl",
+                ? 'bg-[color:color-mix(in_srgb,var(--card-bg)_85%,transparent)] backdrop-blur-2xl'
+                : 'bg-[color:color-mix(in_srgb,var(--card-bg)_97%,transparent)] backdrop-blur-xl',
               portal
-                ? "fixed"
+                ? 'fixed'
                 : [
-                    "absolute",
+                    'absolute',
                     side === 'top' ? 'bottom-full mb-2.5' : 'top-full mt-2.5',
                     align === 'end' ? 'right-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0',
                   ]
@@ -586,13 +676,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             style={portal ? portalStyle : { width: panelWidth }}
           >
             {/* Search header */}
-            <div className="p-2">
+            <div className="p-2 border-b border-[color:color-mix(in_srgb,var(--foreground)_8%,transparent)]">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted/70 pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted pointer-events-none" />
                 <input
                   ref={inputRef}
-                  className="w-full pl-9 pr-3 py-2 bg-transparent rounded-lg text-[13px] text-theme-fg placeholder:text-theme-muted/70 outline-none border-none font-normal focus:bg-theme-hover/40 transition-colors"
-                  placeholder="Search models, providers..."
+                  className="w-full pl-9 pr-3 py-2.5 rounded-[12px] text-[13px] text-theme-fg bg-[color:color-mix(in_srgb,var(--foreground)_5%,transparent)] placeholder:text-theme-muted outline-none border border-transparent font-normal transition-colors focus:bg-[color:color-mix(in_srgb,var(--foreground)_7%,transparent)] focus:border-[color:color-mix(in_srgb,var(--primary)_38%,transparent)]"
+                  placeholder="Search models, providers…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -622,12 +712,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     </div>
                   ) : (
                     <div className="py-12 px-6 text-center">
-                      <div className="w-10 h-10 bg-theme-hover/40 rounded-xl flex items-center justify-center mx-auto mb-3">
-                        <Search className="w-4 h-4 text-theme-muted/70" />
+                      <div className={clsx('w-11 h-11 rounded-[14px] flex items-center justify-center mx-auto mb-3', NEUTRAL_TILE)}>
+                        <Search className="w-4 h-4 text-theme-muted" />
                       </div>
                       <p className="text-[13px] font-medium text-theme-fg mb-1">No matches</p>
                       <p className="text-[11px] text-theme-muted">
-                        Nothing for "<span className="text-theme-fg/80">{search}</span>". Try a provider name or model family.
+                        Nothing for "<span className="text-theme-fg">{search}</span>". Try a provider name or model family.
                       </p>
                     </div>
                   )}
@@ -639,19 +729,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     onClick={() => handleSelect('auto')}
                     data-index={0}
                     className={clsx(
-                      "w-full flex items-center gap-2.5 px-2 py-2 rounded-lg transition-colors text-left",
-                      activeIndex === 0 ? "bg-theme-hover" : "hover:bg-theme-hover/60",
-                      selectedModelId === 'auto' && "bg-primary/[0.08]",
+                      'w-full flex items-center gap-2.5 px-2 py-2 rounded-[14px] transition-colors text-left',
+                      selectedModelId === 'auto'
+                        ? ROW_SELECTED
+                        : activeIndex === 0
+                          ? ROW_ACTIVE
+                          : ROW_HOVER,
                     )}
                   >
-                    <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-primary/15 to-primary/5">
-                      <Wand2 className="w-3.5 h-3.5 text-primary" />
+                    <div className={clsx('w-8 h-8 rounded-[11px] flex items-center justify-center flex-shrink-0', ACCENT_SOFT_TILE)}>
+                      <Wand2 className={clsx('w-4 h-4', ACCENT_TEXT)} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-medium text-theme-fg leading-tight">Automatic</div>
                       <div className="text-[11px] text-theme-muted truncate mt-0.5">Best model picked for each task</div>
                     </div>
-                    {selectedModelId === 'auto' && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                    {selectedModelId === 'auto' && <Check className={clsx('w-4 h-4 flex-shrink-0', ACCENT_TEXT)} />}
                   </button>
 
                   {/* No specific models to list: the user has no API key, so the
@@ -661,7 +754,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       <p className="text-[11px] text-theme-muted leading-relaxed">
                         Stuard automatically picks the best model for each task.
                         <br />
-                        Add a provider API key in <span className="text-theme-fg/80">Settings</span> to choose a specific one.
+                        Add a provider API key in <span className="text-theme-fg">Settings</span> to choose a specific one.
                       </p>
                     </div>
                   )}
@@ -669,10 +762,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   {grouped.openai.length > 0 && (
                     <div className="flex flex-col gap-0.5">
                       <SectionHeader
-                        icon={<Wand2 className="w-3 h-3 text-cyan-500/80" />}
+                        icon={<Wand2 className="w-3 h-3 text-cyan-500" />}
                         label="ChatGPT plan"
                         extra={byokStatus.codexAccountEmail && (
-                          <span className="text-[10px] text-theme-muted/60 font-normal normal-case tracking-normal truncate">
+                          <span className="text-[10px] text-theme-muted font-normal normal-case tracking-normal truncate">
                             {byokStatus.codexAccountEmail}
                           </span>
                         )}
@@ -699,7 +792,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                   {grouped.fast.length > 0 && (
                     <div className="flex flex-col gap-0.5">
-                      <SectionHeader icon={<Zap className="w-3 h-3 text-amber-500/80" />} label="Fast & efficient" />
+                      <SectionHeader icon={<Zap className="w-3 h-3 text-amber-500" />} label="Fast & efficient" />
                       {grouped.fast.map((model) => {
                         const idx = allVisibleItems.findIndex(x => x.id === model.id);
                         return (
@@ -722,7 +815,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                   {grouped.balanced.length > 0 && (
                     <div className="flex flex-col gap-0.5">
-                      <SectionHeader icon={<Scale className="w-3 h-3 text-emerald-500/80" />} label="Balanced" />
+                      <SectionHeader icon={<Scale className="w-3 h-3 text-emerald-500" />} label="Balanced" />
                       {grouped.balanced.map((model) => {
                         const idx = allVisibleItems.findIndex(x => x.id === model.id);
                         return (
@@ -745,7 +838,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                   {grouped.smart.length > 0 && (
                     <div className="flex flex-col gap-0.5">
-                      <SectionHeader icon={<Brain className="w-3 h-3 text-purple-500/80" />} label="Intelligence" />
+                      <SectionHeader icon={<Brain className="w-3 h-3 text-violet-500" />} label="Intelligence" />
                       {grouped.smart.map((model) => {
                         const idx = allVisibleItems.findIndex(x => x.id === model.id);
                         return (
@@ -768,7 +861,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                   {grouped.research.length > 0 && (
                     <div className="flex flex-col gap-0.5">
-                      <SectionHeader icon={<Globe className="w-3 h-3 text-cyan-500/80" />} label="Research" />
+                      <SectionHeader icon={<Globe className="w-3 h-3 text-sky-500" />} label="Research" />
                       {grouped.research.map((model) => {
                         const idx = allVisibleItems.findIndex(x => x.id === model.id);
                         return (
@@ -793,94 +886,96 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="px-2.5 py-2 bg-theme-bg/40 flex flex-col gap-1.5">
+            <div className="px-2.5 py-2.5 border-t border-[color:color-mix(in_srgb,var(--foreground)_8%,transparent)] bg-[color:color-mix(in_srgb,var(--foreground)_3%,transparent)] flex flex-col gap-2">
               {onModelSourceChange && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold text-theme-muted/80 uppercase tracking-wider w-[60px] flex-shrink-0">
+                  <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-[0.14em] w-[58px] flex-shrink-0">
                     Routing
                   </span>
-                  <div className="flex-1 flex items-center bg-theme-hover/40 rounded-md p-[3px] gap-0.5">
-                    {sourceOptions.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        disabled={opt.disabled}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!opt.disabled) onModelSourceChange(opt.value);
-                        }}
-                        className={clsx(
-                          "flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors text-center",
-                          modelSource === opt.value
-                            ? opt.value === 'api_key'
-                              ? "bg-emerald-500 text-white shadow-sm"
-                              : opt.value === 'subscription'
-                                ? "bg-cyan-500 text-white shadow-sm"
-                                : "bg-theme-card text-theme-fg shadow-sm"
-                            : opt.disabled
-                              ? "text-theme-muted/40 cursor-not-allowed"
-                              : "text-theme-muted hover:text-theme-fg"
-                        )}
-                        title={opt.title}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+                  <div className={clsx('flex-1 flex items-center rounded-[12px] p-1 gap-1', SEG_TRACK)}>
+                    {sourceOptions.map((opt) => {
+                      const active = modelSource === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          disabled={opt.disabled}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!opt.disabled) onModelSourceChange(opt.value);
+                          }}
+                          className={clsx(
+                            'flex-1 px-2 py-1 rounded-[8px] text-[11px] font-medium transition-colors text-center',
+                            active
+                              ? opt.value === 'api_key'
+                                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                : opt.value === 'subscription'
+                                  ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300'
+                                  : 'bg-theme-card text-theme-fg shadow-sm'
+                              : opt.disabled
+                                ? 'text-theme-muted opacity-40 cursor-not-allowed'
+                                : 'text-theme-muted hover:text-theme-fg',
+                          )}
+                          title={opt.title}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
-              <div className="flex items-center gap-2">
-                <span
-                  className={clsx(
-                    "text-[10px] font-semibold uppercase tracking-wider w-[60px] flex-shrink-0",
-                    reasoningApplies ? "text-theme-muted/80" : "text-theme-muted/40",
-                  )}
-                  title={reasoningApplies ? undefined : 'This model does not use thinking.'}
-                >
-                  Thinking
-                </span>
-                <div className="flex-1 flex items-center bg-theme-hover/40 rounded-md p-[3px] gap-0.5">
-                  {reasoningOptions.map(({ level, label }) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onReasoningLevelChange?.(level);
-                      }}
-                      className={clsx(
-                        "flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors text-center",
-                        reasoningLevel === level
-                          ? level === 'none'
-                            ? "bg-theme-card text-theme-fg shadow-sm"
-                            : "bg-purple-500 text-white shadow-sm"
-                          : !reasoningApplies
-                            ? "text-theme-muted/40 hover:text-theme-muted"
-                            : "text-theme-muted hover:text-theme-fg"
-                      )}
-                      title={!reasoningApplies ? 'Only applies to reasoning-capable models.' : `Thinking depth: ${label}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
+              {/* Thinking depth — only the tiers this model actually exposes.
+                  Hidden entirely for models that don't reason. */}
+              {reasoning.show && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold text-theme-muted uppercase tracking-[0.14em] w-[58px] flex-shrink-0">
+                    Thinking
+                  </span>
+                  <div className={clsx('flex-1 flex items-center rounded-[12px] p-1 gap-1', SEG_TRACK)}>
+                    {reasoningButtons.map((level) => {
+                      const active = effectiveReasoning === level;
+                      return (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onReasoningLevelChange?.(level);
+                          }}
+                          className={clsx(
+                            'flex-1 px-2 py-1 rounded-[8px] text-[11px] font-medium transition-colors text-center',
+                            active
+                              ? level === 'none'
+                                ? 'bg-theme-card text-theme-fg shadow-sm'
+                                : clsx(ACCENT_SOFT_TILE, ACCENT_TEXT)
+                              : 'text-theme-muted hover:text-theme-fg',
+                          )}
+                          title={level === 'none' ? 'Disable thinking' : `Thinking depth: ${REASONING_LABEL[level]}`}
+                        >
+                          {REASONING_LABEL[level]}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex items-center gap-3 text-[10px] text-theme-muted/70">
+              )}
+              <div className="flex items-center justify-between pt-0.5">
+                <div className="flex items-center gap-3 text-[10px] text-theme-muted">
                   <span className="flex items-center gap-1">
-                    <kbd className="font-mono text-theme-muted">↑↓</kbd>
+                    <kbd className="font-mono">↑↓</kbd>
                     <span>nav</span>
                   </span>
                   <span className="flex items-center gap-1">
-                    <kbd className="font-mono text-theme-muted">↵</kbd>
+                    <kbd className="font-mono">↵</kbd>
                     <span>select</span>
                   </span>
                   <span className="flex items-center gap-1">
-                    <kbd className="font-mono text-theme-muted">esc</kbd>
+                    <kbd className="font-mono">esc</kbd>
                     <span>close</span>
                   </span>
                 </div>
-                <div className="text-[10px] text-theme-muted/60">
+                <div className="text-[10px] text-theme-muted">
                   {selectableModels.length} models
                 </div>
               </div>
@@ -927,12 +1022,15 @@ const ModelItem: React.FC<ModelItemProps> = ({
       data-index={index}
       onClick={onClick}
       className={clsx(
-        'group/row w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left transition-colors relative',
-        isActive ? 'bg-theme-hover' : 'hover:bg-theme-hover/60',
-        isSelected && 'bg-primary/[0.08]',
+        'group/row w-full flex items-center gap-2.5 px-2 py-1.5 rounded-[14px] text-left transition-colors relative',
+        isSelected
+          ? ROW_SELECTED
+          : isActive
+            ? ROW_ACTIVE
+            : ROW_HOVER,
       )}
     >
-      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-theme-hover/50">
+      <div className={clsx('w-8 h-8 rounded-[11px] flex items-center justify-center flex-shrink-0', NEUTRAL_TILE)}>
         {model.logoUrl ? (
           <ModelProviderLogo
             src={model.logoUrl}
@@ -941,7 +1039,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
             className="w-4 h-4"
           />
         ) : (
-          PROVIDER_FALLBACK_ICONS[model.provider] || <Cpu className="w-3.5 h-3.5 text-theme-muted" />
+          providerFallbackIcon(model.provider)
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -949,7 +1047,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
           <span className="text-[13px] font-medium text-theme-fg truncate leading-tight">{model.name}</span>
           {model.isReasoning && (
             <span title="Reasoning-capable model" className="flex-shrink-0">
-              <Brain className="w-3 h-3 text-purple-500/70" aria-label="Reasoning model" />
+              <Brain className="w-3 h-3 text-violet-500" aria-label="Reasoning model" />
             </span>
           )}
         </div>
@@ -975,7 +1073,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
                 onSelectWithSource('api_key');
               }
             }}
-            className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-1.5 py-0.5 rounded transition-opacity cursor-pointer"
+            className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-1.5 py-0.5 rounded-md transition-opacity cursor-pointer"
             title="Use your API key for this provider"
           >
             Use key
@@ -996,7 +1094,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
                 onSelectWithSource('subscription');
               }
             }}
-            className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-1.5 py-0.5 rounded transition-opacity cursor-pointer"
+            className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-1.5 py-0.5 rounded-md transition-opacity cursor-pointer"
             title="Use your ChatGPT plan for this OpenAI model"
           >
             Use plan
@@ -1004,7 +1102,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
         )}
         {source === 'byok' && (
           <span
-            className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-1.5 py-0.5 rounded"
+            className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-1.5 py-0.5 rounded-md"
             title="Routed through your API key — no Stuard credits used."
           >
             Your key
@@ -1012,14 +1110,14 @@ const ModelItem: React.FC<ModelItemProps> = ({
         )}
         {source === 'subscription' && (
           <span
-            className="text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 px-1.5 py-0.5 rounded"
+            className="text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-500/10 px-1.5 py-0.5 rounded-md"
             title="Routed through your ChatGPT plan — no Stuard credits used."
           >
             ChatGPT
           </span>
         )}
         {isSelected && (
-          <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+          <Check className={clsx('w-4 h-4 flex-shrink-0', ACCENT_TEXT)} />
         )}
       </div>
     </button>

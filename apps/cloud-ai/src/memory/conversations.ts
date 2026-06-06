@@ -8,7 +8,7 @@
  * - Search across conversation history
  */
 
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 import { embed, generateObject, generateText } from 'ai';
 import { google } from '../utils/models';
@@ -251,7 +251,7 @@ export async function analyzeConversationSegment(
     }
 
     const modelId = getDefaultModelForCategory('fast');
-    const model = buildProviderModel(modelId);
+    const model = buildNativeProviderModel(modelId);
 
     const { object } = await generateObject({
       model: model as any,
@@ -323,7 +323,7 @@ export async function generateConversationTitle(
       .slice(0, 500);
 
     const modelId = getDefaultModelForCategory('fast');
-    const model = buildProviderModel(modelId);
+    const model = buildNativeProviderModel(modelId);
 
     const { text: title } = await generateText({
       model: model as any,

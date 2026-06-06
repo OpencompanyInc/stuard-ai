@@ -14,7 +14,7 @@ describe('workflow palette categories', () => {
           label: 'Generate Image',
           args: expect.objectContaining({
             prompt: '',
-            model: 'gemini-3.1-flash-image-preview',
+            model: 'google/gemini-3.1-flash-image-preview',
             format: 'png',
           }),
         }),

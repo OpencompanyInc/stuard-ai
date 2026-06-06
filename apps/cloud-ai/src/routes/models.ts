@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { registerDynamicPricing } from '../pricing';
+import { capabilityKey, resolveReasoningControl, type ReasoningControl } from '../utils/reasoning-capability';
 
 type ModelsDevProviderEntry = {
   id?: string;
@@ -17,6 +18,8 @@ type NormalizedModel = {
   modelId: string;
   name: string;
   reasoning: boolean;
+  /** Normalized thinking-level capability (which tiers, whether it can be disabled). */
+  reasoningControl?: ReasoningControl;
   toolCall: boolean;
   structuredOutput: boolean;
   attachment: boolean;
@@ -69,6 +72,9 @@ let _cache: {
   fetchedAtMs: number;
   etag?: string;
   registry?: RegistryResponse;
+  // models.dev `reasoning_options` indexed by capabilityKey, kept so the
+  // OpenRouter-served catalog can borrow precise tiers even on a 304/cache hit.
+  reasoningIndex?: Map<string, any>;
 } = { fetchedAtMs: 0 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -190,6 +196,27 @@ function buildModelsDevRegistry(json: Record<string, ModelsDevProviderEntry>): P
   return { providers, models };
 }
 
+/**
+ * Index every model's models.dev `reasoning_options` by capabilityKey, across
+ * ALL providers in the dump (not just the ones we surface natively) so the
+ * de-branded OpenRouter catalog can match the underlying vendor's tiers.
+ */
+function indexReasoningOptions(json: Record<string, ModelsDevProviderEntry>): Map<string, any> {
+  const index = new Map<string, any>();
+  for (const providerId of Object.keys(json || {})) {
+    const rawModels = json[providerId]?.models;
+    if (!rawModels || typeof rawModels !== 'object') continue;
+    for (const rawModelId of Object.keys(rawModels)) {
+      const m = (rawModels as any)[rawModelId];
+      const opts = m?.reasoning_options;
+      if (opts == null) continue;
+      const modelId = String(m?.id || rawModelId);
+      index.set(capabilityKey(`${providerId}/${modelId}`), opts);
+    }
+  }
+  return index;
+}
+
 function addOpenRouterRegistry(models: NormalizedModel[], providers: RegistryResponse['providers']) {
   if (models.length === 0) return;
   providers.push({
@@ -291,6 +318,7 @@ async function fetchRegistry(): Promise<RegistryResponse> {
   let etag = _cache.etag;
   let providers: RegistryResponse['providers'] = [];
   let models: NormalizedModel[] = [];
+  let reasoningIndex: Map<string, any> = _cache.reasoningIndex ?? new Map();
 
   try {
     const headers: Record<string, string> = {};
@@ -304,6 +332,7 @@ async function fetchRegistry(): Promise<RegistryResponse> {
       etag = resp.headers.get('etag') || undefined;
       const json = (await resp.json()) as Record<string, ModelsDevProviderEntry>;
       ({ providers, models } = buildModelsDevRegistry(json));
+      reasoningIndex = indexReasoningOptions(json);
     }
   } catch {
     ({ providers, models } = getCachedBaseRegistry());
@@ -333,6 +362,9 @@ async function fetchRegistry(): Promise<RegistryResponse> {
   tiers.smart.forEach((id) => tierSet.set(id, 'smart'));
   models.forEach((m) => {
     (m as any).tier = tierSet.get(m.id);
+    // Normalized thinking capability so the picker can adapt per model: precise
+    // tiers from models.dev when known, family heuristic otherwise.
+    m.reasoningControl = resolveReasoningControl(m.id, m.reasoning, reasoningIndex.get(capabilityKey(m.id)));
   });
 
   const registry: RegistryResponse = {
@@ -344,7 +376,7 @@ async function fetchRegistry(): Promise<RegistryResponse> {
     tiers,
   };
 
-  _cache = { fetchedAtMs: now, etag, registry };
+  _cache = { fetchedAtMs: now, etag, registry, reasoningIndex };
   return registry;
 }
 

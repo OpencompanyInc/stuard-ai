@@ -1,6 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { Bug, Lightbulb, Camera, X, Send, AlertTriangle, Tag } from 'lucide-react';
+import { Bug, Lightbulb, Send, AlertTriangle, Tag } from 'lucide-react';
 import clsx from 'clsx';
+import {
+  FeedbackAttachmentPicker,
+  type PendingFeedbackAttachment,
+} from './FeedbackAttachmentPicker';
 
 export interface FeedbackFormProps {
   type?: 'bug' | 'feature';
@@ -52,8 +56,7 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({
   const [description, setDescription] = useState(initialDescription);
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high' | 'critical'>(initialSeverity);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(initialLabels);
-  const [screenshots, setScreenshots] = useState<string[]>([]);
-  const [isCapturing, setIsCapturing] = useState(false);
+  const [attachments, setAttachments] = useState<PendingFeedbackAttachment[]>([]);
 
   const isDone = isSubmitted || isCancelled;
 
@@ -69,30 +72,6 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({
     );
   };
 
-  const handleCaptureScreenshot = async () => {
-    if (isCapturing) return;
-    setIsCapturing(true);
-    try {
-      if ((window as any).desktopAPI?.execTool) {
-        const result = await (window as any).desktopAPI.execTool('capture_screen', {
-          mode: 'screenshot',
-          region: 'fullscreen',
-        });
-        if (result?.ok && result?.path) {
-          setScreenshots(prev => [...prev, result.path]);
-        }
-      }
-    } catch (err) {
-      console.error('Screenshot capture failed:', err);
-    } finally {
-      setIsCapturing(false);
-    }
-  };
-
-  const handleRemoveScreenshot = (index: number) => {
-    setScreenshots(prev => prev.filter((_, i) => i !== index));
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -104,7 +83,11 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({
       description: description.trim(),
       severity: type === 'bug' ? severity : undefined,
       labels: selectedLabels,
-      screenshots,
+      screenshots: attachments.flatMap((item) => {
+        if (item.kind === 'path') return [item.path];
+        const filePath = (item.file as File & { path?: string }).path;
+        return typeof filePath === 'string' && filePath ? [filePath] : [];
+      }),
     });
   };
 
@@ -272,42 +255,18 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({
           </div>
         </div>
 
-        {/* Screenshots */}
+        {/* Attachments */}
         {allowScreenshot && (
           <div>
-            <label className="block text-xs font-medium text-theme-muted mb-1.5 flex items-center gap-1">
-              <Camera className="w-3 h-3" />
-              Screenshots
+            <label className="block text-xs font-medium text-theme-muted mb-1.5">
+              Images & media <span className="font-normal opacity-60">(optional)</span>
             </label>
-            <div className="flex flex-wrap gap-2">
-              {screenshots.map((path, idx) => (
-                <div key={idx} className="relative group">
-                  <div className="w-16 h-16 rounded-lg border border-theme/20 bg-theme-bg flex items-center justify-center text-[10px] text-theme-muted overflow-hidden">
-                    <span className="truncate px-1">{path.split(/[/\\]/).pop()}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveScreenshot(idx)}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={handleCaptureScreenshot}
-                disabled={isDone || isCapturing}
-                className={clsx(
-                  "w-16 h-16 rounded-lg border-2 border-dashed transition-all flex flex-col items-center justify-center gap-1",
-                  "border-theme/20 text-theme-muted hover:border-blue-500/40 hover:text-blue-500",
-                  isCapturing && "opacity-50"
-                )}
-              >
-                <Camera className="w-4 h-4" />
-                <span className="text-[9px]">{isCapturing ? '...' : 'Capture'}</span>
-              </button>
-            </div>
+            <FeedbackAttachmentPicker
+              attachments={attachments}
+              onChange={setAttachments}
+              disabled={isDone}
+              allowCapture
+            />
           </div>
         )}
 

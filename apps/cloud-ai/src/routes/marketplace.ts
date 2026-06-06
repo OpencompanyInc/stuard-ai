@@ -812,6 +812,9 @@ export async function handleMarketplaceRoutes(
       const { data, error } = await supabase
         .from('marketplace_workflows')
         .select('id')
+        // Exclude soft-deleted listings so an unpublished workflow doesn't
+        // reappear in "My Published" after a page reload.
+        .neq('status', 'removed')
         .eq('publisher_id', user.userId)
         .order('created_at', { ascending: false });
 
@@ -1345,16 +1348,27 @@ export async function handleMarketplaceRoutes(
     }
 
     try {
-      // Only allow owner to delete
-      const { error } = await supabase
+      // Soft-delete, but only the owner's listing. `select()` returns the rows
+      // that actually changed — if it's empty the caller doesn't own this slug
+      // (or it's already gone), so report a real failure instead of a silent
+      // "ok" that leaves the listing live on the marketplace.
+      const { data: removed, error } = await supabase
         .from('marketplace_workflows')
         .update({ status: 'removed', updated_at: new Date().toISOString() })
         .eq('slug', slug)
-        .eq('publisher_id', user.userId);
+        .eq('publisher_id', user.userId)
+        .neq('status', 'removed')
+        .select('id');
 
       if (error) {
         res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ error: 'Failed to remove workflow' }));
+        return true;
+      }
+
+      if (!removed || removed.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: "This workflow isn't published under your account, or was already removed." }));
         return true;
       }
 

@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { execLocalTool, safeToolWrite, hasClientBridge } from './bridge';
+import { execLocalTool, safeToolWrite, hasClientBridge, getBridgeSecrets, getBridgeWs } from './bridge';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -225,11 +225,60 @@ function markWorkflowToolArgs(args: any): any {
   return { ...(args as Record<string, any>), __workflowToolCall: true };
 }
 
+/**
+ * Push a wrapper progress event straight to the client socket.
+ *
+ * The Mastra tool `writer` is the intended streaming channel, but in the
+ * orchestrator path it is frequently absent/buffered for run_parallel /
+ * run_sequential — so the per-step events never reach the UI and the trace
+ * rebuilds every branch from the final result at once ("0 → 6/6"). The client
+ * connection is also the bridge connection, and runAgent stashes it (plus the
+ * requestId) on the bridge secrets, so we can emit the SAME `tool_event`
+ * progress messages live here. The client's handler is keyed by
+ * `${parentId}:${index}` and idempotent, so this is purely additive — duplicate
+ * events from the writer path (when it does fire) just update the same branch.
+ */
+function emitWrapperClientEvent(data: any): void {
+  try {
+    const secrets = getBridgeSecrets() as any;
+    if (!secrets) return;
+    const requestId = typeof secrets.__requestId === 'string' ? secrets.__requestId : undefined;
+    const msg: any = { type: 'progress', event: 'tool_event', data };
+    if (requestId) msg.requestId = requestId;
+    const payload = JSON.stringify(msg);
+    const seen = new Set<any>();
+    for (const target of [secrets.__chatWs, getBridgeWs()]) {
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      try {
+        const OPEN = typeof target.OPEN === 'number' ? target.OPEN : 1;
+        if (target.readyState === OPEN) target.send(payload);
+      } catch { }
+    }
+  } catch { }
+}
+
+/**
+ * Emit a wrapper event on BOTH channels: the Mastra tool writer (when present)
+ * and directly to the client. `emitClient` is gated so only the live
+ * run_parallel / run_sequential wrappers fan out to the UI — reused callers like
+ * test_workflow keep the writer-only behavior.
+ */
+async function wrapperWrite(
+  writer: any,
+  data: any,
+  emitClient: boolean,
+): Promise<void> {
+  if (emitClient) emitWrapperClientEvent(data);
+  try { await safeToolWrite(writer as any, data as any); } catch { }
+}
+
 async function runOne(
   step: any,
   writer?: WritableStreamDefaultWriter<any>,
   eventTool = 'run_sequential',
   stepIndex?: number,
+  emitClient = false,
 ) {
   const { tool, args, kind, timeoutMs } = step;
   const toolName = normalizeToolName(tool);
@@ -238,8 +287,7 @@ async function runOne(
     kind,
     ...(typeof stepIndex === 'number' ? { index: stepIndex } : {}),
   };
-  const startEvt = { type: 'tool_event', tool: eventTool, status: 'step_started', step: stepMeta };
-  try { await safeToolWrite(writer as any, startEvt as any); } catch { }
+  await wrapperWrite(writer, { type: 'tool_event', tool: eventTool, status: 'step_started', step: stepMeta }, emitClient);
 
   try {
     let result: any;
@@ -257,21 +305,19 @@ async function runOne(
       );
     }
     const safe = sanitizeResult(result);
-    try {
-      await safeToolWrite(
-        writer as any,
-        { type: 'tool_event', tool: eventTool, status: 'step_completed', step: stepMeta, result: safe } as any,
-      );
-    } catch { }
+    await wrapperWrite(
+      writer,
+      { type: 'tool_event', tool: eventTool, status: 'step_completed', step: stepMeta, result: safe },
+      emitClient,
+    );
     return { tool, ok: (result && typeof result.ok === 'boolean') ? !!result.ok : true, result: safe };
   } catch (e: any) {
     const msg = e?.message || 'failed';
-    try {
-      await safeToolWrite(
-        writer as any,
-        { type: 'tool_event', tool: eventTool, status: 'step_error', step: stepMeta, error: msg } as any,
-      );
-    } catch { }
+    await wrapperWrite(
+      writer,
+      { type: 'tool_event', tool: eventTool, status: 'step_error', step: stepMeta, error: msg },
+      emitClient,
+    );
     return { tool, ok: false, error: msg };
   }
 }
@@ -288,9 +334,9 @@ export const runSequentialTool = createTool({
     const results: any[] = [];
     let firstError: string | undefined;
 
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_sequential', status: 'started', count: steps.length });
+    await wrapperWrite(writer, { type: 'tool_event', tool: 'run_sequential', status: 'started', count: steps.length }, true);
     for (let i = 0; i < steps.length; i++) {
-      const res = await runOne(steps[i], writer as any, 'run_sequential', i);
+      const res = await runOne(steps[i], writer as any, 'run_sequential', i, true);
       results.push(res);
       if ((res.ok ?? true) !== true) {
         if (!firstError) firstError = String(res.error || 'error');
@@ -299,7 +345,7 @@ export const runSequentialTool = createTool({
     }
     const allOk = results.every((r) => (r.ok ?? true) === true);
     const combined = combineResults(results);
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_sequential', status: 'completed', count: results.length, allOk });
+    await wrapperWrite(writer, { type: 'tool_event', tool: 'run_sequential', status: 'completed', count: results.length, allOk }, true);
     return { results, combined, allOk, firstError };
   },
 });
@@ -315,7 +361,7 @@ export const runParallelTool = createTool({
     const { steps, concurrency } = inputData;
     const limit = Math.max(1, Math.min(typeof concurrency === 'number' ? concurrency : steps.length, steps.length));
 
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_parallel', status: 'started', count: steps.length, concurrency: limit });
+    await wrapperWrite(writer, { type: 'tool_event', tool: 'run_parallel', status: 'started', count: steps.length, concurrency: limit }, true);
 
     const results: any[] = new Array(steps.length);
     let idx = 0;
@@ -326,8 +372,11 @@ export const runParallelTool = createTool({
         if (myIdx >= steps.length) break;
         const step = steps[myIdx];
         const toolName = normalizeToolName(step.tool);
-        const startEvt = { type: 'tool_event', tool: 'run_parallel', status: 'step_started', step: { index: myIdx, tool: step.tool, kind: step.kind } };
-        try { await safeToolWrite(writer as any, startEvt as any); } catch { }
+        await wrapperWrite(
+          writer,
+          { type: 'tool_event', tool: 'run_parallel', status: 'step_started', step: { index: myIdx, tool: step.tool, kind: step.kind } },
+          true,
+        );
         try {
           let result: any;
           if (step.kind === 'cloud' || (step.kind === 'auto' && getCloudTools().has(toolName))) {
@@ -345,16 +394,19 @@ export const runParallelTool = createTool({
           }
           const safe = sanitizeResult(result);
           results[myIdx] = { tool: step.tool, ok: (result && typeof result.ok === 'boolean') ? !!result.ok : true, result: safe };
-          try { await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_parallel', status: 'step_completed', step: { index: myIdx, tool: step.tool }, result: safe } as any); } catch { }
+          await wrapperWrite(
+            writer,
+            { type: 'tool_event', tool: 'run_parallel', status: 'step_completed', step: { index: myIdx, tool: step.tool }, result: safe },
+            true,
+          );
         } catch (e: any) {
           const msg = e?.message || 'failed';
           results[myIdx] = { tool: step.tool, ok: false, error: msg };
-          try {
-            await safeToolWrite(
-              writer as any,
-              { type: 'tool_event', tool: 'run_parallel', status: 'step_error', step: { index: myIdx, tool: step.tool }, error: msg } as any,
-            );
-          } catch { }
+          await wrapperWrite(
+            writer,
+            { type: 'tool_event', tool: 'run_parallel', status: 'step_error', step: { index: myIdx, tool: step.tool }, error: msg },
+            true,
+          );
         }
       }
     }
@@ -365,7 +417,7 @@ export const runParallelTool = createTool({
 
     const allOk = results.every((r) => (r?.ok ?? true) === true);
     const combined = combineResults(results as any);
-    await safeToolWrite(writer as any, { type: 'tool_event', tool: 'run_parallel', status: 'completed', count: results.length, allOk });
+    await wrapperWrite(writer, { type: 'tool_event', tool: 'run_parallel', status: 'completed', count: results.length, allOk }, true);
     return { results, combined, allOk };
   },
 });

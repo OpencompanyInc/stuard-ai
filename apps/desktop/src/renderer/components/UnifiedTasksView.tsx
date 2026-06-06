@@ -64,6 +64,15 @@ const PRIORITY_CONFIG: Record<TaskPriority, { label: string; color: string; icon
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 
+// Tasks can arrive with a missing or non-standard priority (e.g. an agent/LLM
+// writing `priority: "medium"` via task_crud, or older stored tasks). Map any
+// unrecognized value to 'normal' so config lookups never return undefined.
+function normalizePriority(priority: unknown): TaskPriority {
+  return typeof priority === 'string' && priority in PRIORITY_CONFIG
+    ? (priority as TaskPriority)
+    : 'normal';
+}
+
 function TaskPriorityPicker({
   value,
   onChange,
@@ -75,7 +84,7 @@ function TaskPriorityPicker({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const cfg = PRIORITY_CONFIG[value];
+  const cfg = PRIORITY_CONFIG[normalizePriority(value)];
 
   useEffect(() => {
     if (!open) return;
@@ -474,7 +483,9 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
     }).sort((a, b) => {
        // Sort by priority (urgent first) then due date
        const pOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
-       if (pOrder[a.priority] !== pOrder[b.priority]) return pOrder[a.priority] - pOrder[b.priority];
+       const aOrder = pOrder[normalizePriority(a.priority)];
+       const bOrder = pOrder[normalizePriority(b.priority)];
+       if (aOrder !== bOrder) return aOrder - bOrder;
        if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
        if (a.dueDate) return -1;
        if (b.dueDate) return 1;
@@ -828,7 +839,8 @@ const TaskCard: React.FC<TaskCardProps> = ({
   task, compact, expanded, onToggleExpand, onToggle, onDelete, onUpdateTask, onUpdate, onRefreshTasks
 }) => {
   const isCompleted = task.status === 'completed';
-  const priorityCfg = PRIORITY_CONFIG[task.priority];
+  const priority = normalizePriority(task.priority);
+  const priorityCfg = PRIORITY_CONFIG[priority];
   const subtodosTotal = task.subTodos?.length || 0;
   const subtodosCompleted = task.subTodos?.filter(s => s.completed).length || 0;
   const remindersCount = task.agentAssignments?.filter(a => a.status === 'pending').length || 0;
@@ -995,7 +1007,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
                 )}>
                   {task.title}
                 </span>
-                {task.priority !== 'normal' && task.priority !== 'low' && !isCompleted && (
+                {priority !== 'normal' && priority !== 'low' && !isCompleted && (
                   <span className={clsx("text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase", priorityCfg.bg, priorityCfg.color)}>
                     {priorityCfg.label}
                   </span>

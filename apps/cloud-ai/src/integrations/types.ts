@@ -44,8 +44,55 @@ export type AuthStrategy =
   | { type: 'apiKey'; keyField: string; in: 'query'; paramName: string }
   /** HTTP Basic auth. */
   | { type: 'basic'; userField: string; passField: string }
+  /**
+   * OAuth 2.0 authorization-code flow ("bring your own OAuth client").
+   *
+   * The user registers an app on the provider's developer console and supplies
+   * its client_id / client_secret as ordinary auth.fields. Stuard runs the
+   * consent redirect, the code-for-token exchange, and the refresh loop. The
+   * live access token is injected exactly like a bearer token.
+   *
+   * The access/refresh tokens themselves are NOT user-entered fields — they're
+   * written by the OAuth callback under the reserved secret keys below
+   * (OAUTH_ACCESS_TOKEN_KEY etc.) and read by the executor at call time.
+   */
+  | {
+      type: 'oauth2';
+      /** Provider consent endpoint (browser redirect target). */
+      authorizeUrl: string;
+      /** Provider token endpoint (server-side code exchange + refresh). */
+      tokenUrl: string;
+      /** auth.fields name holding the user's OAuth client id. */
+      clientIdField: string;
+      /** auth.fields name holding the user's OAuth client secret. */
+      clientSecretField: string;
+      /** Scopes to request at consent. */
+      scopes?: string[];
+      /** Header the access token is injected into. Default Authorization. */
+      headerName?: string;
+      /** Auth scheme prefix. Default "Bearer". */
+      scheme?: string;
+      /** Extra static params appended to the authorize URL (e.g. access_type=offline, prompt=consent). */
+      extraAuthParams?: Record<string, string>;
+    }
   /** No auth — tool calls itself supply credentials or the API is public. */
   | { type: 'none' };
+
+/**
+ * Reserved secret keys that the OAuth callback / refresh loop manage for an
+ * `oauth2` integration. These are never collected from the user — they hold
+ * the live tokens and are merged into the integration's encrypted secret bag
+ * server-side. The executor reads OAUTH_ACCESS_TOKEN_KEY to inject the bearer.
+ */
+export const OAUTH_ACCESS_TOKEN_KEY = 'oauth_access_token';
+export const OAUTH_REFRESH_TOKEN_KEY = 'oauth_refresh_token';
+/** Epoch-ms expiry of the access token, stored as a string. */
+export const OAUTH_EXPIRES_AT_KEY = 'oauth_expires_at';
+export const OAUTH_RUNTIME_KEYS: readonly string[] = [
+  OAUTH_ACCESS_TOKEN_KEY,
+  OAUTH_REFRESH_TOKEN_KEY,
+  OAUTH_EXPIRES_AT_KEY,
+];
 
 /**
  * Body shape for declarative tools. JSON and form cover ~95% of REST APIs;

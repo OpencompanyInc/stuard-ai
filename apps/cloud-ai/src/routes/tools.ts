@@ -6,6 +6,7 @@ import { runWithSecrets } from '../tools/bridge';
 import { verifyToken, checkAccess, logUsageEvent } from '../supabase';
 import { verifyVMAuthFromRequest } from '../services/vm-tokens';
 import { CORS_ALLOWED_ORIGINS, PUBLIC_TOOLS_ALLOWLIST, REQUIRE_TOOL_AUTH, IS_DEVELOPMENT } from '../utils/config';
+import { isOpenRouterTtsModel, synthesizeSpeechOpenRouter } from '../media/openrouter-tts';
 
 function getCorsOrigin(req: IncomingMessage): string {
   const origin = req.headers.origin || '';
@@ -150,6 +151,45 @@ export async function handleToolsRoutes(req: IncomingMessage, res: ServerRespons
 
       if (!text) {
         writeJson(res, 400, { ok: false, error: 'text_required' }, corsOrigin);
+        return true;
+      }
+
+      // OpenRouter audio models (e.g. openai/gpt-audio) are served through
+      // OpenRouter instead of ElevenLabs. The model id picks the provider;
+      // ElevenLabs stays the default and an equally valid choice.
+      if (isOpenRouterTtsModel(modelId)) {
+        const tts = await synthesizeSpeechOpenRouter({
+          model: modelId,
+          text,
+          voice: body?.voice || body?.voice_id,
+          format,
+        });
+
+        if (userId) {
+          try {
+            await logUsageEvent(userId, null, tts.model, {
+              totalTokens: 0,
+              ...(tts.costUsd > 0 ? { costUsd: tts.costUsd } : {}),
+              provider: 'openrouter',
+              endpoint: '/tools/text_to_speech',
+              textLength: text.length,
+              source_label: 'Text to Speech',
+              modelId: tts.model,
+              format: tts.format,
+            });
+          } catch {}
+        }
+
+        writeJson(res, 200, {
+          ok: true,
+          audioData: tts.audioBuffer.toString('base64'),
+          format: tts.format,
+          voice_id: voiceId,
+          model_id: tts.model,
+          textLength: text.length,
+          transcript: tts.transcript,
+          mimeType: tts.mimeType,
+        }, corsOrigin);
         return true;
       }
 

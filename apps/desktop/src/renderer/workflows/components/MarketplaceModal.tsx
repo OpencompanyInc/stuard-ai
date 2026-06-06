@@ -11,6 +11,14 @@ import {
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import { FUNCTION_NODE_ICONS, FUNCTION_NODE_COLORS } from "../constants/functionNodeStyle";
 import { withWorkspaceBundle } from "../utils/workspaceBundle";
+import { confirmDialog } from "./ConfirmDialog";
+import {
+  getMarketplaceUsername,
+  setMarketplaceUsername,
+  normalizeUsername,
+  onMarketplaceUsernameChanged,
+  creatorProfileFromUsername,
+} from "../utils/marketplaceIdentity";
 import "../../scrollbar.css";
 
 // Helper to get token from Supabase auth
@@ -55,37 +63,6 @@ async function persistMarketplaceLink(
   }
 }
 
-// ─── Remembered creator profile ─────────────────────────────────────────────
-// The publisher's handle/name is remembered once across all publishes (it's the
-// same creator), but stays editable per-workflow. Stored locally so it's
-// pre-filled on the very first publish of every new workflow.
-const CREATOR_PROFILE_KEY = 'stuard_marketplace_creator_profile';
-
-function loadSavedCreatorProfile(): Partial<MarketplaceCreatorProfile> {
-  try {
-    const raw = localStorage.getItem(CREATOR_PROFILE_KEY);
-    if (raw) return JSON.parse(raw) as Partial<MarketplaceCreatorProfile>;
-  } catch { /* ignore */ }
-  return {};
-}
-
-function saveCreatorProfile(profile: Partial<MarketplaceCreatorProfile>): void {
-  try {
-    // Only persist the identity fields worth remembering across workflows.
-    const slim: Partial<MarketplaceCreatorProfile> = {
-      display_name: profile.display_name,
-      handle: profile.handle,
-      bio: profile.bio,
-      website_url: profile.website_url,
-      avatar_url: profile.avatar_url,
-      hero_image_url: profile.hero_image_url,
-    };
-    if (slim.handle || slim.display_name) {
-      localStorage.setItem(CREATOR_PROFILE_KEY, JSON.stringify(slim));
-    }
-  } catch { /* ignore */ }
-}
-
 async function uploadMarketplaceAsset(file: File, kind: 'thumbnail' | 'cover' | 'media'): Promise<string> {
   const userId = await getCurrentUserId();
   if (!userId) {
@@ -127,11 +104,18 @@ function Toast({ message, type = 'success', onClose }: { message: string; type?:
   }, [onClose]);
 
   return (
-    <div className={`fixed bottom-6 right-6 z-[1100] px-4 py-3 rounded-xl shadow-lg border flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300 ${type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
-      }`}>
-      {type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <AlertCircle className="w-5 h-5 text-rose-600" />}
+    <div
+      className="wf-bg-elevated fixed bottom-6 right-6 z-[1100] px-4 py-3 rounded-xl shadow-2xl border flex items-center gap-3 animate-in slide-in-from-bottom-4 duration-300"
+      style={{
+        borderColor: type === 'success' ? 'rgba(34,197,94,0.35)' : 'rgba(244,63,94,0.35)',
+        color: 'var(--wf-fg)',
+      }}
+    >
+      {type === 'success'
+        ? <CheckCircle2 className="w-5 h-5" style={{ color: '#22c55e' }} />
+        : <AlertCircle className="w-5 h-5" style={{ color: '#fb7185' }} />}
       <span className="text-sm font-medium">{message}</span>
-      <button onClick={onClose} className="p-0.5 hover:bg-white/50 rounded">
+      <button onClick={onClose} className="p-0.5 rounded wf-hover-bg wf-fg-muted">
         <X className="w-4 h-4" />
       </button>
     </div>
@@ -173,6 +157,83 @@ function ModalShell({
         </div>
         <div className="flex-1 overflow-auto custom-scrollbar">{children}</div>
       </div>
+    </div>
+  );
+}
+
+// ─── Marketplace identity panel ──────────────────────────────────────────────
+// The one-time publisher @username. Set once here (or in My Published), reused
+// for every publish. Replaces the old per-publish display-name + handle fields.
+function MarketplaceIdentityPanel({
+  onChange,
+  compact = false,
+}: {
+  onChange?: (username: string) => void;
+  compact?: boolean;
+}) {
+  const [username, setUsername] = useState(() => getMarketplaceUsername());
+  const [editing, setEditing] = useState(() => !getMarketplaceUsername());
+  const [draft, setDraft] = useState(username);
+
+  useEffect(() => {
+    return onMarketplaceUsernameChanged((u) => {
+      setUsername(u);
+      setDraft(u);
+      setEditing(!u);
+    });
+  }, []);
+
+  const commit = () => {
+    const u = setMarketplaceUsername(draft);
+    setUsername(u);
+    setDraft(u);
+    setEditing(!u);
+    onChange?.(u);
+  };
+
+  return (
+    <div className={`wf-card rounded-2xl border wf-border ${compact ? "p-3.5" : "p-4"}`}>
+      <div className="flex items-center gap-2 text-[13px] font-semibold wf-fg">
+        <User className="w-4 h-4" style={{ color: "var(--wf-accent)" }} />
+        Marketplace identity
+      </div>
+      <p className="mt-1 text-xs wf-fg-muted">
+        Everything you publish goes out under this one username — set it once, it's reused for every workflow.
+      </p>
+      {editing ? (
+        <div className="mt-3 flex items-center gap-2">
+          <div className="flex flex-1 items-center wf-input rounded-xl px-3 py-2 text-sm">
+            <span className="wf-fg-faint mr-0.5">@</span>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(normalizeUsername(e.target.value))}
+              onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+              placeholder="your-username"
+              className="flex-1 bg-transparent outline-none wf-fg"
+              autoFocus
+            />
+          </div>
+          <button
+            type="button"
+            onClick={commit}
+            disabled={!normalizeUsername(draft)}
+            className="wf-primary-btn rounded-full px-4 py-2 text-[13px] font-semibold disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-sm font-semibold wf-fg">@{username}</span>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 text-[12px] font-medium wf-fg-muted hover:wf-fg"
+          >
+            <Pencil className="w-3 h-3" /> Edit
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -658,16 +719,9 @@ export function PublishModal({
   const [thumbnailUrl, setThumbnailUrl] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>([]);
-  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>(() => ({
-    display_name: "",
-    handle: "",
-    bio: "",
-    website_url: "",
-    avatar_url: "",
-    hero_image_url: "",
-    // Remember the creator across workflows (editable per-workflow below).
-    ...loadSavedCreatorProfile(),
-  }));
+  // Publisher identity is a single one-time @username (set in Showcase / My
+  // Published), not a per-publish name + handle.
+  const [username, setUsername] = useState<string>(() => getMarketplaceUsername());
   const [uploadingAsset, setUploadingAsset] = useState<'thumbnail' | 'cover' | 'media' | null>(null);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [fetchingCats, setFetchingCats] = useState(true);
@@ -714,14 +768,9 @@ export function PublishModal({
             setCoverImageUrl(found.cover_image_url || "");
             setMedia(found.media || []);
             setLocked(Boolean(found.locked));
-            setCreatorProfile(found.creator || {
-              display_name: found.publisher_name,
-              handle: "",
-              bio: "",
-              website_url: "",
-              avatar_url: "",
-              hero_image_url: "",
-            });
+            // Seed the username from the existing listing if the user hasn't set
+            // one yet (keeps their established handle).
+            setUsername((prev) => prev || normalizeUsername(found.creator?.handle || found.publisher_name || ""));
           }
         }
       } catch (e) {
@@ -860,6 +909,16 @@ export function PublishModal({
       return;
     }
 
+    const cleanUsername = normalizeUsername(username);
+    if (!cleanUsername) {
+      setError("Set your marketplace @username before publishing.");
+      const showcaseIdx = wizardSteps.findIndex((s) => s.id === "showcase");
+      if (showcaseIdx >= 0) setWizardStep(showcaseIdx);
+      return;
+    }
+    // Persist the one-time identity so every future publish reuses it.
+    setMarketplaceUsername(cleanUsername);
+
     setLoading(true);
     setError(null);
     setSecurityResult(null);
@@ -894,7 +953,7 @@ export function PublishModal({
         thumbnailUrl: thumbnailUrl || undefined,
         coverImageUrl: coverImageUrl || undefined,
         media,
-        creatorProfile,
+        creatorProfile: creatorProfileFromUsername(cleanUsername),
         locked,
       }) as any;
 
@@ -905,7 +964,6 @@ export function PublishModal({
         // publish updates THIS listing (a new version) instead of creating a
         // duplicate. Also remember the creator for future publishes.
         await persistMarketplaceLink(model, res.workflow?.slug, res.workflow?.version);
-        saveCreatorProfile(creatorProfile);
         try { (window as any).desktopAPI?.notify?.('Published!', `${name} is now live on the marketplace.`); } catch { }
         onSuccess();
         setTimeout(() => onClose(), 1200);
@@ -930,7 +988,13 @@ export function PublishModal({
 
   const handleUnpublish = async () => {
     if (!existingWorkflow) return;
-    if (!confirm(`Are you sure you want to unpublish "${existingWorkflow.name}"? This will remove it from the marketplace.`)) return;
+    const ok = await confirmDialog({
+      title: `Unpublish "${existingWorkflow.name}"?`,
+      message: "This removes it from the marketplace. People who already installed it keep their copy. You can publish it again later.",
+      confirmLabel: "Unpublish",
+      tone: "danger",
+    });
+    if (!ok) return;
 
     setUnpublishLoading(true);
     try {
@@ -986,7 +1050,7 @@ export function PublishModal({
     return (
       <ModalShell title="Checking Status..." onClose={onClose} maxWidth="max-w-3xl">
         <div className="h-[300px] flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+          <Loader2 className="w-8 h-8 animate-spin wf-accent-text" />
         </div>
       </ModalShell>
     );
@@ -1036,7 +1100,7 @@ export function PublishModal({
                   <div className="text-xs" style={{ color: d ? "rgba(219,234,254,0.72)" : "rgba(30,64,175,0.72)" }}>Publish a new version with your current changes</div>
                 </div>
               </div>
-              <ChevronRight className="w-5 h-5 group-hover:text-indigo-500" style={{ color: d ? "rgba(147,197,253,0.7)" : "#818cf8" }} />
+              <ChevronRight className="w-5 h-5 group-hover:wf-accent-text" style={{ color: d ? "rgba(147,197,253,0.7)" : "#818cf8" }} />
             </button>
 
             <button
@@ -1180,7 +1244,7 @@ export function PublishModal({
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm transition-all"
               style={inputStyle}
               placeholder="e.g., Smart Inbox Assistant"
             />
@@ -1192,7 +1256,7 @@ export function PublishModal({
               maxLength={160}
               value={shortDescription}
               onChange={e => setShortDescription(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm transition-all"
               style={inputStyle}
               placeholder="A concise one-line summary shown on cards"
             />
@@ -1207,7 +1271,7 @@ export function PublishModal({
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[110px] resize-none transition-all"
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm min-h-[110px] resize-none transition-all"
             style={inputStyle}
             placeholder="Describe what your workflow does, how it works, and any setup users should know about..."
           />
@@ -1224,7 +1288,7 @@ export function PublishModal({
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingCats}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm appearance-none pr-8 transition-all"
                 style={inputStyle}
               >
                 <option value="general">General</option>
@@ -1290,80 +1354,19 @@ export function PublishModal({
               subtitle="Your creator profile and store artwork. All optional, but a polished listing gets more installs."
             />
 
-        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
-          <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
-            <Users className="w-4 h-4 text-indigo-400" />
-            Creator Profile
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Display Name</label>
-              <input
-                type="text"
-                value={creatorProfile.display_name || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-                placeholder="How your name appears in the store"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg-muted">Handle</label>
-              <input
-                type="text"
-                value={creatorProfile.handle || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-                placeholder="creator-name"
-              />
-            </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-sm font-medium wf-fg-muted">Creator Bio</label>
-              <textarea
-                value={creatorProfile.bio || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[72px] resize-none transition-all"
-                style={inputStyle}
-                placeholder="Tell people what kind of workflows you build"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Website</label>
-              <input
-                type="url"
-                value={creatorProfile.website_url || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-                placeholder="https://your-site.com"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Avatar URL</label>
-              <input
-                type="url"
-                value={creatorProfile.avatar_url || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-                placeholder="Optional avatar image URL"
-              />
-            </div>
-          </div>
-        </div>
+        <MarketplaceIdentityPanel onChange={setUsername} />
 
         <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="text-sm font-semibold wf-fg flex items-center gap-2">
-                <ImagePlus className="w-4 h-4 text-indigo-400" />
+                <ImagePlus className="w-4 h-4 wf-accent-text" />
                 Store Artwork & Media
               </div>
               <p className="text-xs wf-fg-muted mt-1">Add thumbnail art, a cover image, and screenshots or videos like a store listing.</p>
             </div>
             {uploadingAsset && (
-              <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
+              <div className="flex items-center gap-2 text-xs wf-accent-chip px-3 py-1.5 rounded-full">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Uploading {uploadingAsset}...
               </div>
@@ -1378,7 +1381,7 @@ export function PublishModal({
               style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                <div className="w-10 h-10 rounded-xl wf-icon-chip wf-accent-text flex items-center justify-center">
                   <Upload className="w-4 h-4" />
                 </div>
                 <div>
@@ -1387,7 +1390,7 @@ export function PublishModal({
                 </div>
               </div>
               {thumbnailUrl && (
-                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border wf-border" />
               )}
             </button>
 
@@ -1398,7 +1401,7 @@ export function PublishModal({
               style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                <div className="w-10 h-10 rounded-xl wf-icon-chip wf-accent-text flex items-center justify-center">
                   <ImagePlus className="w-4 h-4" />
                 </div>
                 <div>
@@ -1407,7 +1410,7 @@ export function PublishModal({
                 </div>
               </div>
               {coverImageUrl && (
-                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border wf-border" />
               )}
             </button>
           </div>
@@ -1421,7 +1424,7 @@ export function PublishModal({
               <button
                 type="button"
                 onClick={() => mediaInputRef.current?.click()}
-                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                className="px-3 py-2 rounded-lg wf-primary-btn text-sm font-medium transition-colors flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add Media
@@ -1445,12 +1448,12 @@ export function PublishModal({
                     >
                       <X className="w-4 h-4" />
                     </button>
-                    <div className="p-2 text-[11px] text-slate-500 truncate">{item.alt_text || item.media_type}</div>
+                    <div className="p-2 text-[11px] wf-fg-muted truncate">{item.alt_text || item.media_type}</div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+              <div className="rounded-xl border border-dashed wf-border p-6 text-center text-sm wf-fg-muted">
                 Add screenshots or preview clips so your workflow looks like a proper store listing.
               </div>
             )}
@@ -1480,7 +1483,7 @@ export function PublishModal({
               thumbnailUrl={thumbnailUrl}
               coverImageUrl={coverImageUrl}
               mediaCount={media.length}
-              creatorProfile={creatorProfile}
+              creatorProfile={creatorProfileFromUsername(username)}
               onJumpTo={(stepId) => {
                 const idx = wizardSteps.findIndex(s => s.id === stepId);
                 if (idx >= 0) goToStep(idx);
@@ -1488,19 +1491,19 @@ export function PublishModal({
             />
 
             {/* Lock toggle (kept here as the final pre-publish decision) */}
-            <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200'}`}>
+            <div className={`rounded-xl p-4 border transition-all ${locked ? 'bg-amber-50/50 border-amber-200' : 'wf-surface-muted wf-border'}`}>
               <div className="flex items-start gap-3">
                 <button
                   type="button"
                   onClick={() => setLocked(!locked)}
-                  className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'
+                  className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'wf-surface-muted'
                     }`}
                 >
-                  <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+                  <div className={`w-4 h-4 rounded-full wf-bg-elevated shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
                 </button>
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
+                    {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 wf-fg-faint" />}
                     <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
                       {locked ? (publishAs === 'function' ? 'Locked Function' : 'Locked Workflow') : (publishAs === 'function' ? 'Open Function' : 'Open Workflow')}
                     </span>
@@ -1553,7 +1556,7 @@ export function PublishModal({
               type="button"
               onClick={goNext}
               disabled={!canProceed}
-              className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+              className="px-5 py-2.5 rounded-xl text-sm wf-primary-btn font-medium flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
             >
               Next
               <ChevronRight className="w-4 h-4" />
@@ -1563,7 +1566,7 @@ export function PublishModal({
               type="button"
               onClick={handlePublish}
               disabled={loading}
-              className="px-5 py-2.5 rounded-xl text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+              className="px-5 py-2.5 rounded-xl text-sm wf-primary-btn font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
             >
               {loading ? (
                 <>
@@ -1619,14 +1622,7 @@ export function UpdateWorkflowModal({
   const [thumbnailUrl, setThumbnailUrl] = useState(workflow.thumbnail_url || "");
   const [coverImageUrl, setCoverImageUrl] = useState(workflow.cover_image_url || "");
   const [media, setMedia] = useState<MarketplaceWorkflowMedia[]>(workflow.media || []);
-  const [creatorProfile, setCreatorProfile] = useState<Partial<MarketplaceCreatorProfile>>(workflow.creator || {
-    display_name: workflow.publisher_name,
-    handle: "",
-    bio: "",
-    website_url: "",
-    avatar_url: "",
-    hero_image_url: "",
-  });
+  const [username, setUsername] = useState<string>(() => getMarketplaceUsername() || normalizeUsername(workflow.creator?.handle || workflow.publisher_name || ""));
   const [uploadingAsset, setUploadingAsset] = useState<'thumbnail' | 'cover' | 'media' | null>(null);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [versions, setVersions] = useState<MarketplaceVersion[]>([]);
@@ -1729,7 +1725,7 @@ export function UpdateWorkflowModal({
         thumbnailUrl: thumbnailUrl !== (workflow.thumbnail_url || "") ? thumbnailUrl : undefined,
         coverImageUrl: coverImageUrl !== (workflow.cover_image_url || "") ? coverImageUrl : undefined,
         media: JSON.stringify(media) !== JSON.stringify(workflow.media || []) ? media : undefined,
-        creatorProfile: creatorProfile,
+        creatorProfile: username ? creatorProfileFromUsername(username) : undefined,
         changelog: changelog.trim() || undefined,
         locked: locked !== Boolean(workflow.locked) ? locked : undefined,
       }) as any;
@@ -1740,7 +1736,7 @@ export function UpdateWorkflowModal({
         // Keep the local workflow pinned to this listing + its new version so
         // the version history stays accurate and the next edit updates in place.
         await persistMarketplaceLink(newSpec, workflow.slug, res.workflow?.version);
-        saveCreatorProfile(creatorProfile);
+        if (username) setMarketplaceUsername(username);
         try { (window as any).desktopAPI?.notify?.('Updated!', `${name} v${res.workflow?.version} is now live.`); } catch { }
         onSuccess();
         setTimeout(() => onClose(), 1200);
@@ -1853,7 +1849,7 @@ export function UpdateWorkflowModal({
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm transition-all"
               style={inputStyle}
             />
           </div>
@@ -1864,7 +1860,7 @@ export function UpdateWorkflowModal({
               maxLength={160}
               value={shortDescription}
               onChange={e => setShortDescription(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
+              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm transition-all"
               style={inputStyle}
             />
             <div className="flex justify-end">
@@ -1878,7 +1874,7 @@ export function UpdateWorkflowModal({
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[100px] resize-none transition-all"
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm min-h-[100px] resize-none transition-all"
             style={inputStyle}
           />
         </div>
@@ -1902,7 +1898,7 @@ export function UpdateWorkflowModal({
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={fetchingData}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm appearance-none pr-8 transition-all"
+                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm appearance-none pr-8 transition-all"
                 style={inputStyle}
               >
                 <option value="general">General</option>
@@ -1921,75 +1917,19 @@ export function UpdateWorkflowModal({
           </div>
         </div>
 
-        <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
-          <div className="flex items-center gap-2 text-sm font-semibold wf-fg">
-            <Users className="w-4 h-4 text-indigo-400" />
-            Creator Profile
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Display Name</label>
-              <input
-                type="text"
-                value={creatorProfile.display_name || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, display_name: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Handle</label>
-              <input
-                type="text"
-                value={creatorProfile.handle || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-') }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-              />
-            </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-sm font-medium wf-fg">Creator Bio</label>
-              <textarea
-                value={creatorProfile.bio || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, bio: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm min-h-[72px] resize-none transition-all"
-                style={inputStyle}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Website</label>
-              <input
-                type="url"
-                value={creatorProfile.website_url || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, website_url: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium wf-fg">Avatar URL</label>
-              <input
-                type="url"
-                value={creatorProfile.avatar_url || ''}
-                onChange={e => setCreatorProfile(prev => ({ ...prev, avatar_url: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm transition-all"
-                style={inputStyle}
-              />
-            </div>
-          </div>
-        </div>
+        <MarketplaceIdentityPanel onChange={setUsername} />
 
         <div className="rounded-2xl border p-5 space-y-4 shadow-sm" style={cardStyle}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="text-sm font-semibold wf-fg flex items-center gap-2">
-                <ImagePlus className="w-4 h-4 text-indigo-400" />
+                <ImagePlus className="w-4 h-4 wf-accent-text" />
                 Store Artwork & Media
               </div>
               <p className="text-xs wf-fg-muted mt-1">Refresh your cover art, thumbnails, screenshots, or preview clips.</p>
             </div>
             {uploadingAsset && (
-              <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100">
+              <div className="flex items-center gap-2 text-xs wf-accent-chip px-3 py-1.5 rounded-full">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Uploading {uploadingAsset}...
               </div>
@@ -2004,7 +1944,7 @@ export function UpdateWorkflowModal({
               style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                <div className="w-10 h-10 rounded-xl wf-icon-chip wf-accent-text flex items-center justify-center">
                   <Upload className="w-4 h-4" />
                 </div>
                 <div>
@@ -2013,7 +1953,7 @@ export function UpdateWorkflowModal({
                 </div>
               </div>
               {thumbnailUrl && (
-                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+                <img src={thumbnailUrl} alt="Thumbnail" className="mt-4 w-full h-28 object-cover rounded-xl border wf-border" />
               )}
             </button>
 
@@ -2024,7 +1964,7 @@ export function UpdateWorkflowModal({
               style={subtleCardStyle}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                <div className="w-10 h-10 rounded-xl wf-icon-chip wf-accent-text flex items-center justify-center">
                   <ImagePlus className="w-4 h-4" />
                 </div>
                 <div>
@@ -2033,7 +1973,7 @@ export function UpdateWorkflowModal({
                 </div>
               </div>
               {coverImageUrl && (
-                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border border-slate-200" />
+                <img src={coverImageUrl} alt="Cover" className="mt-4 w-full h-28 object-cover rounded-xl border wf-border" />
               )}
             </button>
           </div>
@@ -2047,7 +1987,7 @@ export function UpdateWorkflowModal({
               <button
                 type="button"
                 onClick={() => mediaInputRef.current?.click()}
-                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                className="px-3 py-2 rounded-lg wf-primary-btn text-sm font-medium transition-colors flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add Media
@@ -2088,13 +2028,13 @@ export function UpdateWorkflowModal({
             <button
               type="button"
               onClick={() => setLocked(!locked)}
-              className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'bg-slate-300'}`}
+              className={`mt-0.5 w-10 h-6 rounded-full transition-all flex items-center px-1 ${locked ? 'bg-amber-500' : 'wf-surface-muted'}`}
             >
-              <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
+              <div className={`w-4 h-4 rounded-full wf-bg-elevated shadow-sm transition-transform ${locked ? 'translate-x-4' : 'translate-x-0'}`} />
             </button>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 text-slate-400" />}
+                {locked ? <Lock className="w-4 h-4 text-amber-600" /> : <Unlock className="w-4 h-4 wf-fg-faint" />}
                 <span className={`text-sm font-semibold ${locked ? '' : 'wf-fg'}`} style={locked ? { color: d ? "#fde68a" : "#78350f" } : undefined}>
                   {locked ? 'Locked Workflow' : 'Open Workflow'}
                 </span>
@@ -2118,11 +2058,11 @@ export function UpdateWorkflowModal({
               {versions.slice(0, 5).map((v, i) => (
                 <div key={v.version + i} className={`flex items-center justify-between py-1.5 ${i > 0 ? 'border-t' : ''}`} style={i > 0 ? { borderColor: "var(--wf-border)" } : undefined}>
                   <div className="flex items-center gap-2">
-                    <span className={`text-xs font-mono font-semibold ${v.current ? 'text-indigo-600' : 'wf-fg-muted'}`}>
+                    <span className={`text-xs font-mono font-semibold ${v.current ? 'wf-accent-text' : 'wf-fg-muted'}`}>
                       v{v.version}
                     </span>
                     {v.current && (
-                      <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">Current</span>
+                      <span className="text-[10px] bg-[color-mix(in_srgb,var(--wf-accent)_14%,transparent)] wf-accent-text px-1.5 py-0.5 rounded font-medium">Current</span>
                     )}
                   </div>
                   <span className="text-xs wf-fg-faint">
@@ -2221,9 +2161,13 @@ export function MyPublishedWorkflowsModal({
   }, [loadWorkflows]);
 
   const handleDelete = async (slug: string, name: string) => {
-    if (!confirm(`Are you sure you want to unpublish "${name}"?\n\nThis will:\n• Remove it from the marketplace\n• Users who downloaded it will keep their copies\n• This action cannot be undone`)) {
-      return;
-    }
+    const ok = await confirmDialog({
+      title: `Unpublish "${name}"?`,
+      message: "It's removed from the marketplace. People who already installed it keep their copy. You can publish it again anytime.",
+      confirmLabel: "Unpublish",
+      tone: "danger",
+    });
+    if (!ok) return;
 
     setDeletingSlug(slug);
     try {
@@ -2254,35 +2198,40 @@ export function MyPublishedWorkflowsModal({
     <>
       <ModalShell title="My Published Workflows" onClose={onClose} maxWidth="max-w-3xl">
         <div className="min-h-[400px] flex flex-col">
+          {/* Marketplace identity — the one-time @username every publish ships under. */}
+          <div className="px-5 pt-5">
+            <MarketplaceIdentityPanel compact />
+          </div>
+
           {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
-              <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 wf-fg-muted py-16">
+              <Loader2 className="w-8 h-8 animate-spin wf-accent-text" />
               <span className="text-sm">Loading your workflows...</span>
             </div>
           ) : error ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-rose-50 flex items-center justify-center">
-                <AlertCircle className="w-8 h-8 text-rose-400" />
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 py-12">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(244,63,94,0.12)" }}>
+                <AlertCircle className="w-8 h-8" style={{ color: "#fb7185" }} />
               </div>
               <div className="text-center">
-                <p className="font-medium text-slate-900">Something went wrong</p>
-                <p className="text-sm text-slate-500 mt-1">{error}</p>
+                <p className="font-medium wf-fg">Something went wrong</p>
+                <p className="text-sm wf-fg-muted mt-1">{error}</p>
                 <button
                   onClick={loadWorkflows}
-                  className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                  className="mt-4 px-4 py-2 wf-primary-btn rounded-full text-sm font-semibold transition-colors"
                 >
                   Try again
                 </button>
               </div>
             </div>
           ) : workflows.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center px-8">
-<div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-100 to-sky-50 flex items-center justify-center shadow-sm border border-blue-100">
-                <Package className="w-10 h-10 text-blue-500" />
+            <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center px-8 py-12">
+              <div className="w-20 h-20 rounded-2xl wf-icon-chip flex items-center justify-center">
+                <Package className="w-10 h-10 wf-accent-text" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900 mb-2">No published workflows yet</h3>
-                <p className="text-sm text-slate-600 max-w-sm leading-relaxed">
+                <h3 className="text-lg font-bold wf-fg mb-2">No published workflows yet</h3>
+                <p className="text-sm wf-fg-muted max-w-sm leading-relaxed">
                   Share your workflows with the community! Open a workflow and click "Publish to Marketplace" to get started.
                 </p>
               </div>
@@ -2291,21 +2240,21 @@ export function MyPublishedWorkflowsModal({
             <div className="p-5 space-y-5">
               {/* Stats Summary */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                  <div className="text-2xl font-bold text-slate-900">{workflows.length}</div>
-                  <div className="text-xs text-slate-500 font-medium mt-1">Published</div>
+                <div className="wf-card rounded-xl p-4 border wf-border">
+                  <div className="text-2xl font-bold wf-fg">{workflows.length}</div>
+                  <div className="text-xs wf-fg-muted font-medium mt-1">Published</div>
                 </div>
-<div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-                  <div className="text-2xl font-bold text-blue-600">{totalStats.downloads}</div>
-                  <div className="text-xs text-blue-600/70 font-medium mt-1">Total Downloads</div>
+                <div className="wf-accent-soft-bg rounded-xl p-4">
+                  <div className="text-2xl font-bold wf-accent-text">{totalStats.downloads}</div>
+                  <div className="text-xs wf-fg-muted font-medium mt-1">Total Downloads</div>
                 </div>
-                <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
-                  <div className="text-2xl font-bold text-amber-600">{totalStats.ratings}</div>
-                  <div className="text-xs text-amber-600/70 font-medium mt-1">Total Reviews</div>
+                <div className="wf-card rounded-xl p-4 border wf-border">
+                  <div className="text-2xl font-bold" style={{ color: "#f59e0b" }}>{totalStats.ratings}</div>
+                  <div className="text-xs wf-fg-muted font-medium mt-1">Total Reviews</div>
                 </div>
               </div>
 
-              <div className="h-px bg-slate-200" />
+              <div className="h-px wf-border" style={{ borderTopWidth: 1, height: 1, background: "var(--wf-border)" }} />
 
               <div className="space-y-3">
                 {workflows.map(w => {
@@ -2313,42 +2262,39 @@ export function MyPublishedWorkflowsModal({
                   return (
                     <div
                       key={w.id}
-                      className={`bg-white border rounded-xl transition-all overflow-hidden ${w.status === 'published'
-                        ? 'border-slate-200 hover:border-blue-200 hover:shadow-md'
-                        : 'border-slate-200 bg-slate-50 opacity-70'
-                        }`}
+                      className={`wf-card wf-card-interactive border wf-border rounded-xl overflow-hidden ${w.status === 'published' ? '' : 'opacity-70'}`}
                     >
                       <div className="p-4">
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-start gap-4 flex-1 min-w-0">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-50 to-white border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+                            <div className="w-12 h-12 rounded-xl wf-icon-chip flex items-center justify-center wf-accent-text shrink-0">
                               {w.icon ? <span className="text-2xl">{w.icon}</span> : <Globe className="w-6 h-6" />}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-semibold text-slate-900 truncate">{w.name}</h3>
-                                <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                <h3 className="font-semibold wf-fg truncate">{w.name}</h3>
+                                <span className="text-xs font-mono wf-fg-muted wf-surface-muted px-1.5 py-0.5 rounded">
                                   v{w.version}
                                 </span>
                                 {w.locked && (
-                                  <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1" style={{ background: "rgba(245,158,11,0.14)", color: "#d97706" }}>
                                     <Lock className="w-2.5 h-2.5" /> Locked
                                   </span>
                                 )}
                                 {w.status !== 'published' && (
-                                  <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-medium uppercase">
+                                  <span className="text-[10px] wf-surface-muted wf-fg-muted px-1.5 py-0.5 rounded font-medium uppercase">
                                     {w.status}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{w.description}</p>
-                              <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
+                              <p className="text-sm wf-fg-muted mt-0.5 line-clamp-1">{w.description}</p>
+                              <div className="flex items-center gap-4 mt-2 text-xs wf-fg-muted">
                                 <div className="flex items-center gap-1">
                                   <Download className="w-3.5 h-3.5" />
                                   {w.download_count} downloads
                                 </div>
                                 {w.rating_avg > 0 && (
-                                  <div className="flex items-center gap-1 text-amber-600">
+                                  <div className="flex items-center gap-1" style={{ color: "#d97706" }}>
                                     <Star className="w-3.5 h-3.5 fill-current" />
                                     {Number(w.rating_avg).toFixed(1)} ({w.rating_count})
                                   </div>
@@ -2364,7 +2310,7 @@ export function MyPublishedWorkflowsModal({
                           <div className="flex items-center gap-2 shrink-0">
                             <button
                               onClick={() => setExpandedId(isExpanded ? null : w.id)}
-                              className="p-2 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                              className="p-2 rounded-lg border wf-border wf-fg-muted hover:wf-fg wf-hover-bg transition-colors"
                               title={isExpanded ? "Hide details" : "Show details"}
                             >
                               <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
@@ -2372,7 +2318,7 @@ export function MyPublishedWorkflowsModal({
                             {w.status === 'published' && onUpdateWorkflow && (
                               <button
                                 onClick={() => onUpdateWorkflow(w)}
-                                className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
+                                className="p-2 rounded-lg border wf-border wf-fg-muted hover:wf-accent-text wf-hover-bg transition-colors"
                                 title="Push an update"
                               >
                                 <ArrowUpCircle className="w-4 h-4" />
@@ -2381,7 +2327,9 @@ export function MyPublishedWorkflowsModal({
                             <button
                               onClick={() => handleDelete(w.slug, w.name)}
                               disabled={deletingSlug === w.slug}
-                              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors disabled:opacity-50"
+                              className="p-2 rounded-lg border wf-border wf-fg-muted wf-hover-bg transition-colors disabled:opacity-50"
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#fb7185"; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = ""; }}
                               title="Unpublish workflow"
                             >
                               {deletingSlug === w.slug ? (
@@ -2396,22 +2344,22 @@ export function MyPublishedWorkflowsModal({
 
                       {/* Expanded Details */}
                       {isExpanded && (
-                        <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-slate-50/70 animate-in slide-in-from-top-2 duration-200">
+                        <div className="px-4 pb-4 pt-2 border-t wf-border wf-bg-overlay animate-in slide-in-from-top-2 duration-200">
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Category</div>
-                              <div className="text-sm text-slate-800 capitalize">{w.category || 'General'}</div>
+                              <div className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1">Category</div>
+                              <div className="text-sm wf-fg capitalize">{w.category || 'General'}</div>
                             </div>
                             <div>
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Slug</div>
-                              <div className="text-xs font-mono text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 truncate">{w.slug}</div>
+                              <div className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1">Slug</div>
+                              <div className="text-xs font-mono wf-fg-muted wf-surface-muted px-2 py-1 rounded border wf-border truncate">{w.slug}</div>
                             </div>
                             {w.tags && w.tags.length > 0 && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Tags</div>
+                                <div className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1.5">Tags</div>
                                 <div className="flex flex-wrap gap-1.5">
                                   {w.tags.map(tag => (
-                                    <span key={tag} className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">
+                                    <span key={tag} className="text-xs px-2 py-0.5 wf-accent-chip rounded-full">
                                       {tag}
                                     </span>
                                   ))}
@@ -2419,8 +2367,8 @@ export function MyPublishedWorkflowsModal({
                               </div>
                             )}
                             <div className="col-span-2">
-                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description</div>
-                              <p className="text-sm text-slate-600 leading-relaxed">{w.description}</p>
+                              <div className="text-[10px] font-bold wf-fg-faint uppercase tracking-wider mb-1">Description</div>
+                              <p className="text-sm wf-fg-muted leading-relaxed">{w.description}</p>
                             </div>
                           </div>
                         </div>
@@ -2524,9 +2472,9 @@ export function WorkflowUpdateModal({
     <ModalShell title="Update Available" onClose={onClose}>
       <div className="p-6 space-y-6">
         {/* Update Banner */}
-<div className="bg-gradient-to-r from-blue-50 to-sky-50 rounded-xl p-5 border border-blue-100">
+<div className="wf-accent-soft-bg rounded-xl p-5">
           <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-xl bg-white/[0.04] border border-blue-200 flex items-center justify-center text-blue-600 shadow-sm">
+            <div className="w-14 h-14 rounded-xl bg-white/[0.04] border wf-border flex items-center justify-center wf-accent-text shadow-sm">
               <ArrowUpCircle className="w-7 h-7" />
             </div>
             <div className="flex-1">
@@ -2541,7 +2489,7 @@ export function WorkflowUpdateModal({
                     v{update.currentVersion}
                   </span>
                 </div>
-                <ChevronRight className="w-4 h-4 text-slate-300" />
+                <ChevronRight className="w-4 h-4 wf-fg-faint" />
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-white/50">Latest:</span>
                   <span className="text-xs font-mono bg-emerald-100 px-2 py-0.5 rounded text-emerald-700 font-semibold">
@@ -2563,7 +2511,7 @@ export function WorkflowUpdateModal({
         {/* What's New Section */}
         {loadingInfo ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+            <Loader2 className="w-6 h-6 animate-spin wf-accent-text" />
           </div>
         ) : (
           <>
@@ -2593,15 +2541,15 @@ export function WorkflowUpdateModal({
                     <div key={v.version + i} className={`flex items-center justify-between py-2 ${i > 0 ? 'border-t border-white/[0.04]' : ''}`}>
                       <div className="flex items-center gap-3">
                         <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${v.current ? 'bg-emerald-100 text-emerald-700' :
-                          v.version === update.currentVersion ? 'bg-slate-200 text-white/70' : 'text-white/50'
+                          v.version === update.currentVersion ? 'wf-surface-muted text-white/70' : 'text-white/50'
                           }`}>
                           v{v.version}
                         </span>
                         {v.current && (
-                          <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Latest</span>
+                          <span className="text-[10px] bg-[color-mix(in_srgb,var(--wf-accent)_14%,transparent)] wf-accent-text px-1.5 py-0.5 rounded font-medium">Latest</span>
                         )}
                         {v.version === update.currentVersion && (
-                          <span className="text-[10px] bg-slate-300 text-white/70 px-1.5 py-0.5 rounded font-medium">Your version</span>
+                          <span className="text-[10px] wf-surface-muted text-white/70 px-1.5 py-0.5 rounded font-medium">Your version</span>
                         )}
                       </div>
                       <span className="text-xs text-white/40">
@@ -2637,7 +2585,7 @@ export function WorkflowUpdateModal({
           type="button"
           onClick={handleUpdate}
           disabled={loading}
-          className="px-5 py-2 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+          className="px-5 py-2 rounded-lg text-sm wf-primary-btn font-medium flex items-center gap-2 disabled:opacity-50 transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           Update Workflow
@@ -2659,9 +2607,9 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
   return (
     <button
       onClick={onClick}
-      className="flex h-full flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white text-left shadow-sm transition-all hover:-translate-y-1 hover:border-blue-300 hover:shadow-xl"
+      className="flex h-full flex-col overflow-hidden rounded-[24px] border wf-border wf-bg-elevated text-left shadow-sm transition-all hover:-translate-y-1 hover:border-[color-mix(in_srgb,var(--wf-accent)_45%,transparent)] hover:shadow-xl"
     >
-      <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700">
+      <div className="relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-rose-500 via-rose-600 to-red-700">
         {cover ? (
           <img src={cover} alt={workflow.name} className="h-full w-full object-cover transition-transform duration-500 hover:scale-105" />
         ) : (
@@ -2671,7 +2619,7 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
         <div className="absolute left-4 right-4 top-4 flex items-start justify-between gap-3">
-          <div className="rounded-full bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-sm">
+          <div className="rounded-full bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] wf-fg shadow-sm">
             {workflow.category || 'General'}
           </div>
           <div className="flex items-center gap-2">
@@ -2693,7 +2641,7 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
 
       <div className="flex flex-1 flex-col gap-4 p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-slate-100 text-slate-700 shadow-inner">
+          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl wf-surface-muted wf-fg shadow-inner">
             {workflow.creator?.avatar_url ? (
               <img src={workflow.creator.avatar_url} alt={creatorName} className="h-full w-full object-cover" />
             ) : (
@@ -2701,15 +2649,15 @@ function WorkflowCard({ workflow, onClick }: { workflow: MarketplaceWorkflow; on
             )}
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-900">{creatorName}</div>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+            <div className="text-sm font-semibold wf-fg">{creatorName}</div>
+            <div className="mt-0.5 flex items-center gap-2 text-xs wf-fg-muted">
               <span>@{workflow.creator?.handle || creatorName.toLowerCase().replace(/\s+/g, '')}</span>
               {workflow.creator?.follower_count ? <span>{workflow.creator.follower_count} followers</span> : null}
             </div>
           </div>
         </div>
 
-        <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 text-xs font-medium text-slate-500">
+        <div className="mt-auto flex items-center justify-between border-t wf-border pt-3 text-xs font-medium wf-fg-muted">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Download className="h-3.5 w-3.5" />
@@ -2790,8 +2738,8 @@ function WorkflowDetail({
   };
 
   return (
-    <div className="flex h-full flex-col bg-slate-100">
-      <div className="relative overflow-hidden border-b border-slate-200 bg-slate-950 text-white">
+    <div className="flex h-full flex-col wf-surface-muted">
+      <div className="relative overflow-hidden border-b wf-border bg-slate-950 text-white">
         {workflow.cover_image_url || workflow.thumbnail_url ? (
           <img src={workflow.cover_image_url || workflow.thumbnail_url || ''} alt={workflow.name} className="absolute inset-0 h-full w-full object-cover" />
         ) : null}
@@ -2828,7 +2776,7 @@ function WorkflowDetail({
             <button
               onClick={handleImport}
               disabled={importing}
-              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-0.5 hover:bg-blue-700 disabled:opacity-70"
+              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-[color:var(--wf-accent)] px-6 py-3 text-sm font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-[color:var(--wf-accent)] disabled:opacity-70"
             >
               {importing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
               {importLabel}
@@ -2841,7 +2789,7 @@ function WorkflowDetail({
         <div className="mx-auto grid max-w-6xl gap-6 xl:grid-cols-[minmax(0,1.4fr)_360px]">
           <div className="space-y-6">
             {activeMedia ? (
-              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-[28px] border wf-border wf-bg-elevated shadow-sm">
                 <div className="aspect-[16/9] bg-slate-900">
                   {isVideoMedia(activeMedia) ? (
                     <video src={activeMedia.url} controls poster={activeMedia.thumbnail_url || undefined} className="h-full w-full object-cover" />
@@ -2850,13 +2798,13 @@ function WorkflowDetail({
                   )}
                 </div>
                 {gallery.length > 1 ? (
-                  <div className="flex gap-3 overflow-x-auto border-t border-slate-100 p-4">
+                  <div className="flex gap-3 overflow-x-auto border-t wf-border p-4">
                     {gallery.map((item, index) => (
                       <button
                         key={`${item.url}-${index}`}
                         type="button"
                         onClick={() => setActiveMediaIndex(index)}
-                        className={`relative h-20 w-32 shrink-0 overflow-hidden rounded-2xl border transition-all ${index === activeMediaIndex ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-300'}`}
+                        className={`relative h-20 w-32 shrink-0 overflow-hidden rounded-2xl border transition-all ${index === activeMediaIndex ? 'border-[color:var(--wf-accent)] ring-2 ring-[color-mix(in_srgb,var(--wf-accent)_22%,transparent)]' : 'wf-border hover:border-[color-mix(in_srgb,var(--wf-accent)_45%,transparent)]'}`}
                       >
                         {isVideoMedia(item) ? (
                           <div className="flex h-full w-full items-center justify-center bg-slate-900 text-white/80"><PlayCircle className="h-8 w-8" /></div>
@@ -2870,18 +2818,18 @@ function WorkflowDetail({
               </div>
             ) : null}
 
-            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">About this workflow</h3>
-              <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workflow.description}</p>
+            <div className="rounded-[28px] border wf-border wf-bg-elevated p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] wf-fg-muted">About this workflow</h3>
+              <p className="mt-4 whitespace-pre-wrap text-sm leading-7 wf-fg">{workflow.description}</p>
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Tags & category</h3>
+              <div className="rounded-[28px] border wf-border wf-bg-elevated p-6 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] wf-fg-muted">Tags & category</h3>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {workflow.category ? <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">{workflow.category}</span> : null}
+                  {workflow.category ? <span className="rounded-full wf-surface-muted px-3 py-1.5 text-xs font-semibold wf-fg">{workflow.category}</span> : null}
                   {workflow.tags?.map(tag => (
-                    <span key={tag} className="flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
+                    <span key={tag} className="flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--wf-accent)_12%,transparent)] px-3 py-1.5 text-xs font-medium wf-accent-text">
                       <Hash className="h-3 w-3 opacity-60" />
                       {tag}
                     </span>
@@ -2889,8 +2837,8 @@ function WorkflowDetail({
                 </div>
               </div>
 
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Rate this workflow</h3>
+              <div className="rounded-[28px] border wf-border wf-bg-elevated p-6 shadow-sm">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] wf-fg-muted">Rate this workflow</h3>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-1">
                     {[1, 2, 3, 4, 5].map((r) => (
@@ -2902,53 +2850,53 @@ function WorkflowDetail({
                         disabled={isRating}
                         className="p-1 transition-transform hover:scale-110 active:scale-95"
                       >
-                        <Star className={`h-8 w-8 transition-colors ${(hoverRating || rating || Math.round(workflow.rating_avg)) >= r ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
+                        <Star className={`h-8 w-8 transition-colors ${(hoverRating || rating || Math.round(workflow.rating_avg)) >= r ? 'fill-amber-400 text-amber-400' : 'wf-fg-faint'}`} />
                       </button>
                     ))}
                   </div>
-                  <div className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600">{workflow.rating_count} ratings</div>
+                  <div className="rounded-full wf-surface-muted px-3 py-1.5 text-sm font-medium wf-fg-muted">{workflow.rating_count} ratings</div>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="space-y-6">
-            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Creator</h3>
+            <div className="rounded-[28px] border wf-border wf-bg-elevated p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] wf-fg-muted">Creator</h3>
               <div className="mt-4 flex items-start gap-4">
-                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-slate-100 text-slate-700 shadow-inner">
+                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl wf-surface-muted wf-fg shadow-inner">
                   {creator?.avatar_url ? <img src={creator.avatar_url} alt={creator.display_name} className="h-full w-full object-cover" /> : <span className="text-xl font-semibold">{(creator?.display_name || workflow.publisher_name).slice(0, 1).toUpperCase()}</span>}
                 </div>
                 <div className="min-w-0 flex-1">
                   <button
                     type="button"
                     onClick={() => creator?.handle && onOpenCreator(creator.handle)}
-                    className="text-left text-lg font-semibold text-slate-900 hover:text-blue-600"
+                    className="text-left text-lg font-semibold wf-fg hover:wf-accent-text"
                   >
                     {creator?.display_name || workflow.publisher_name}
                   </button>
-                  <div className="mt-1 text-sm text-slate-500">@{creator?.handle || workflow.publisher_name.toLowerCase().replace(/\s+/g, '')}</div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                  <div className="mt-1 text-sm wf-fg-muted">@{creator?.handle || workflow.publisher_name.toLowerCase().replace(/\s+/g, '')}</div>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs wf-fg-muted">
                     <span>{creator?.follower_count || 0} followers</span>
                     <span>{creator?.workflow_count || 1} workflows</span>
                   </div>
                 </div>
               </div>
-              {creator?.bio ? <p className="mt-4 text-sm leading-6 text-slate-600">{creator.bio}</p> : null}
+              {creator?.bio ? <p className="mt-4 text-sm leading-6 wf-fg-muted">{creator.bio}</p> : null}
               <div className="mt-4 flex flex-wrap gap-3">
                 {creator?.handle ? (
                   <button
                     type="button"
                     onClick={() => onToggleFollow(creator)}
                     disabled={followLoading}
-                    className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${creator.is_following ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-60`}
+                    className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${creator.is_following ? 'bg-slate-900 text-white hover:opacity-90' : 'bg-[color:var(--wf-accent)] text-white hover:bg-[color:var(--wf-accent)]'} disabled:opacity-60`}
                   >
                     {followLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
                     {creator.is_following ? 'Following' : 'Follow creator'}
                   </button>
                 ) : null}
                 {creator?.website_url ? (
-                  <a href={creator.website_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-blue-300 hover:text-blue-600">
+                  <a href={creator.website_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border wf-border px-4 py-2 text-sm font-medium wf-fg hover:border-[color-mix(in_srgb,var(--wf-accent)_45%,transparent)] hover:wf-accent-text">
                     <ExternalLink className="h-4 w-4" />
                     Website
                   </a>
@@ -2956,13 +2904,13 @@ function WorkflowDetail({
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Store details</h3>
-              <dl className="mt-4 space-y-3 text-sm text-slate-600">
-                <div className="flex items-center justify-between gap-3"><dt>Version</dt><dd className="font-medium text-slate-900">{workflow.version}</dd></div>
-                <div className="flex items-center justify-between gap-3"><dt>Downloads</dt><dd className="font-medium text-slate-900">{workflow.download_count}</dd></div>
-                <div className="flex items-center justify-between gap-3"><dt>Published</dt><dd className="font-medium text-slate-900">{new Date(workflow.created_at).toLocaleDateString()}</dd></div>
-                <div className="flex items-center justify-between gap-3"><dt>Access</dt><dd className="font-medium text-slate-900">{workflow.locked ? 'Locked listing' : 'Open listing'}</dd></div>
+            <div className="rounded-[28px] border wf-border wf-bg-elevated p-6 shadow-sm">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] wf-fg-muted">Store details</h3>
+              <dl className="mt-4 space-y-3 text-sm wf-fg-muted">
+                <div className="flex items-center justify-between gap-3"><dt>Version</dt><dd className="font-medium wf-fg">{workflow.version}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Downloads</dt><dd className="font-medium wf-fg">{workflow.download_count}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Published</dt><dd className="font-medium wf-fg">{new Date(workflow.created_at).toLocaleDateString()}</dd></div>
+                <div className="flex items-center justify-between gap-3"><dt>Access</dt><dd className="font-medium wf-fg">{workflow.locked ? 'Locked listing' : 'Open listing'}</dd></div>
               </dl>
             </div>
           </div>
@@ -2988,8 +2936,8 @@ function CreatorDetail({
   followLoading: boolean;
 }) {
   return (
-    <div className="flex h-full flex-col bg-slate-100">
-      <div className="relative overflow-hidden border-b border-slate-200 bg-slate-950 text-white">
+    <div className="flex h-full flex-col wf-surface-muted">
+      <div className="relative overflow-hidden border-b wf-border bg-slate-950 text-white">
         {creator.hero_image_url ? <img src={creator.hero_image_url} alt={creator.display_name} className="absolute inset-0 h-full w-full object-cover" /> : null}
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/85 to-slate-950/30" />
         <div className="relative p-6 md:p-8">
@@ -3015,7 +2963,7 @@ function CreatorDetail({
                 type="button"
                 onClick={() => onToggleFollow(creator)}
                 disabled={followLoading}
-                className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition-colors ${creator.is_following ? 'bg-white text-slate-900 hover:bg-slate-100' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-60`}
+                className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition-colors ${creator.is_following ? 'wf-bg-elevated wf-fg hover:wf-surface-muted' : 'bg-[color:var(--wf-accent)] text-white hover:bg-[color:var(--wf-accent)]'} disabled:opacity-60`}
               >
                 {followLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
                 {creator.is_following ? 'Following' : 'Follow creator'}
@@ -3029,8 +2977,8 @@ function CreatorDetail({
         <div className="mx-auto max-w-6xl">
           <div className="mb-6 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-xl font-semibold text-slate-900">Published by {creator.display_name}</h3>
-              <p className="mt-1 text-sm text-slate-500">Browse this creator’s workflow catalog.</p>
+              <h3 className="text-xl font-semibold wf-fg">Published by {creator.display_name}</h3>
+              <p className="mt-1 text-sm wf-fg-muted">Browse this creator’s workflow catalog.</p>
             </div>
           </div>
           {workflows.length > 0 ? (
@@ -3040,7 +2988,7 @@ function CreatorDetail({
               ))}
             </div>
           ) : (
-            <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">This creator hasn’t published anything yet.</div>
+            <div className="rounded-[28px] border border-dashed wf-border wf-bg-elevated p-10 text-center text-sm wf-fg-muted">This creator hasn’t published anything yet.</div>
           )}
         </div>
       </div>
@@ -3372,24 +3320,24 @@ export function MarketplaceBrowser({
             followLoading={followLoading}
           />
         ) : (
-          <div className="flex flex-col h-[74vh] bg-slate-100">
+          <div className="flex flex-col h-[74vh] wf-surface-muted">
             {/* Search Header */}
-            <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 shadow-sm">
+            <div className="shrink-0 border-b wf-border wf-bg-elevated px-6 py-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-4">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">Stuard Store</div>
-                  <h2 className="mt-1 text-2xl font-bold text-slate-900">Discover workflows from creators</h2>
-                  <p className="mt-1 text-sm text-slate-500">Browse featured automations, follow creators, and install polished workflows.</p>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] wf-accent-text">Stuard Store</div>
+                  <h2 className="mt-1 text-2xl font-bold wf-fg">Discover workflows from creators</h2>
+                  <p className="mt-1 text-sm wf-fg-muted">Browse featured automations, follow creators, and install polished workflows.</p>
                 </div>
               </div>
               <div className="flex gap-4">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-2.5 w-5 h-5 text-slate-400" />
+                  <Search className="absolute left-3 top-2.5 w-5 h-5 wf-fg-faint" />
                   <input
                     type="text"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 shadow-sm transition-all focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    className="w-full rounded-xl border wf-border wf-bg-elevated py-2.5 pl-10 pr-4 text-sm wf-fg shadow-sm transition-all focus:border-[color:var(--wf-accent)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)]"
                     placeholder="Search for workflows..."
                   />
                 </div>
@@ -3397,14 +3345,14 @@ export function MarketplaceBrowser({
                   <select
                     value={category}
                     onChange={e => setCategory(e.target.value)}
-                    className="min-w-[170px] appearance-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-8 text-sm text-slate-900 shadow-sm transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    className="min-w-[170px] appearance-none rounded-xl border wf-border wf-bg-elevated px-4 py-2.5 pr-8 text-sm wf-fg shadow-sm transition-colors focus:border-[color:var(--wf-accent)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)]"
                   >
                     <option value="all">All Categories</option>
                     {categories.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 wf-fg-faint">
                     <ChevronRight className="w-4 h-4 rotate-90" />
                   </div>
                 </div>
@@ -3413,7 +3361,7 @@ export function MarketplaceBrowser({
               <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
                 <button
                   onClick={() => { setCategory('all'); setSearch(''); }}
-                  className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === 'all' && !search ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
+                  className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === 'all' && !search ? 'border-[color:var(--wf-accent)] bg-[color:var(--wf-accent)] text-white shadow-sm' : 'wf-border wf-bg-elevated wf-fg-muted hover:border-[color-mix(in_srgb,var(--wf-accent)_35%,transparent)] hover:wf-accent-text'}`}
                 >
                   All
                 </button>
@@ -3421,7 +3369,7 @@ export function MarketplaceBrowser({
                   <button
                     key={c.id}
                     onClick={() => setCategory(c.id)}
-                    className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === c.id ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
+                    className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${category === c.id ? 'border-[color:var(--wf-accent)] bg-[color:var(--wf-accent)] text-white shadow-sm' : 'wf-border wf-bg-elevated wf-fg-muted hover:border-[color-mix(in_srgb,var(--wf-accent)_35%,transparent)] hover:wf-accent-text'}`}
                   >
                     {c.name}
                   </button>
@@ -3432,8 +3380,8 @@ export function MarketplaceBrowser({
             {/* Results Grid */}
             <div className="flex-1 overflow-y-auto p-6 md:p-8">
               {loading ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-500">
-                  <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                <div className="flex h-full flex-col items-center justify-center gap-3 wf-fg-muted">
+                  <Loader2 className="w-8 h-8 animate-spin wf-accent-text" />
                   <span className="text-sm">{initialLoad ? 'Loading marketplace...' : 'Searching...'}</span>
                 </div>
               ) : error ? (
@@ -3442,11 +3390,11 @@ export function MarketplaceBrowser({
                     <AlertCircle className="w-8 h-8 text-rose-400" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-slate-900">Something went wrong</p>
-                    <p className="mt-1 max-w-xs text-sm text-slate-500">{error}</p>
+                    <p className="font-medium wf-fg">Something went wrong</p>
+                    <p className="mt-1 max-w-xs text-sm wf-fg-muted">{error}</p>
                     <button
                       onClick={loadFeatured}
-                      className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                      className="mt-4 rounded-lg bg-[color:var(--wf-accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[color:var(--wf-accent)]"
                     >
                       Try again
                     </button>
@@ -3458,7 +3406,7 @@ export function MarketplaceBrowser({
                     <button
                       type="button"
                       onClick={() => setSelectedWorkflow(featuredHero)}
-                      className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-left text-white shadow-xl"
+                      className="relative overflow-hidden rounded-[32px] border wf-border bg-slate-950 text-left text-white shadow-xl"
                     >
                       {featuredHero.cover_image_url || featuredHero.thumbnail_url ? (
                         <img src={featuredHero.cover_image_url || featuredHero.thumbnail_url || ''} alt={featuredHero.name} className="absolute inset-0 h-full w-full object-cover" />
@@ -3476,7 +3424,7 @@ export function MarketplaceBrowser({
                           </div>
                         </div>
                         <div className="flex justify-end">
-                          <div className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold shadow-lg shadow-blue-500/25">
+                          <div className="inline-flex items-center gap-2 rounded-2xl bg-[color:var(--wf-accent)] px-5 py-3 text-sm font-semibold shadow-lg">
                             View listing
                             <ChevronRight className="h-4 w-4" />
                           </div>
@@ -3488,8 +3436,8 @@ export function MarketplaceBrowser({
                   <div>
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
-                        <h3 className="text-lg font-semibold text-slate-900">{search.trim() || category !== 'all' ? 'Results' : 'Popular workflows'}</h3>
-                        <p className="mt-1 text-sm text-slate-500">Discover ready-to-install automations from the Stuard community.</p>
+                        <h3 className="text-lg font-semibold wf-fg">{search.trim() || category !== 'all' ? 'Results' : 'Popular workflows'}</h3>
+                        <p className="mt-1 text-sm wf-fg-muted">Discover ready-to-install automations from the Stuard community.</p>
                       </div>
                     </div>
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -3505,16 +3453,16 @@ export function MarketplaceBrowser({
                 </div>
               ) : search.trim() || category !== 'all' ? (
                 // Search with no results
-                <div className="flex h-full flex-col items-center justify-center gap-4 text-slate-500">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                    <Search className="w-8 h-8 text-slate-300" />
+                <div className="flex h-full flex-col items-center justify-center gap-4 wf-fg-muted">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full wf-bg-elevated shadow-sm">
+                    <Search className="w-8 h-8 wf-fg-faint" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-slate-900">No workflows found</p>
+                    <p className="font-medium wf-fg">No workflows found</p>
                     <p className="mt-1 text-sm">Try different search terms or browse all categories</p>
                     <button
                       onClick={() => { setSearch(''); setCategory('all'); }}
-                      className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all hover:border-indigo-200 hover:text-indigo-600"
+                      className="mt-4 rounded-lg border wf-border wf-bg-elevated px-4 py-2 text-sm font-medium wf-fg transition-all hover:border-[color-mix(in_srgb,var(--wf-accent)_35%,transparent)] hover:wf-accent-text"
                     >
                       Clear filters
                     </button>
@@ -3523,12 +3471,12 @@ export function MarketplaceBrowser({
               ) : (
                 // Empty marketplace - encourage publishing
                 <div className="flex h-full flex-col items-center justify-center gap-6 px-8 text-center">
-                  <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-100 to-violet-50 shadow-sm">
-                    <Rocket className="w-12 h-12 text-indigo-500" />
+                  <div className="flex h-24 w-24 items-center justify-center rounded-2xl wf-icon-chip shadow-sm">
+                    <Rocket className="w-12 h-12 wf-accent-text" />
                   </div>
                   <div>
-                    <h3 className="mb-2 text-xl font-bold text-slate-900">The marketplace is waiting for you!</h3>
-                    <p className="max-w-md text-sm leading-relaxed text-slate-500">
+                    <h3 className="mb-2 text-xl font-bold wf-fg">The marketplace is waiting for you!</h3>
+                    <p className="max-w-md text-sm leading-relaxed wf-fg-muted">
                       Be the first to share your workflows with the community.
                       Create powerful automations and help others save time.
                     </p>
@@ -3536,7 +3484,7 @@ export function MarketplaceBrowser({
                   <div className="flex gap-3">
                     <button
                       onClick={onClose}
-                      className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2"
+                      className="px-5 py-2.5 bg-[color:var(--wf-accent)] text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-all shadow-lg  flex items-center gap-2"
                     >
                       <Plus className="w-4 h-4" />
                       Create a Workflow
@@ -3901,7 +3849,7 @@ function FunctionNodeDesigner({
                       ? d ? 'bg-violet-500/15 border-violet-500/40 text-violet-200 shadow-sm'
                           : 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
                       : d ? 'bg-white/[0.02] border-white/[0.08] text-white/55 hover:bg-white/[0.05]'
-                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                          : 'wf-bg-elevated wf-border wf-fg-muted hover:wf-surface-muted'
                   }`}
                   title={id}
                 >
@@ -3988,7 +3936,7 @@ function PortListEditor({
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <label className="text-xs font-medium wf-fg flex items-center gap-1.5">
-          <Icon className={`w-3.5 h-3.5 ${kind === 'inputs' ? 'text-emerald-500' : 'text-blue-500'}`} />
+          <Icon className={`w-3.5 h-3.5 ${kind === 'inputs' ? 'text-emerald-500' : 'wf-accent-text'}`} />
           {label}
           <span className="text-[10px] wf-fg-faint font-normal">({ports.length})</span>
         </label>
@@ -3996,7 +3944,7 @@ function PortListEditor({
           type="button"
           onClick={onAdd}
           className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
-            d ? 'text-white/70 hover:bg-white/[0.06]' : 'text-slate-600 hover:bg-slate-100'
+            d ? 'text-white/70 hover:bg-white/[0.06]' : 'wf-fg-muted hover:wf-surface-muted'
           }`}
         >
           <Plus className="w-3 h-3" />
@@ -4031,7 +3979,7 @@ function PortListEditor({
               type="button"
               onClick={() => onRemove(i)}
               className={`p-1.5 rounded-md transition-colors ${
-                d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'
+                d ? 'text-white/40 hover:text-red-400 hover:bg-red-500/10' : 'wf-fg-faint hover:text-red-600 hover:bg-red-50'
               }`}
               title="Remove port"
             >
@@ -4040,7 +3988,7 @@ function PortListEditor({
           </div>
         ))}
         {ports.length === 0 && (
-          <div className={`text-[11px] italic px-2.5 py-2 rounded-lg border border-dashed ${d ? 'border-white/[0.08] text-white/40' : 'border-slate-200 text-slate-400'}`}>
+          <div className={`text-[11px] italic px-2.5 py-2 rounded-lg border border-dashed ${d ? 'border-white/[0.08] text-white/40' : 'wf-border wf-fg-faint'}`}>
             No {label.toLowerCase()} defined.
           </div>
         )}
@@ -4160,21 +4108,21 @@ function WizardStepper({
               >
                 <div className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all border-2 ${
                   isCurrent
-                    ? d ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30' : 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-300'
+                    ? d ? 'bg-[color:var(--wf-accent)] border-[color:var(--wf-accent)] text-white shadow-lg ' : 'bg-[color:var(--wf-accent)] border-[color:var(--wf-accent)] text-white shadow-md '
                     : isCompleted
                       ? d ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-600'
-                      : d ? 'bg-white/[0.03] border-white/[0.10] text-white/40' : 'bg-slate-50 border-slate-200 text-slate-400'
+                      : d ? 'bg-white/[0.03] border-white/[0.10] text-white/40' : 'wf-surface-muted wf-border wf-fg-faint'
                 }`}>
                   {isCompleted ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
                 </div>
                 <div className="flex flex-col items-start leading-tight">
                   <span className={`text-[10px] font-semibold uppercase tracking-wider ${
-                    isCurrent ? d ? 'text-indigo-300' : 'text-indigo-600' : 'wf-fg-faint'
+                    isCurrent ? d ? 'wf-accent-text' : 'wf-accent-text' : 'wf-fg-faint'
                   }`}>
                     Step {i + 1}
                   </span>
                   <span className={`text-xs font-medium ${
-                    isCurrent ? 'wf-fg' : isCompleted ? d ? 'text-white/65' : 'text-slate-600' : 'wf-fg-faint'
+                    isCurrent ? 'wf-fg' : isCompleted ? d ? 'text-white/65' : 'wf-fg-muted' : 'wf-fg-faint'
                   }`}>
                     {step.label}
                   </span>
@@ -4184,7 +4132,7 @@ function WizardStepper({
                 <div className={`flex-1 h-px transition-colors ${
                   i < currentIndex
                     ? d ? 'bg-emerald-500/40' : 'bg-emerald-300'
-                    : d ? 'bg-white/[0.06]' : 'bg-slate-200'
+                    : d ? 'bg-white/[0.06]' : 'wf-surface-muted'
                 }`} />
               )}
             </React.Fragment>
@@ -4206,8 +4154,8 @@ function StepHeader({
   return (
     <div className="flex items-start justify-between gap-3 flex-wrap">
       <div className="flex items-start gap-3 min-w-0">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500/15 to-violet-500/15 border border-indigo-500/20 shrink-0">
-          <Icon className="w-5 h-5 text-indigo-500" />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center wf-icon-chip shrink-0">
+          <Icon className="w-5 h-5 wf-accent-text" />
         </div>
         <div className="min-w-0">
           <h2 className="text-base font-bold wf-fg leading-tight">{title}</h2>
@@ -4248,10 +4196,10 @@ function ReviewSummary({
       {/* Hero summary */}
       <div className="rounded-2xl border p-5 flex items-start gap-4" style={{ background: cardBg, borderColor: cardBorder }}>
         <div
-          className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${publishAs === 'function' ? '' : 'bg-indigo-500/15'}`}
+          className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 ${publishAs === 'function' ? '' : 'wf-icon-chip'}`}
           style={publishAs === 'function' ? { background: fnColor.bg, color: fnColor.fg } : undefined}
         >
-          {publishAs === 'function' ? <FnIcon className="w-6 h-6" /> : <Globe className="w-6 h-6 text-indigo-500" />}
+          {publishAs === 'function' ? <FnIcon className="w-6 h-6" /> : <Globe className="w-6 h-6 wf-accent-text" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -4259,7 +4207,7 @@ function ReviewSummary({
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
               publishAs === 'function'
                 ? d ? 'bg-violet-500/15 text-violet-300 border border-violet-500/25' : 'bg-violet-100 text-violet-700 border border-violet-200'
-                : d ? 'bg-blue-500/15 text-blue-300 border border-blue-500/25' : 'bg-blue-100 text-blue-700 border border-blue-200'
+                : 'wf-accent-chip'
             }`}>
               {publishAs === 'function' ? <Box className="w-2.5 h-2.5" /> : <Layers className="w-2.5 h-2.5" />}
               {publishAs}
@@ -4312,7 +4260,7 @@ function ReviewCard({
           type="button"
           onClick={onEdit}
           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-            d ? 'text-indigo-300 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'
+            d ? 'wf-accent-text hover:bg-[color-mix(in_srgb,var(--wf-accent)_10%,transparent)]0/10' : 'wf-accent-text hover:bg-[color-mix(in_srgb,var(--wf-accent)_10%,transparent)]'
           }`}
         >
           <Pencil className="w-2.5 h-2.5" />

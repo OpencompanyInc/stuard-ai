@@ -394,7 +394,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('../utils/models', () => ({
-  buildProviderModel: vi.fn(() => 'mocked-model'),
+  buildNativeProviderModel: vi.fn(() => 'mocked-model'),
 }));
 
 vi.mock('../tools/bridge', () => ({

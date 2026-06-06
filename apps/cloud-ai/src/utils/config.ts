@@ -85,6 +85,10 @@ export const REDDIT_CLIENT_ID = clean(process.env.REDDIT_CLIENT_ID || '');
 export const REDDIT_CLIENT_SECRET = clean(process.env.REDDIT_CLIENT_SECRET || '');
 export const REDDIT_REDIRECT_PATH = clean(process.env.REDDIT_REDIRECT_PATH || '/integrations/reddit/callback');
 
+export const NOTION_CLIENT_ID = clean(process.env.NOTION_CLIENT_ID || process.env.NOTION_OAUTH_CLIENT_ID || '');
+export const NOTION_CLIENT_SECRET = clean(process.env.NOTION_CLIENT_SECRET || process.env.NOTION_OAUTH_CLIENT_SECRET || '');
+export const NOTION_REDIRECT_PATH = clean(process.env.NOTION_REDIRECT_PATH || '/integrations/notion/callback');
+
 // X (Twitter) OAuth 2.0 + PKCE. CLIENT_SECRET is optional (only used for confidential apps).
 export const X_CLIENT_ID = clean(process.env.X_CLIENT_ID || process.env.TWITTER_CLIENT_ID || '');
 export const X_CLIENT_SECRET = clean(process.env.X_CLIENT_SECRET || process.env.TWITTER_CLIENT_SECRET || '');

@@ -8,7 +8,7 @@
  */
 
 import { embed, generateText } from 'ai';
-import { google, buildProviderModel } from '../utils/models';
+import { google, buildNativeProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 import { execLocalTool, hasClientBridge } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
@@ -53,7 +53,7 @@ export async function synthesizeCollections(options?: {
     }
 
     const modelId = getDefaultModelForCategory('fast');
-    const model = buildProviderModel(modelId);
+    const model = buildNativeProviderModel(modelId);
 
     for (const drawer of drawers) {
       const topic = String(drawer.topic || '').trim();
@@ -199,7 +199,7 @@ async function mergeSimilarTopics(): Promise<number> {
 
     // Use LLM to confirm merges (process top 5 pairs max to control costs)
     const modelId = getDefaultModelForCategory('fast');
-    const model = buildProviderModel(modelId);
+    const model = buildNativeProviderModel(modelId);
     let merged = 0;
 
     for (const pair of pairs.slice(0, 5)) {

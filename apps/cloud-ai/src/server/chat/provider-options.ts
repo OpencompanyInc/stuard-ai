@@ -1,6 +1,14 @@
 import { DEFAULT_MAX_STEPS, MAX_STEPS_CAP } from '../../utils/config';
 import type { AgentType } from './types';
 import { isQuickChatRequest } from './quick-request';
+import {
+  clampEffortToControl,
+  heuristicReasoningControl,
+  resolveEffectiveReasoning,
+  type EffectiveReasoning,
+  type ReasoningEffort,
+  type RequestedReasoning,
+} from '../../utils/reasoning-capability';
 
 interface ProviderOptionsArgs {
   agentType: AgentType;
@@ -37,11 +45,14 @@ export function getHardTimeoutMs(agentType: AgentType) {
   return 0;
 }
 
-type ReasoningLevel = 'none' | 'low' | 'medium' | 'high';
-
-function normalizeReasoning(msg: any): ReasoningLevel {
+function normalizeReasoning(msg: any): RequestedReasoning {
   const raw = String(msg?.reasoningLevel || '').toLowerCase();
-  if (raw === 'none' || raw === 'low' || raw === 'medium' || raw === 'high') return raw;
+  if (
+    raw === 'none' || raw === 'minimal' || raw === 'low' ||
+    raw === 'medium' || raw === 'high' || raw === 'xhigh'
+  ) {
+    return raw;
+  }
   return 'high';
 }
 
@@ -58,6 +69,17 @@ function tailOf(id: string): string {
   return id.split('/').pop() || '';
 }
 
+/**
+ * Native id prefixes that Stuard serves through OpenRouter (see
+ * buildProviderModel). When such a model resolves to Stuard-serving
+ * ('friendly'), it's transported through OpenRouter — whose SDK only reads the
+ * `openrouter` option namespace — so its reasoning controls must be emitted
+ * there, exactly like an `openrouter/*` id. BYOK ('byok') and ChatGPT plan
+ * ('subscription') keep the native transport, so they still use the native
+ * namespaces below. Perplexity keeps its native key, so it's excluded.
+ */
+const OPENROUTER_SERVED_PREFIXES = new Set(['openai', 'penai', 'google', 'anthropic', 'deepseek', 'xai']);
+
 export function buildProviderOptions({
   agentType,
   workflowModelId,
@@ -68,7 +90,7 @@ export function buildProviderOptions({
   msg,
 }: ProviderOptionsArgs) {
   const providerOptions: any = {};
-  const reasoningLevel = normalizeReasoning(msg);
+  const requested = normalizeReasoning(msg);
 
   // Pick the id we should route from. Workflow/skill architects use their
   // dedicated model ids; everything else uses chosenModelId. modelLabel is the
@@ -80,25 +102,33 @@ export function buildProviderOptions({
       : (chosenModelId || modelLabel || '');
   const prefix = prefixOf(effectiveId);
 
+  // Reconcile the requested level with what this model can actually do: turn
+  // `none` into the model's default when it can't be disabled, and let the
+  // per-provider mapping below translate the surviving effort tier. `effective`
+  // is one of 'none' (off) | 'default' (on, model-chosen) | an effort tier.
+  const control = heuristicReasoningControl(effectiveId);
+  const effective: EffectiveReasoning = resolveEffectiveReasoning(requested, control);
+
   // When the model is routed through OpenRouter, its SDK ignores per-provider
   // option keys (anthropic/openai/google/etc.) — we must use the openrouter
-  // namespace with the unified `reasoning` field. The actual sub-provider lives
-  // in the second path segment (e.g. "openrouter/anthropic/claude-...").
-  if (prefix === 'openrouter') {
+  // namespace with the unified `reasoning` field. This covers explicit
+  // `openrouter/*` ids AND bare native ids that resolved to Stuard-serving
+  // ('friendly'), which buildProviderModel now transports through OpenRouter.
+  const openRouterTransported = prefix === 'openrouter'
+    || (modelSource === 'friendly' && OPENROUTER_SERVED_PREFIXES.has(prefix));
+  if (openRouterTransported) {
     // OpenRouter accepts effort values 'xhigh' | 'high' | 'medium' | 'low' | 'minimal' | 'none'.
-    // Our four levels map directly; we also set `enabled: false` for 'none' so
-    // providers that don't honor `effort: 'none'` still skip reasoning.
-    const effortMap: Record<ReasoningLevel, 'none' | 'low' | 'medium' | 'high'> = {
-      none: 'none',
-      low: 'low',
-      medium: 'medium',
-      high: 'high',
-    };
-    providerOptions.openrouter = {
-      reasoning: reasoningLevel === 'none'
-        ? { enabled: false, effort: 'none' }
-        : { enabled: true, effort: effortMap[reasoningLevel] },
-    };
+    // Clamp the tier into the model's supported ladder so we never send an
+    // effort it would reject; 'default' enables reasoning without pinning a tier.
+    if (effective === 'none') {
+      providerOptions.openrouter = { reasoning: { enabled: false, effort: 'none' } };
+    } else if (effective === 'default') {
+      providerOptions.openrouter = { reasoning: { enabled: true } };
+    } else {
+      providerOptions.openrouter = {
+        reasoning: { enabled: true, effort: clampEffortToControl(effective, control) },
+      };
+    }
     return providerOptions;
   }
 
@@ -111,41 +141,55 @@ export function buildProviderOptions({
     const isGemini25 = tail.includes('gemini-2.5');
     const isGemini3 = tail.includes('gemini-3');
     if (isGemini25) {
-      const gemini25Budget: Record<ReasoningLevel, number> = {
-        none: 0,
-        low: 1024,
-        medium: 8192,
-        high: 24576,
+      if (effective === 'none') {
+        providerOptions.google = { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } };
+      } else if (effective === 'default') {
+        // Can't disable (e.g. 2.5 Pro): leave the budget to the model.
+        providerOptions.google = { thinkingConfig: { includeThoughts: true } };
+      } else {
+        const gemini25Budget: Record<ReasoningEffort, number> = {
+          minimal: 512,
+          low: 1024,
+          medium: 8192,
+          high: 24576,
+          xhigh: 24576,
+        };
+        providerOptions.google = {
+          thinkingConfig: { thinkingBudget: gemini25Budget[effective], includeThoughts: true },
+        };
+      }
+    } else if (isGemini3 && effective !== 'none' && effective !== 'default') {
+      // Gemini 3 thinkingLevel accepts low/medium/high; fold the extremes in.
+      const gemini3Level: Record<ReasoningEffort, 'low' | 'medium' | 'high'> = {
+        minimal: 'low',
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
+        xhigh: 'high',
       };
       providerOptions.google = {
-        thinkingConfig: {
-          thinkingBudget: gemini25Budget[reasoningLevel],
-          includeThoughts: reasoningLevel !== 'none',
-        },
-      };
-    } else if (isGemini3 && reasoningLevel !== 'none') {
-      providerOptions.google = {
-        thinkingConfig: {
-          thinkingLevel: reasoningLevel,
-          includeThoughts: true,
-        },
+        thinkingConfig: { thinkingLevel: gemini3Level[effective], includeThoughts: true },
       };
     }
-    // Gemini 3 has no documented "off" — omit thinkingConfig and let the
-    // model decide rather than sending the invalid `thinkingLevel: 'none'`.
+    // Gemini 3 has no documented "off" — omit thinkingConfig (for 'none'/'default')
+    // and let the model decide rather than sending an invalid thinkingLevel.
   }
 
   // ---------- Anthropic extended thinking ----------
   if (prefix === 'anthropic') {
-    if (reasoningLevel === 'none') {
+    if (effective === 'none') {
       providerOptions.anthropic = { thinking: { type: 'disabled' } };
     } else {
-      const anthropicBudget: Record<Exclude<ReasoningLevel, 'none'>, number | undefined> = {
+      const anthropicBudget: Record<EffectiveReasoning, number | undefined> = {
+        none: undefined,
+        default: undefined,
+        minimal: 3000,
         low: 5000,
         medium: 16384,
         high: undefined,
+        xhigh: 32000,
       };
-      const budgetTokens = anthropicBudget[reasoningLevel];
+      const budgetTokens = anthropicBudget[effective];
       providerOptions.anthropic = {
         sendReasoning: true,
         thinking: budgetTokens ? { type: 'enabled', budgetTokens } : { type: 'enabled' },
@@ -157,21 +201,20 @@ export function buildProviderOptions({
   if (prefix === 'openai' || prefix === 'penai' /* typo-tolerant alias */) {
     const tail = tailOf(effectiveId);
     const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(tail);
-    if (supportsEffort) {
-      // gpt-5.1 caps reasoning effort at 'medium'; everything else allows 'high'.
+    if (supportsEffort && effective !== 'none') {
+      // OpenAI reasoningEffort accepts minimal|low|medium|high; xhigh folds to
+      // high. gpt-5.1 caps at 'medium'; 'default' lands on a safe 'medium'.
       const maxEffort: 'medium' | 'high' = /^gpt-5\.1/.test(tail) ? 'medium' : 'high';
-      const order: ReasoningLevel[] = ['none', 'low', 'medium', 'high'];
-      const clampedEffort = order.indexOf(reasoningLevel) > order.indexOf(maxEffort)
-        ? maxEffort
-        : reasoningLevel;
-      if (clampedEffort !== 'none') {
-        providerOptions.openai = {
-          reasoningEffort: clampedEffort,
-          // Without `reasoningSummary` the Responses API streams no reasoning
-          // chunks at all; gpt-5.4 supports the richer 'detailed' summary.
-          reasoningSummary: /^gpt-5\.4/.test(tail) ? 'detailed' : 'auto',
-        };
-      }
+      const order: Array<'minimal' | 'low' | 'medium' | 'high'> = ['minimal', 'low', 'medium', 'high'];
+      const base: 'minimal' | 'low' | 'medium' | 'high' =
+        effective === 'default' ? 'medium' : effective === 'xhigh' ? 'high' : effective;
+      const clampedEffort = order.indexOf(base) > order.indexOf(maxEffort) ? maxEffort : base;
+      providerOptions.openai = {
+        reasoningEffort: clampedEffort,
+        // Without `reasoningSummary` the Responses API streams no reasoning
+        // chunks at all; gpt-5.4 supports the richer 'detailed' summary.
+        reasoningSummary: /^gpt-5\.4/.test(tail) ? 'detailed' : 'auto',
+      };
     }
   }
 
@@ -179,9 +222,9 @@ export function buildProviderOptions({
   if (prefix === 'xai') {
     const tail = tailOf(effectiveId);
     const supportsReasoning = !tail.includes('non-reasoning');
-    if (supportsReasoning && reasoningLevel !== 'none') {
-      // xAI Chat API only supports 'low' | 'high'; 'medium' collapses to 'high'.
-      const xaiEffort: 'low' | 'high' = reasoningLevel === 'low' ? 'low' : 'high';
+    if (supportsReasoning && effective !== 'none') {
+      // xAI Chat API only supports 'low' | 'high'; everything above low → high.
+      const xaiEffort: 'low' | 'high' = (effective === 'low' || effective === 'minimal') ? 'low' : 'high';
       providerOptions.xai = { reasoningEffort: xaiEffort };
     }
   }
@@ -189,7 +232,7 @@ export function buildProviderOptions({
   // ---------- DeepSeek thinking ----------
   if (prefix === 'deepseek') {
     providerOptions.deepseek = {
-      thinking: { type: reasoningLevel === 'none' ? 'disabled' : 'enabled' },
+      thinking: { type: effective === 'none' ? 'disabled' : 'enabled' },
     };
   }
 

@@ -1379,6 +1379,70 @@ async function execTool(
 
 type ExecuteStepResult = CoreExecuteStepResult;
 
+// Resolve + execute a bundled workspace sub-workflow (.stuard file) on the VM.
+// The deploy dir is the workspace root; the bundle unpack writes sub-workflows
+// there preserving their relative paths, so `path`/`file` resolves directly.
+async function vmCallWorkspaceFunction(
+  args: any,
+  ctx: any,
+  engineCtx: EngineContext,
+  deployDir?: string,
+): Promise<any> {
+  try {
+    if (!deployDir) return { ok: false, error: 'call_workspace_function unavailable: no deploy dir' };
+    const rawPath = String(args?.path || args?.file || '').trim();
+    if (!rawPath) return { ok: false, error: 'missing path to .stuard file' };
+    const inputs = (args?.inputs && typeof args.inputs === 'object') ? args.inputs
+      : (args?.args && typeof args.args === 'object') ? args.args
+      : {};
+
+    const resolvedRel = rawPath.endsWith('.stuard') ? rawPath : `${rawPath}.stuard`;
+    const root = path.resolve(deployDir);
+    const target = path.resolve(root, ...resolvedRel.split(/[/\\]/).filter(Boolean));
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      return { ok: false, error: `invalid workspace function path: ${resolvedRel}` };
+    }
+    if (!fs.existsSync(target)) {
+      return { ok: false, error: `workspace function not found: ${resolvedRel}` };
+    }
+
+    let subModel: any;
+    try {
+      subModel = JSON.parse(fs.readFileSync(target, 'utf-8') || '{}');
+    } catch (e: any) {
+      return { ok: false, error: `failed to parse ${resolvedRel}: ${String(e?.message || e)}` };
+    }
+
+    const requestedTriggerId = String(args?.triggerId || '').trim();
+    const subSpec = designerModelToStuardSpec(subModel, requestedTriggerId || undefined);
+
+    // Pick the trigger to run: explicit > first 'function' trigger > first trigger.
+    const triggers: any[] = Array.isArray(subSpec.triggers) ? subSpec.triggers : [];
+    const triggerId = requestedTriggerId
+      || String(triggers.find((t) => t?.type === 'function')?.id || '').trim()
+      || String(triggers[0]?.id || '').trim();
+    if (!triggerId) {
+      return { ok: false, error: `no callable trigger in ${resolvedRel}` };
+    }
+
+    engineCtx.logFn(`📂 Calling workspace function: ${resolvedRel} (${triggerId})`);
+
+    const result = await coreExecuteFromTrigger(subSpec, triggerId, inputs, ctx, {
+      logFn: engineCtx.logFn,
+      executeStep: (sp, st, c) => executeStep(sp, st, c, engineCtx, deployDir),
+    });
+
+    return {
+      ok: result.ok !== false,
+      functionPath: resolvedRel,
+      result: (result as any)?.result,
+      error: (result as any)?.error,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'call_workspace_function failed' };
+  }
+}
+
 // VM tool dispatch — owns orchestration (run_sequential/run_parallel), noop, and
 // execTool routing with deployDir + kind. Injected into the shared executeStep
 // skeleton. Args are already interpolated by the skeleton.
@@ -1409,6 +1473,12 @@ async function vmDispatchTool(
       logFn: engineCtx.logFn,
       executeStep: (sp, st, c) => executeStep(sp, st, c, engineCtx, deployDir),
     });
+  }
+  // call_workspace_function runs a separate .stuard sub-workflow file bundled
+  // into the deploy dir (the VM's workspace root). Mirrors the desktop tool but
+  // reads from disk under deployDir instead of the desktop workspace.
+  if (toolName === 'call_workspace_function') {
+    return vmCallWorkspaceFunction(mergedArgs, ctx, engineCtx, deployDir);
   }
   if (toolName === 'noop' || !toolName) return { ok: true };
   return execTool(

@@ -255,7 +255,7 @@ function WorkflowsApp() {
   const [workflowReasoningLevel, setWorkflowReasoningLevel] = useState<ReasoningLevel>(() => {
     try {
       const raw = window.localStorage.getItem('workflow.reasoning_level');
-      return raw === 'none' || raw === 'low' || raw === 'medium' || raw === 'high' ? raw : 'high';
+      return raw === 'none' || raw === 'minimal' || raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'xhigh' ? raw : 'high';
     } catch {
       return 'high';
     }

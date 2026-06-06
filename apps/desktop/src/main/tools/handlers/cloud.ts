@@ -767,16 +767,19 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     
     // Decode base64 audio
     const audioBuffer = Buffer.from(result.audioData, 'base64');
+    // Honor the format the provider actually returned (OpenRouter gpt-audio may
+    // emit wav/flac/etc.); fall back to the requested format.
+    const savedFormat = String(result.format || format).toLowerCase();
     let filePath: string | undefined;
     let played = false;
-    
+
     // Save to file if requested
     if (save || play) {
       const { randomUUID } = await import('crypto');
       const { join } = await import('path');
       const { writeFile, mkdir } = await import('fs/promises');
 
-      const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
+      const fileName = `tts_${randomUUID().slice(0, 8)}.${savedFormat}`;
       const ttsDir = getMediaLibrarySourceDir('generated-audio');
       const targetPath = outputPath || join(ttsDir, fileName);
       filePath = targetPath;
@@ -813,9 +816,9 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
     return {
       ok: true,
       filePath: save ? filePath : undefined,
-      format,
+      format: savedFormat,
       voice_id: voiceId,
-      model_id: modelId,
+      model_id: result.model_id || modelId,
       textLength: text.length,
       played,
     };
@@ -831,7 +834,7 @@ async function execTextToSpeech(args: any, ctx: RouterContext): Promise<any> {
 async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
   try {
     const prompt = String(args?.prompt || '').trim();
-    const model = args?.model || 'gemini-3.1-flash-image-preview';
+    const model = args?.model || 'google/gemini-3.1-flash-image-preview';
     const format = args?.format || 'png';
 
     if (!prompt) {

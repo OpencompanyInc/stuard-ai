@@ -126,7 +126,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'find_text', label: 'Find Text', icon: Scan, args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
       { k: 'cloud.tool', t: 'find_and_click_text', label: 'Find & Click Text', icon: MousePointer2, args: { text: '', context: '', start: false, region: { x: 0, y: 0, width: 800, height: 600 }, caseSensitive: false } },
       { k: 'cloud.tool', t: 'google_cloud_ocr', label: 'OCR (Image or Screen)', icon: Scan, args: { path: '', imageUrl: '', base64: '', mimeType: 'image/png', captureScreen: false, region: { x: 0, y: 0, width: 800, height: 600 }, ocrMode: 'document', languageHints: [], includeWordBoxes: true } },
-      { k: 'cloud.tool', t: 'generate_image', label: 'Generate Image', icon: Sparkles, args: { prompt: '', model: 'gemini-3.1-flash-image-preview', size: 'auto', aspect_ratio: 'auto', quality: 'auto', n: 1, format: 'png', background: 'auto' } },
+      { k: 'cloud.tool', t: 'generate_image', label: 'Generate Image', icon: ImageIcon, args: { prompt: '', model: 'google/gemini-3.1-flash-image-preview', aspect_ratio: 'auto', n: 1, format: 'png' } },
     ],
   },
   {

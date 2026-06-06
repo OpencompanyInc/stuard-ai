@@ -8,6 +8,7 @@ import { FormWizard } from './FormWizard';
 import type { DropzoneFile } from './FileDropzone';
 import { ChatUIRenderer } from './ChatUIRenderer';
 import { EmailView } from './EmailView';
+import { FeedbackForm } from './FeedbackForm';
 import { GenUIErrorBoundary } from './GenUIErrorBoundary';
 
 export interface GenUIProps {
@@ -147,6 +148,23 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
             readOnly={isCompleted}
             onSend={(data) => onResult({ action: 'send_email', ...data })}
             onCancel={() => onResult({ action: 'cancel_email' })}
+          />
+        );
+
+      case 'show_feedback_form':
+        return (
+          <FeedbackForm
+            type={safeArgs.type}
+            title={safeArgs.title}
+            description={safeArgs.description}
+            severity={safeArgs.severity}
+            labels={safeArgs.labels}
+            suggestedLabels={safeArgs.suggestedLabels}
+            allowScreenshot={safeArgs.allowScreenshot !== false}
+            isSubmitted={isCompleted && result?.submitted}
+            isCancelled={isCompleted && result?.cancelled}
+            onSubmit={(data) => onResult({ submitted: true, ...data })}
+            onCancel={() => onResult({ submitted: false, cancelled: true })}
           />
         );
 

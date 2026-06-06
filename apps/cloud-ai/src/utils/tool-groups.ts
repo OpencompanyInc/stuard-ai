@@ -96,6 +96,7 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   reddit: ['reddit_'],
   discord: ['discord_'],
   x: ['x_'],
+  notion: ['notion_'],
 };
 
 function isAllowedTool(name: string, enabledIntegrations: string[]): boolean {

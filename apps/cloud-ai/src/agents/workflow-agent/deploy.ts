@@ -86,9 +86,11 @@ async function loadWorkflowFromBridge(workflowId: string, writer?: any): Promise
   try {
     const res = await execLocalTool(
       'read_local_workflow',
-      { workflowId },
+      // includeWorkspaceBundle ships the workflow's imported sub-workflows,
+      // functions, scripts and assets so the VM runs a self-contained copy.
+      { workflowId, includeWorkspaceBundle: true },
       writer,
-      10_000,
+      15_000,
       { silent: true, noFallback: true },
     );
     if (res?.ok && res?.model) return res.model;

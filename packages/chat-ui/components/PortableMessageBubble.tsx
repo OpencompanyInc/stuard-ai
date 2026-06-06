@@ -10,7 +10,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Archive, Check, ChevronRight, Copy, ListOrdered, Loader2, Split, Users, XCircle } from 'lucide-react';
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '../ai-elements/ChainOfThought';
 import { Shimmer } from '../ai-elements/Shimmer';
-import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath } from '../helpers';
+import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath, unwrapExecuteTool } from '../helpers';
 import { isRedundantStreamingUpdate, mergeStreamingText } from '../streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../text';
 import type { Message, StreamChunk, ToolCall } from '../types';
@@ -611,7 +611,8 @@ function buildTraceSteps(
       }
 
       if (chunk.type === 'tool') {
-        const tc = chunk.tool;
+        // Collapse the execute_tool meta-wrapper so the step shows the real tool.
+        const tc = unwrapExecuteTool(chunk.tool);
         if (isTopLevelDuplicateOfNestedTool(tc, streamChunks)) return;
         if (shouldHideTool(tc)) return;
         steps.push({
@@ -653,7 +654,7 @@ function buildTraceSteps(
     });
   }
 
-  (toolCalls || []).forEach((tool, index) => {
+  (toolCalls || []).map((t) => unwrapExecuteTool(t)).forEach((tool, index) => {
     if (shouldHideTool(tool)) return;
     steps.push({
       id: tool.id || `tool-fallback-${index}`,

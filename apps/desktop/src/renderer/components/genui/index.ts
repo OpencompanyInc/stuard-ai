@@ -32,6 +32,7 @@ export { AgentTodoList } from './AgentTodoList';
 
 // === Feedback ===
 export { FeedbackForm } from './FeedbackForm';
+export { FeedbackAttachmentPicker } from './FeedbackAttachmentPicker';
 
 // === Forms / Wizards ===
 export { FormWizard } from './FormWizard';

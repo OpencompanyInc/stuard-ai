@@ -10,8 +10,6 @@ import { SmartValueEditor } from '../SmartValueEditor';
 import { EnhancedUIBuilderModal } from '../../../ui-builder/EnhancedUIBuilderModal';
 import type { UIWindowConfig } from '../../../ui-builder/types';
 import { extractHtmlFromComponent } from '../../../ui-builder/utils/codeGenerator';
-import { supabase } from '../../../lib/supabaseClient';
-import { getCloudAiHttp } from '../../../utils/cloud';
 import { useModelRegistry } from '../../../hooks/useModelRegistry';
 import { HotkeyEditor } from './editors/HotkeyEditor';
 import { AcceleratorEditor } from './editors/AcceleratorEditor';
@@ -32,13 +30,6 @@ import { CronEditor } from '../CronEditor';
 import { UIBuilderModal } from '../../../ui-builder';
 
 export type { UpstreamNode };
-
-interface IntegrationProfileOption {
-  provider: string;
-  profile: string;
-  email?: string | null;
-  isDefault?: boolean;
-}
 
 let googleProfileOptionsCache: ArgOption[] | null = null;
 let googleProfileOptionsPromise: Promise<ArgOption[]> | null = null;
@@ -63,22 +54,32 @@ async function fetchGoogleProfileOptions(): Promise<ArgOption[]> {
   if (googleProfileOptionsPromise) return googleProfileOptionsPromise;
 
   googleProfileOptionsPromise = (async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) return [];
+    // Google OAuth tokens live in the desktop's local encrypted store (not
+    // Supabase) since the device-local migration — read profiles from the local
+    // agent's oauth_list, mirroring useIntegrationsState.refreshProfiles('google').
+    const agentHttp = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
+    let tokens: any[] = [];
+    try {
+      const resp = await fetch(`${agentHttp}/v1/tools/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'oauth_list', args: {} }),
+      });
+      const json = await resp.json().catch(() => null);
+      if (json && (json as any).ok && Array.isArray((json as any).tokens)) {
+        tokens = (json as any).tokens;
+      }
+    } catch {
+      return [];
+    }
 
-    const resp = await fetch(`${getCloudAiHttp()}/integrations/profiles?provider=google`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const json = await resp.json().catch(() => null);
-    const profiles = Array.isArray(json?.profiles) ? json.profiles as IntegrationProfileOption[] : [];
-
-    const options = profiles
-      .map((profile): ArgOption | null => {
-        const value = String((profile as any).profile || (profile as any).profile_label || '').trim();
+    const options = tokens
+      .filter((t) => String(t?.provider || '').toLowerCase() === 'google')
+      .map((t): ArgOption | null => {
+        const value = String(t?.profileLabel || t?.profile_label || '').trim();
         if (!value) return null;
-        const email = String((profile as any).email || (profile as any).account_email || '').trim();
-        const isDefault = Boolean((profile as any).isDefault ?? (profile as any).is_default);
+        const email = String(t?.accountEmail || t?.account_email || '').trim();
+        const isDefault = Boolean(t?.isDefault ?? t?.is_default);
         return {
           value,
           label: email ? `${email}${isDefault ? ' (default)' : ''}` : `${value}${isDefault ? ' (default)' : ''}`,

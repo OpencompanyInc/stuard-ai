@@ -134,7 +134,10 @@ export function useAppController() {
   const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, wakewordSensitivity, chatMode: defaultChatMode, setChatMode: setDefaultChatMode, chatModels: defaultChatModels, setChatModels: setDefaultChatModels, modelSource, setModelSource } = usePreferences();
   const { modelById } = useModelRegistry();
   const [reasoningLevel, setReasoningLevel] = useState<import('./hooks/usePreferences').ReasoningLevel>(() => {
-    try { const v = localStorage.getItem('stuard.pref.reasoning_level'); return (v === 'low' || v === 'medium') ? v : 'high'; } catch { return 'high'; }
+    try {
+      const v = localStorage.getItem('stuard.pref.reasoning_level');
+      return (v === 'none' || v === 'minimal' || v === 'low' || v === 'medium' || v === 'high' || v === 'xhigh') ? v : 'high';
+    } catch { return 'high'; }
   });
   // Persist reasoning level
   useEffect(() => { try { localStorage.setItem('stuard.pref.reasoning_level', reasoningLevel); } catch {} }, [reasoningLevel]);
@@ -1556,8 +1559,8 @@ export function useAppController() {
   }, [internalSidebarOpen, overlayMode, setInternalSidebarWidth]);
   const handleSwitchSidebarTab = useCallback((tab: 'terminal' | 'todo' | 'projects') => setActiveSidebarTab(tab), []);
 
-  // Auto-open sidebar when an agent runs a terminal command, starts a headed
-  // CLI session, or creates a to-do list. The sidebar opens to the relevant tab.
+  // Auto-open sidebar when an agent opens an interactive terminal session, starts
+  // a headed CLI session, or creates a to-do list — not for run_command / scripts.
   useEffect(() => {
     if (overlayMode !== 'window' && overlayMode !== 'sidebar') return;
 

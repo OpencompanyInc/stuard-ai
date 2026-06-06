@@ -50,7 +50,7 @@ const INTEGRATION_PREFIXES: Record<string, string[]> = {
   discord: ['discord_'],
   reddit: ['reddit_'],
   x: ['x_'],
-  notion: ['notion_'],  // MCP
+  notion: ['notion_'],
   linear: ['linear_'],  // MCP
   stripe: ['stripe_'],  // MCP
   'browser-use': ['browser_use_'],

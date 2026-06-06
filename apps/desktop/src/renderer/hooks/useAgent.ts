@@ -108,6 +108,13 @@ const HIDDEN_WRAPPER_TOOL_NAMES = new Set([
   'run_parallel',
 ]);
 
+/** Interactive terminal sessions only — not run_command / run_python_script / etc. */
+const SIDEBAR_TERMINAL_ACTIVITY_TOOLS = new Set([
+  'start_terminal',
+  'run_terminal_command',
+  'terminal_create',
+]);
+
 // GenUI tools that render interactive UI and may require user response
 const GENUI_TOOL_NAMES = new Set([
   // Decision & Input (blocking - wait for user response)
@@ -116,6 +123,7 @@ const GENUI_TOOL_NAMES = new Set([
   'pick_date',
   'request_files',
   'show_command', // Has "Run" button
+  'show_feedback_form',
   // Display only (non-blocking)
   'show_table',
   'show_info',
@@ -134,6 +142,7 @@ const BLOCKING_GENUI_TOOLS = new Set([
   'pick_date',
   'request_files',
   'show_command',
+  'show_feedback_form',
 ]);
 
 export interface GenUIToolCall {
@@ -396,7 +405,7 @@ interface SendMessageOptions {
   modelId?: string;
   modelSource?: 'stuard' | 'api_key' | 'subscription';
   modelConfig?: any;
-  reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+  reasoningLevel?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /** Compact quick send: skip memory retrieval + post-turn ingestion (auth/credits still apply). */
   skipMemoryIngestion?: boolean;
   silent?: boolean;
@@ -709,7 +718,7 @@ export function useAgent(options?: string | UseAgentOptions) {
     modelId?: string;
     modelSource?: 'stuard' | 'api_key' | 'subscription';
     modelConfig?: any;
-    reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+    reasoningLevel?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
     context?: Record<string, any>;
   };
   const lastSendOptionsRef = useRef<Map<string, LastSendModelOptions>>(new Map());
@@ -1942,10 +1951,7 @@ export function useAgent(options?: string | UseAgentOptions) {
               const requestIdKey = String(msg.requestId || activeRequestIdRef.current || '');
 
               if (
-                (tool === 'start_terminal' ||
-                  tool === 'run_terminal_command' ||
-                  tool === 'terminal_create' ||
-                  tool === 'run_command') &&
+                SIDEBAR_TERMINAL_ACTIVITY_TOOLS.has(tool) &&
                 (normalizedStatus === 'called' || normalizedStatus === 'started')
               ) {
                 try {
@@ -3718,7 +3724,7 @@ export function useAgent(options?: string | UseAgentOptions) {
       modelId?: string;
       modelSource?: 'stuard' | 'api_key' | 'subscription';
       modelConfig?: any;
-      reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+      reasoningLevel?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       context?: Record<string, any>;
     }
   ) => {

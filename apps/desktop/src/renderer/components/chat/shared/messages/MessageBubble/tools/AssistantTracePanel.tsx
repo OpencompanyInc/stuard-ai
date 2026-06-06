@@ -26,6 +26,7 @@ import {
 } from '../helpers/delegation';
 import { normalizeMarkdownSpacing } from '../helpers/markdown';
 import { formatDuration } from '../helpers/media';
+import { unwrapExecuteTool } from '../helpers/executeTool';
 import { getToolStepLabel } from '../helpers/toolStepLabel';
 import {
   SUBAGENT_REPLY_FALLBACK,
@@ -102,7 +103,10 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
         }
 
         if (chunk.type === 'tool') {
-          const tc = chunk.tool;
+          // Collapse the execute_tool meta-wrapper into the real tool so the
+          // step's label, grouping, args and previews are all driven by the
+          // tool that actually ran (not the generic "Execute Tool" shell).
+          const tc = unwrapExecuteTool(chunk.tool);
           if (isTopLevelDuplicateOfNestedTool(tc, streamChunks)) return;
           if (HIDDEN_TOOL_NAMES.has(tc.tool) || GENUI_TOOL_NAMES.has(tc.tool)) return;
 
@@ -147,6 +151,7 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
     }
 
     (toolCalls || [])
+      .map((tool) => unwrapExecuteTool(tool))
       .filter((tool) => !HIDDEN_TOOL_NAMES.has(tool.tool) && !GENUI_TOOL_NAMES.has(tool.tool))
       .forEach((tool, index) => {
         steps.push({

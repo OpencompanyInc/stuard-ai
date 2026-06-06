@@ -22,6 +22,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const XAI_API_KEY = process.env.XAI_API_KEY || '';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
+// Gemini/GPT/Grok/DeepSeek are served through Stuard's OpenRouter account, so an
+// OpenRouter key satisfies the native-provider requirement (see buildProviderModel).
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SESSION SKILL STORAGE
@@ -473,17 +476,17 @@ function createSkillAgent(modelIdOverride?: string, modelInstance?: any): Agent 
 
     const provider = String(modelId.split('/')[0] || '').toLowerCase();
 
-    if (!modelInstance && provider === 'google' && !GOOGLE_API_KEY) {
-        throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for google skill models');
+    if (!modelInstance && provider === 'google' && !GOOGLE_API_KEY && !OPENROUTER_API_KEY) {
+        throw new Error('GOOGLE_GENERATIVE_AI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY is required for google skill models');
     }
-    if (!modelInstance && provider === 'openai' && !OPENAI_API_KEY) {
-        throw new Error('OPENAI_API_KEY is required for openai skill models');
+    if (!modelInstance && provider === 'openai' && !OPENAI_API_KEY && !OPENROUTER_API_KEY) {
+        throw new Error('OPENAI_API_KEY or OPENROUTER_API_KEY is required for openai skill models');
     }
-    if (!modelInstance && provider === 'xai' && !XAI_API_KEY) {
-        throw new Error('XAI_API_KEY is required for xai skill models');
+    if (!modelInstance && provider === 'xai' && !XAI_API_KEY && !OPENROUTER_API_KEY) {
+        throw new Error('XAI_API_KEY or OPENROUTER_API_KEY is required for xai skill models');
     }
-    if (!modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY) {
-        throw new Error('DEEPSEEK_API_KEY is required for deepseek skill models');
+    if (!modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY && !OPENROUTER_API_KEY) {
+        throw new Error('DEEPSEEK_API_KEY or OPENROUTER_API_KEY is required for deepseek skill models');
     }
     if (!modelInstance && provider === 'perplexity' && !PERPLEXITY_API_KEY) {
         throw new Error('PERPLEXITY_API_KEY is required for perplexity skill models');

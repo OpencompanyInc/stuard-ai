@@ -9,6 +9,14 @@ const unifiedTasksPath = () => {
     return path.join(userDataPath, 'unified-tasks.json');
 };
 
+const VALID_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+
+// Tasks can be written by the agent (task_crud) or older clients with a missing
+// or non-standard priority (e.g. "medium"). Coerce anything unrecognized to
+// 'normal' so the dashboard's priority config lookup never resolves to undefined.
+const normalizePriority = (priority: unknown): string =>
+    typeof priority === 'string' && VALID_PRIORITIES.has(priority) ? priority : 'normal';
+
 const loadUnifiedTasks = (): any[] => {
     try {
         const p = unifiedTasksPath();
@@ -50,7 +58,7 @@ export const unifiedTasksService = {
             createdAt: now,
             updatedAt: now,
             status: task.status || 'pending',
-            priority: task.priority || 'normal',
+            priority: normalizePriority(task.priority),
             subTodos: task.subTodos || [],
             agentAssignments: task.agentAssignments || [],
             showInCalendar: task.showInCalendar !== false,
@@ -64,7 +72,9 @@ export const unifiedTasksService = {
         const tasks = loadUnifiedTasks();
         const idx = tasks.findIndex((t: any) => t.id === task.id);
         if (idx >= 0) {
-            tasks[idx] = { ...tasks[idx], ...task, updatedAt: new Date().toISOString() };
+            const merged = { ...tasks[idx], ...task, updatedAt: new Date().toISOString() };
+            merged.priority = normalizePriority(merged.priority);
+            tasks[idx] = merged;
             saveUnifiedTasks(tasks);
             return { ok: true, task: tasks[idx], tasks };
         }

@@ -9,6 +9,7 @@ import {
   workflows_deploy,
   workflows_undeploy,
   workflows_getDeployStatus,
+  workflows_gatherWorkspaceBundle,
 } from '../../workflows/workflows';
 import { runStuardEngine, EngineContext } from '../../engine';
 import { stuards_save, stuards_list } from '../../stuards';
@@ -365,6 +366,16 @@ export async function execReadLocalWorkflow(args: any, ctx: RouterContext): Prom
     const content = String(result.content || '');
     let model: any = null;
     try { model = content ? JSON.parse(content) : null; } catch { model = null; }
+
+    // For VM deploy, the caller asks for the workspace bundle so it can ship a
+    // self-contained copy (sub-workflows, scripts, assets) the VM can run.
+    if (args?.includeWorkspaceBundle && model && typeof model === 'object') {
+      try {
+        const bundle = workflows_gatherWorkspaceBundle(id);
+        if (bundle) model.__workspaceBundle = bundle;
+      } catch { /* best-effort — deploy still works without bundled deps */ }
+    }
+
     return {
       ok: true,
       id: result.id,

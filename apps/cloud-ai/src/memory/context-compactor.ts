@@ -1,6 +1,6 @@
 import { generateText } from 'ai';
 import { getDefaultModelForCategory } from '../pricing';
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 import {
   computeBudget,
   estimateTokens,
@@ -185,7 +185,7 @@ async function generateStructuredSummary(messages: HistoryMessage[]): Promise<st
   ].join('\n\n');
 
   const fastModelId = getDefaultModelForCategory('fast');
-  const model = buildProviderModel(fastModelId);
+  const model = buildNativeProviderModel(fastModelId);
   if (!model) {
     throw new Error(`missing_compaction_model:${fastModelId}`);
   }

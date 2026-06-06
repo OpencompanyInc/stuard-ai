@@ -40,6 +40,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const XAI_API_KEY = process.env.XAI_API_KEY || '';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
+// Gemini/GPT/Grok/DeepSeek are served through Stuard's OpenRouter account, so an
+// OpenRouter key satisfies the native-provider requirement (see buildProviderModel).
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 export { WORKFLOW_SYSTEM_PROMPT };
 
@@ -230,21 +233,21 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
 
   const provider = String(modelId.split('/')[0] || '').toLowerCase();
 
-  if (!options.modelInstance && provider === 'google' && !GOOGLE_API_KEY) {
-    workflowAgentLog('error', { message: 'GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY not set', modelId });
-    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY or GEMINI_API_KEY is required for google workflow models');
+  if (!options.modelInstance && provider === 'google' && !GOOGLE_API_KEY && !OPENROUTER_API_KEY) {
+    workflowAgentLog('error', { message: 'GOOGLE_GENERATIVE_AI_API_KEY/GEMINI_API_KEY or OPENROUTER_API_KEY not set', modelId });
+    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY is required for google workflow models');
   }
-  if (!options.modelInstance && provider === 'openai' && !OPENAI_API_KEY) {
-    workflowAgentLog('error', { message: 'OPENAI_API_KEY not set', modelId });
-    throw new Error('OPENAI_API_KEY is required for openai workflow models');
+  if (!options.modelInstance && provider === 'openai' && !OPENAI_API_KEY && !OPENROUTER_API_KEY) {
+    workflowAgentLog('error', { message: 'OPENAI_API_KEY or OPENROUTER_API_KEY not set', modelId });
+    throw new Error('OPENAI_API_KEY or OPENROUTER_API_KEY is required for openai workflow models');
   }
-  if (!options.modelInstance && provider === 'xai' && !XAI_API_KEY) {
-    workflowAgentLog('error', { message: 'XAI_API_KEY not set', modelId });
-    throw new Error('XAI_API_KEY is required for xai workflow models');
+  if (!options.modelInstance && provider === 'xai' && !XAI_API_KEY && !OPENROUTER_API_KEY) {
+    workflowAgentLog('error', { message: 'XAI_API_KEY or OPENROUTER_API_KEY not set', modelId });
+    throw new Error('XAI_API_KEY or OPENROUTER_API_KEY is required for xai workflow models');
   }
-  if (!options.modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY) {
-    workflowAgentLog('error', { message: 'DEEPSEEK_API_KEY not set', modelId });
-    throw new Error('DEEPSEEK_API_KEY is required for deepseek workflow models');
+  if (!options.modelInstance && provider === 'deepseek' && !DEEPSEEK_API_KEY && !OPENROUTER_API_KEY) {
+    workflowAgentLog('error', { message: 'DEEPSEEK_API_KEY or OPENROUTER_API_KEY not set', modelId });
+    throw new Error('DEEPSEEK_API_KEY or OPENROUTER_API_KEY is required for deepseek workflow models');
   }
   if (!options.modelInstance && provider === 'perplexity' && !PERPLEXITY_API_KEY) {
     workflowAgentLog('error', { message: 'PERPLEXITY_API_KEY not set', modelId });

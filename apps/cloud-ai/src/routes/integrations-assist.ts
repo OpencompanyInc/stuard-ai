@@ -62,7 +62,7 @@ The user is authoring a declarative HTTP-integration manifest that will be
 executed by a runtime that:
   • binds {{secrets.<name>}} and {{args.<name>}} into URL/headers/query/body templates,
   • enforces a per-manifest outbound_hosts allowlist (localhost/RFC1918 always blocked),
-  • supports auth strategies: bearer | apiKey (header/query) | basic | none,
+  • supports auth strategies: bearer | apiKey (header/query) | basic | oauth2 | none,
   • supports body kinds: none | json | form | text.
 
 Schema (TypeScript shape):
@@ -74,6 +74,7 @@ Schema (TypeScript shape):
         | { type: "apiKey";  keyField: string; in: "header"; headerName: string; prefix?: string }
         | { type: "apiKey";  keyField: string; in: "query";  paramName: string }
         | { type: "basic";   userField: string; passField: string }
+        | { type: "oauth2";  authorizeUrl: string; tokenUrl: string; clientIdField: string; clientSecretField: string; scopes?: string[]; scheme?: string; extraAuthParams?: Record<string,string> }
         | { type: "none" },
       fields: Array<{ name, label, secret, required, placeholder?, hint? }>,
     },
@@ -118,6 +119,17 @@ Operating rules:
      Add hosts when adding tools; do not leave stale ones.
   5. Prefer the simplest auth strategy that fits. Most modern SaaS APIs use
      "bearer" with tokenField "api_key". Default scheme is "Bearer".
+     Use "oauth2" only when the API requires an OAuth authorization-code flow
+     (per-user consent) rather than a static key. For oauth2:
+       • Declare exactly two auth.fields — the user's OAuth client id and client
+         secret (e.g. names "client_id" and "client_secret", both secret:true) —
+         and point clientIdField/clientSecretField at them. Do NOT add fields for
+         the access/refresh tokens; Stuard fetches and refreshes those itself.
+       • Set authorizeUrl and tokenUrl to the provider's real OAuth endpoints and
+         list the scopes. The access token is injected as a bearer automatically,
+         so tools must NOT set their own Authorization header.
+       • The user registers their own OAuth app and adds Stuard's redirect URL,
+         which the builder shows them — mention this when you propose oauth2.
   6. Keep tool descriptions tight; they're what the agent reads to decide
      when to call them.
   7. If the current manifest has issues (undeclared secret reference,

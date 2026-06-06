@@ -178,6 +178,28 @@ function unwrapSpec(spec: any): { workflow: any; isFunction: boolean } {
 }
 
 /**
+ * Published specs can carry a `__workspaceBundle` of the workflow's dependency
+ * files (text sub-workflows/scripts + base64 binary assets). The base64 blobs
+ * are never a security signal and would bloat (or blow the context window of)
+ * the AI prompt, so drop them before analysis. Text deps are kept so static
+ * scanning still sees bundled sub-workflow/script source.
+ */
+function stripBundleBinary(spec: any): any {
+  if (!spec || typeof spec !== 'object' || !spec.__workspaceBundle) return spec;
+  const bundle = spec.__workspaceBundle;
+  if (!bundle || typeof bundle !== 'object' || bundle.binary === undefined) return spec;
+  return { ...spec, __workspaceBundle: { ...bundle, binary: undefined } };
+}
+
+/** Drop the entire workspace bundle (used to keep the AI prompt bounded). */
+function stripBundle(spec: any): any {
+  if (!spec || typeof spec !== 'object' || !('__workspaceBundle' in spec)) return spec;
+  const clone = { ...spec };
+  delete clone.__workspaceBundle;
+  return clone;
+}
+
+/**
  * Static analysis of workflow spec for known dangerous patterns
  */
 function staticAnalysis(spec: any): SecurityIssue[] {
@@ -689,14 +711,16 @@ export async function analyzeWorkflowSecurity(
 ): Promise<SecurityAnalysisResult> {
   const { workflow, isFunction } = unwrapSpec(spec);
 
-  // 1. Static analysis
-  const staticIssues = staticAnalysis(workflow);
+  // 1. Static analysis — keep bundled text deps (so sub-workflow/script source is
+  //    scanned) but drop base64 binary blobs.
+  const staticIssues = staticAnalysis(stripBundleBinary(workflow));
 
-  // 2. Node-level analysis
+  // 2. Node-level analysis (reads spec.nodes only)
   const { issues: nodeIssues, warnings: nodeWarnings } = analyzeNodes(workflow);
 
-  // 3. AI-powered deep analysis
-  const aiResult = await aiAnalysis(workflow, name, description, isFunction);
+  // 3. AI-powered deep analysis — drop the whole bundle to keep the prompt within
+  //    the model's context window.
+  const aiResult = await aiAnalysis(stripBundle(workflow), name, description, isFunction);
   
   // Combine all results
   const allIssues = [...staticIssues, ...nodeIssues, ...aiResult.issues];
@@ -724,8 +748,9 @@ export async function analyzeWorkflowSecurity(
  */
 export function quickSecurityCheck(spec: any): { blocked: boolean; reason?: string; dataFlow?: 'local' | 'external' | 'mixed' } {
   const { workflow } = unwrapSpec(spec);
-  const specStr = JSON.stringify(workflow);
-  
+  // Scan the spec + bundled text deps, but not base64 binary blobs.
+  const specStr = JSON.stringify(stripBundleBinary(workflow));
+
   // Immediate blockers - destructive actions
   if (DANGEROUS_PATTERNS.sensitiveFiles.test(specStr)) {
     return { blocked: true, reason: 'Workflow accesses sensitive system files.', dataFlow: 'local' };

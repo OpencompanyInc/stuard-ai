@@ -264,6 +264,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsReadWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFile', id, filePath),
   workflowsReadWorkspaceFileBinary: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFileBinary', id, filePath),
   workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => ipcRenderer.invoke('workflows:writeWorkspaceFile', id, filePath, content),
+  workflowsWriteWorkspaceFileBinary: (id: string, filePath: string, base64: string) => ipcRenderer.invoke('workflows:writeWorkspaceFileBinary', id, filePath, base64),
   workflowsDeleteWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:deleteWorkspaceFile', id, filePath),
   workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => ipcRenderer.invoke('workflows:createWorkspaceSubdir', id, subpath),
   workflowsRenameWorkspaceFile: (id: string, oldPath: string, newName: string) => ipcRenderer.invoke('workflows:renameWorkspaceFile', id, oldPath, newName),

@@ -6,6 +6,7 @@ export const GENUI_TOOL_NAMES = new Set([
   'request_files',
   'show_files',
   'show_form',
+  'show_feedback_form',
   // Inline custom React UI (blocking or non-blocking based on args)
   'chat_ui',
   // Email draft / preview

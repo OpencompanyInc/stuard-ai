@@ -81,7 +81,7 @@ import {
 } from '../supabase';
 import { getOrCreateQueryEmbedding } from '../utils/shared-embedding';
 import { normalizeUsage } from '../utils/usage';
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 import { generateWithToolRecovery } from './proactive-utils';
 import { generateText } from 'ai';
 import { normalizeThreadTitle, THREAD_TITLE_SYSTEM } from '../utils/thread-title';
@@ -568,7 +568,7 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
         try {
           const titlePrompt = `User:\n${message}\n\nAssistant:\n${responseText}`;
           const titleModelId = getDefaultModelForCategory('fast');
-          const titleModel = buildProviderModel(titleModelId);
+          const titleModel = buildNativeProviderModel(titleModelId);
           const tRes = await generateText({
             model: titleModel as any,
             system: THREAD_TITLE_SYSTEM,

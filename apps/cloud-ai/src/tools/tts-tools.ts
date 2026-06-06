@@ -5,7 +5,9 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { mediaGalleryDir } from '../utils/platform';
-import { execLocalTool } from './bridge';
+import { execLocalTool, getBridgeSecrets } from './bridge';
+import { logUsageEvent } from '../supabase';
+import { isOpenRouterTtsModel, synthesizeSpeechOpenRouter } from '../media/openrouter-tts';
 
 const ELEVENLABS_DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
 
@@ -67,11 +69,11 @@ const FORMAT_TO_ELEVENLABS: Record<string, string> = {
 
 export const text_to_speech = createTool({
   id: 'text_to_speech',
-  description: 'Convert text to speech audio using ElevenLabs TTS. Supports multiple languages and voices. Can optionally save to file and/or play the audio immediately.',
+  description: 'Convert text to speech audio. Defaults to ElevenLabs TTS (rich voice library, use list_tts_voices); also supports the audio models openai/gpt-audio and openai/gpt-audio-mini — pass that model id and a voice like alloy/echo/nova. Can optionally save to file and/or play the audio immediately.',
   inputSchema: z.object({
     text: z.string().min(1).max(5000).describe('Text to convert to speech (max 5000 characters)'),
-    voice_id: z.string().default(ELEVENLABS_DEFAULT_VOICE_ID).describe('ElevenLabs voice ID. Use list_tts_voices to see available voices.'),
-    model_id: z.enum(ELEVENLABS_MODELS).default('eleven_multilingual_v2').describe('Model to use: eleven_multilingual_v2 (recommended), eleven_turbo_v2_5 (faster), or eleven_monolingual_v1'),
+    voice_id: z.string().default(ELEVENLABS_DEFAULT_VOICE_ID).describe('Voice. For ElevenLabs: a voice ID (use list_tts_voices). For the gpt-audio models: a voice name like alloy, echo, nova, shimmer.'),
+    model_id: z.string().default('eleven_multilingual_v2').describe('TTS model. ElevenLabs: eleven_multilingual_v2 (default), eleven_turbo_v2_5 (faster), eleven_monolingual_v1. Audio models: openai/gpt-audio, openai/gpt-audio-mini.'),
     language_code: z.string().optional().describe('Language code (ISO 639-1) to enforce language for text normalization (e.g., "en", "es", "fr", "de", "ja")'),
     speed: z.number().min(0.25).max(2.0).default(1.0).describe('Speech speed multiplier (0.25 to 2.0)'),
     stability: z.number().min(0).max(1).optional().describe('Voice stability (0-1). Lower = more emotion, Higher = more stable'),
@@ -95,35 +97,67 @@ export const text_to_speech = createTool({
     const { text, voice_id, model_id, language_code, speed, stability, similarity_boost, style, format, save, play, outputPath } = inputData;
 
     try {
-      const client = getElevenLabsClient();
-      const outputFormat = FORMAT_TO_ELEVENLABS[format] || 'mp3_44100_128';
+      // Resolve audio + effective format from the selected provider.
+      let audioBuffer: Buffer;
+      let effectiveFormat: string = format;
+      let usageModel: string = `elevenlabs/${model_id}`;
+      let usageCostUsd: number | undefined;
+      let usageProvider = 'elevenlabs';
 
-      const voiceSettings: Record<string, any> = {};
-      if (speed !== undefined && speed !== 1.0) voiceSettings.speed = speed;
-      if (stability !== undefined) voiceSettings.stability = stability;
-      if (similarity_boost !== undefined) voiceSettings.similarity_boost = similarity_boost;
-      if (style !== undefined) voiceSettings.style = style;
+      if (isOpenRouterTtsModel(model_id)) {
+        const tts = await synthesizeSpeechOpenRouter({ model: model_id, text, voice: voice_id, format });
+        audioBuffer = tts.audioBuffer;
+        effectiveFormat = tts.format;
+        usageModel = tts.model;
+        usageCostUsd = tts.costUsd > 0 ? tts.costUsd : undefined;
+        usageProvider = 'openrouter';
+      } else {
+        const client = getElevenLabsClient();
+        const outputFormat = FORMAT_TO_ELEVENLABS[format] || 'mp3_44100_128';
 
-      const requestParams: Record<string, any> = {
-        text,
-        modelId: model_id,
-        outputFormat,
-      };
+        const voiceSettings: Record<string, any> = {};
+        if (speed !== undefined && speed !== 1.0) voiceSettings.speed = speed;
+        if (stability !== undefined) voiceSettings.stability = stability;
+        if (similarity_boost !== undefined) voiceSettings.similarity_boost = similarity_boost;
+        if (style !== undefined) voiceSettings.style = style;
 
-      if (language_code) requestParams.languageCode = language_code;
-      if (Object.keys(voiceSettings).length > 0) {
-        requestParams.voiceSettings = voiceSettings;
+        const requestParams: Record<string, any> = {
+          text,
+          modelId: model_id,
+          outputFormat,
+        };
+
+        if (language_code) requestParams.languageCode = language_code;
+        if (Object.keys(voiceSettings).length > 0) {
+          requestParams.voiceSettings = voiceSettings;
+        }
+
+        const audioStream = await client.textToSpeech.convert(voice_id, requestParams as any);
+        audioBuffer = await streamToBuffer(audioStream);
       }
 
-      const audioStream = await client.textToSpeech.convert(voice_id, requestParams as any);
-
-      const audioBuffer = await streamToBuffer(audioStream);
+      // Bill the call — the /tools route doesn't auto-bill, each LLM/media tool
+      // logs its own usage. Best-effort; never breaks the result.
+      try {
+        const userId = getBridgeSecrets()?.userId;
+        if (userId && typeof userId === 'string') {
+          await logUsageEvent(userId, null, usageModel, {
+            totalTokens: 0,
+            ...(usageCostUsd != null ? { costUsd: usageCostUsd } : {}),
+            provider: usageProvider,
+            endpoint: '/tools/text_to_speech',
+            textLength: text.length,
+            source_label: 'Text to Speech',
+            format: effectiveFormat,
+          });
+        }
+      } catch {}
 
       let filePath: string | undefined;
       let played = false;
 
       if (save || play) {
-        const fileName = `tts_${randomUUID().slice(0, 8)}.${format}`;
+        const fileName = `tts_${randomUUID().slice(0, 8)}.${effectiveFormat}`;
         const resolvedFilePath: string = outputPath || join(mediaGalleryDir('generated-audio'), fileName);
         filePath = resolvedFilePath;
 
@@ -139,8 +173,8 @@ export const text_to_speech = createTool({
           await execLocalTool('_media_register', {
             b64: audioBuffer.toString('base64'),
             fileName,
-            format,
-            mimeType: format === 'mp3' ? 'audio/mpeg' : `audio/${format}`,
+            format: effectiveFormat,
+            mimeType: effectiveFormat === 'mp3' ? 'audio/mpeg' : `audio/${effectiveFormat}`,
             source: 'generated-audio',
             toolName: 'text_to_speech',
             classification: 'Generated audio',
@@ -168,7 +202,7 @@ export const text_to_speech = createTool({
       return {
         ok: true,
         filePath: save ? filePath : undefined,
-        format,
+        format: effectiveFormat,
         voice: voice_id,
         textLength: text.length,
         played,

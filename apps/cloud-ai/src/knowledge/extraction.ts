@@ -5,7 +5,7 @@
 
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 import { writeLog } from '../utils/logger';
 
@@ -229,7 +229,7 @@ export async function extractKnowledge(
 
   try {
     const extractionModelId = getDefaultModelForCategory('fast');
-    const extractionModel = buildProviderModel(extractionModelId);
+    const extractionModel = buildNativeProviderModel(extractionModelId);
 
     const { object } = await generateObject({
       model: extractionModel as any,

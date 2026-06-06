@@ -19,6 +19,12 @@ import {
   type EncryptedField,
 } from '../utils/token-encryption';
 import type { IntegrationManifest } from './types';
+import {
+  OAUTH_ACCESS_TOKEN_KEY,
+  OAUTH_REFRESH_TOKEN_KEY,
+  OAUTH_EXPIRES_AT_KEY,
+  OAUTH_RUNTIME_KEYS,
+} from './types';
 
 const COLS =
   'user_id, slug, name, description, icon, category, version, manifest, secrets_encrypted, enabled, created_at, updated_at';
@@ -187,10 +193,12 @@ export async function upsertInstalled(
     .single();
   const merged: SecretsEncrypted = { ...((existing as any)?.secrets_encrypted || {}) };
 
-  // Only keep secrets for fields the manifest actually declares.
+  // Only keep secrets for fields the manifest actually declares — plus the
+  // reserved OAuth runtime keys, which are written by the OAuth callback rather
+  // than the connect form and must survive a manifest redeploy.
   const declared = new Set((manifest.auth?.fields || []).map((f) => f.name));
   for (const key of Object.keys(merged)) {
-    if (!declared.has(key)) delete merged[key];
+    if (!declared.has(key) && !OAUTH_RUNTIME_KEYS.includes(key)) delete merged[key];
   }
   for (const [field, value] of Object.entries(secrets)) {
     if (!declared.has(field)) continue;
@@ -222,6 +230,47 @@ export async function upsertInstalled(
     .single();
   if (error || !data) throw new Error(error?.message || 'upsert_failed');
   return toPublic(data as unknown as CustomIntegrationRow);
+}
+
+/**
+ * Persist OAuth runtime tokens for an oauth2 integration. Called by the OAuth
+ * callback after the code exchange and by the refresh loop after a rotation.
+ * Merges the reserved token keys into the existing encrypted secret bag without
+ * disturbing the user-entered client_id / client_secret fields.
+ */
+export async function setOAuthTokens(
+  userId: string,
+  slug: string,
+  tokens: { accessToken: string; refreshToken: string | null; expiresAt: number | null },
+): Promise<boolean> {
+  const sb = getSupabaseService();
+  if (!sb) return false;
+  const { data: existing } = await sb
+    .from('custom_integrations')
+    .select('secrets_encrypted')
+    .eq('user_id', userId)
+    .eq('slug', slug)
+    .single();
+  const merged: SecretsEncrypted = { ...((existing as any)?.secrets_encrypted || {}) };
+
+  const put = (key: string, value: string | null): void => {
+    if (value == null || value === '') {
+      delete merged[key];
+      return;
+    }
+    const enc = encryptForUser(userId, value);
+    if (enc) merged[key] = enc;
+  };
+  put(OAUTH_ACCESS_TOKEN_KEY, tokens.accessToken);
+  put(OAUTH_REFRESH_TOKEN_KEY, tokens.refreshToken);
+  put(OAUTH_EXPIRES_AT_KEY, tokens.expiresAt != null ? String(tokens.expiresAt) : null);
+
+  const { error } = await sb
+    .from('custom_integrations')
+    .update({ secrets_encrypted: merged, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('slug', slug);
+  return !error;
 }
 
 export async function setEnabled(userId: string, slug: string, enabled: boolean): Promise<boolean> {

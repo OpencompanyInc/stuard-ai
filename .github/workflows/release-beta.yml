@@ -233,6 +233,9 @@ jobs:
           # X (Twitter) OAuth
           SECRETS="$SECRETS,X_CLIENT_ID=X_CLIENT_ID:latest"
           SECRETS="$SECRETS,X_CLIENT_SECRET=X_CLIENT_SECRET:latest"
+          # Notion OAuth
+          SECRETS="$SECRETS,NOTION_CLIENT_ID=NOTION_CLIENT_ID:latest"
+          SECRETS="$SECRETS,NOTION_CLIENT_SECRET=NOTION_CLIENT_SECRET:latest"
           # Messaging
           SECRETS="$SECRETS,WA_PHONE_NUMBER_ID=WA_PHONE_NUMBER_ID:latest"
           SECRETS="$SECRETS,WA_ACCESS_TOKEN=WA_ACCESS_TOKEN:latest"
@@ -287,6 +290,47 @@ jobs:
           if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
             echo "::warning::Ops callback (failed) failed with HTTP $HTTP_CODE"
           fi
+
+  # 2b. Sync tool descriptions + embeddings to Supabase (tool_embeddings).
+  # Tool docs are read from the source registry, so search_tools serves stale
+  # descriptions until this runs. Incremental sync re-embeds only tools whose
+  # description changed. Dev syncs via `pnpm --filter @stuardai/cloud-ai sync:tools`.
+  sync-beta-tool-docs:
+    name: Sync Tool Docs (Beta)
+    runs-on: ubuntu-latest
+    needs: deploy-beta-backend
+    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Sync tool docs to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          export SUPABASE_SECRET_KEY="$(gcloud secrets versions access latest --secret=SUPABASE_SECRET_KEY)"
+          export GOOGLE_API_KEY="$(gcloud secrets versions access latest --secret=GOOGLE_API_KEY)"
+          export OPENAI_API_KEY="$(gcloud secrets versions access latest --secret=OPENAI_API_KEY)"
+          pnpm --filter @stuardai/cloud-ai run sync:tools
 
   # 3. Deploy Website (Frontend) to Vercel Preview
   deploy-beta-website:

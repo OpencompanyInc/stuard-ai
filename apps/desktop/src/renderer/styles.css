@@ -355,19 +355,29 @@
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
 
-[data-wf-theme='dark'] .model-selector-panel,
-.model-selector-panel[data-wf-theme='dark'] {
-  color-scheme: dark;
+/* Inside Studio the panel borrows the workflow palette so its neutral surfaces
+   and brand-accent tints (color-mix on --primary) read as the Studio red, not
+   the app's VS Code blue. Covers both wf themes. */
+[data-wf-theme] .model-selector-panel,
+.model-selector-panel[data-wf-theme] {
   --foreground: var(--wf-fg);
   --foreground-muted: var(--wf-fg-muted);
   --background: var(--wf-bg);
-  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 94%, #12141a);
+  --card-bg: var(--wf-bg-elevated);
   --card-border: var(--wf-border);
   --border: var(--wf-border);
   --sidebar-item-hover: var(--wf-hover);
   --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
   --input-bg: var(--wf-input-bg);
   --input-border: var(--wf-input-border);
+  --primary: var(--wf-accent);
+  --primary-foreground: #ffffff;
+}
+
+[data-wf-theme='dark'] .model-selector-panel,
+.model-selector-panel[data-wf-theme='dark'] {
+  color-scheme: dark;
+  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 94%, #12141a);
   border: 1px solid var(--wf-border) !important;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
 }
@@ -2181,6 +2191,18 @@ button.input-status-float:not(:disabled) {
 .wf-icon-chip {
   background: color-mix(in srgb, var(--wf-fg) 6%, transparent);
   color: var(--wf-fg-muted);
+}
+
+/* Brand-red accent text/icon (used by marketplace + publish surfaces). */
+.wf-accent-text { color: var(--wf-accent); }
+.wf-accent-chip {
+  background: color-mix(in srgb, var(--wf-accent) 12%, transparent);
+  color: var(--wf-accent);
+  border: 1px solid color-mix(in srgb, var(--wf-accent) 22%, transparent);
+}
+.wf-accent-soft-bg {
+  background: color-mix(in srgb, var(--wf-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--wf-accent) 18%, transparent);
 }
 
 

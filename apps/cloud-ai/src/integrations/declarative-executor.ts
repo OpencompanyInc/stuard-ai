@@ -25,6 +25,7 @@ import type {
   ExecutorContext,
   ExecutorResult,
 } from './types';
+import { OAUTH_ACCESS_TOKEN_KEY, OAUTH_RUNTIME_KEYS } from './types';
 
 // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -53,6 +54,11 @@ export async function executeDeclarativeTool(
 
   const declaredArgs = new Set(Object.keys(tool.args.properties || {}));
   const declaredSecrets = new Set(manifest.auth.fields.map(f => f.name));
+  // OAuth runtime tokens live under reserved keys (not user-declared fields);
+  // allow templates to reference them when the manifest uses the oauth2 flow.
+  if (manifest.auth.strategy.type === 'oauth2') {
+    for (const k of OAUTH_RUNTIME_KEYS) declaredSecrets.add(k);
+  }
   const binder = makeBinder(ctx, declaredArgs, declaredSecrets);
 
   // Build URL
@@ -268,6 +274,18 @@ function applyAuthHeaders(strategy: AuthStrategy, secrets: Record<string, string
       headers.set('Authorization', `Basic ${b64}`);
       return;
     }
+    case 'oauth2': {
+      // The live access token is fetched/refreshed before execution and stored
+      // under the reserved key; inject it like a bearer token.
+      const token = secrets[OAUTH_ACCESS_TOKEN_KEY];
+      if (!token) {
+        throw new IntegrationExecutorError('oauth_not_connected', 'OAuth is not connected — connect the integration before calling its tools');
+      }
+      const headerName = strategy.headerName || 'Authorization';
+      const scheme = strategy.scheme || 'Bearer';
+      headers.set(headerName, `${scheme} ${token}`);
+      return;
+    }
     case 'none':
       return;
   }
@@ -391,6 +409,30 @@ function matchesHost(hostname: string, pattern: string): boolean {
     return h === tail || h.endsWith('.' + tail);
   }
   return false;
+}
+
+/**
+ * Validate an OAuth authorize/token URL before we redirect a browser to it or
+ * make a server-side token request against it. Unlike tool requests these are
+ * not subject to the manifest's outbound_hosts allowlist (they're the provider's
+ * own endpoints), but they MUST still be https and MUST NOT point at a private/
+ * loopback host — otherwise a malicious manifest could SSRF the cloud-ai box via
+ * its own token endpoint. Returns the parsed URL on success.
+ */
+export function assertPublicHttpsUrl(raw: string, label: string): URL {
+  let url: URL;
+  try {
+    url = new URL(String(raw || ''));
+  } catch {
+    throw new IntegrationExecutorError('invalid_url', `${label} is not a valid URL`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new IntegrationExecutorError('blocked_protocol', `${label} must use https`);
+  }
+  if (isPrivateOrLoopback(url.hostname)) {
+    throw new IntegrationExecutorError('blocked_private_host', `${label} host ${url.hostname} is private/loopback and never allowed`);
+  }
+  return url;
 }
 
 function enforceHostPolicy(url: URL, allowlist: string[]): void {

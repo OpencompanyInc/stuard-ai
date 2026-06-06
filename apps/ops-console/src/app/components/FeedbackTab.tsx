@@ -256,6 +256,39 @@ export default function FeedbackTab({
               <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3">{selectedItem.description}</p>
             )}
 
+            {Array.isArray(selectedItem.screenshots) && selectedItem.screenshots.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-700 mb-2">Attachments</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {selectedItem.screenshots.map((attachment, index) => {
+                    const url = typeof attachment?.url === 'string' ? attachment.url : '';
+                    const caption = attachment?.caption || `Attachment ${index + 1}`;
+                    const mimeType = typeof attachment?.mimeType === 'string' ? attachment.mimeType : '';
+                    const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(url);
+
+                    return (
+                      <a
+                        key={`${url}-${index}`}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block rounded-lg border border-gray-200 overflow-hidden hover:border-blue-300 transition-colors"
+                      >
+                        {isImage ? (
+                          <img src={url} alt={caption} className="h-32 w-full object-cover bg-gray-100" />
+                        ) : (
+                          <div className="h-32 flex items-center justify-center bg-gray-50 px-3 text-center text-xs text-gray-600">
+                            {caption}
+                          </div>
+                        )}
+                        <div className="px-2 py-1.5 text-[11px] text-gray-500 truncate">{caption}</div>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Meta */}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>

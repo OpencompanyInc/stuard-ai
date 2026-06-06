@@ -319,6 +319,7 @@ export interface Deployment {
 export interface FeedbackEntry {
   id: string; type: 'bug' | 'feature'; status: string; priority: string;
   title: string; description: string | null;
+  screenshots?: Array<{ url: string; caption?: string; mimeType?: string; size?: number }>;
   reporter_email: string | null; assigned_to: string | null;
   created_at: string; updated_at: string | null; resolved_at: string | null;
   commentCount?: number;

@@ -4,6 +4,8 @@ import { FileEditDiffPreview } from '../previews/FileEditDiffPreview';
 import { WriteFilePreview } from '../previews/WriteFilePreview';
 import { ReadFilePreview } from '../previews/ReadFilePreview';
 import { AnalyzeMediaPreview } from '../previews/AnalyzeMediaPreview';
+import { MediaResultPreview } from '../previews/MediaResultPreview';
+import { collectImageSources } from '../helpers/media';
 import {
   extractTerminalStatus,
   extractTerminalText,
@@ -14,6 +16,18 @@ import {
 import { LIVE_OUTPUT_TOOL_NAMES, LiveOutputPanel } from './LiveOutputPanel';
 import { TerminalOutputPanel } from './TerminalOutputPanel';
 import { ToolPayloadPreview } from './ToolPayloadPreview';
+
+// Image-generation tools may return an extensionless blob URL, so for these we
+// relax detection (`assumeImage`) and treat any returned URL as an image.
+// Screenshot / capture tools return real file paths (e.g. .png) and are picked
+// up by extension detection instead — that also safely skips audio/video
+// captures, which must NOT be forced into an <img>.
+const IMAGE_RESULT_TOOL_NAMES = new Set([
+  'generate_image',
+  'image_gen',
+  'create_image',
+  'edit_image',
+]);
 
 export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) => {
   if (tool.status === 'error') {
@@ -99,6 +113,15 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
           />
         );
       }
+    }
+
+    // Any tool that produced an image (generation, screenshot, capture, or just
+    // happens to return an image path/URL) gets an inline thumbnail.
+    const imageSrcs = collectImageSources(tool.result, {
+      assumeImage: IMAGE_RESULT_TOOL_NAMES.has(tool.tool),
+    });
+    if (imageSrcs.length > 0) {
+      return <MediaResultPreview srcs={imageSrcs} />;
     }
 
     return (

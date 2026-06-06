@@ -41,6 +41,7 @@ import { YouTubeEmbed } from './inline/YouTubeEmbed';
 import type { ContentSegment, ContextPath } from './types';
 import { extractContentSegments } from './helpers/content';
 import { isTopLevelDuplicateOfNestedText } from './helpers/trace';
+import { unwrapExecuteTool } from './helpers/executeTool';
 import { ToolCallPill } from './tools/ToolCallPill';
 import { AssistantTracePanel } from './tools/AssistantTracePanel';
 import { useMessageMarkdownComponents } from './hooks/useMessageMarkdownComponents';
@@ -217,7 +218,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               // AssistantTracePanel / DelegationCard with markdown.
               if (chunk.type === 'text' && chunk.nested) return null;
               if (chunk.type === 'tool') {
-                const tc = chunk.tool;
+                const tc = unwrapExecuteTool(chunk.tool);
                 const isGenUI = GENUI_TOOL_NAMES.has(tc.tool);
                 const isHidden = HIDDEN_TOOL_NAMES.has(tc.tool);
 

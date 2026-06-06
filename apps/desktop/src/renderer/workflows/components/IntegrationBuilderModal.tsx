@@ -58,7 +58,11 @@ type AuthStrategy =
   | { type: "apiKey"; keyField: string; in: "header"; headerName: string; prefix?: string }
   | { type: "apiKey"; keyField: string; in: "query"; paramName: string }
   | { type: "basic"; userField: string; passField: string }
+  | { type: "oauth2"; authorizeUrl: string; tokenUrl: string; clientIdField: string; clientSecretField: string; scopes?: string[]; scheme?: string; extraAuthParams?: Record<string, string> }
   | { type: "none" };
+
+/** Reserved secret key written by the OAuth callback once a user connects. */
+const OAUTH_ACCESS_TOKEN_KEY = "oauth_access_token";
 
 interface AuthField {
   name: string;
@@ -163,6 +167,35 @@ const PRESETS: Array<{ id: string; label: string; description: string; build: ()
       auth: {
         strategy: { type: "apiKey", keyField: "api_key", in: "query", paramName: "apikey" },
         fields: [{ name: "api_key", label: "API Key", secret: true, required: true }],
+      },
+      outbound_hosts: ["api.example.com"],
+      tools: [],
+    }),
+  },
+  {
+    id: "oauth2",
+    label: "OAuth 2.0 (Connect button)",
+    description: "Google, Slack, Notion — user signs in via consent, no key pasting",
+    build: () => ({
+      slug: "my-integration",
+      name: "My Integration",
+      description: "",
+      icon: "🔐",
+      category: "Other",
+      version: "0.1.0",
+      auth: {
+        strategy: {
+          type: "oauth2",
+          authorizeUrl: "https://provider.com/oauth/authorize",
+          tokenUrl: "https://provider.com/oauth/token",
+          clientIdField: "client_id",
+          clientSecretField: "client_secret",
+          scopes: [],
+        },
+        fields: [
+          { name: "client_id", label: "Client ID", secret: true, required: true },
+          { name: "client_secret", label: "Client Secret", secret: true, required: true },
+        ],
       },
       outbound_hosts: ["api.example.com"],
       tools: [],
@@ -395,8 +428,9 @@ export function IntegrationBuilderModal({
   const [aiError, setAiError] = useState<string | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
   // Deployed integrations come from the secure server-side store, keyed by slug.
-  const [installed, setInstalled] = useState<Record<string, { enabled: boolean }>>({});
+  const [installed, setInstalled] = useState<Record<string, { enabled: boolean; oauthConnected?: boolean }>>({});
   const [deploying, setDeploying] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const showToast = useCallback((kind: "success" | "error", text: string) => {
     setToast({ kind, text });
@@ -405,8 +439,8 @@ export function IntegrationBuilderModal({
 
   const refreshInstalled = useCallback(async () => {
     const list = await fetchInstalledIntegrations();
-    const map: Record<string, { enabled: boolean }> = {};
-    for (const i of list) map[i.slug] = { enabled: i.enabled };
+    const map: Record<string, { enabled: boolean; oauthConnected?: boolean }> = {};
+    for (const i of list) map[i.slug] = { enabled: i.enabled, oauthConnected: Array.isArray(i.configuredSecrets) && i.configuredSecrets.includes(OAUTH_ACCESS_TOKEN_KEY) };
     setInstalled(map);
     // Let the workflow palette + bot tool picker re-pull the deployed set.
     try { window.dispatchEvent(new CustomEvent("stuard:integrations-changed")); } catch { /* noop */ }
@@ -537,6 +571,35 @@ export function IntegrationBuilderModal({
     await refreshInstalled();
     showToast("success", `Uninstalled "${draft.slug}".`);
   }, [draft.slug, isInstalled, showToast, refreshInstalled]);
+
+  // ─── Connect (OAuth 2.0 — bring-your-own-client) ───────────────────────
+  // Opens the provider consent flow in the browser; cloud-ai exchanges the
+  // code and writes the token into the integration's encrypted secret bag.
+  // We poll the deployed integration until its configuredSecrets reports the
+  // access token, then mark it connected.
+  const onConnectOAuth = useCallback(async () => {
+    if (!isInstalled) { showToast("error", "Deploy the integration first, then Connect."); return; }
+    const token = await getToken();
+    if (!token) { showToast("error", "Sign in again to connect."); return; }
+    const url = `${getCloudAiHttp()}/integrations/custom/${encodeURIComponent(draft.slug)}/oauth/connect?token=${encodeURIComponent(token)}`;
+    try { (window as any).desktopAPI?.openExternal?.(url); } catch { window.open(url, "_blank"); }
+    setConnecting(true);
+    try {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const list = await fetchInstalledIntegrations();
+        const me = list.find((x) => x.slug === draft.slug);
+        if (me && Array.isArray(me.configuredSecrets) && me.configuredSecrets.includes(OAUTH_ACCESS_TOKEN_KEY)) {
+          await refreshInstalled();
+          showToast("success", `Connected "${draft.name || draft.slug}". Its tools can now call the API.`);
+          return;
+        }
+      }
+      showToast("error", "Didn't see a completed connection. Finish the consent in your browser, then try again.");
+    } finally {
+      setConnecting(false);
+    }
+  }, [draft.slug, draft.name, isInstalled, showToast, refreshInstalled]);
 
   // ─── Publish (clipboard until marketplace lands) ───────────────────────
   const onPublish = useCallback(async () => {
@@ -771,6 +834,10 @@ export function IntegrationBuilderModal({
     const coercedArgs: Record<string, any> = {};
     if (suffix === "run-draft") {
       if (!activeTool) { setRunError("Add at least one tool, then select it."); return; }
+      if (draft.auth.strategy.type === "oauth2" && !isInstalled) {
+        setRunError("OAuth tools run through the deployed integration. Deploy and Connect first, then test.");
+        return;
+      }
       for (const a of activeTool.args) {
         const raw = argValues[a.name];
         if (raw === undefined || raw === null || raw === "") {
@@ -792,14 +859,22 @@ export function IntegrationBuilderModal({
     try {
       const token = await getToken();
       if (!token) throw new Error("Not signed in — sign in again to mint a fresh Supabase token.");
-      const url = `${getCloudAiHttp()}/v1/integrations/${suffix}`;
+      // OAuth integrations have no static token to send in a draft, so testing
+      // a tool runs the DEPLOYED integration server-side (which uses the
+      // connected token + auto-refresh) instead of the stateless run-draft path.
+      const useDeployedRun = suffix === "run-draft" && draft.auth.strategy.type === "oauth2";
+      const url = useDeployedRun
+        ? `${getCloudAiHttp()}/v1/integrations/run`
+        : `${getCloudAiHttp()}/v1/integrations/${suffix}`;
       const r = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(
-          suffix === "run-draft"
-            ? { manifest: toManifest(draft), secrets, toolName: activeTool!.name, args: coercedArgs }
-            : { manifest: toManifest(draft), secrets }
+          useDeployedRun
+            ? { slug: draft.slug, toolName: activeTool!.name, args: coercedArgs }
+            : suffix === "run-draft"
+              ? { manifest: toManifest(draft), secrets, toolName: activeTool!.name, args: coercedArgs }
+              : { manifest: toManifest(draft), secrets }
         ),
       });
       // Read body as text first so we can show it raw when JSON parsing fails
@@ -837,7 +912,7 @@ export function IntegrationBuilderModal({
     } finally {
       setBusy(false);
     }
-  }, [draft, secrets, activeTool, argValues]);
+  }, [draft, secrets, activeTool, argValues, isInstalled]);
 
   // ─── Keyboard ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -919,6 +994,17 @@ export function IntegrationBuilderModal({
               {activeSlug && (
                 <button onClick={onDeleteActive} className="p-1.5 rounded-full text-rose-400 hover:bg-rose-500/15 transition-colors" title="Delete draft">
                   <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {draft.auth.strategy.type === "oauth2" && isInstalled && (
+                <button
+                  onClick={onConnectOAuth}
+                  disabled={connecting}
+                  className={`px-3 py-1.5 rounded-full text-[12px] font-semibold flex items-center gap-1.5 ${installed[draft.slug]?.oauthConnected ? IB_BUTTON : "wf-primary-btn disabled:opacity-40 disabled:cursor-not-allowed"}`}
+                  title={installed[draft.slug]?.oauthConnected ? "Reconnect — re-run the provider sign-in" : "Sign in to the provider to authorize this integration"}
+                >
+                  {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                  {connecting ? "Connecting…" : installed[draft.slug]?.oauthConnected ? "Reconnect" : "Connect"}
                 </button>
               )}
               <button
@@ -1356,6 +1442,26 @@ function TextArea({ value, onChange, placeholder, rows = 4, mono }: {
 // ════════════════════════════════════════════════════════════════════════
 // Auth editor
 // ════════════════════════════════════════════════════════════════════════
+/** Read-only redirect URL the user must whitelist in their OAuth provider app. */
+function OAuthRedirectHint() {
+  const redirectUrl = `${getCloudAiHttp()}/integrations/custom/oauth/callback`;
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try { await navigator.clipboard.writeText(redirectUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch { /* noop */ }
+  };
+  return (
+    <div className="rounded-lg border wf-border-subtle p-3 space-y-1.5" style={{ background: "var(--wf-bg)" }}>
+      <div className="text-[11.5px] font-semibold wf-fg-muted">Redirect URL — add this to your provider's OAuth app</div>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-[11.5px] wf-fg break-all rounded-md px-2 py-1.5 wf-surface-muted">{redirectUrl}</code>
+        <button onClick={onCopy} className={`p-1.5 rounded-md ${IB_ICON_BUTTON}`} title="Copy redirect URL">
+          {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AuthEditor({ auth, setAuth }: { auth: Draft["auth"]; setAuth: (a: Draft["auth"]) => void }) {
   const strategy = auth.strategy;
 
@@ -1363,20 +1469,36 @@ function AuthEditor({ auth, setAuth }: { auth: Draft["auth"]; setAuth: (a: Draft
     if (type === "bearer") setAuth({ ...auth, strategy: { type: "bearer", tokenField: auth.fields[0]?.name || "api_key" } });
     else if (type === "apiKey") setAuth({ ...auth, strategy: { type: "apiKey", keyField: auth.fields[0]?.name || "api_key", in: "header", headerName: "X-API-Key" } });
     else if (type === "basic") setAuth({ ...auth, strategy: { type: "basic", userField: "username", passField: "password" } });
+    else if (type === "oauth2") setAuth({
+      ...auth,
+      strategy: {
+        type: "oauth2",
+        authorizeUrl: "",
+        tokenUrl: "",
+        clientIdField: auth.fields[0]?.name || "client_id",
+        clientSecretField: auth.fields[1]?.name || "client_secret",
+        scopes: [],
+      },
+      // OAuth needs exactly the user's client id + secret. Seed them if absent.
+      fields: auth.fields.length ? auth.fields : [
+        { name: "client_id", label: "Client ID", secret: true, required: true },
+        { name: "client_secret", label: "Client Secret", secret: true, required: true },
+      ],
+    });
     else setAuth({ ...auth, strategy: { type: "none" } });
   };
 
   return (
     <div className="space-y-3">
       <Field label="Auth type">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-          {(["bearer", "apiKey", "basic", "none"] as const).map(t => (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+          {(["bearer", "apiKey", "basic", "oauth2", "none"] as const).map(t => (
             <button
               key={t}
               onClick={() => setStrategy(t)}
               className={`px-2.5 py-1.5 text-[11.5px] font-medium rounded-lg border transition-colors ${strategy.type === t ? IB_ACTIVE : "wf-border-subtle wf-fg-muted wf-hover-bg hover:wf-fg"}`}
             >
-              {t === "bearer" ? "Bearer" : t === "apiKey" ? "API key" : t === "basic" ? "Basic" : "None"}
+              {t === "bearer" ? "Bearer" : t === "apiKey" ? "API key" : t === "basic" ? "Basic" : t === "oauth2" ? "OAuth 2.0" : "None"}
             </button>
           ))}
         </div>
@@ -1426,6 +1548,40 @@ function AuthEditor({ auth, setAuth }: { auth: Draft["auth"]; setAuth: (a: Draft
           <Field label="Username field"><Input value={strategy.userField} onChange={v => setAuth({ ...auth, strategy: { ...strategy, userField: v } })} mono /></Field>
           <Field label="Password field"><Input value={strategy.passField} onChange={v => setAuth({ ...auth, strategy: { ...strategy, passField: v } })} mono /></Field>
         </Grid2>
+      )}
+
+      {strategy.type === "oauth2" && (
+        <div className="space-y-3">
+          <Grid2>
+            <Field label="Authorize URL" hint="Provider consent endpoint">
+              <Input value={strategy.authorizeUrl} onChange={v => setAuth({ ...auth, strategy: { ...strategy, authorizeUrl: v } })} placeholder="https://provider.com/oauth/authorize" mono />
+            </Field>
+            <Field label="Token URL" hint="Code exchange + refresh">
+              <Input value={strategy.tokenUrl} onChange={v => setAuth({ ...auth, strategy: { ...strategy, tokenUrl: v } })} placeholder="https://provider.com/oauth/token" mono />
+            </Field>
+          </Grid2>
+          <Grid2>
+            <Field label="Client ID field" hint="Which field holds the client id">
+              <Input value={strategy.clientIdField} onChange={v => setAuth({ ...auth, strategy: { ...strategy, clientIdField: v } })} mono />
+            </Field>
+            <Field label="Client Secret field" hint="Which field holds the client secret">
+              <Input value={strategy.clientSecretField} onChange={v => setAuth({ ...auth, strategy: { ...strategy, clientSecretField: v } })} mono />
+            </Field>
+          </Grid2>
+          <Field label="Scopes" hint="Space- or comma-separated">
+            <Input
+              value={(strategy.scopes || []).join(" ")}
+              onChange={v => setAuth({ ...auth, strategy: { ...strategy, scopes: v.split(/[\s,]+/).filter(Boolean) } })}
+              placeholder="read write offline_access"
+            />
+          </Field>
+          <OAuthRedirectHint />
+          <p className="text-[11.5px] wf-fg-muted leading-relaxed">
+            Register an OAuth app on the provider, add the redirect URL above, then enter its
+            <span className="wf-fg font-medium"> client id &amp; secret</span> below. After you <span className="wf-fg font-medium">Deploy</span>, a
+            <span className="wf-fg font-medium"> Connect</span> button appears — that runs the provider sign-in. Don't add token fields; Stuard fetches and refreshes those.
+          </p>
+        </div>
       )}
 
       {/* Auth fields — what we ask the user for at connect time */}

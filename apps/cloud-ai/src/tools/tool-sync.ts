@@ -226,6 +226,22 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
   github_dispatch_workflow: ['github', 'actions', 'ci', 'workflow'],
   github_get_me: ['github', 'profile'],
 
+  // Notion
+  notion_get_me: ['notion', 'workspace', 'profile'],
+  notion_search: ['notion', 'search', 'pages', 'databases'],
+  notion_get_page: ['notion', 'page', 'read'],
+  notion_get_database: ['notion', 'database', 'schema'],
+  notion_query_database: ['notion', 'database', 'rows', 'query'],
+  notion_list_block_children: ['notion', 'blocks', 'content', 'page content'],
+  notion_get_block: ['notion', 'block'],
+  notion_list_comments: ['notion', 'comments', 'discussion'],
+  notion_update_page: ['notion', 'page', 'update', 'edit'],
+  notion_update_block: ['notion', 'block', 'update', 'edit'],
+  notion_create_page: ['notion', 'page', 'create', 'new page'],
+  notion_append_blocks: ['notion', 'blocks', 'append', 'insert'],
+  notion_append_paragraph: ['notion', 'paragraph', 'write', 'append'],
+  notion_create_comment: ['notion', 'comment', 'reply'],
+
   // WhatsApp
   whatsapp_send_message: ['whatsapp', 'message', 'chat'],
   whatsapp_send_media: ['whatsapp', 'media', 'photo'],
@@ -341,6 +357,20 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   github_list_repos: ['repositories', 'projects', 'code repos', 'my repos'],
   github_list_issues: ['issues', 'bugs', 'tickets', 'github issues'],
   github_create_issue: ['bug report', 'new issue', 'create ticket', 'report bug'],
+
+  // Notion
+  notion_get_me: ['notion workspace', 'notion account', 'connected notion'],
+  notion_search: ['find notion page', 'search notion', 'notion database search'],
+  notion_get_page: ['read notion page', 'notion page details'],
+  notion_get_database: ['notion database schema', 'database columns'],
+  notion_query_database: ['notion table rows', 'database entries', 'query notion db'],
+  notion_list_block_children: ['notion page content', 'blocks on page', 'read notion content'],
+  notion_list_comments: ['notion comments', 'page comments', 'discussion thread'],
+  notion_update_page: ['edit notion page', 'update notion properties', 'change page title'],
+  notion_update_block: ['edit notion block', 'update paragraph', 'check to-do'],
+  notion_create_page: ['new notion page', 'create notion doc', 'add database row'],
+  notion_append_paragraph: ['write to notion', 'add text to page', 'append notion'],
+  notion_create_comment: ['comment on notion', 'reply notion', 'add notion comment'],
 
   // Discord
   discord_list_guilds: ['discord servers', 'my servers', 'guilds', 'discord'],
@@ -613,7 +643,7 @@ export async function syncToolsToSupabase(options: {
   // Check which tools need updating
   const { data: existingTools, error: fetchError } = await supabase
     .from('tool_embeddings')
-    .select('name, updated_at')
+    .select('name, updated_at, description')
     .in('name', toolsToSync.map(t => t.id || t.name));
 
   if (fetchError) {
@@ -621,13 +651,21 @@ export async function syncToolsToSupabase(options: {
     return result;
   }
 
-  const existingMap = new Map(
-    (existingTools || []).map((t: any) => [t.name, new Date(t.updated_at)])
+  // name → stored description, so incremental sync re-embeds tools whose
+  // description changed (not just brand-new tools). Without this, editing a
+  // tool's description never reaches Supabase unless --force is passed, leaving
+  // search_tools serving the stale doc (e.g. an old model list).
+  const existingDescriptions = new Map(
+    (existingTools || []).map((t: any) => [t.name, t.description ?? ''])
   );
 
   const toUpdate = force
     ? toolsToSync
-    : toolsToSync.filter(t => !existingMap.has(t.id || t.name));
+    : toolsToSync.filter(t => {
+        const id = t.id || t.name;
+        if (!existingDescriptions.has(id)) return true; // new tool
+        return existingDescriptions.get(id) !== (t.description || ''); // changed description
+      });
 
   if (toUpdate.length === 0) {
     console.log('[tool-sync] All tools up to date');

@@ -6,17 +6,18 @@ import type { ToolCall } from '../../../../../../hooks/useAgent';
 import { FilePathActions } from '../inline/FilePathActions';
 import { extractFilePaths, isFilePath } from '../helpers/filePaths';
 import { humanizeToolName } from '../helpers/toolLabels';
+import { unwrapExecuteTool } from '../helpers/executeTool';
 
-export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool }) => {
+export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) => {
+  // Collapse the execute_tool meta-wrapper into the real tool so the name,
+  // arguments and result shown here all belong to the tool that actually ran.
+  const tool = unwrapExecuteTool(rawTool);
   const status = tool.status || 'running';
   const isCompleted = status === 'completed';
   const isError = status === 'error';
   const [showDetails, setShowDetails] = useState(false);
 
-  // execute_tool is a wrapper — show the actual tool being executed
-  const resolvedToolName = tool.tool === 'execute_tool' && tool.args?.tool_name
-    ? String(tool.args.tool_name)
-    : tool.tool;
+  const resolvedToolName = tool.tool;
 
   // For subagent tools, show the objective/task instead of generic tool name
   const isSubagentTool = resolvedToolName === 'deploy_headless_agent';

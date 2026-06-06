@@ -10,7 +10,7 @@ const { getSessionWorkflowMock, getWorkflowByIdMock, sendMock } = vi.hoisted(() 
 // module load, so stub out the heavy/process-bound modules to a no-op shape.
 vi.mock('ai', () => ({ generateText: vi.fn() }));
 vi.mock('../../pricing', () => ({ getDefaultModelForCategory: vi.fn() }));
-vi.mock('../../utils/models', () => ({ buildProviderModel: vi.fn() }));
+vi.mock('../../utils/models', () => ({ buildNativeProviderModel: vi.fn() }));
 vi.mock('../../utils/logger', () => ({ writeLog: vi.fn() }));
 vi.mock('../../utils/sanitize', () => ({
   sanitizeToolEvent: (v: any) => v,

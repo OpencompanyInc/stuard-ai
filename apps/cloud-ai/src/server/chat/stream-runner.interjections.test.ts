@@ -44,7 +44,7 @@ vi.mock('../../pricing', () => {
 
 vi.mock('../../utils/models', () => {
   return {
-    buildProviderModel: vi.fn(),
+    buildNativeProviderModel: vi.fn(),
   };
 });
 

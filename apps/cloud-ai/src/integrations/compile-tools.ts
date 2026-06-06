@@ -25,6 +25,7 @@ import type {
   ToolArgsSchema,
 } from './types';
 import { getEnabledWithSecrets, type InstalledIntegrationWithSecrets } from './installed-store';
+import { ensureFreshOAuthToken } from './oauth-refresh';
 import { zodToJsonSchema } from '../tools/zod-utils';
 
 const TOOL_NAME_RE = /[^a-z0-9_]/g;
@@ -109,6 +110,7 @@ function compileOneTool(
   manifest: IntegrationManifest,
   tool: DeclarativeTool,
   secrets: Record<string, string>,
+  userId?: string,
 ): { name: string; tool: any; entry: CustomToolCatalogEntry } {
   const name = compiledToolName(manifest.slug, tool.name);
   const category = manifest.category || 'Integrations';
@@ -121,6 +123,10 @@ function compileOneTool(
     inputSchema,
     execute: async (args: any) => {
       try {
+        // oauth2 integrations: refresh the access token lazily before the call.
+        // ensureFreshOAuthToken mutates `secrets` in place (and persists), so the
+        // captured bag stays current across calls within the request.
+        if (userId) await ensureFreshOAuthToken(userId, manifest, secrets);
         const result = await executeDeclarativeTool(manifest, tool.name, {
           secrets,
           args: args && typeof args === 'object' ? args : {},
@@ -142,8 +148,15 @@ function compileOneTool(
   };
 }
 
-/** Build compiled tools + catalog from an already-loaded set of integrations. */
-export function compileIntegrations(integrations: InstalledIntegrationWithSecrets[]): CompiledIntegrationTools {
+/**
+ * Build compiled tools + catalog from an already-loaded set of integrations.
+ * Pass `userId` so oauth2 tools can refresh + persist their tokens at call time;
+ * omit it (e.g. in unit tests) to execute with whatever secrets are supplied.
+ */
+export function compileIntegrations(
+  integrations: InstalledIntegrationWithSecrets[],
+  userId?: string,
+): CompiledIntegrationTools {
   const tools: Record<string, any> = {};
   const catalog: CustomToolCatalogEntry[] = [];
   for (const integ of integrations) {
@@ -152,7 +165,7 @@ export function compileIntegrations(integrations: InstalledIntegrationWithSecret
     for (const tool of manifest.tools) {
       if (!tool?.name) continue;
       try {
-        const { name, tool: mastraTool, entry } = compileOneTool(manifest, tool, integ.secrets);
+        const { name, tool: mastraTool, entry } = compileOneTool(manifest, tool, integ.secrets, userId);
         tools[name] = mastraTool;
         // Attach a JSON-schema view for palettes / workflow-node discovery.
         try { entry.inputSchema = zodToJsonSchema(mastraTool.inputSchema); } catch {}
@@ -174,7 +187,7 @@ export async function compileInstalledToTools(userId: string): Promise<CompiledI
   try {
     const integrations = await getEnabledWithSecrets(userId);
     if (!integrations.length) return { tools: {}, catalog: [] };
-    return compileIntegrations(integrations);
+    return compileIntegrations(integrations, userId);
   } catch {
     return { tools: {}, catalog: [] };
   }

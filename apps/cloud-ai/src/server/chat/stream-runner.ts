@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 
 import { getDefaultModelForCategory } from '../../pricing';
-import { buildProviderModel } from '../../utils/models';
+import { buildNativeProviderModel } from '../../utils/models';
 import { writeLog } from '../../utils/logger';
 import { sanitizeToolEvent, sanitizeSteps } from '../../utils/sanitize';
 import { normalizeUsage } from '../../utils/usage';
@@ -872,7 +872,7 @@ function fireAndForgetConversationTitle(
     try {
       const titlePrompt = `User message:\n${prompt}`;
       const titleModelId = getDefaultModelForCategory('fast');
-      const titleModel = buildProviderModel(titleModelId);
+      const titleModel = buildNativeProviderModel(titleModelId);
       const result = await generateText({
         model: titleModel as any,
         system: THREAD_TITLE_SYSTEM,

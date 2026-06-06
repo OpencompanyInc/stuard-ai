@@ -2504,6 +2504,97 @@ export function workflows_writeWorkspaceFile(id: string, filePath: string, conte
   }
 }
 
+/** Write a binary file (provided as base64) to the workspace. */
+export function workflows_writeWorkspaceFileBinary(id: string, filePath: string, base64: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe || !filePath) return { ok: false, error: 'invalid_args' };
+    const wsDir = getWorkspaceDir(safe);
+    if (!wsDir) return { ok: false, error: 'not_a_workspace' };
+
+    const target = path.join(wsDir, ...filePath.split('/').filter(Boolean));
+    if (!target.startsWith(wsDir)) return { ok: false, error: 'path_traversal' };
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(target);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+
+    fs.writeFileSync(target, Buffer.from(String(base64 || ''), 'base64'));
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+// Workspace dependency bundling — main-process mirror of the renderer's
+// utils/workspaceBundle.ts. Used by the read_local_workflow bridge tool so the
+// cloud-ai workflow agent can deploy a self-contained workflow to the VM.
+const WORKSPACE_BUNDLE_TEXT_EXTS = new Set([
+  'stuard', 'py', 'js', 'ts', 'mjs', 'cjs', 'json', 'jsonl', 'ndjson',
+  'txt', 'md', 'csv', 'tsv', 'yaml', 'yml', 'env', 'sql', 'sh', 'toml', 'ini',
+]);
+const WORKSPACE_BUNDLE_BINARY_EXTS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'tiff', 'avif',
+  'wav', 'mp3', 'ogg', 'flac', 'm4a', 'aac', 'opus',
+  'mp4', 'webm', 'mov', 'm4v',
+  'pdf', 'woff', 'woff2', 'ttf', 'otf', 'zip', 'wasm', 'bin', 'dat',
+]);
+const WORKSPACE_BUNDLE_MAX_TEXT = 1 * 1024 * 1024;
+const WORKSPACE_BUNDLE_MAX_BINARY = 2 * 1024 * 1024;
+const WORKSPACE_BUNDLE_MAX_TOTAL = 8 * 1024 * 1024;
+
+/** Gather a workspace's text + binary deps into a `__workspaceBundle` object. */
+export function workflows_gatherWorkspaceBundle(
+  id: string,
+): { version: 1 | 2; files: Record<string, string>; binary?: Record<string, string> } | null {
+  const info = workflows_getWorkspaceInfo(id);
+  if (!info?.ok || !Array.isArray((info as any).files)) return null;
+
+  const files: Record<string, string> = {};
+  const binary: Record<string, string> = {};
+  let total = 0;
+
+  for (const entry of (info as any).files as WorkspaceFileEntry[]) {
+    if (!entry || entry.type !== 'file') continue;
+    const relPath = String(entry.path || '').replace(/\\/g, '/');
+    if (!relPath) continue;
+    if (relPath === 'main.stuard' || relPath.split('/').some((p) => p.startsWith('.'))) continue;
+    const dot = relPath.lastIndexOf('.');
+    const ext = dot >= 0 ? relPath.slice(dot + 1).toLowerCase() : '';
+    const size = typeof entry.size === 'number' ? entry.size : 0;
+
+    if (WORKSPACE_BUNDLE_TEXT_EXTS.has(ext)) {
+      if (size > WORKSPACE_BUNDLE_MAX_TEXT) continue;
+      const res = workflows_readWorkspaceFile(id, relPath);
+      if (res?.ok && typeof (res as any).content === 'string') {
+        const content = (res as any).content as string;
+        if (total + content.length > WORKSPACE_BUNDLE_MAX_TOTAL) break;
+        total += content.length;
+        files[relPath] = content;
+      }
+    } else if (WORKSPACE_BUNDLE_BINARY_EXTS.has(ext)) {
+      if (size > WORKSPACE_BUNDLE_MAX_BINARY) continue;
+      const res = workflows_readWorkspaceFileBinary(id, relPath);
+      if (res?.ok && typeof (res as any).base64 === 'string') {
+        const b64 = (res as any).base64 as string;
+        if (total + b64.length > WORKSPACE_BUNDLE_MAX_TOTAL) continue;
+        total += b64.length;
+        binary[relPath] = b64;
+      }
+    }
+  }
+
+  const hasText = Object.keys(files).length > 0;
+  const hasBinary = Object.keys(binary).length > 0;
+  if (!hasText && !hasBinary) return null;
+  const bundle: { version: 1 | 2; files: Record<string, string>; binary?: Record<string, string> } = {
+    version: hasBinary ? 2 : 1,
+    files,
+  };
+  if (hasBinary) bundle.binary = binary;
+  return bundle;
+}
+
 /** Delete a file or empty directory from the workspace */
 export function workflows_deleteWorkspaceFile(id: string, filePath: string) {
   try {

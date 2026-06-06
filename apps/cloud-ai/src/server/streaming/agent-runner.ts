@@ -7,6 +7,13 @@ import { getWorkflowAgentForUser, WORKFLOW_SYSTEM_PROMPT } from '../../agents/wo
 import { getSkillAgentForUser, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
 import { routeModel, ModelChoice } from '../../router/model-router';
+import {
+  heuristicReasoningControl,
+  resolveEffectiveReasoning,
+  type EffectiveReasoning,
+  type ReasoningEffort,
+  type RequestedReasoning,
+} from '../../utils/reasoning-capability';
 import { writeLog } from '../../utils/logger';
 import { normalizeUsage } from '../../utils/usage';
 import { computeBudget, estimateTokens } from '../../memory/token-budget';
@@ -165,7 +172,7 @@ interface AgentMessage {
   modelId?: string;
   modelSource?: string;
   modelConfig?: any;
-  reasoningLevel?: 'none' | 'low' | 'medium' | 'high';
+  reasoningLevel?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   integrations?: string[];
   history?: any[]; // Context history
   context?: {
@@ -702,9 +709,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
         },
       });
 
-      // Enable thinking/reasoning streams for supported providers.
-      const reasoningLevel: 'none' | 'low' | 'medium' | 'high' =
-        (['none', 'low', 'medium', 'high'].includes(message.reasoningLevel || '') ? message.reasoningLevel : 'high') as any;
+      // Enable thinking/reasoning streams for supported providers. The requested
+      // level is reconciled with the model's real capability (extra-high tier,
+      // disable-ability) via the shared resolver — see provider-options.ts, which
+      // keeps the main chat path in sync with this one.
+      const requestedReasoning: RequestedReasoning =
+        (['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(message.reasoningLevel || '')
+          ? message.reasoningLevel
+          : 'high') as RequestedReasoning;
+      const reasoningControl = heuristicReasoningControl(chosenModelId || '');
+      const effectiveReasoning: EffectiveReasoning = resolveEffectiveReasoning(requestedReasoning, reasoningControl);
 
       // Build provider options as a standalone object — merged into buildStreamOptions()
       const providerOpts: Record<string, any> = {};
@@ -713,40 +727,43 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       const isGemini3 = chosenModelId?.includes('google/gemini-3');
       const isGemini25 = chosenModelId?.includes('google/gemini-2.5');
       if (isGemini25) {
-        const gemini25Budget: Record<'none' | 'low' | 'medium' | 'high', number> = {
-          none: 0,
-          low: 1024,
-          medium: 8192,
-          high: 24576,
+        if (effectiveReasoning === 'none') {
+          providerOpts.google = { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } };
+        } else if (effectiveReasoning === 'default') {
+          providerOpts.google = { thinkingConfig: { includeThoughts: true } };
+        } else {
+          const gemini25Budget: Record<ReasoningEffort, number> = {
+            minimal: 512,
+            low: 1024,
+            medium: 8192,
+            high: 24576,
+            xhigh: 24576,
+          };
+          providerOpts.google = {
+            thinkingConfig: { thinkingBudget: gemini25Budget[effectiveReasoning], includeThoughts: true },
+          };
+        }
+      } else if (isGemini3 && effectiveReasoning !== 'none' && effectiveReasoning !== 'default') {
+        const gemini3Level: Record<ReasoningEffort, 'low' | 'medium' | 'high'> = {
+          minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high',
         };
         providerOpts.google = {
-          thinkingConfig: {
-            thinkingBudget: gemini25Budget[reasoningLevel],
-            includeThoughts: reasoningLevel !== 'none',
-          },
-        };
-      } else if (isGemini3 && reasoningLevel !== 'none') {
-        providerOpts.google = {
-          thinkingConfig: {
-            thinkingLevel: reasoningLevel as 'low' | 'medium' | 'high',
-            includeThoughts: true,
-          },
+          thinkingConfig: { thinkingLevel: gemini3Level[effectiveReasoning], includeThoughts: true },
         };
       }
 
       // ---------- Anthropic thinking ----------
       if (chosenModelId?.includes('anthropic/')) {
-        if (reasoningLevel === 'none') {
+        if (effectiveReasoning === 'none') {
           providerOpts.anthropic = {
             thinking: { type: 'disabled' },
           };
         } else {
-          const anthropicBudget: Record<string, number | undefined> = {
-            low: 5000,
-            medium: 16384,
-            high: undefined, // no cap
+          const anthropicBudget: Record<EffectiveReasoning, number | undefined> = {
+            none: undefined, default: undefined,
+            minimal: 3000, low: 5000, medium: 16384, high: undefined /* no cap */, xhigh: 32000,
           };
-          const budgetTokens = anthropicBudget[reasoningLevel];
+          const budgetTokens = anthropicBudget[effectiveReasoning];
           providerOpts.anthropic = {
             sendReasoning: true,
             thinking: budgetTokens
@@ -760,20 +777,19 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       if (chosenModelId?.includes('openai/')) {
         const modelPart = (chosenModelId || '').split('/').pop() || '';
         const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
-        if (supportsEffort) {
-          // gpt-5.1 only supports up to 'medium' reasoning effort
-          const maxEffort = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
-          const effortLevels: string[] = ['none', 'low', 'medium', 'high'];
-          const clampedEffort = effortLevels.indexOf(reasoningLevel) > effortLevels.indexOf(maxEffort)
-            ? maxEffort
-            : reasoningLevel;
+        if (supportsEffort && effectiveReasoning !== 'none') {
+          // OpenAI reasoningEffort accepts minimal|low|medium|high; xhigh folds to
+          // high. gpt-5.1 caps at 'medium'; 'default' lands on a safe 'medium'.
+          const maxEffort: 'medium' | 'high' = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
+          const order: Array<'minimal' | 'low' | 'medium' | 'high'> = ['minimal', 'low', 'medium', 'high'];
+          const base: 'minimal' | 'low' | 'medium' | 'high' =
+            effectiveReasoning === 'default' ? 'medium' : effectiveReasoning === 'xhigh' ? 'high' : effectiveReasoning;
+          const clampedEffort = order.indexOf(base) > order.indexOf(maxEffort) ? maxEffort : base;
           providerOpts.openai = {
             reasoningEffort: clampedEffort,
             // Responses API: expose reasoning summaries as streaming chunks
             // GPT-5.4 supports 'detailed' summaries for richer reasoning output
-            reasoningSummary: clampedEffort !== 'none'
-              ? (/^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto')
-              : undefined,
+            reasoningSummary: /^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto',
           };
         }
       }
@@ -782,16 +798,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       if (chosenModelId?.includes('xai/')) {
         const modelPart = (chosenModelId || '').split('/').pop() || '';
         const supportsReasoning = !modelPart.includes('non-reasoning');
-        if (supportsReasoning && reasoningLevel !== 'none') {
+        if (supportsReasoning && effectiveReasoning !== 'none') {
           // xAI Chat API only supports 'low' | 'high' (not 'medium' or 'none')
-          const xaiEffort = reasoningLevel === 'low' ? 'low' : 'high';
+          const xaiEffort = (effectiveReasoning === 'low' || effectiveReasoning === 'minimal') ? 'low' : 'high';
           providerOpts.xai = { reasoningEffort: xaiEffort };
         }
       }
 
       // ---------- DeepSeek thinking ----------
       if (chosenModelId?.includes('deepseek/')) {
-        if (reasoningLevel === 'none') {
+        if (effectiveReasoning === 'none') {
           providerOpts.deepseek = { thinking: { type: 'disabled' } };
         } else {
           providerOpts.deepseek = { thinking: { type: 'enabled' } };

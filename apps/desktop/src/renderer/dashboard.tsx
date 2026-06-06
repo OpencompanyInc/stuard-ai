@@ -18,6 +18,7 @@ import { TasksView } from "./components/TasksView";
 import { CloudEngineDashboard } from "./components/CloudEngineDashboard";
 import { StorageView } from "./components/StorageView";
 import { MediaLibraryView } from "./components/MediaLibraryView";
+import { FeedbackView } from "./components/FeedbackView";
 import { MemoryLockGate } from "./components/MemoryLockGate";
 import { HeaderActionsContext, type HeaderAction } from "./components/HeaderActions";
 import {
@@ -34,6 +35,7 @@ import {
   Cloud,
   HardDrive,
   Image as ImageIcon,
+  MessageSquare,
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
@@ -238,7 +240,7 @@ function DashboardApp() {
       const initialTab = params.get('tab');
       // Agents moved to Stuard Studio; the main process redirects 'bots'/'proactive'
       // deep links there, so the dashboard only handles its own remaining tabs.
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(initialTab)) {
+      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'feedback'].includes(initialTab)) {
         return initialTab;
       }
     } catch { }
@@ -420,7 +422,7 @@ function DashboardApp() {
       const tab = data?.tab;
       if (
         tab &&
-        ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage'].includes(tab)
+        ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'feedback'].includes(tab)
       ) {
         setTab(tab);
       }
@@ -1435,6 +1437,13 @@ function DashboardApp() {
         { id: 'settings', label: 'Settings', icon: Settings },
       ],
     },
+    {
+      key: 'support',
+      label: 'Support',
+      items: [
+        { id: 'feedback', label: 'Feedback', icon: MessageSquare },
+      ],
+    },
   ];
 
   const tabMeta: Record<string, { title: string; subtitle: string }> = {
@@ -1448,6 +1457,7 @@ function DashboardApp() {
     cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
     media: { title: 'Media', subtitle: 'Browse imported files, generated media, and message attachments in one gallery.' },
     storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
+    feedback: { title: 'Feedback', subtitle: 'Report a bug or suggest an idea — and track where it stands.' },
   };
 
   const currentTabMeta = tabMeta[tab as keyof typeof tabMeta] ?? {
@@ -1760,6 +1770,10 @@ function DashboardApp() {
 
                           {tab === 'storage' && (
                             <StorageView />
+                          )}
+
+                          {tab === 'feedback' && userEmail && (
+                            <FeedbackView session={session} appVersion={appVersion} />
                           )}
 
                           {tab === 'integrations' && userEmail && (

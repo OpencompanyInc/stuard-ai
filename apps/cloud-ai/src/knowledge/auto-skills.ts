@@ -13,7 +13,7 @@
 
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 
 import { execLocalTool } from '../tools/bridge';
 import { writeLog } from '../utils/logger';
@@ -472,7 +472,7 @@ export async function analyzeForAutoSkill(
 
   try {
     const modelId = 'google/gemini-2.5-flash';
-    const model = buildProviderModel(modelId);
+    const model = buildNativeProviderModel(modelId);
 
     const { object: analysis } = await generateObject({
       model: model as any,

@@ -2,11 +2,14 @@ import React, { memo, useState } from 'react';
 import clsx from 'clsx';
 import { toMediaSrc } from '../helpers/media';
 
-// Image component that handles loading states and local/web URLs (memoized)
-export const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src, alt }) => {
+// Image component that handles loading states and local/web URLs (memoized).
+// `size="thumb"` renders the compact variant used inside the chain-of-thought
+// trace; the default is the full inline size used in message bodies.
+export const InlineImage: React.FC<{ src: string; alt?: string; size?: 'default' | 'thumb' }> = memo(({ src, alt, size = 'default' }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imageSrc = toMediaSrc(src || '');
+  const isThumb = size === 'thumb';
 
   if (error) {
     return (
@@ -25,7 +28,8 @@ export const InlineImage: React.FC<{ src: string; alt?: string }> = memo(({ src,
         onLoad={() => setLoaded(true)}
         onError={() => setError(`${src}`)}
         className={clsx(
-          "block my-2 max-w-full max-h-[300px] rounded-xl border border-theme/10 shadow-lg object-contain transition-opacity duration-200",
+          "block rounded-xl border border-theme/10 object-contain transition-opacity duration-200",
+          isThumb ? "my-0 max-w-[200px] max-h-[150px] shadow-sm" : "my-2 max-w-full max-h-[300px] shadow-lg",
           loaded ? "opacity-100" : "opacity-0"
         )}
       />

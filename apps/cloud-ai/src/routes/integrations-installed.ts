@@ -29,6 +29,7 @@ import {
   getEnabledWithSecrets,
 } from '../integrations/installed-store';
 import { compiledToolName } from '../integrations/compile-tools';
+import { ensureFreshOAuthToken } from '../integrations/oauth-refresh';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -124,7 +125,10 @@ export async function handleIntegrationsInstalledRoutes(
 
       const resolved = await getDecryptedSecrets(userId, slug);
       if (!resolved) { writeJson(res, 404, { ok: false, error: 'not_installed', detail: `No enabled integration "${slug}"` }); return true; }
-      const result = await executeDeclarativeTool(resolved.manifest, toolName, { secrets: resolved.secrets, args });
+      // For oauth2 integrations, refresh the access token if it's near expiry
+      // before the call (no-op for every other auth strategy).
+      const secrets = await ensureFreshOAuthToken(userId, resolved.manifest, resolved.secrets);
+      const result = await executeDeclarativeTool(resolved.manifest, toolName, { secrets, args });
       writeJson(res, 200, { ok: true, result });
       return true;
     }

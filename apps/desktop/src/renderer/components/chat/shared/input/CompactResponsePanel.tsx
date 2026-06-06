@@ -106,6 +106,10 @@ const COMPACT_RICH_META: Record<string, CompactRichMeta> = {
     title: 'Form',
     hint: 'Open the full view to complete the form.',
   },
+  show_feedback_form: {
+    title: 'Feedback',
+    hint: 'Open the full view to submit your bug report or feature request.',
+  },
 };
 
 function getCompactRichContentMeta(component: string): CompactRichMeta {

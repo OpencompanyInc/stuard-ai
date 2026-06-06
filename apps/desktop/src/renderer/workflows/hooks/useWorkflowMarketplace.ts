@@ -3,6 +3,7 @@ import { getValidAccessToken } from "../../auth/authManager";
 import { getMarketplaceApi, type MarketplaceUpdate } from "../../utils/cloud";
 import { specToDesignerModel } from "../utils/conversions";
 import { unpackWorkspaceBundle, stripWorkspaceBundle } from "../utils/workspaceBundle";
+import { alertDialog } from "../components/ConfirmDialog";
 
 interface UseWorkflowMarketplaceProps {
   selectedId: string;
@@ -74,7 +75,11 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
         await refresh();
         await load(newId);
       } catch (e: any) {
-        alert(e?.message || "Import failed");
+        await alertDialog({
+          title: "Import failed",
+          message: e?.message || "We couldn't import this workflow. Please try again.",
+          tone: "danger",
+        });
       }
     },
     [load, refresh]

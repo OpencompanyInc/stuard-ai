@@ -82,6 +82,7 @@ function getConnectUrl(slug: string, token: string): string | null {
     case 'google-tasks': return `${base}/integrations/google/connect?${tokenParam}&target=tasks`;
     case 'gmail': return `${base}/integrations/google/connect?${tokenParam}&target=gmail`;
     case 'github': return `${base}/integrations/github/connect?${tokenParam}`;
+    case 'notion': return `${base}/integrations/notion/connect?${tokenParam}`;
     case 'discord': return `${base}/integrations/discord/connect?${tokenParam}`;
     case 'reddit': return `${base}/integrations/reddit/connect?${tokenParam}`;
     case 'x': return `${base}/integrations/x/connect?${tokenParam}`;
@@ -103,6 +104,7 @@ function getStatusUrl(slug: string): string | null {
     case 'google-tasks': return `${base}/integrations/google/status?target=tasks`;
     case 'gmail': return `${base}/integrations/google/status?target=gmail`;
     case 'github': return `${base}/integrations/github/status`;
+    case 'notion': return `${base}/integrations/notion/status`;
     case 'discord': return `${base}/integrations/discord/status`;
     case 'reddit': return `${base}/integrations/reddit/status`;
     case 'x': return `${base}/integrations/x/status`;

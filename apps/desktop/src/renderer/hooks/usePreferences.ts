@@ -5,8 +5,23 @@ const LS_PREFIX = "stuard.pref.";
 export type ChatMode = 'auto' | string;
 export type ModelSourcePreference = 'stuard' | 'api_key' | 'subscription';
 
-/** Per-request reasoning effort level for models that support it. */
-export type ReasoningLevel = 'none' | 'low' | 'medium' | 'high';
+/** A single thinking-depth tier, weakest → strongest. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+/** Per-request reasoning level for models that support it (`none` = thinking off). */
+export type ReasoningLevel = 'none' | ReasoningEffort;
+
+/**
+ * Normalized thinking capability for a model, surfaced by `/v1/models` so the
+ * picker can show only the tiers that apply (some models add an extra-high
+ * tier, some can't be turned off, some don't reason at all).
+ */
+export interface ReasoningControl {
+  supported: boolean;
+  canDisable: boolean;
+  levels: ReasoningEffort[];
+  default: ReasoningEffort;
+}
 
 /**
  * Providers that support per-request reasoning/thinking level configuration.
@@ -38,6 +53,8 @@ export interface ModelMeta {
   providerId?: string;
   logoUrl?: string;
   isReasoning: boolean;
+  /** Per-model thinking capability (from `/v1/models`); drives the picker controls. */
+  reasoningControl?: ReasoningControl;
   contextWindow?: number;
   category: 'fast' | 'balanced' | 'smart' | 'research';
 }

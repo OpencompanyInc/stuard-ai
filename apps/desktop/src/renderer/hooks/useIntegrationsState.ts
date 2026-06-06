@@ -52,6 +52,20 @@ function isGoogleIntegrationSlug(slug: string): boolean {
   return (GOOGLE_INTEGRATION_SLUGS as readonly string[]).includes(slug);
 }
 
+/**
+ * Providers whose OAuth tokens live in the desktop's local encrypted store
+ * (single slug == provider). The cloud-ai callback stages the token for the
+ * desktop to claim and the tools read it over the bridge — nothing lands in
+ * Supabase. Google is migrated the same way but is handled separately because
+ * it fans one token out across multiple product slugs. Keep in sync with the
+ * cloud-ai callbacks that call stageTokensForClaim.
+ */
+const DEVICE_LOCAL_PROVIDERS = ["x", "reddit", "github", "notion"] as const;
+
+function isDeviceLocalProvider(slug: string): boolean {
+  return (DEVICE_LOCAL_PROVIDERS as readonly string[]).includes(slug);
+}
+
 function googleScopesToConnectedSlugs(scopes: unknown[]): Record<string, boolean> {
   const scopeSet = new Set(scopes.map((s) => String(s)));
   const out: Record<string, boolean> = {};
@@ -213,6 +227,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
 
       await Promise.all([
         fetchStatus(`${CLOUD_AI_HTTP}/integrations/github/status`, "github"),
+        fetchStatus(`${CLOUD_AI_HTTP}/integrations/notion/status`, "notion"),
         ...(OUTLOOK_INTEGRATION_ENABLED
           ? [fetchStatus(`${CLOUD_AI_HTTP}/integrations/outlook/status`, "outlook")]
           : []),
@@ -252,17 +267,24 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           : []),
       ]);
 
-      // Device-local Google status — authoritative when the local agent responds.
+      // Device-local status — authoritative when the local agent responds.
+      // Google maps one token across product slugs; x/reddit/github use a single
+      // slug == provider.
       const localGoogleConnected: Record<string, boolean> = {};
+      const localDeviceConnected: Record<string, boolean> = {};
       let localOAuthReachable = false;
       const { ok: localOAuthOk, tokens: localTokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
       if (localOAuthOk) {
         localOAuthReachable = true;
         for (const token of localTokens) {
-          if (String(token?.provider || "").toLowerCase() !== "google") continue;
-          const slugs = googleScopesToConnectedSlugs(Array.isArray(token.scopes) ? token.scopes : []);
-          for (const [slug, connected] of Object.entries(slugs)) {
-            if (connected) localGoogleConnected[slug] = true;
+          const provider = String(token?.provider || "").toLowerCase();
+          if (provider === "google") {
+            const slugs = googleScopesToConnectedSlugs(Array.isArray(token.scopes) ? token.scopes : []);
+            for (const [slug, connected] of Object.entries(slugs)) {
+              if (connected) localGoogleConnected[slug] = true;
+            }
+          } else if (isDeviceLocalProvider(provider)) {
+            localDeviceConnected[provider] = true;
           }
         }
       }
@@ -286,9 +308,24 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
           }
         }
 
+        // Device-local providers (x/reddit/github): local store is the source of
+        // truth when the agent is reachable, so a disconnect actually clears the
+        // pill (no preserve-prev). A running cloud engine (VM) still counts, so
+        // cloud-primary users stay connected.
+        for (const provider of DEVICE_LOCAL_PROVIDERS) {
+          if (localOAuthReachable) {
+            if (localDeviceConnected[provider] || serverConnected[provider] === true) next[provider] = true;
+          } else if (serverConnected[provider] === true) {
+            next[provider] = true;
+          } else if (serverConnected[provider] == null && prev[provider]) {
+            // Agent unreachable and the server didn't answer — keep cached state.
+            next[provider] = true;
+          }
+        }
+
         for (const [slug, connected] of Object.entries(serverConnected)) {
-          if (isGoogleIntegrationSlug(slug)) {
-            // Already handled from local store above; never preserve stale cache.
+          if (isGoogleIntegrationSlug(slug) || isDeviceLocalProvider(slug)) {
+            // Already resolved from the local store above; never preserve stale cache.
             continue;
           }
           if (connected === true) {
@@ -346,6 +383,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         ? [{ slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true }]
         : []),
       { slug: "github", name: "GitHub", description: "Read repos and issues.", category: "Development", homepage: "https://github.com/", available: true },
+      { slug: "notion", name: "Notion", description: "Search pages, read databases, and append content to your workspace.", category: "Productivity", homepage: "https://www.notion.so/", available: true },
       ...(DISCORD_INTEGRATION_ENABLED
         ? [{ slug: "discord", name: "Discord", description: "Read and send messages, list servers and DMs.", category: "Communication", homepage: "https://discord.com/", available: true }]
         : []),
@@ -874,35 +912,36 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     const token = session?.access_token;
     const provider = slugToProvider(slug);
 
-    // Google tokens live in the local encrypted store — not Supabase.
-    if (provider === "google") {
+    // Device-local tokens (google + x/reddit/github) live in the local encrypted
+    // store — not Supabase. Remove them via the local agent.
+    if (provider && (provider === "google" || isDeviceLocalProvider(provider))) {
       let profileToDelete = profileLabel?.trim() || "";
       if (!profileToDelete) {
         const { ok, tokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
         if (ok) {
-          const googleTokens = tokens.filter((t) => String(t?.provider || "").toLowerCase() === "google");
-          const defaultProfile = googleTokens.find((t) => t.isDefault) || googleTokens[0];
+          const providerTokens = tokens.filter((t) => String(t?.provider || "").toLowerCase() === provider);
+          const defaultProfile = providerTokens.find((t) => t.isDefault) || providerTokens[0];
           profileToDelete = String(defaultProfile?.profileLabel || "default").trim();
         }
       }
 
       if (profileToDelete) {
         await execLocalAgentTool(AGENT_HTTP, "remove_oauth_tokens", {
-          provider: "google",
+          provider,
           profileLabel: profileToDelete,
         });
         // Best-effort cleanup of any legacy Supabase row from before migration.
         if (token) {
           try {
             await fetch(
-              `${CLOUD_AI_HTTP}/integrations/profiles?provider=google&profile=${encodeURIComponent(profileToDelete)}`,
+              `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileToDelete)}`,
               { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
             );
           } catch {}
         }
       }
 
-      await refreshProfiles("google");
+      await refreshProfiles(provider);
       if (token) await syncConnectedFromServer(token);
       return;
     }
@@ -961,6 +1000,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   /** Map UI slug → provider string used by the backend */
   const slugToProvider = (slug: string): string | null => {
     if (slug === "github") return "github";
+    if (slug === "notion") return "notion";
     if (OUTLOOK_INTEGRATION_ENABLED && slug === "outlook") return "outlook";
     if (DISCORD_INTEGRATION_ENABLED && slug === "discord") return "discord";
     if (REDDIT_INTEGRATION_ENABLED && slug === "reddit") return "reddit";
@@ -979,19 +1019,22 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     const token = session?.access_token;
     setProfilesLoading(true);
     try {
-      const localGoogleProfiles: IntegrationProfile[] = [];
+      // Device-local providers (google + x/reddit/github) keep their profiles in
+      // the local encrypted store, not Supabase — read them from the local agent.
+      const isLocalProvider = (p: string) => p === "google" || isDeviceLocalProvider(p);
+      const localProfiles: IntegrationProfile[] = [];
       const { ok: localOk, tokens: localTokens } = await fetchLocalOAuthTokens(AGENT_HTTP);
       if (localOk) {
         for (const t of localTokens) {
-          if (String(t?.provider || "").toLowerCase() === "google") {
-            localGoogleProfiles.push(localOAuthTokenToProfile(t));
+          if (isLocalProvider(String(t?.provider || "").toLowerCase())) {
+            localProfiles.push(localOAuthTokenToProfile(t));
           }
         }
       }
 
       const mapServerProfiles = (rows: any[]): IntegrationProfile[] =>
         rows
-          .filter((p) => String(p?.provider || "").toLowerCase() !== "google")
+          .filter((p) => !isLocalProvider(String(p?.provider || "").toLowerCase()))
           .map((p: any) => ({
             provider: p.provider || "",
             profile_label: p.profile || p.profile_label || "default",
@@ -1000,13 +1043,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
             scopes_csv: (Array.isArray(p.scopes) ? p.scopes.join(",") : p.scopes) || p.scopes_csv || null,
           }));
 
-      if (provider === "google") {
-        setProfiles(localGoogleProfiles);
+      if (provider && isLocalProvider(provider)) {
+        setProfiles(localProfiles.filter((p) => p.provider === provider));
         return;
       }
 
       if (!token) {
-        setProfiles(provider ? [] : localGoogleProfiles);
+        setProfiles(provider ? [] : localProfiles);
         return;
       }
 
@@ -1021,7 +1064,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         if (provider) {
           setProfiles(serverProfiles);
         } else {
-          setProfiles([...localGoogleProfiles, ...serverProfiles]);
+          setProfiles([...localProfiles, ...serverProfiles]);
         }
       });
     } catch {} finally {
@@ -1040,12 +1083,12 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   /** Set a given profile as the default for its provider */
   const setDefaultProfile = useCallback(async (provider: string, profileLabel: string) => {
     const token = session?.access_token;
-    if (provider === "google") {
+    if (provider === "google" || isDeviceLocalProvider(provider)) {
       await execLocalAgentTool(AGENT_HTTP, "set_oauth_default", {
-        provider: "google",
+        provider,
         profileLabel,
       });
-      await refreshProfiles("google");
+      await refreshProfiles(provider);
       if (token) await syncConnectedFromServer(token);
       return;
     }
@@ -1066,20 +1109,20 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     const token = session?.access_token;
     if (!profileLabel) return;
 
-    if (provider === "google") {
+    if (provider === "google" || isDeviceLocalProvider(provider)) {
       await execLocalAgentTool(AGENT_HTTP, "remove_oauth_tokens", {
-        provider: "google",
+        provider,
         profileLabel,
       });
       if (token) {
         try {
           await fetch(
-            `${CLOUD_AI_HTTP}/integrations/profiles?provider=google&profile=${encodeURIComponent(profileLabel)}`,
+            `${CLOUD_AI_HTTP}/integrations/profiles?provider=${encodeURIComponent(provider)}&profile=${encodeURIComponent(profileLabel)}`,
             { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
           );
         } catch {}
       }
-      await refreshProfiles("google");
+      await refreshProfiles(provider);
       if (token) await syncConnectedFromServer(token);
       return;
     }
@@ -1469,6 +1512,28 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return false;
     };
 
+    // Device-local providers (x/reddit/github, like google): claim the staged
+    // token and write it to the local encrypted store. Mark connected on success
+    // (the cloud status only sees VM-held tokens, never desktop-held ones). Fall
+    // back to status polling for cloud-primary (VM) users where nothing is staged.
+    const connectDeviceLocal = async (slug: string, provider: string, statusUrl: string) => {
+      const stored = await claimAndStoreLocally();
+      if (stored) {
+        setConnectedMap((prev) => {
+          const next = { ...prev, [slug]: true };
+          try {
+            localStorage.setItem("integrations.connected", JSON.stringify(next));
+          } catch {}
+          emitConnectedChanged();
+          return next;
+        });
+      } else {
+        await pollStatus(statusUrl, slug);
+      }
+      await refreshProfiles(provider);
+      await syncConnectedFromServer(token);
+    };
+
     if (OUTLOOK_INTEGRATION_ENABLED && slug === "outlook") {
       const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
@@ -1485,9 +1550,16 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/github/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/github/status${statusProfileParam}`, "github");
-      await refreshProfiles('github');
-      await syncConnectedFromServer(token);
+      await connectDeviceLocal("github", "github", `${CLOUD_AI_HTTP}/integrations/github/status${statusProfileParam}`);
+      return;
+    }
+
+    if (slug === "notion") {
+      const profileParam = profileLabel ? `&profile=${encodeURIComponent(profileLabel)}` : '';
+      const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
+      const url = `${CLOUD_AI_HTTP}/integrations/notion/connect?token=${encodeURIComponent(token)}${profileParam}`;
+      openExternal(url);
+      await connectDeviceLocal("notion", "notion", `${CLOUD_AI_HTTP}/integrations/notion/status${statusProfileParam}`);
       return;
     }
 
@@ -1507,9 +1579,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/reddit/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/reddit/status${statusProfileParam}`, "reddit");
-      await refreshProfiles('reddit');
-      await syncConnectedFromServer(token);
+      await connectDeviceLocal("reddit", "reddit", `${CLOUD_AI_HTTP}/integrations/reddit/status${statusProfileParam}`);
       return;
     }
 
@@ -1518,9 +1588,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       const statusProfileParam = profileLabel ? `?profile=${encodeURIComponent(profileLabel)}` : '';
       const url = `${CLOUD_AI_HTTP}/integrations/x/connect?token=${encodeURIComponent(token)}${profileParam}`;
       openExternal(url);
-      await pollStatus(`${CLOUD_AI_HTTP}/integrations/x/status${statusProfileParam}`, "x");
-      await refreshProfiles('x');
-      await syncConnectedFromServer(token);
+      await connectDeviceLocal("x", "x", `${CLOUD_AI_HTTP}/integrations/x/status${statusProfileParam}`);
       return;
     }
 

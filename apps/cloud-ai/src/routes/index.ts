@@ -9,6 +9,7 @@ import { handleOutlookRoutes } from './integrations/outlook';
 import { handleDiscordRoutes } from './integrations/discord';
 import { handleRedditRoutes } from './integrations/reddit';
 import { handleXRoutes } from './integrations/x';
+import { handleNotionRoutes } from './integrations/notion';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
@@ -54,6 +55,7 @@ import { handleByokRoutes } from './byok';
 import { handleIntegrationsDraftRoutes } from './integrations-draft';
 import { handleIntegrationsAssistRoutes } from './integrations-assist';
 import { handleIntegrationsInstalledRoutes } from './integrations-installed';
+import { handleCustomOAuthRoutes } from './integrations/custom-oauth';
 
 export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   if (await handlePolarWebhook(req, res, parsedUrl)) return true;
@@ -72,6 +74,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (DISCORD_INTEGRATION_ENABLED && await handleDiscordRoutes(req, res, parsedUrl)) return true;
   if (REDDIT_INTEGRATION_ENABLED && await handleRedditRoutes(req, res, parsedUrl)) return true;
   if (await handleXRoutes(req, res, parsedUrl)) return true;
+  if (await handleNotionRoutes(req, res, parsedUrl)) return true;
   if (await handleTelnyxRoutes(req, res, parsedUrl)) return true;
   if (META_INTEGRATION_ENABLED && await handleMetaRoutes(req, res, parsedUrl)) return true;
   if (WHATSAPP_INTEGRATION_ENABLED && await handleWhatsAppRoutes(req, res, parsedUrl)) return true;
@@ -90,6 +93,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleIntegrationsDraftRoutes(req, res, parsedUrl)) return true;
   if (await handleIntegrationsAssistRoutes(req, res, parsedUrl)) return true;
   if (await handleIntegrationsInstalledRoutes(req, res, parsedUrl)) return true;
+  if (await handleCustomOAuthRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudEngineRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleStorageRoutes(req, res, parsedUrl)) return true;

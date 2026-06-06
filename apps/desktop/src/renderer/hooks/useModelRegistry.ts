@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCloudAiHttp } from "../utils/cloud";
-import { FALLBACK_MODELS, ALL_CHAT_MODEL_IDS, type ModelMeta } from "./usePreferences";
+import { FALLBACK_MODELS, ALL_CHAT_MODEL_IDS, type ModelMeta, type ReasoningControl } from "./usePreferences";
 
 const ALLOWED_MODEL_SET = new Set(ALL_CHAT_MODEL_IDS);
 
@@ -117,6 +117,7 @@ export type CloudModelRegistry = {
     modelId: string;
     name: string;
     reasoning: boolean;
+    reasoningControl?: ReasoningControl;
     toolCall: boolean;
     structuredOutput: boolean;
     attachment: boolean;
@@ -234,6 +235,8 @@ export function useModelRegistry() {
         isReasoning: typeof fallbackById.get(m.id)?.isReasoning === "boolean"
           ? !!fallbackById.get(m.id)?.isReasoning
           : !!m.reasoning,
+        // Per-model thinking capability (extra-high tier, disable-ability, …).
+        reasoningControl: m.reasoningControl,
         // Prefer the registry's real context window (models.dev / OpenRouter both
         // expose it) over our hardcoded table, which is partial and goes stale.
         contextWindow: m.limit?.context ?? fallbackById.get(m.id)?.contextWindow,

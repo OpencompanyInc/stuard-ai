@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { generateObject } from 'ai';
-import { buildProviderModel } from '../utils/models';
+import { buildNativeProviderModel } from '../utils/models';
 import { getDefaultModelForCategory } from '../pricing';
 
 const ROUTER_VERBOSE = process.env.ROUTER_VERBOSE !== '0' && process.env.ROUTER_VERBOSE !== 'false';
@@ -96,7 +96,8 @@ export async function routeModel(
     ].join('\n');
 
     const routingModelId = getDefaultModelForCategory('fast');
-    const routingModel = buildProviderModel(routingModelId);
+    // Routing is internal overhead Stuard pays and never bills → native key.
+    const routingModel = buildNativeProviderModel(routingModelId);
 
     const result = await generateObject({
       model: routingModel,

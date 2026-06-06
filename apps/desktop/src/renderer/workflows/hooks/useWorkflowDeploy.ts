@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import type { DesignerModel } from "../types";
+import { withWorkspaceBundle } from "../utils/workspaceBundle";
 
 export interface WorkflowDeployStatus {
   deployed: boolean;
@@ -233,6 +234,11 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
       await (window as any).desktopAPI?.workflowsSave?.(selectedId, JSON.stringify(model, null, 2));
       const timezone = detectClientTimezone();
 
+      // Bundle the workspace's text + binary dependencies (imported sub-workflows,
+      // functions, scripts, config, assets) into the payload so the VM can run a
+      // self-contained copy — call_workspace_function resolves against the bundle.
+      const payload = await withWorkspaceBundle(selectedId, model);
+
       // Create cloud deployment via API
       // NOTE: No user tokens are passed to the VM. The VM authenticates with cloud-ai
       // using its own per-VM HMAC secret (VM_TOKEN_SECRET), which cloud-ai verifies
@@ -243,7 +249,7 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
           name: model.name || `Workflow ${selectedId}`,
           kind: 'workflow',
           description: model.description || `Deployed from workflow editor`,
-          payload: model,
+          payload,
           envVars: { TZ: timezone, STUARD_USER_TIMEZONE: timezone },
           autoRestart: true,
           schedule: model.triggers?.find((t) => t.type === 'schedule.cron')?.args?.cron || undefined,

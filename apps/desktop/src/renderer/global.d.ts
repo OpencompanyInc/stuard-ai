@@ -181,7 +181,9 @@ declare global {
       workflowsGetWorkspaceInfo: (id: string) => Promise<{ ok: boolean; workspacePath?: string; subdirs?: string[]; files?: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number; updatedAt?: string }>; error?: string }>;
       workflowsListWorkspaceFiles: (id: string, subpath?: string) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; type: 'file' | 'directory'; size?: number; updatedAt?: string }>; error?: string }>;
       workflowsReadWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; content?: string; size?: number; updatedAt?: string; error?: string }>;
+      workflowsReadWorkspaceFileBinary: (id: string, filePath: string) => Promise<{ ok: boolean; base64?: string; mime?: string; size?: number; error?: string }>;
       workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+      workflowsWriteWorkspaceFileBinary: (id: string, filePath: string, base64: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDeleteWorkspaceFile: (id: string, filePath: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsImportAsWorkspaceFunction: (hostId: string, sourceId: string, options?: { subdir?: string }) => Promise<{ ok: boolean; path?: string; name?: string; inputParams?: any[]; functionNode?: any; error?: string }>;

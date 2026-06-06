@@ -885,6 +885,12 @@ export class DeployExecutor extends EventEmitter {
     fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify(payload, null, 2));
     this.writeEnvFile(dir, envVars);
 
+    // Unpack the workspace bundle (imported sub-workflows, functions, scripts,
+    // config, binary assets) into the deploy dir so the engine can resolve
+    // call_workspace_function and $workspace.* file references at runtime. The
+    // deploy dir IS the workspace root on the VM (see $workspace.path).
+    this.unpackWorkspaceBundle(dir, payload?.__workspaceBundle);
+
     if (payload?.requirements) {
       const reqPath = path.join(dir, 'requirements.txt');
       fs.writeFileSync(reqPath, payload.requirements);
@@ -909,6 +915,50 @@ export class DeployExecutor extends EventEmitter {
     for (const sub of ['data', 'scripts', 'assets']) {
       fs.mkdirSync(path.join(dir, sub), { recursive: true });
     }
+  }
+
+  /**
+   * Write a `__workspaceBundle` (text files + base64 binaries) into the deploy
+   * dir, preserving folder structure. Mirrors the desktop renderer's
+   * unpackWorkspaceBundle so a workflow's imported sub-workflows / scripts /
+   * assets are on disk before the engine runs.
+   */
+  private unpackWorkspaceBundle(dir: string, bundle: any): void {
+    if (!bundle || typeof bundle !== 'object') return;
+    const root = path.resolve(dir);
+
+    const writeOne = (relPath: string, write: (target: string) => void) => {
+      const safe = String(relPath || '').replace(/\\/g, '/');
+      // Never escape the deploy dir or clobber the spec/compiled output.
+      if (!safe || safe.includes('..') || safe.startsWith('/')) return;
+      if (safe === 'main.stuard' || safe === 'workflow.json' || safe === 'compiled-spec.json') return;
+      const target = path.resolve(root, ...safe.split('/').filter(Boolean));
+      if (target !== root && !target.startsWith(root + path.sep)) return;
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        write(target);
+        if (safe.endsWith('.sh') || safe.endsWith('.py')) {
+          try { fs.chmodSync(target, 0o755); } catch { /* ignore */ }
+        }
+      } catch (e: any) {
+        this.appendLog(dir, `[deploy] Skipped bundled file ${safe}: ${e?.message || e}`);
+      }
+    };
+
+    const files = bundle.files && typeof bundle.files === 'object' ? bundle.files : {};
+    for (const [relPath, content] of Object.entries(files)) {
+      if (typeof content !== 'string') continue;
+      writeOne(relPath, (target) => fs.writeFileSync(target, content as string, 'utf-8'));
+    }
+
+    const binary = bundle.binary && typeof bundle.binary === 'object' ? bundle.binary : {};
+    for (const [relPath, base64] of Object.entries(binary)) {
+      if (typeof base64 !== 'string') continue;
+      writeOne(relPath, (target) => fs.writeFileSync(target, Buffer.from(base64 as string, 'base64')));
+    }
+
+    const count = Object.keys(files).length + Object.keys(binary).length;
+    if (count > 0) this.appendLog(dir, `[deploy] Unpacked ${count} workspace dependency file(s)`);
   }
 
   private async prepareProject(dir: string, payload: any, envVars: Record<string, string>): Promise<string> {
