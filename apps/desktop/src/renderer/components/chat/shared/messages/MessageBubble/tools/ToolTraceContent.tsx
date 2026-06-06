@@ -5,7 +5,9 @@ import { WriteFilePreview } from '../previews/WriteFilePreview';
 import { ReadFilePreview } from '../previews/ReadFilePreview';
 import { AnalyzeMediaPreview } from '../previews/AnalyzeMediaPreview';
 import { MediaResultPreview } from '../previews/MediaResultPreview';
-import { collectImageSources } from '../helpers/media';
+import { MediaAudioPreview } from '../previews/MediaAudioPreview';
+import { ScrapeResultPreview } from '../previews/ScrapeResultPreview';
+import { collectImageSources, collectAudioSources } from '../helpers/media';
 import {
   extractTerminalStatus,
   extractTerminalText,
@@ -27,6 +29,17 @@ const IMAGE_RESULT_TOOL_NAMES = new Set([
   'image_gen',
   'create_image',
   'edit_image',
+]);
+
+// Tools whose whole job is to return audio. For these we relax detection so a
+// data:/blob audio payload still gets a player; other tools are picked up by
+// audio file extension instead.
+const AUDIO_RESULT_TOOL_NAMES = new Set([
+  'text_to_speech',
+  'generate_speech',
+  'tts',
+  'generate_audio',
+  'generate_music',
 ]);
 
 export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) => {
@@ -100,6 +113,13 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
       return <AnalyzeMediaPreview args={args} result={tool.result} />;
     }
 
+    if (tool.tool === 'scrape_url') {
+      const results = Array.isArray((tool.result as any)?.results) ? (tool.result as any).results : null;
+      if (results && results.length > 0) {
+        return <ScrapeResultPreview results={results} />;
+      }
+    }
+
     if (TERMINAL_OUTPUT_TOOL_NAMES.has(tool.tool)) {
       const terminalText = extractTerminalText(tool.result, tool.liveOutput) ?? '';
       const status = extractTerminalStatus(tool.result);
@@ -122,6 +142,15 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
     });
     if (imageSrcs.length > 0) {
       return <MediaResultPreview srcs={imageSrcs} />;
+    }
+
+    // Any tool that produced audio (TTS, generated music, recorded clips, or
+    // just happens to return an audio path/URL) gets an inline player.
+    const audioSrcs = collectAudioSources(tool.result, {
+      assumeAudio: AUDIO_RESULT_TOOL_NAMES.has(tool.tool),
+    });
+    if (audioSrcs.length > 0) {
+      return <MediaAudioPreview srcs={audioSrcs} />;
     }
 
     return (

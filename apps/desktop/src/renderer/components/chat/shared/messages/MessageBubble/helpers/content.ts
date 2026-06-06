@@ -9,6 +9,10 @@ const AUDIO_EXTS = new Set(['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac', 'opus']);
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'm4v', 'webm']);
 
 function getAttachmentType(src: string): 'image' | 'video' | 'audio' | 'file' {
+  // data: URIs (e.g. TTS audio, generated images) carry their type inline and
+  // usually have no file extension — classify by the data: prefix first.
+  const dataUri = /^data:(image|audio|video)\//i.exec(src.trim());
+  if (dataUri) return dataUri[1].toLowerCase() as 'image' | 'audio' | 'video';
   const ext = (src.match(/\.([a-zA-Z0-9]+)(?:[?#].*)?$/)?.[1] || '').toLowerCase();
   if (AUDIO_EXTS.has(ext)) return 'audio';
   if (VIDEO_EXTS.has(ext)) return 'video';

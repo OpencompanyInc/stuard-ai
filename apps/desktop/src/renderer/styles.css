@@ -36,9 +36,16 @@
   --input-bg: #ffffff;
   --input-border: #cbd5e1;
 
-  --primary: #007acc;
-  /* VS Code Blue */
+  --primary: #ff383c;
+  /* Stuard brand red — single brand accent across every surface */
   --primary-foreground: #ffffff;
+
+  /* Delegated-agent accent — a single purposeful indigo reserved ONLY for
+     "subagent / delegation" meaning (queue steer rows, steer-target selector,
+     delegation traces). Never used for ordinary brand emphasis. */
+  --agent-accent: #6366f1;
+  /* indigo-500 */
+  --agent-accent-soft: rgba(99, 102, 241, 0.10);
 
   --accent: #f8fafc;
   /* slate-50 */
@@ -64,7 +71,7 @@
   --dashboard-hover: rgba(15, 23, 42, 0.045);
   --dashboard-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
   --dashboard-shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.05);
-  --dashboard-glow: rgba(37, 99, 235, 0.16);
+  --dashboard-glow: rgba(255, 56, 60, 0.14);
 }
 
 [data-theme='dark'] {
@@ -99,8 +106,14 @@
   --input-border: #3c3c3c;
   /* Inputs usually blend or have subtle border */
 
-  --primary: #007acc;
+  --primary: #ff4a4e;
+  /* Stuard brand red — brighter calibration for dark surfaces (matches Studio) */
   --primary-foreground: #ffffff;
+
+  /* Delegated-agent accent — indigo tuned for dark surfaces */
+  --agent-accent: #818cf8;
+  /* indigo-400 */
+  --agent-accent-soft: rgba(129, 140, 248, 0.14);
 
   --accent: #2d2d2d;
   --accent-foreground: #ffffff;
@@ -1829,6 +1842,181 @@ button.input-status-float:not(:disabled) {
   --input-border: var(--wf-input-border);
 }
 
+/* ========================================================================
+   Stuard Notification Overlay — calm, launcher-adjacent surfaces
+   ======================================================================== */
+
+.stuard-notification-shell.launcher-compact-skin {
+  font-family: 'General Sans', 'Figtree', 'Plus Jakarta Sans', 'Inter', sans-serif;
+}
+
+.stuard-notification-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.08),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+  /* `translate` (not `transform`) so the entrance composes cleanly with the
+     inline exit transform NotificationItem sets. */
+  animation: stuard-notification-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes stuard-notification-in {
+  from { opacity: 0; translate: 26px 0; }
+  to   { opacity: 1; translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stuard-notification-card { animation: none; }
+}
+
+[data-theme='light'] .stuard-notification-card {
+  background: color-mix(in srgb, var(--card-bg) 94%, #fff);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 6px 22px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+[data-theme='light'] .stuard-notification-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 12%, var(--border));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 10px 30px rgba(15, 23, 42, 0.12),
+    0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+[data-theme='dark'] .stuard-notification-card {
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+[data-theme='dark'] .stuard-notification-card:hover {
+  border-color: color-mix(in srgb, var(--foreground) 14%, var(--border));
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+}
+
+/* Brand eyebrow — quiet source label with a calm red signature dot */
+.stuard-notification-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0.1875rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--foreground-muted);
+}
+
+.stuard-notification-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.stuard-notification-icon {
+  background: var(--sidebar-item-hover);
+  color: var(--foreground-muted);
+}
+
+/* Agent-done / brand moment — red-tinted check tying it to Stuard */
+.stuard-notification-icon--brand {
+  background: color-mix(in srgb, var(--primary) 15%, var(--sidebar-item-hover));
+  color: color-mix(in srgb, var(--primary) 82%, var(--foreground));
+}
+
+.stuard-notification-icon--success {
+  background: color-mix(in srgb, #10b981 14%, var(--sidebar-item-hover));
+  color: color-mix(in srgb, #10b981 78%, var(--foreground));
+}
+
+.stuard-notification-icon--warning {
+  background: color-mix(in srgb, #f59e0b 14%, var(--sidebar-item-hover));
+  color: color-mix(in srgb, #f59e0b 82%, var(--foreground));
+}
+
+.stuard-notification-icon--error {
+  background: color-mix(in srgb, #ef4444 12%, var(--sidebar-item-hover));
+  color: color-mix(in srgb, #ef4444 78%, var(--foreground));
+}
+
+.stuard-notification-btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: background-color 150ms ease, transform 150ms ease, opacity 150ms ease;
+}
+
+.stuard-notification-btn:active {
+  transform: scale(0.98);
+}
+
+.stuard-notification-btn-primary {
+  background: color-mix(in srgb, var(--foreground) 92%, transparent);
+  color: var(--background);
+  border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.stuard-notification-btn-primary:hover {
+  background: var(--foreground);
+}
+
+.stuard-notification-btn-secondary {
+  background: transparent;
+  color: var(--foreground-muted);
+  border: 1px solid var(--border);
+}
+
+.stuard-notification-btn-secondary:hover {
+  background: var(--sidebar-item-hover);
+  color: var(--foreground);
+}
+
+.stuard-notification-input {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  border-radius: 0.5rem;
+}
+
+.stuard-notification-input::placeholder {
+  color: var(--foreground-muted);
+}
+
+.stuard-notification-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--foreground) 22%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.stuard-notification-progress {
+  background: color-mix(in srgb, var(--foreground-muted) 55%, transparent);
+}
+
+.stuard-notification-link {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--foreground-muted) 65%, transparent);
+}
+
+.notification-container.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.notification-container.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground-muted, #64748b) 35%, transparent);
+  border-radius: 999px;
+}
+
 /* Workflow theme utility classes */
 .wf-bg            { background-color: var(--wf-bg); }
 .wf-bg-elevated   { background-color: var(--wf-bg-elevated); }
@@ -2317,7 +2505,7 @@ body {
 /* GenUI Component Scrollbar - Sleek & Minimal */
 .genui-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--primary, #007acc) transparent;
+  scrollbar-color: var(--primary, #ff383c) transparent;
 }
 
 .genui-scrollbar::-webkit-scrollbar {
@@ -2330,7 +2518,7 @@ body {
 }
 
 .genui-scrollbar::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--primary, #007acc) 50%, transparent);
+  background: color-mix(in srgb, var(--primary, #ff383c) 50%, transparent);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
@@ -2339,12 +2527,12 @@ body {
 
 .genui-scrollbar:hover::-webkit-scrollbar-thumb {
   background: linear-gradient(135deg,
-      color-mix(in srgb, var(--primary, #007acc) 60%, transparent),
-      color-mix(in srgb, var(--primary, #007acc) 80%, transparent));
+      color-mix(in srgb, var(--primary, #ff383c) 60%, transparent),
+      color-mix(in srgb, var(--primary, #ff383c) 80%, transparent));
 }
 
 .genui-scrollbar::-webkit-scrollbar-thumb:active {
-  background: var(--primary, #007acc);
+  background: var(--primary, #ff383c);
 }
 
 /* GenUI Scrollbar - Dark variant */
@@ -2445,7 +2633,7 @@ body {
     90deg,
     var(--foreground) 0%,
     var(--foreground) 35%,
-    var(--primary, #007acc) 50%,
+    var(--primary, #ff383c) 50%,
     var(--foreground) 65%,
     var(--foreground) 100%
   );
@@ -2471,9 +2659,9 @@ body {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--primary, #007acc) 40%,
-    color-mix(in srgb, var(--primary, #007acc) 70%, white) 50%,
-    var(--primary, #007acc) 60%,
+    var(--primary, #ff383c) 40%,
+    color-mix(in srgb, var(--primary, #ff383c) 70%, white) 50%,
+    var(--primary, #ff383c) 60%,
     transparent 100%
   );
   animation: toolGlowBar 1.8s ease-in-out infinite;

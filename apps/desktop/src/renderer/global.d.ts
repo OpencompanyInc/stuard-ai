@@ -66,6 +66,7 @@ declare global {
       codexOpenLogin: () => Promise<{ ok: boolean; error?: string }>;
       codexRevealDir: () => Promise<{ ok: boolean }>;
       show: () => Promise<void>;
+      focusAgentTasks: () => Promise<{ ok: boolean }>;
       hide: () => Promise<void>;
       toggle: () => Promise<void>;
       startOverlayScreenSnip: (durationMs?: number) => Promise<{ ok: boolean; enabled: boolean; restoreDelay: number; error?: string }>;

@@ -11,6 +11,7 @@ import {
 import { humanizeToolName } from '../helpers/toolLabels';
 import { PreviewBadge } from './PreviewBadge';
 import { WebSearchSources } from './WebSearchSources';
+import { TraceMarkdown } from './TraceMarkdown';
 
 interface ToolPayloadPreviewProps {
   data: unknown;
@@ -50,15 +51,15 @@ export const ToolPayloadPreview: React.FC<ToolPayloadPreviewProps> = ({ data, em
     }
 
     return (
-      <div
-        className="rounded-lg px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+      <TraceMarkdown
+        className="break-words rounded-lg px-3 py-2 text-[11px] leading-relaxed"
         style={{
           backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
           color: 'color-mix(in srgb, var(--foreground) 75%, transparent)',
         }}
       >
-        {truncatePreviewText(filtered, 300)}
-      </div>
+        {truncatePreviewText(filtered, 600)}
+      </TraceMarkdown>
     );
   }
 
@@ -122,9 +123,9 @@ export const ToolPayloadPreview: React.FC<ToolPayloadPreviewProps> = ({ data, em
           <div className="mb-1 text-[10px] text-theme-muted">
             {humanizeToolName(entry.key)}
           </div>
-          <div className="whitespace-pre-wrap break-words">
-            {truncatePreviewText(entry.value, 240)}
-          </div>
+          <TraceMarkdown className="break-words">
+            {truncatePreviewText(entry.value, 480)}
+          </TraceMarkdown>
         </div>
       ))}
 

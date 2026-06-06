@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   codexOpenLogin: () => ipcRenderer.invoke('codex:openLogin'),
   codexRevealDir: () => ipcRenderer.invoke('codex:revealDir'),
   show: () => ipcRenderer.invoke("overlay:show"),
+  focusAgentTasks: () => ipcRenderer.invoke('overlay:focusAgentTasks'),
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
   startOverlayScreenSnip: (durationMs?: number) => ipcRenderer.invoke("overlay:startScreenSnip", durationMs),

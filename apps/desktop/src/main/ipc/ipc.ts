@@ -281,6 +281,14 @@ export function setupIpc() {
     .sort((a, b) => a.localeCompare(b));
   // Overlay
   ipcMain.handle("overlay:show", () => showWindow());
+  ipcMain.handle("overlay:focusAgentTasks", () => {
+    setOverlayMode('window');
+    showWindow();
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send('overlay:view-mode', { mode: 'tasks', subTab: 'agent' }); } catch { }
+    }
+    return { ok: true };
+  });
   ipcMain.handle("overlay:hide", () => hideWindow());
   ipcMain.handle("overlay:toggle", () => toggleWindow());
   ipcMain.handle("overlay:setMode", (_e, mode: "compact" | "sidebar" | "window") => setOverlayMode(mode));
@@ -770,6 +778,7 @@ export function setupIpc() {
         variant,
         position,
         duration,
+        className: payload?.className || 'stuard-notification',
       };
 
       // Open the overlay lazily (it's not created at startup anymore). If the

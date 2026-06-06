@@ -11,7 +11,7 @@ import {
   HomeIcon,
   PlusIcon
 } from "@radix-ui/react-icons";
-import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, Sparkles, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout } from 'lucide-react';
+import { Mic, MicOff, X, LogIn, Video, Calendar, Bell, ListTodo, PanelRight, Search, Globe, FolderSearch, MessageSquare, Zap, Chrome, Github, PlayCircle, Play, Command, Loader2, File as FileIconLucide, ExternalLink, Copy, Plus as PlusLucide, AppWindow, Folder, Image as ImageIconLucide, Film, Music, Code as CodeIcon, Archive, FileText, CloudDownload, Download, Paperclip, Box, FolderLock, Shield, Eye, Pencil, Trash2, CheckCircle, FolderOpen, AlertTriangle, CornerDownRight, AudioLines, Layout } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { VoiceMorphPill } from '../../../voice/VoiceMorphPill';
 import type { VoiceToolEvent } from '../../../../hooks/useVoiceMode';
@@ -2404,9 +2404,10 @@ const InputArea = forwardRef(function InputArea(
                 className={clsx(
                   "no-drag w-full outline-none text-[13px] leading-normal placeholder:truncate rounded-3xl px-5 py-2 resize-none scrollbar-hidden transition-colors overflow-hidden font-medium",
                   showFileNav
-                    ? "bg-primary/5 text-primary placeholder:text-primary/40"
+                    ? "text-primary placeholder:text-theme-muted/50"
                     : "bg-theme-hover/50 text-theme-fg border border-theme/50 placeholder:text-theme-muted focus:bg-theme-hover"
                 )}
+                style={showFileNav ? { background: 'color-mix(in srgb, var(--primary) 6%, transparent)' } : undefined}
                 maxRows={query.length > 0 ? 6 : 1}
                 minRows={1}
               />

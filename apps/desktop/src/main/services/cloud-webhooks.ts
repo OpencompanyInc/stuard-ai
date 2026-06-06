@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { handleCloudWebhookEvent } from '../workflows';
 import logger from '../utils/logger';
+import { notifyOrchestratorDone } from './agent-task-notifications';
 import {
     getMainAccessToken,
     getMainSupabaseClient,
@@ -1030,6 +1031,9 @@ async function connect() {
                         }
                     } catch { }
                 } else if (msg.vmMirror && (msg.type === 'progress' || msg.type === 'final' || msg.type === 'conversation' || msg.type === 'title' || msg.type === 'subagent_event')) {
+                    if (msg.type === 'final') {
+                        try { notifyOrchestratorDone(msg); } catch { }
+                    }
                     // VM stream mirror — relay real-time streaming events to renderer
                     try {
                         for (const win of BrowserWindow.getAllWindows()) {

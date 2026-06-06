@@ -15,7 +15,8 @@ export const NotificationController: React.FC<NotificationControllerProps> = ({ 
                 title: 'System Online',
                 message: 'Notification system is working perfectly (IPC).',
                 variant: 'success',
-                sound: true
+                sound: true,
+                className: 'stuard-notification',
             });
 
             // 2. Info (No progress bar support via simple IPC notify yet, sending generic)
@@ -23,7 +24,8 @@ export const NotificationController: React.FC<NotificationControllerProps> = ({ 
                 (window as any).desktopAPI?.notify({
                     title: 'Processing Data',
                     message: 'Analyzing local files...',
-                    variant: 'info'
+                    variant: 'info',
+                    className: 'stuard-notification',
                 });
             }, 1000);
 
@@ -33,6 +35,7 @@ export const NotificationController: React.FC<NotificationControllerProps> = ({ 
                     title: 'Screenshot Saved',
                     message: 'Saved to capture.png',
                     variant: 'info',
+                    className: 'stuard-notification',
                     image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=200&auto=format&fit=crop',
                 });
             }, 3500);
@@ -47,7 +50,8 @@ export const NotificationController: React.FC<NotificationControllerProps> = ({ 
                     title: d.title || 'Notification',
                     message: d.body,
                     variant: (d.variant as any) || 'info',
-                    sound: true
+                    sound: true,
+                    className: 'stuard-notification',
                 });
             }
             else if (evt.event === 'reminder_triggered') {
@@ -56,7 +60,8 @@ export const NotificationController: React.FC<NotificationControllerProps> = ({ 
                     message: d.message,
                     variant: 'neutral',
                     sound: true,
-                    duration: 0 // Keep persistent
+                    duration: 0,
+                    className: 'stuard-notification',
                 });
             }
         });

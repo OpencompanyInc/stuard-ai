@@ -14,7 +14,7 @@ import {
   Check,
   ChevronRight,
   Star,
-  Sparkles,
+  MessageCircle,
   Keyboard,
 } from 'lucide-react';
 
@@ -40,7 +40,7 @@ const QUICK_PRESETS = [
   { name: 'Google', type: 'url' as const, target: 'https://google.com', icon: Globe },
   { name: 'YouTube', type: 'url' as const, target: 'https://youtube.com', icon: Globe },
   { name: 'GitHub', type: 'url' as const, target: 'https://github.com', icon: Globe },
-  { name: 'ChatGPT', type: 'url' as const, target: 'https://chat.openai.com', icon: Sparkles },
+  { name: 'ChatGPT', type: 'url' as const, target: 'https://chat.openai.com', icon: MessageCircle },
 ];
 
 export const getTypeConfig = (type: string) => {

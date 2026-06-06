@@ -1,7 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
-import { Mic, MicOff, X, Loader2, Sparkles } from 'lucide-react';
+import { Mic, MicOff, X, Loader2, Workflow } from 'lucide-react';
 import { VoiceOrb } from './VoiceOrb';
 import type { VoiceModeState, TranscriptLine, VoiceToolEvent } from '../../hooks/useVoiceMode';
 import { describeTool, friendlyVoiceState, voiceStateHaloShadow } from './voiceLabels';
@@ -237,7 +237,7 @@ export function VoiceMorphPill({
                   className="voice-mode-tool-chip"
                 >
                   {t.name === 'delegate' ? (
-                    <Sparkles size={10} className="text-violet-500/80" />
+                    <Workflow size={10} style={{ color: 'var(--agent-accent)' }} />
                   ) : (
                     <Loader2 size={10} className="animate-spin text-pill-muted" />
                   )}

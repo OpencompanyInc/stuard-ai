@@ -77,6 +77,8 @@ export interface NotificationConfig {
     progress?: number;
     /** Custom CSS class */
     className?: string;
+    /** Orchestrator finished — injects an Open Chat action in the notification overlay */
+    orchestratorDone?: boolean;
 }
 
 export interface NotificationState extends Required<Pick<NotificationConfig, 'id' | 'title' | 'variant' | 'position' | 'dismissible'>> {
@@ -93,6 +95,7 @@ export interface NotificationState extends Required<Pick<NotificationConfig, 'id
     onDismiss?: () => void;
     progress?: number;
     className?: string;
+    orchestratorDone?: boolean;
     createdAt: number;
     duration: number;
 }

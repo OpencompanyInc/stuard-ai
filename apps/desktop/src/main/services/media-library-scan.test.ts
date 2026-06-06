@@ -51,6 +51,24 @@ describe('media-library capture scan', () => {
       source: 'audio-recordings',
       classification: 'Audio capture',
     });
+
+    expect(inferCaptureSourceFromPath(
+      path.join(root, 'recordings', 'audiovideo_rec_123.mp4'),
+      root,
+    )).toEqual({
+      source: 'video-recordings',
+      classification: 'Video capture',
+    });
+  });
+
+  it('maps misfiled webcam videos in audio-recordings to video sources', () => {
+    expect(inferCaptureSourceFromPath(
+      path.join(root, 'audio-recordings', '2026-06', 'audiovideo_rec_123.mp4'),
+      root,
+    )).toEqual({
+      source: 'video-recordings',
+      classification: 'Video capture',
+    });
   });
 
   it('recognizes library-managed source folders', () => {

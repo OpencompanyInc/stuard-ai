@@ -29,7 +29,13 @@ export const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) =>
       fileViewer.openFile({ path: filePath, source: 'vm', name: fileName });
       return;
     }
-    try { (window as any).desktopAPI?.openPath?.(filePath); } catch {}
+    // The preload exposes the OS open as `mediaOpenPath` (media:openPath →
+    // shell.openPath); there is no `openPath`. Fall back to openExternal.
+    const api = (window as any).desktopAPI;
+    try {
+      if (api?.mediaOpenPath) { api.mediaOpenPath(filePath); return; }
+      api?.openExternal?.(filePath);
+    } catch {}
   };
 
   const revealInFolder = (e: React.MouseEvent) => {
@@ -37,32 +43,43 @@ export const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) =>
     try { (window as any).desktopAPI?.showItemInFolder?.(filePath); } catch {}
   };
 
+  // `border-theme/10` is a dead class (no rule) so the bare `border` would render
+  // Tailwind's default light-gray = a white outline in dark mode. Use a real
+  // foreground-derived border colour instead.
+  const subtleBorder = 'color-mix(in srgb, var(--foreground) 12%, transparent)';
+
   return (
-    <div className="my-0.5 flex items-center gap-2 rounded-lg border border-theme/10 bg-transparent px-2.5 py-1.5">
-      <span className="shrink-0 rounded-full border border-theme/10 px-1.5 py-0.5 text-[9px] font-medium text-theme-muted">
+    <div
+      className="my-0.5 flex items-center gap-2 rounded-lg border bg-transparent px-2.5 py-1.5"
+      style={{ borderColor: subtleBorder }}
+    >
+      <span
+        className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium text-theme-muted"
+        style={{ borderColor: subtleBorder }}
+      >
         {kindLabel}
       </span>
-      <span className="max-w-[200px] truncate text-[10px] font-medium text-theme-fg/85" title={filePath}>
+      <span className="max-w-[200px] truncate text-[10px] font-medium text-theme-fg" title={filePath}>
         {fileName}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         <button
           onClick={openFile}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Open file"
         >
           <ExternalLink className="h-3 w-3" />
         </button>
         <button
           onClick={revealInFolder}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Show in folder"
         >
           <Folder className="h-3 w-3" />
         </button>
         <button
           onClick={copyPath}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/20 hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Copy path"
         >
           {copied

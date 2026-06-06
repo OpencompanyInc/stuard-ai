@@ -203,9 +203,24 @@ export function inferCaptureSourceFromPath(
   if (!topSegment) return null;
 
   const mapped = AGENT_CAPTURE_DIR_MAP[topSegment];
-  if (mapped) return mapped;
+  if (mapped) {
+    // Legacy recordings/ and misfiled audio-recordings/ folders may contain video files.
+    if (topSegment === 'recordings' || topSegment === 'audio-recordings') {
+      const kind = inferKind(resolvedFile);
+      if (kind === 'video') {
+        return { source: 'video-recordings', classification: 'Video capture' };
+      }
+    }
+    return mapped;
+  }
 
   if (LIBRARY_SOURCE_DIRS.has(topSegment)) {
+    if (topSegment === 'audio-recordings') {
+      const kind = inferKind(resolvedFile);
+      if (kind === 'video') {
+        return { source: 'video-recordings', classification: 'Video capture' };
+      }
+    }
     return { source: topSegment };
   }
 
@@ -769,8 +784,31 @@ export function updateMediaLibraryPrefs(updates: Partial<MediaLibraryPrefs>) {
   return nextPrefs;
 }
 
+function repairMisclassifiedVideoCaptures(store: MediaLibraryStore) {
+  let changed = false;
+  for (let index = 0; index < store.items.length; index += 1) {
+    const item = store.items[index];
+    if (item.kind !== 'video') continue;
+    const misclassified = item.classification === 'Audio capture' || item.source === 'audio-recordings';
+    if (!misclassified) continue;
+    store.items[index] = mergeItem(item, {
+      source: 'video-recordings',
+      classification: 'Video capture',
+      tags: Array.from(new Set([
+        ...item.tags.filter((tag) => tag !== 'audio-capture' && tag !== 'audio-recordings'),
+        'video-capture',
+        'video-recordings',
+        'video',
+      ])),
+    });
+    changed = true;
+  }
+  if (changed) saveStore(store);
+}
+
 export function listMediaLibraryItems() {
   const store = loadStore();
+  repairMisclassifiedVideoCaptures(store);
   return store.items.filter((item) => {
     if (!isMediaLibraryItemVisibleInDashboard(item)) return false;
     if (item.localPath && !fileExists(item.localPath) && item.syncStatus !== 'cloud-only') {
@@ -1186,25 +1224,28 @@ export async function captureToolMedia(toolName: string, args: any, result: any)
   }
 
   if ((toolName === 'capture_media' || toolName === 'stop_capture') && result.filePath) {
-    const requestedKind = String(args?.kind || result?.kind || result?.mimeType || '').toLowerCase();
-    const kind = inferKind(String(result.filePath), String(result.mimeType || ''));
-    const source = kind === 'image'
+    const requestedKind = String(args?.kind || result?.kind || '').toLowerCase();
+    const fileKind = inferKind(String(result.filePath), String(result.mimeType || ''));
+    const isPhoto = fileKind === 'image' || requestedKind === 'photo';
+    const isVideo = fileKind === 'video' || requestedKind === 'video' || requestedKind === 'audiovideo';
+    const isAudio = fileKind === 'audio' || (!isVideo && requestedKind === 'audio');
+    const source = isPhoto
       ? 'photos'
-      : kind === 'audio'
+      : isAudio
         ? 'audio-recordings'
         : 'video-recordings';
-    const classification = kind === 'image'
+    const classification = isPhoto
       ? 'Photo capture'
-      : kind === 'audio'
+      : isAudio
         ? 'Audio capture'
-        : kind === 'video'
+        : isVideo
           ? 'Video capture'
           : undefined;
     fileTargets.push({
       field: 'filePath',
       source,
       classification,
-      tags: ['capture', kind],
+      tags: ['capture', isPhoto ? 'image' : isAudio ? 'audio' : isVideo ? 'video' : fileKind],
       metadata: {
         requestedKind,
         mode: args?.mode || result?.mode || null,

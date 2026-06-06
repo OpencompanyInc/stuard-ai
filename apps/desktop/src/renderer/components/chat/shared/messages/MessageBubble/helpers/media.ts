@@ -1,4 +1,4 @@
-import { IMAGE_EXTS, getFileExt, isFilePath } from './filePaths';
+import { IMAGE_EXTS, AUDIO_EXTS, getFileExt, isFilePath } from './filePaths';
 
 /** A data:image URI, or an http(s) URL whose path ends in an image extension. */
 export function isImageUrl(v: string): boolean {
@@ -11,6 +11,19 @@ export function isImageUrl(v: string): boolean {
 /** A local file path that points at an image. */
 export function isImagePath(v: string): boolean {
   return isFilePath(v) && IMAGE_EXTS.has(getFileExt(v));
+}
+
+/** A data:audio URI, or an http(s) URL whose path ends in an audio extension. */
+export function isAudioUrl(v: string): boolean {
+  const s = v.trim();
+  if (/^data:audio\//i.test(s)) return true;
+  if (/^https?:\/\//i.test(s)) return AUDIO_EXTS.has(getFileExt(s.split(/[?#]/)[0]));
+  return false;
+}
+
+/** A local file path that points at an audio file. */
+export function isAudioPath(v: string): boolean {
+  return isFilePath(v) && AUDIO_EXTS.has(getFileExt(v));
 }
 
 /**
@@ -33,6 +46,46 @@ export function collectImageSources(
     // For known image-producing tools, also accept a bare http(s) URL (no ext)
     // or any data: URI — the tool's whole job is to return that image.
     if (assumeImage && /^(https?:\/\/|data:)/i.test(s.trim())) return true;
+    return false;
+  };
+
+  const walk = (obj: any) => {
+    if (out.length >= max) return;
+    if (typeof obj === 'string') {
+      const s = obj.trim();
+      if (s && accept(s) && !seen.has(s)) {
+        seen.add(s);
+        out.push(s);
+      }
+      return;
+    }
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    for (const val of Object.values(obj)) walk(val);
+  };
+
+  walk(value);
+  return out.slice(0, max);
+}
+
+/**
+ * Deep-walk a tool result and collect anything renderable as an inline audio
+ * player: local audio file paths, data:audio URIs, and audio URLs. When the
+ * producing tool is known to emit audio (text_to_speech, …) we relax detection
+ * (`assumeAudio`) so a data:/http audio payload without a clear extension still
+ * gets a player. Dedupes and caps the count.
+ */
+export function collectAudioSources(
+  value: any,
+  opts: { assumeAudio?: boolean; max?: number } = {},
+): string[] {
+  const { assumeAudio = false, max = 4 } = opts;
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const accept = (s: string): boolean => {
+    if (isAudioPath(s) || isAudioUrl(s)) return true;
+    if (assumeAudio && /^data:audio\//i.test(s.trim())) return true;
     return false;
   };
 

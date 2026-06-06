@@ -91,6 +91,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
             onDismiss: config.onDismiss,
             progress: config.progress,
             className: config.className,
+            orchestratorDone: config.orchestratorDone,
             createdAt: Date.now(),
             duration,
         };

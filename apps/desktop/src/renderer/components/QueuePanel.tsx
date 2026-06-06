@@ -1,6 +1,6 @@
 import type React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Circle, CornerDownRight, ListTodo, Paperclip, Sparkles, X } from "lucide-react";
+import { Circle, CornerDownRight, ListTodo, Paperclip, Workflow, X } from "lucide-react";
 
 interface QueuedMessage {
   id: string;
@@ -42,12 +42,12 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
       <div className="rounded-t-[24px] rounded-b-md bg-theme-hover/35 border-b border-theme/10 px-2.5 pt-2 pb-1.5">
         <div className="flex items-center justify-between gap-3 px-1 pb-1">
           <div className="flex items-center gap-1.5 min-w-0">
-            <ListTodo className="w-3.5 h-3.5 text-primary shrink-0" />
+            <ListTodo className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--primary)" }} />
             <span className="text-[10px] font-black uppercase tracking-widest text-theme-muted">
               In queue
             </span>
           </div>
-          <span className="text-[10px] font-black uppercase tracking-widest text-primary/80 shrink-0">
+          <span className="text-[10px] font-black uppercase tracking-widest shrink-0" style={{ color: "var(--primary)" }}>
             {total}
             {overflowCount > 0 ? ` (+${overflowCount} more)` : ""}
           </span>
@@ -61,6 +61,9 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
               const subagentLabel = msg.subagentTarget
                 ? `${humanizeSubagentKind(msg.subagentTarget.kind)} agent`
                 : null;
+              // Delegated-agent steer carries the indigo agent accent; orchestrator
+              // steer + plain messages stay on the brand red / neutral language.
+              const accent = subagentLabel ? "var(--agent-accent)" : "var(--primary)";
               const attachmentCount = (Array.isArray(msg.attachments) ? msg.attachments.length : 0)
                 + (Array.isArray(msg.contextPaths) ? msg.contextPaths.length : 0);
 
@@ -76,13 +79,23 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                   <div className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                     {isSteer ? (
                       subagentLabel ? (
-                        <Sparkles className={isFirst ? "w-3.5 h-3.5 text-violet-500" : "w-3.5 h-3.5 text-violet-500/60"} strokeWidth={2.4} />
+                        <Workflow
+                          className="w-3.5 h-3.5"
+                          strokeWidth={2.2}
+                          style={{ color: isFirst ? accent : "var(--foreground-muted)", opacity: isFirst ? 1 : 0.7 }}
+                        />
                       ) : (
-                        <CornerDownRight className={isFirst ? "w-3.5 h-3.5 text-primary" : "w-3.5 h-3.5 text-theme-muted/70"} />
+                        <CornerDownRight
+                          className={isFirst ? "w-3.5 h-3.5" : "w-3.5 h-3.5 text-theme-muted/70"}
+                          style={isFirst ? { color: "var(--primary)" } : undefined}
+                        />
                       )
                     ) : (
                       <>
-                        <Circle className={isFirst ? "w-3.5 h-3.5 text-primary" : "w-3.5 h-3.5 text-theme-muted/70"} />
+                        <Circle
+                          className={isFirst ? "w-3.5 h-3.5" : "w-3.5 h-3.5 text-theme-muted/70"}
+                          style={isFirst ? { color: "var(--primary)" } : undefined}
+                        />
                         <span className="absolute text-[9px] font-black text-theme-fg/80">{index + 1}</span>
                       </>
                     )}
@@ -96,10 +109,20 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                         {msg.text || "Empty message"}
                       </p>
                       {subagentLabel && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300 text-[9px] font-black uppercase tracking-widest shrink-0 border border-violet-500/15">
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest shrink-0 border"
+                          style={{
+                            background: "var(--agent-accent-soft)",
+                            color: "var(--agent-accent)",
+                            borderColor: "color-mix(in srgb, var(--agent-accent) 22%, transparent)",
+                          }}
+                        >
                           <span className="relative flex h-1.5 w-1.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-500 opacity-60" />
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500" />
+                            <span
+                              className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60"
+                              style={{ background: "var(--agent-accent)" }}
+                            />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: "var(--agent-accent)" }} />
                           </span>
                           {subagentLabel}
                         </span>
@@ -111,16 +134,12 @@ export default function QueuePanel({ messages, queueDepth, onCancelMessage }: Qu
                         </span>
                       )}
                     </div>
-                    {(isSteer || isFirst) && (
-                      <div className={isFirst
-                        ? subagentLabel
-                          ? "text-[9px] font-black uppercase tracking-widest text-violet-600/90 dark:text-violet-400/90"
-                          : "text-[9px] font-black uppercase tracking-widest text-primary/80"
-                        : "text-[9px] font-bold uppercase tracking-widest text-theme-muted/70"}>
+                    {isFirst && (
+                      <div className="text-[10px] font-medium text-theme-muted">
                         {isSteer
                           ? subagentLabel
-                            ? `Nudges ${subagentLabel} at next step`
-                            : "Applies next step"
+                            ? `Steers the ${subagentLabel} next`
+                            : "Steers the next step"
                           : "Up next"}
                       </div>
                     )}

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { NotificationProvider, useNotification, NotificationConfig } from './components/NotificationSystem';
+import { useNotificationTheme } from './components/NotificationSystem/useNotificationTheme';
 import { normalizeAskUserPrompt } from '@stuardai/chat-ui/askUserPromptUtils';
 
 type InteractiveNotificationConfig = NotificationConfig & {
@@ -10,6 +11,20 @@ type InteractiveNotificationConfig = NotificationConfig & {
         options?: any[];
     };
 };
+
+function buildOrchestratorDoneActions() {
+    return [
+        {
+            label: 'Open Chat',
+            variant: 'primary' as const,
+            onClick: () => {
+                try {
+                    (window as any).desktopAPI?.show?.();
+                } catch { /* no-op */ }
+            },
+        },
+    ];
+}
 
 // Component to handle IPC events and show notifications
 const NotificationListener = () => {
@@ -72,9 +87,21 @@ const NotificationListener = () => {
                 return;
             }
 
+            if (config.orchestratorDone) {
+                show({
+                    ...config,
+                    className: config.className || 'stuard-notification',
+                    actions: config.actions?.length ? config.actions : buildOrchestratorDoneActions(),
+                });
+                return;
+            }
+
             const responseId = typeof config.responseId === 'string' ? config.responseId : '';
             if (!responseId) {
-                show(config);
+                show({
+                    ...config,
+                    className: config.className || 'stuard-notification',
+                });
                 return;
             }
 
@@ -157,13 +184,14 @@ const NotificationListener = () => {
 
             show({
                 id: CHECKIN_ID,
-                title: isFollowUp ? '✦ Stuard' : '✦ Stuard Check-in',
+                title: isFollowUp ? 'Stuard' : 'Check-in',
                 message: agentMessage,
                 structuredContent,
                 variant: 'info',
                 position: 'top-right',
                 duration: 0,
                 dismissible: true,
+                className: 'stuard-notification',
                 sound: !isFollowUp,
                 input: {
                     placeholder: 'Reply to Stuard...',
@@ -199,10 +227,12 @@ const NotificationListener = () => {
 };
 
 export const NotificationApp = () => {
+    useNotificationTheme();
+
     return (
         <NotificationProvider defaultPosition="top-right" maxNotifications={6}>
             <NotificationOverlayHandler />
-            <div className="w-screen h-screen overflow-hidden pointer-events-none">
+            <div className="w-screen h-screen overflow-hidden pointer-events-none stuard-notification-shell launcher-compact-skin">
                 <NotificationListener />
             </div>
         </NotificationProvider>

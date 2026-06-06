@@ -737,6 +737,15 @@ function classifyContentTarget(value: string): ContentSegment | null {
     return { type: 'youtube', embedUrl: youtubeEmbed };
   }
 
+  // data: URIs carry their media type inline — TTS / image tools often return
+  // these with NO file extension, which would otherwise fall through and leak
+  // the raw "<<…>>" marker as visible text (e.g. audio replies showing "<<").
+  const dataUri = /^data:(image|audio|video)\//i.exec(trimmed);
+  if (dataUri) {
+    const kind = dataUri[1].toLowerCase();
+    return { type: kind as 'image' | 'audio' | 'video', src: trimmed };
+  }
+
   const ext = getFileExt(trimmed);
   if (IMAGE_EXTS.has(ext)) return { type: 'image', src: trimmed };
   if (AUDIO_EXTS.has(ext)) return { type: 'audio', src: trimmed };

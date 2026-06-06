@@ -4,6 +4,7 @@ import { isFilePath } from '../helpers/filePaths';
 import { collectImageSources } from '../helpers/media';
 import { truncatePreviewText } from '../helpers/payload';
 import { MediaResultPreview } from './MediaResultPreview';
+import { TraceMarkdown } from '../tools/TraceMarkdown';
 
 interface AnalyzeMediaPreviewProps {
   args: Record<string, any>;
@@ -46,15 +47,15 @@ export const AnalyzeMediaPreview: React.FC<AnalyzeMediaPreviewProps> = ({ args, 
         </div>
       ) : null}
       {summary ? (
-        <div
-          className="rounded-lg px-3 py-2 text-[11.5px] leading-relaxed whitespace-pre-wrap break-words"
+        <TraceMarkdown
+          className="break-words rounded-lg px-3 py-2 text-[11.5px] leading-relaxed"
           style={{
             backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
             color: 'color-mix(in srgb, var(--foreground) 80%, transparent)',
           }}
         >
           {summary}
-        </div>
+        </TraceMarkdown>
       ) : (
         <div className="text-[11px] text-theme-muted">No summary returned.</div>
       )}

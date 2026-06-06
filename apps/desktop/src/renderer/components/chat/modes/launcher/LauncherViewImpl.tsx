@@ -23,7 +23,8 @@ import {
   Loader2,
   Image as ImageIcon,
   AppWindow,
-  Sparkles,
+  Bot,
+  Workflow,
   Zap,
   MessageCircle,
   MessageSquare,
@@ -32,6 +33,7 @@ import {
   ListTodo,
   CheckCircle,
   CornerDownLeft,
+  LayoutDashboard,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { VoiceOrb, type VoiceState } from "../../../voice/VoiceOrb";
@@ -162,6 +164,7 @@ import { NextUpIcon, getNextUpBgColor, getNextUpTextColor } from './NextUp';
 import { LauncherGreeting } from './LauncherGreeting';
 import { normalizeLauncherSearchText, shouldRunLauncherSemanticSearch } from './search';
 import { quickActions } from './quickActions';
+import { filterCompactStuardNav } from '../../../../utils/compactStuardNav';
 
 export const LauncherView: React.FC<LauncherViewProps> = ({
   query,
@@ -295,6 +298,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         )
         .slice(0, 8),
     [commands, normalizedDeferredQuery],
+  );
+
+  const stuardCommands = useMemo(
+    () => filterCompactStuardNav(normalizedDeferredQuery, 10),
+    [normalizedDeferredQuery],
   );
 
   const nextUp = plannerData?.nextUp;
@@ -822,7 +830,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const hasQuery = String(query || "").trim().length >= 2;
   const showResults =
     hasQuery &&
-    (filteredCommands.length > 0 ||
+    (stuardCommands.length > 0 ||
+      filteredCommands.length > 0 ||
       fileResults.length > 0 ||
       appResults.length > 0);
 
@@ -1074,7 +1083,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       onClick={onSend}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[14px] hover:bg-theme-active transition-colors group border border-theme bg-theme-card text-left"
                     >
-                      <div className="w-7 h-7 rounded-[10px] bg-primary/15 flex items-center justify-center shrink-0">
+                      <div
+                        className="w-7 h-7 rounded-[10px] flex items-center justify-center shrink-0"
+                        style={{ background: "color-mix(in srgb, var(--primary) 14%, transparent)" }}
+                      >
                         <MessageSquare className="w-3.5 h-3.5 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
@@ -1090,10 +1102,68 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       </span>
                     </button>
 
+                    {stuardCommands.length > 0 && (
+                      <div className="rounded-2xl p-4 bg-theme-bg/30 border border-theme/20 shadow-sm">
+                        <div className="flex items-center gap-2 mb-3">
+                          <LayoutDashboard className="w-4 h-4 text-theme-muted" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
+                            Stuard
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {stuardCommands.map((c, idx) => {
+                            const Icon = c.icon;
+                            const prevGroup =
+                              idx > 0 ? stuardCommands[idx - 1]?.group : undefined;
+                            const showGroupLabel =
+                              c.group && c.group !== prevGroup;
+                            return (
+                              <React.Fragment key={c.id}>
+                                {showGroupLabel && (
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted px-2 pt-1">
+                                    {c.group === "dashboard" ? "Dashboard" : "Studio"}
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    c.run();
+                                    setQuery("");
+                                  }}
+                                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
+                                >
+                                  <div
+                                    className="flex items-center justify-center shrink-0"
+                                    style={{
+                                      width: 36,
+                                      height: 36,
+                                      borderRadius: 10,
+                                      background: `${c.tile}22`,
+                                      color: c.tile,
+                                    }}
+                                  >
+                                    <Icon className="w-4 h-4" strokeWidth={1.75} />
+                                  </div>
+                                  <div className="flex-1 min-w-0 flex flex-col gap-1">
+                                    <div className="text-[13px] font-semibold text-theme-fg truncate">
+                                      <HighlightMatch text={c.title} query={query} />
+                                    </div>
+                                    <div className="text-[11px] text-theme-muted truncate">
+                                      {c.subtitle}
+                                    </div>
+                                  </div>
+                                </button>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {appResults.length > 0 && (
                       <div className="launcher-apps-panel bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
                         <div className="flex items-center gap-2 mb-3">
-                          <AppWindow className="w-4 h-4 text-blue-500" />
+                          <AppWindow className="w-4 h-4 text-theme-muted" />
                           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
                             Applications
                           </span>
@@ -1125,7 +1195,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                                     borderRadius: 4,
                                     background: iconUrl
                                       ? "rgba(64, 64, 64, 0.5)"
-                                      : "#3B82F6",
+                                      : "#6b7280",
                                   }}
                                 >
                                   {iconUrl ? (
@@ -1157,7 +1227,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     {fileResults.length > 0 && (
                       <div className="rounded-2xl p-4">
                         <div className="flex items-center gap-2 mb-3">
-                          <FolderSearch className="w-4 h-4 text-emerald-500" />
+                          <FolderSearch className="w-4 h-4 text-theme-muted" />
                           <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
                             Files
                           </span>
@@ -1331,9 +1401,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       translucentMode
                         ? "bg-theme-bg/80 backdrop-blur-xl"
                         : "bg-theme-input",
-                      isDragOver && "ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent",
+                      isDragOver && "ring-2 ring-offset-1 ring-offset-transparent",
                     ),
               )}
+              style={!isCompact && isDragOver ? { ['--tw-ring-color' as any]: 'color-mix(in srgb, var(--primary) 50%, transparent)' } : undefined}
               onDragOver={(e) => {
                 e.preventDefault();
                 try { e.dataTransfer.dropEffect = "copy"; } catch { }
@@ -1343,7 +1414,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               onDrop={onDrop ? handleDropWrapped : undefined}
             >
               {!isCompact && isDragOver && (
-                <div className="absolute inset-0 z-50 rounded-[16px] bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none">
+                <div
+                  className="absolute inset-0 z-50 rounded-[16px] border-2 border-dashed flex items-center justify-center pointer-events-none"
+                  style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)', borderColor: 'color-mix(in srgb, var(--primary) 45%, transparent)' }}
+                >
                   <div className="flex items-center gap-2 text-primary font-semibold text-sm">
                     <Upload className="w-5 h-5" />
                     <span>Drop files, images, or links here</span>
@@ -1491,7 +1565,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                               className="inline-flex items-center gap-1.5 rounded-full border border-theme/15 bg-theme-hover/60 backdrop-blur-md px-2.5 py-1 shadow-sm"
                             >
                               {t.name === "delegate" ? (
-                                <Sparkles size={10} className="text-violet-500/80" />
+                                <Workflow size={10} style={{ color: 'var(--agent-accent)' }} />
                               ) : (
                                 <Loader2 size={10} className="animate-spin text-theme-muted" />
                               )}
@@ -1524,7 +1598,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                     <div className="flex flex-wrap gap-1 px-1">
                       {contextPaths.map((ctx, idx) => {
                         const Icon = ctx.type === "bot"
-                          ? Sparkles
+                          ? Bot
                           : ctx.isDirectory
                             ? Folder
                             : FileIcon;

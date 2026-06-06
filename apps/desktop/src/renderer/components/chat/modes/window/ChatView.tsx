@@ -7,7 +7,7 @@
   useRef,
 } from "react";
 import { clsx } from "clsx";
-import { Sparkles } from "lucide-react";
+import { Brain } from "lucide-react";
 import MessageList from "../../shared/messages/MessageList";
 import { ContextItem } from "../../../FileNavigator";
 import type {
@@ -606,7 +606,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <Brain className="w-3.5 h-3.5 text-amber-500" />
                         <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
                           Pending memory
                         </span>
@@ -794,7 +794,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   <div className="px-4 py-2 border-b border-theme/10 bg-amber-500/10">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <Brain className="w-3.5 h-3.5 text-amber-500" />
                         <span className="text-[11px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-300">
                           Pending memory
                         </span>

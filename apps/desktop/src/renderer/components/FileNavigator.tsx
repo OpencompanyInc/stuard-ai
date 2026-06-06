@@ -14,9 +14,13 @@ import {
   Loader2,
   Search,
   Box,
-  Sparkles
+  Bot
 } from "lucide-react";
 import { clsx } from "clsx";
+
+/** Brand-red tint helper — opacity modifiers on --primary are dead no-ops, so
+ *  mix the channel explicitly (same idiom Studio uses for --wf-accent). */
+const brandSoft = (pct: number) => `color-mix(in srgb, var(--primary) ${pct}%, transparent)`;
 
 export interface ContextItem {
   path: string;
@@ -305,7 +309,10 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
             {queryText || (crumbs.length === 0 ? "Search files, folders, bots…" : "Filter…")}
           </span>
           {queryText && (
-            <span className="inline-block w-[2px] h-4 bg-primary/70 rounded-full animate-pulse shrink-0" />
+            <span
+              className="inline-block w-[2px] h-4 rounded-full animate-pulse shrink-0"
+              style={{ background: brandSoft(70) }}
+            />
           )}
         </div>
       </div>
@@ -347,90 +354,99 @@ export const FileNavigator = forwardRef<FileNavRef, FileNavProps>(({ onSelect, o
         <div className="flex flex-col gap-0.5">
           {sortedItems.map((item, i) => {
             const isSelected = i === selectedIndex;
+            const groupOf = (it: any) => (it?.type === 'bot' ? 'bot' : it?.isDirectory ? 'dir' : 'file');
+            const group = groupOf(item);
+            const showHeader = i === 0 || group !== groupOf(sortedItems[i - 1]);
+            const headerLabel = group === 'bot' ? 'Agents' : group === 'dir' ? 'Folders' : 'Files';
             return (
-              <div
-                key={`${item.path}-${i}`}
-                id={`filenav-item-${i}`}
-                className={clsx(
-                  'group flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border border-transparent',
-                  isSelected
-                    ? (compact ? 'bg-[var(--compact-pill-hover)] border-pill-fg/10' : 'bg-theme-active border-theme shadow-sm')
-                    : (compact ? 'hover:bg-pill-fg/10 hover:border-pill-fg/10' : 'hover:bg-theme-hover hover:border-theme/50'),
-                )}
-                onClick={(e) => handleEntryClick(item, e)}
-                onMouseEnter={() => setSelectedIndex(i)}
-              >
-                {/* Icon */}
-                <div className={clsx(
-                  'w-6 h-6 flex items-center justify-center shrink-0 rounded-md transition-colors',
-                  item.type === 'bot'
-                    ? (isSelected ? 'bg-amber-500 text-white shadow-amber-500/20 shadow-lg' : 'bg-amber-500/10 text-amber-500')
-                    : item.isDirectory
-                      ? (isSelected
-                        ? (compact ? 'bg-pill-fg text-pill-bg' : 'bg-theme-fg text-theme-bg')
-                        : (compact ? 'bg-pill-fg/10 text-pill-muted' : 'bg-theme-hover text-theme-muted'))
-                      : (isSelected
-                        ? (compact ? 'bg-pill-fg/15 text-pill-fg' : 'bg-theme-active text-theme-fg')
-                        : (compact ? 'bg-pill-fg/10 text-pill-muted' : 'bg-theme-hover text-theme-muted')),
-                )}>
-                  {item.type === 'bot'
-                    ? <Sparkles className="w-3.5 h-3.5" />
-                    : item.isDirectory
-                      ? <Folder className="w-3.5 h-3.5" />
-                      : <File className="w-3.5 h-3.5" />}
-                </div>
-
-                {/* Name */}
-                <div className="flex-1 min-w-0 flex flex-col justify-center">
-                  <span className={clsx(
-                    'text-[13px] truncate transition-colors',
-                    isSelected
-                      ? (compact ? 'text-pill-fg font-semibold' : 'text-theme-fg font-semibold')
-                      : item.isDirectory
-                        ? (compact ? 'text-pill-fg font-medium' : 'text-theme-fg font-medium')
-                        : (compact ? 'text-pill-muted' : 'text-theme-muted'),
+              <React.Fragment key={`${item.path}-${i}`}>
+                {/* Group header — neutral, calm list grouping */}
+                {showHeader && (
+                  <div className={clsx(
+                    'px-2 pb-1 text-[10px] font-bold uppercase tracking-widest select-none',
+                    i > 0 ? 'pt-2.5 mt-1' : 'pt-1',
+                    compact ? 'text-pill-muted/70' : 'text-theme-muted/70',
                   )}>
-                    {item.name}
-                  </span>
-                  {item.type === 'bot' && (
-                    <span className={clsx(
-                      'text-[10px] truncate transition-colors',
-                      isSelected ? 'text-amber-200' : (compact ? 'text-pill-muted' : 'text-theme-muted'),
-                    )}>
-                      Bot - {item.metadata?.status || "paused"}{item.metadata?.vmDeployedAt ? " - VM" : ""}
-                    </span>
+                    {headerLabel}
+                  </div>
+                )}
+                <div
+                  id={`filenav-item-${i}`}
+                  className={clsx(
+                    'group flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-all cursor-pointer border',
+                    isSelected
+                      ? 'shadow-sm'
+                      : clsx('border-transparent', compact ? 'hover:bg-pill-fg/10' : 'hover:bg-theme-hover'),
                   )}
-                </div>
-
-                {/* Actions */}
-                <div className={clsx('flex items-center gap-1 transition-opacity', isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')}>
-                  {/* Add button */}
-                  <button
-                    onClick={(e) => handleAddContext(item, e)}
+                  style={isSelected ? { borderColor: 'var(--primary)', background: brandSoft(compact ? 14 : 9) } : undefined}
+                  onClick={(e) => handleEntryClick(item, e)}
+                  onMouseEnter={() => setSelectedIndex(i)}
+                >
+                  {/* Icon */}
+                  <div
                     className={clsx(
-                      'p-1.5 rounded-md transition-colors',
-                      isSelected
-                        ? (compact ? 'bg-pill-fg/15 text-pill-fg hover:bg-pill-fg/20' : 'bg-theme-bg/20 text-theme-fg hover:bg-theme-bg/30')
-                        : (compact ? 'hover:bg-pill-fg/10 text-pill-muted hover:text-pill-fg' : 'hover:bg-theme-hover text-theme-muted hover:text-theme-fg'),
+                      'w-6 h-6 flex items-center justify-center shrink-0 rounded-md transition-colors',
+                      !isSelected && (compact ? 'bg-pill-fg/10 text-pill-muted' : 'bg-theme-hover text-theme-muted'),
                     )}
-                    title={item.isDirectory ? "Add folder as context" : item.type === 'bot' ? "Mention bot" : "Add to context"}
+                    style={isSelected ? { background: 'var(--primary)', color: '#fff' } : undefined}
                   >
-                    <PlusCircledIcon className="w-4 h-4" />
-                  </button>
+                    {item.type === 'bot'
+                      ? <Bot className="w-3.5 h-3.5" />
+                      : item.isDirectory
+                        ? <Folder className="w-3.5 h-3.5" />
+                        : <File className="w-3.5 h-3.5" />}
+                  </div>
 
-                  {/* Navigate Hint */}
-                  {item.isDirectory && (
-                    <div className={clsx(
-                      'px-1.5 py-0.5 rounded text-[10px] font-mono',
+                  {/* Name */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-center">
+                    <span className={clsx(
+                      'text-[13px] truncate transition-colors',
                       isSelected
-                        ? (compact ? 'text-pill-muted' : 'text-theme-muted')
-                        : (compact ? 'text-pill-muted/70' : 'text-theme-muted/70'),
+                        ? (compact ? 'text-pill-fg font-semibold' : 'text-theme-fg font-semibold')
+                        : item.isDirectory || item.type === 'bot'
+                          ? (compact ? 'text-pill-fg font-medium' : 'text-theme-fg font-medium')
+                          : (compact ? 'text-pill-muted' : 'text-theme-muted'),
                     )}>
-                      ↵
-                    </div>
-                  )}
+                      {item.name}
+                    </span>
+                    {item.type === 'bot' && (
+                      <span className={clsx(
+                        'text-[10px] truncate',
+                        compact ? 'text-pill-muted' : 'text-theme-muted',
+                      )}>
+                        Agent · {item.metadata?.status || "paused"}{item.metadata?.vmDeployedAt ? " · VM" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className={clsx('flex items-center gap-1 transition-opacity', isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')}>
+                    {/* Add button */}
+                    <button
+                      onClick={(e) => handleAddContext(item, e)}
+                      className={clsx(
+                        'p-1.5 rounded-md transition-colors',
+                        compact
+                          ? 'hover:bg-pill-fg/15 text-pill-muted hover:text-pill-fg'
+                          : 'hover:bg-theme-hover text-theme-muted hover:text-theme-fg',
+                      )}
+                      title={item.isDirectory ? "Add folder as context" : item.type === 'bot' ? "Mention agent" : "Add to context"}
+                    >
+                      <PlusCircledIcon className="w-4 h-4" />
+                    </button>
+
+                    {/* Navigate Hint */}
+                    {item.isDirectory && (
+                      <div className={clsx(
+                        'px-1.5 py-0.5 rounded text-[10px] font-mono',
+                        compact ? 'text-pill-muted/70' : 'text-theme-muted/70',
+                      )}>
+                        ↵
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </React.Fragment>
             );
           })}
         </div>

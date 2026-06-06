@@ -24,7 +24,7 @@ export const InlineVideo: React.FC<{ src: string }> = memo(({ src }) => {
         console.error(`[InlineVideo] Failed(${code ?? 'unknown'}): "${src}" → "${videoSrc}"`);
         setError(`${src}`);
       }}
-      className="block my-2 max-w-full max-h-[300px] rounded-xl border border-theme/10 shadow-lg bg-black"
+      className="block my-2 max-w-full max-h-[300px] rounded-xl shadow-lg bg-black"
     />
   );
 });

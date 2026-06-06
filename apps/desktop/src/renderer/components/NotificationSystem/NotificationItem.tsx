@@ -7,7 +7,6 @@ import rehypeKatex from 'rehype-katex';
 import { GenUIContainer, GenUIErrorBoundary } from '../genui';
 import {
     X,
-    Info,
     CheckCircle,
     AlertTriangle,
     AlertOctagon,
@@ -147,14 +146,15 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         }
     }, [isHovered, notification.duration]);
 
-    // Variant config — solid backgrounds, colored accents
+    const isStuardNotification = notification.className?.includes('stuard-notification');
+
     const variantConfig = {
         info: {
-            icon: Info,
-            accentColor: '#3b82f6',
-            iconBg: 'bg-blue-500/10',
-            iconText: 'text-blue-600 dark:text-blue-400',
-            progressBg: 'bg-blue-500',
+            icon: Bell,
+            accentColor: 'var(--border)',
+            iconBg: 'bg-theme-hover',
+            iconText: 'text-theme-muted',
+            progressBg: 'bg-theme-muted/40',
             label: 'Information',
         },
         success: {
@@ -162,7 +162,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             accentColor: '#10b981',
             iconBg: 'bg-emerald-500/10',
             iconText: 'text-emerald-600 dark:text-emerald-400',
-            progressBg: 'bg-emerald-500',
+            progressBg: 'bg-emerald-500/50',
             label: 'Success',
         },
         warning: {
@@ -170,7 +170,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             accentColor: '#f59e0b',
             iconBg: 'bg-amber-500/10',
             iconText: 'text-amber-600 dark:text-amber-400',
-            progressBg: 'bg-amber-500',
+            progressBg: 'bg-amber-500/50',
             label: 'Warning',
         },
         error: {
@@ -178,24 +178,47 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             accentColor: '#ef4444',
             iconBg: 'bg-red-500/10',
             iconText: 'text-red-600 dark:text-red-400',
-            progressBg: 'bg-red-500',
+            progressBg: 'bg-red-500/50',
             label: 'Error',
         },
         neutral: {
             icon: Bell,
-            accentColor: '#6b7280',
+            accentColor: 'var(--border)',
             iconBg: 'bg-theme-hover',
             iconText: 'text-theme-muted',
-            progressBg: 'bg-gray-400',
+            progressBg: 'bg-theme-muted/40',
             label: 'Notification',
         },
     };
 
-    const config = variantConfig[notification.variant];
-    const Icon = config.icon;
+    const stuardIconClass = notification.orchestratorDone || notification.variant === 'success'
+        ? 'stuard-notification-icon stuard-notification-icon--success'
+        : notification.variant === 'warning'
+            ? 'stuard-notification-icon stuard-notification-icon--warning'
+            : notification.variant === 'error'
+                ? 'stuard-notification-icon stuard-notification-icon--error'
+                : 'stuard-notification-icon';
 
-    // Button variant styles
+    const config = variantConfig[notification.variant];
+    const Icon = (isStuardNotification && (notification.orchestratorDone || notification.variant === 'success'))
+        ? CheckCircle
+        : config.icon;
+
     const getButtonStyles = (variant: NotificationAction['variant'] = 'secondary') => {
+        if (isStuardNotification) {
+            return {
+                className: clsx(
+                    'stuard-notification-btn',
+                    variant === 'primary'
+                        ? 'stuard-notification-btn-primary'
+                        : variant === 'danger'
+                            ? 'bg-red-500 text-white hover:bg-red-600'
+                            : 'stuard-notification-btn-secondary',
+                ),
+                style: undefined,
+            };
+        }
+
         const base = 'px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-[0.97]';
         switch (variant) {
             case 'primary':
@@ -212,18 +235,16 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
             style={{
-                borderLeftColor: config.accentColor,
+                ...(isStuardNotification ? {} : { borderLeftColor: config.accentColor }),
                 transform: isExiting ? 'translateX(110%)' : 'translateX(0)',
                 opacity: isExiting ? 0 : 1,
                 transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease',
             }}
             className={clsx(
-                'relative w-full min-w-[340px] max-w-[400px]',
-                'bg-theme-card rounded-lg',
-                'border border-theme border-l-[4px]',
-                'shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
-                'pointer-events-auto',
-                'overflow-hidden',
+                'relative w-full min-w-[340px] max-w-[400px] pointer-events-auto overflow-hidden',
+                isStuardNotification
+                    ? 'stuard-notification-card'
+                    : 'bg-theme-card rounded-lg border border-theme border-l-[4px] shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
                 notification.className
             )}
         >
@@ -232,8 +253,11 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                 <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-theme-hover">
                     <div
                         ref={progressRef}
-                        className={clsx('h-full w-full rounded-full', config.progressBg)}
-                        style={{ opacity: 0.7 }}
+                        className={clsx(
+                            'h-full w-full rounded-full',
+                            isStuardNotification ? 'stuard-notification-progress' : config.progressBg,
+                        )}
+                        style={{ opacity: isStuardNotification ? 1 : 0.7 }}
                     />
                 </div>
             )}
@@ -256,18 +280,20 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                     ) : (
                         <div
                             className={clsx(
-                                'shrink-0 w-9 h-9 rounded-lg flex items-center justify-center',
-                                config.iconBg,
-                                config.iconText
+                                'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center',
+                                isStuardNotification ? stuardIconClass : clsx(config.iconBg, config.iconText),
                             )}
                         >
-                            {notification.icon || <Icon className="w-[18px] h-[18px]" strokeWidth={2} />}
+                            {notification.icon || <Icon className="w-4 h-4" strokeWidth={2} />}
                         </div>
                     )}
 
                     {/* Text content */}
                     <div className="flex-1 min-w-0 max-h-[68vh] overflow-y-auto custom-scrollbar pr-1">
-                        <h4 className="font-semibold text-[13px] text-theme-fg leading-tight truncate">
+                        <h4 className={clsx(
+                            'font-medium text-[13px] text-theme-fg leading-tight truncate',
+                            isStuardNotification && 'font-stuard tracking-tight'
+                        )}>
                             {notification.title}
                         </h4>
                         {notification.message && (
@@ -319,7 +345,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                                     {...props}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-blue-600 hover:underline underline-offset-2"
+                                                    className={isStuardNotification ? 'stuard-notification-link' : 'text-blue-600 hover:underline underline-offset-2'}
                                                 />
                                             ),
                                             img: ({ node, src, ...props }) => (
@@ -350,7 +376,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                 {shouldShowExpand && (
                                     <button
                                         onClick={() => setExpandedMessage(v => !v)}
-                                        className="mt-1 text-[11px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                                        className="mt-1 text-[11px] font-medium text-theme-muted hover:text-theme-fg transition-colors"
                                     >
                                         {expandedMessage ? 'Show less' : 'Show more'}
                                     </button>
@@ -394,21 +420,23 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         onKeyDown={handleKeyDown}
                                         placeholder={notification.input.placeholder || 'Type here...'}
                                         className={clsx(
-                                            'flex-1 px-2.5 py-1.5 text-xs rounded-md',
-                                            'bg-theme-input border border-theme/30',
-                                            'text-theme-fg placeholder:text-theme-muted',
-                                            'focus:outline-none focus:ring-2 focus:ring-offset-0',
-                                            'transition-all'
+                                            'flex-1 px-2.5 py-1.5 text-xs rounded-md transition-all',
+                                            isStuardNotification
+                                                ? 'stuard-notification-input'
+                                                : 'bg-theme-input border border-theme/30 text-theme-fg placeholder:text-theme-muted focus:outline-none focus:ring-2 focus:ring-offset-0',
                                         )}
-                                        style={{ '--tw-ring-color': config.accentColor + '40' } as React.CSSProperties}
+                                        style={isStuardNotification ? undefined : ({ '--tw-ring-color': config.accentColor + '40' } as React.CSSProperties)}
                                     />
                                     <button
                                         onClick={handleInputSubmit}
                                         className={clsx(
-                                            'rounded-md text-white hover:opacity-90 active:scale-95 transition-all',
-                                            submitText ? 'px-2.5 py-1.5 text-[11px] font-semibold leading-none min-w-[52px]' : 'p-1.5'
+                                            isStuardNotification
+                                                ? 'stuard-notification-btn stuard-notification-btn-primary'
+                                                : 'rounded-md text-white hover:opacity-90 active:scale-95 transition-all',
+                                            !isStuardNotification && (submitText ? 'px-2.5 py-1.5 text-[11px] font-semibold leading-none min-w-[52px]' : 'p-1.5'),
+                                            isStuardNotification && (submitText ? 'min-w-[52px]' : 'p-1.5'),
                                         )}
-                                        style={{ backgroundColor: config.accentColor }}
+                                        style={isStuardNotification ? undefined : { backgroundColor: config.accentColor }}
                                     >
                                         {submitText ? submitText : <Send className="w-3.5 h-3.5" />}
                                     </button>
@@ -416,7 +444,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                 {(notification.input.cancelText) && (
                                     <button
                                         onClick={handleInputCancel}
-                                        className="mt-1.5 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                                        className="mt-1.5 text-[11px] text-theme-muted hover:text-theme-fg transition-colors"
                                     >
                                         {notification.input.cancelText || 'Cancel'}
                                     </button>
@@ -455,8 +483,8 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                             onClick={handleDismiss}
                             className={clsx(
                                 'shrink-0 p-1 rounded-md',
-                                'text-gray-400 hover:text-gray-600',
-                                'hover:bg-gray-100 active:bg-gray-200',
+                                'text-theme-muted hover:text-theme-fg',
+                                'hover:bg-theme-hover active:bg-theme-active',
                                 'transition-all duration-150'
                             )}
                         >

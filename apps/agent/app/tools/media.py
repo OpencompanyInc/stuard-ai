@@ -23,7 +23,7 @@ _sessions_lock = threading.Lock()
 def _capture_dir_for_kind(kind: str) -> str:
     if kind == "audio":
         return library_source_dir("audio-recordings")
-    if kind == "video":
+    if kind in ("video", "audiovideo"):
         return library_source_dir("video-recordings")
     if kind == "photo":
         return library_source_dir("photos")
@@ -486,7 +486,7 @@ async def _capture_via_bus(
     if mode == "until_stop":
         if not file_path:
             ext = "wav" if kind == "audio" else "mp4"
-            cat = "recordings" if kind in ("audio", "audiovideo") else "videos"
+            cat = "recordings" if kind == "audio" else "videos"
             file_path = os.path.join(library_source_dir_for_category(cat), f"{kind}_{session_id}_{int(time.time()*1000)}.{ext}")
             with _sessions_lock:
                 rec = _active_recordings.get(session_id)

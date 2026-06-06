@@ -33,6 +33,11 @@ import {
   type MediaKind,
   type MediaLibraryItem,
 } from '../hooks/useMediaLibrary';
+import { GenerativeCover } from './media/GenerativeCover';
+
+/** Brand-red tint helper — opacity modifiers on the manual --primary class are
+ *  dead no-ops, so mix the channel explicitly (see styles.css / project memory). */
+const brandSoft = (pct: number) => `color-mix(in srgb, var(--primary) ${pct}%, transparent)`;
 
 /* ────────────────────────── Category System ────────────────────────── */
 
@@ -245,18 +250,22 @@ function MediaLightbox({
             <video key={item.id} src={src} controls autoPlay playsInline className="max-h-[calc(100vh-180px)] max-w-full rounded-2xl bg-black object-contain shadow-2xl" />
           )}
           {item.kind === 'audio' && src && (
-            <div className="w-full max-w-xl rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 p-8 backdrop-blur-sm">
-              <div className="mb-4 flex justify-center">
-                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/20 text-primary">
-                  <Music className="h-10 w-10" />
-                </div>
-              </div>
+            <div className="flex w-full max-w-md flex-col items-center gap-6 rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 p-8 backdrop-blur-sm">
+              <GenerativeCover
+                seed={item.id || item.name}
+                kind="audio"
+                className="aspect-square w-full max-w-[260px] rounded-2xl shadow-2xl ring-1 ring-white/10"
+              />
               <InlineAudioPlayer src={src} name={item.name} />
             </div>
           )}
           {(item.kind === 'document' || item.kind === 'unknown' || !src) && (
-            <div className="flex max-w-md flex-col items-center gap-4 rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 px-10 py-12 text-center backdrop-blur-sm">
-              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-white/5 text-white/80">{kindIcon(item.kind, 'h-10 w-10')}</div>
+            <div className="flex max-w-md flex-col items-center gap-5 rounded-3xl border border-[color:var(--dashboard-panel-border)] bg-white/5 px-10 py-12 text-center backdrop-blur-sm">
+              <GenerativeCover
+                seed={item.id || item.name}
+                kind={item.kind}
+                className="h-24 w-24 rounded-2xl shadow-xl ring-1 ring-white/10"
+              />
               <p className="text-lg font-semibold text-white">{item.name}</p>
               <p className="text-sm text-white/50">Open with native app to view this file.</p>
             </div>
@@ -292,7 +301,7 @@ function MediaCard({ item, viewMode, onClick }: { item: MediaLibraryItem; viewMo
     return (
       <button type="button" onClick={onClick} className="dashboard-card flex items-center gap-4 p-3 text-left transition hover:bg-theme-hover/40">
         <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-black/30">
-          {item.kind === 'image' && src ? <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" /> : item.kind === 'video' && src ? <video src={src} muted preload="metadata" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-theme-muted">{kindIcon(item.kind, 'h-5 w-5')}</div>}
+          {item.kind === 'image' && src ? <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" /> : item.kind === 'video' && src ? <video src={src} muted preload="metadata" className="h-full w-full object-cover" /> : <GenerativeCover seed={item.id || item.name} kind={item.kind} className="h-full w-full" glyph={false} />}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-theme-fg">{item.name}</p>
@@ -316,11 +325,11 @@ function MediaCard({ item, viewMode, onClick }: { item: MediaLibraryItem; viewMo
           </div>
         ) : null}
         {!hasVisualPreview ? (
-          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-theme-hover/80 to-theme-hover/30">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[color:var(--dashboard-panel-border)] bg-black/20 text-theme-muted">
-              {kindIcon(item.kind, 'h-7 w-7')}
-            </div>
-          </div>
+          <GenerativeCover
+            seed={item.id || item.name}
+            kind={item.kind}
+            className="h-full w-full transition duration-300 group-hover:scale-[1.03]"
+          />
         ) : null}
         <div className="absolute left-2 top-2">
           <span className="rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">{item.classification}</span>
@@ -438,7 +447,7 @@ export function MediaLibraryView() {
   }, [deleteItem, lightboxItem, showToast]);
 
   if (loading) {
-    return <div className="flex h-[48vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
+    return <div className="flex h-[48vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" style={{ color: 'var(--primary)' }} /></div>;
   }
 
   return (
@@ -457,12 +466,21 @@ export function MediaLibraryView() {
                 onClick={() => setActiveCategory(cat.id)}
                 className={clsx(
                   'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition',
-                  active ? 'bg-primary/10 text-primary font-medium' : 'text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg',
+                  active ? 'font-medium' : 'text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg',
                 )}
+                style={active ? { background: brandSoft(12), color: 'var(--primary)' } : undefined}
               >
-                <Icon className={clsx('h-4 w-4 shrink-0', active ? 'text-primary' : cat.color)} />
+                <Icon
+                  className={clsx('h-4 w-4 shrink-0', !active && 'text-theme-muted')}
+                  style={active ? { color: 'var(--primary)' } : undefined}
+                />
                 <span className="flex-1 truncate">{cat.label}</span>
-                <span className={clsx('text-[11px] tabular-nums', active ? 'text-primary/70' : 'text-theme-muted/60')}>{count}</span>
+                <span
+                  className={clsx('text-[11px] tabular-nums', !active && 'text-theme-muted/60')}
+                  style={active ? { color: brandSoft(70) } : undefined}
+                >
+                  {count}
+                </span>
               </button>
             );
           })}
@@ -484,23 +502,23 @@ export function MediaLibraryView() {
           <div className="flex items-center gap-2">
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-theme-muted" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" className="w-48 rounded-xl border border-theme/10 bg-theme-hover/50 py-2 pl-9 pr-3 text-sm text-theme-fg placeholder:text-theme-muted/60 focus:border-primary/40 focus:outline-none" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" className="w-48 rounded-xl border border-theme bg-theme-hover/50 py-2 pl-9 pr-3 text-sm text-theme-fg placeholder:text-theme-muted/60 focus:outline-none focus:ring-2" style={{ ['--tw-ring-color' as any]: brandSoft(35) }} />
             </label>
-            <div className="flex rounded-lg border border-theme/10 bg-theme-hover/30">
-              <button onClick={() => setViewMode('grid')} className={clsx('rounded-l-lg p-2 transition', viewMode === 'grid' ? 'bg-primary/10 text-primary' : 'text-theme-muted hover:text-theme-fg')}><Grid3X3 className="h-4 w-4" /></button>
-              <button onClick={() => setViewMode('list')} className={clsx('rounded-r-lg p-2 transition', viewMode === 'list' ? 'bg-primary/10 text-primary' : 'text-theme-muted hover:text-theme-fg')}><LayoutList className="h-4 w-4" /></button>
+            <div className="flex rounded-lg border border-theme bg-theme-hover/30">
+              <button onClick={() => setViewMode('grid')} className={clsx('rounded-l-lg p-2 transition', viewMode !== 'grid' && 'text-theme-muted hover:text-theme-fg')} style={viewMode === 'grid' ? { background: brandSoft(12), color: 'var(--primary)' } : undefined}><Grid3X3 className="h-4 w-4" /></button>
+              <button onClick={() => setViewMode('list')} className={clsx('rounded-r-lg p-2 transition', viewMode !== 'list' && 'text-theme-muted hover:text-theme-fg')} style={viewMode === 'list' ? { background: brandSoft(12), color: 'var(--primary)' } : undefined}><LayoutList className="h-4 w-4" /></button>
             </div>
             <button onClick={() => void refresh()} className="rounded-xl bg-theme-hover/50 p-2 text-theme-muted hover:text-theme-fg transition"><RefreshCw className="h-4 w-4" /></button>
-            <button onClick={() => void importMedia()} disabled={importing} className="flex items-center gap-1.5 rounded-xl bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 transition disabled:opacity-50">
+            <button onClick={() => void importMedia()} disabled={importing} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-fg hover:opacity-90 transition disabled:opacity-50">
               {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Import
             </button>
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-xl border border-theme/10 bg-theme-hover/25 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-xl bg-theme-hover/25 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
           <button type="button" onClick={() => void openMediaFolder()} className="flex min-w-0 flex-col gap-0.5 text-left text-xs text-theme-muted hover:text-theme-fg">
             <span className="flex items-center gap-2">
-              <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+              <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--primary)' }} />
               <span className="truncate">{prefs.resolvedStorageRootPath || 'Media folder not set'}</span>
             </span>
             <span className="pl-6 text-[10px] text-theme-muted/70">Screen and camera captures are saved under this folder.</span>
@@ -523,7 +541,7 @@ export function MediaLibraryView() {
             const Icon = cat.icon;
             const active = activeCategory === cat.id;
             return (
-              <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={clsx('flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition', active ? 'bg-primary/10 text-primary' : 'bg-theme-hover/30 text-theme-muted hover:text-theme-fg')}>
+              <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={clsx('flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition', !active && 'bg-theme-hover/30 text-theme-muted hover:text-theme-fg')} style={active ? { background: brandSoft(12), color: 'var(--primary)' } : undefined}>
                 <Icon className="h-3.5 w-3.5" />{cat.label}
                 <span className="opacity-50">{categoryCounts[cat.id] || 0}</span>
               </button>
@@ -534,7 +552,7 @@ export function MediaLibraryView() {
         {/* Gallery */}
         {filtered.length === 0 ? (
           <div className="dashboard-card flex flex-col items-center justify-center p-16 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl" style={{ background: brandSoft(12), color: 'var(--primary)' }}>
               <FolderOpen className="h-8 w-8" />
             </div>
             <h3 className="mt-4 text-lg font-semibold text-theme-fg">No media here yet</h3>

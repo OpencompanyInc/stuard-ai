@@ -709,6 +709,40 @@ export function useAgent(options?: string | UseAgentOptions) {
     });
   }, []);
   const deferredDelegatedFinalsRef = useRef<Map<string, DeferredDelegatedFinal>>(new Map());
+  const orchestratorNotifiedRef = useRef<Set<string>>(new Set());
+
+  const maybeNotifyOrchestratorDone = useCallback((
+    completedTabId: string,
+    completedRequestId: string | undefined,
+    previewText: string,
+  ) => {
+    const key = completedRequestId || completedTabId;
+    if (orchestratorNotifiedRef.current.has(key)) return;
+    orchestratorNotifiedRef.current.add(key);
+    if (orchestratorNotifiedRef.current.size > 100) {
+      orchestratorNotifiedRef.current.clear();
+      orchestratorNotifiedRef.current.add(key);
+    }
+
+    const trimmed = String(previewText || '').trim();
+    const message = trimmed
+      ? (trimmed.length > 240 ? `${trimmed.slice(0, 237)}…` : trimmed)
+      : 'Your task is complete.';
+
+    try {
+      (window as any).desktopAPI?.notify?.({
+        id: `orchestrator-done-${key}`,
+        title: 'Task complete',
+        message,
+        variant: 'info',
+        position: 'top-right',
+        duration: 10_000,
+        sound: true,
+        className: 'stuard-notification',
+        orchestratorDone: true,
+      });
+    } catch { /* notification overlay may be unavailable */ }
+  }, []);
 
   // Last model selection used by sendMessage per tab, so fallback resends
   // (e.g. unhandled steers reposted after a turn ends) inherit the same model
@@ -1394,7 +1428,12 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
   }, [syncQueuedMessages]);
 
-  const finishCompletedTurn = (completedTabId: string, completedRequestId: string | undefined, isAborted: boolean) => {
+  const finishCompletedTurn = (
+    completedTabId: string,
+    completedRequestId: string | undefined,
+    isAborted: boolean,
+    previewText?: string,
+  ) => {
     if (completedRequestId) {
       requestIdToTabRef.current.delete(completedRequestId);
       if (activeRequestIdRef.current === completedRequestId) {
@@ -1448,6 +1487,10 @@ export function useAgent(options?: string | UseAgentOptions) {
       }
     } else {
       tryDequeueAndSend();
+    }
+
+    if (!isAborted) {
+      maybeNotifyOrchestratorDone(completedTabId, completedRequestId, previewText || '');
     }
   };
 
@@ -1503,7 +1546,10 @@ export function useAgent(options?: string | UseAgentOptions) {
     }));
 
     refreshPendingMemories();
-    finishCompletedTurn(tabId, completedRequestId, deferred.isAborted);
+    const previewText = deferred.isAborted
+      ? ''
+      : String(currentTab.currentResponse || deferred.finalText || '').trim();
+    finishCompletedTurn(tabId, completedRequestId, deferred.isAborted, previewText);
     setTabLastError(tabId, null);
     return true;
   };
@@ -2803,7 +2849,16 @@ export function useAgent(options?: string | UseAgentOptions) {
             refreshPendingMemories();
 
             // Clean up request tracking and mark tab as no longer running
-            finishCompletedTurn(completedTabId, completedRequestId, isAborted);
+            const previewTab = tabsRef.current.find(t => t.id === completedTabId);
+            const hadPartialForPreview = turnHadPartialCommitRef.current.get(completedTabId) === true;
+            const orchestratorPreview = isAborted
+              ? ''
+              : String(
+                (hadPartialForPreview && previewTab?.currentResponse)
+                  ? previewTab.currentResponse
+                  : finalText
+              ).trim();
+            finishCompletedTurn(completedTabId, completedRequestId, isAborted, orchestratorPreview);
             setTabLastError(completedTabId, null);
           } else if (msg.type === 'stopped') {
             console.log('[agent] Stream stopped by server:', msg.success);

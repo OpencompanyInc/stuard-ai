@@ -1,6 +1,6 @@
 import { clsx } from 'clsx';
 import { useEffect, useState } from 'react';
-import { Loader2, LogIn, Sparkles } from 'lucide-react';
+import { Loader2, LogIn, Download } from 'lucide-react';
 import CommandPalette from '../CommandPalette';
 import HotkeysHelp from '../HotkeysHelp';
 import { PermissionDialog } from '../PermissionDialog';
@@ -566,8 +566,11 @@ export function AppShell(props: any) {
             <div className="bg-theme-card border border-theme rounded-2xl shadow-2xl px-8 py-7 max-w-sm mx-4 text-center animate-in zoom-in-95 duration-200">
               <div className="flex items-center justify-center mb-4">
                 <div className="relative">
-                  <Sparkles className="w-10 h-10 text-primary" />
-                  <Loader2 className="w-14 h-14 text-primary/40 animate-spin absolute -top-2 -left-2" />
+                  <Download className="w-10 h-10 text-primary" />
+                  <Loader2
+                    className="w-14 h-14 animate-spin absolute -top-2 -left-2"
+                    style={{ color: 'color-mix(in srgb, var(--primary) 40%, transparent)' }}
+                  />
                 </div>
               </div>
               <div className="text-base font-bold text-theme-fg tracking-tight font-stuard mb-1.5">Updating Stuard AI</div>

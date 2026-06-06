@@ -335,7 +335,7 @@ export const generate_image = createTool({
       // Register images in the desktop media library via bridge (best-effort, silent)
       try {
         const { execLocalTool } = await import('./bridge');
-        await execLocalTool('_media_register', {
+        const reg: any = await execLocalTool('_media_register', {
           images: images.map((img) => ({
             _b64: img._b64,
             format: img.format,
@@ -346,6 +346,16 @@ export const generate_image = createTool({
           tags: ['generated', 'ai'],
           metadata: { model: resolvedModel, provider: vendorFromModelId(resolvedModel), prompt },
         }, undefined, 30000, { silent: true });
+
+        // When a desktop/VM bridge handled the registration it re-saved each image
+        // to a real on-device path. Surface those local paths back as filePath so
+        // the chat trace renders the file that actually exists on the client,
+        // instead of cloud-ai's own /root/... path which the client can't read.
+        const regItems = Array.isArray(reg?.items) ? reg.items : [];
+        for (let i = 0; i < images.length; i++) {
+          const localPath = String(regItems[i]?.localPath || '').trim();
+          if (regItems[i]?.ok && localPath) images[i].filePath = localPath;
+        }
       } catch (regErr: any) {
         console.log(`[image-gen] Media register (best-effort): ${regErr?.message || regErr}`);
       }

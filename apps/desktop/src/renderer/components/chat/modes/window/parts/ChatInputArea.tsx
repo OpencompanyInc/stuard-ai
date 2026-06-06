@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, Folder, Sparkles, AtSign, Loader2 } from 'lucide-react';
+import { Image, File, X, Plus, Mic, MicOff, Square, Upload, Phone, PhoneOff, ArrowUp, CornerDownRight, Folder, Bot, Workflow, AtSign, Loader2, ListPlus } from 'lucide-react';
 import QueuePanel from '../../../../QueuePanel';
 import { ModelSelector } from '../../../../ModelSelector';
 import { ContextItem, FileNavRef } from '../../../../FileNavigator';
@@ -17,6 +17,11 @@ import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../..
 import { CreditsLimitNotice } from '../../../shared/CreditsLimitNotice';
 import { ToolRunningIndicator } from '../../../shared/input/ToolRunningIndicator';
 import { hasInFlightToolCalls, type ToolCallLike } from '../../../../../utils/toolBrand';
+
+// Brand / agent tint helpers — opacity modifiers on the manual --primary class
+// are dead no-ops, so mix the channel explicitly.
+const brandSoft = (pct: number) => `color-mix(in srgb, var(--primary) ${pct}%, transparent)`;
+const agentSoft = (pct: number) => `color-mix(in srgb, var(--agent-accent) ${pct}%, transparent)`;
 
 // ── Realtime Voice Conversation Test Helpers ──
 
@@ -518,16 +523,17 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               translucentMode
                 ? "bg-theme-bg/80 backdrop-blur-xl"
                 : "bg-theme-input",
-              isDragOver && "ring-2 ring-primary/50 ring-offset-1 ring-offset-transparent",
+              isDragOver && "ring-2 ring-offset-1 ring-offset-transparent",
             )
           : clsx(
               "rounded-[28px] p-1 gap-1",
               translucentMode
                 ? "bg-theme-bg backdrop-blur-xl"
                 : "bg-theme-card",
-              isDragOver && "ring-2 ring-primary/50 ring-offset-1",
+              isDragOver && "ring-2 ring-offset-1",
             ),
       )}
+      style={isDragOver ? { ['--tw-ring-color' as any]: brandSoft(50) } : undefined}
       onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch { } }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -535,10 +541,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     >
       {/* Drop overlay */}
       {isDragOver && (
-        <div className={clsx(
-          "absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary/40 flex items-center justify-center pointer-events-none animate-in fade-in duration-150",
-          launcherSkin ? "rounded-[16px]" : "rounded-[28px]",
-        )}>
+        <div
+          className={clsx(
+            "absolute inset-0 z-50 border-2 border-dashed flex items-center justify-center pointer-events-none animate-in fade-in duration-150",
+            launcherSkin ? "rounded-[16px]" : "rounded-[28px]",
+          )}
+          style={{ background: brandSoft(10), borderColor: brandSoft(45) }}
+        >
           <div className="flex items-center gap-2 text-primary font-semibold text-sm">
             <Upload className="w-5 h-5" />
             <span>Drop files, images, or PDFs here</span>
@@ -575,7 +584,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             <div className="px-2 pt-2 pb-1 flex flex-wrap gap-1.5">
               {contextPaths.map((ctx, idx) => {
                 const Icon =
-                  ctx.type === 'bot' ? Sparkles
+                  ctx.type === 'bot' ? Bot
                   : ctx.isDirectory ? Folder
                   : File;
                 return (
@@ -619,7 +628,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               {att.type === 'image' ? (
                 <Image className="w-3.5 h-3.5 text-primary" />
               ) : (
-                <File className="w-3.5 h-3.5 text-emerald-500" />
+                <File className="w-3.5 h-3.5 text-theme-muted" />
               )}
               <span className="max-w-[160px] truncate font-semibold">{att.name}</span>
               {onRemoveAttachment && (
@@ -822,7 +831,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                       className="inline-flex items-center gap-1.5 rounded-full border border-theme/15 bg-theme-hover/60 backdrop-blur-md px-2.5 py-1 shadow-sm"
                     >
                       {t.name === 'delegate' ? (
-                        <Sparkles size={10} className="text-violet-500/80" />
+                        <Workflow size={10} style={{ color: 'var(--agent-accent)' }} />
                       ) : (
                         <Loader2 size={10} className="animate-spin text-theme-muted" />
                       )}
@@ -842,8 +851,10 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           "flex flex-col transition-all relative z-[1]",
           launcherSkin
             ? "gap-1.5 px-0.5"
-            : "gap-1 bg-theme-hover/50 rounded-[24px] p-1.5 focus-within:ring-2 focus-within:ring-primary/10",
-        )}>
+            : "gap-1 bg-theme-hover/50 rounded-[24px] p-1.5 focus-within:ring-2",
+        )}
+        style={launcherSkin ? undefined : { ['--tw-ring-color' as any]: brandSoft(12) }}
+        >
           <div className="min-w-0 w-full px-1">
             <TextareaAutosize
               ref={textareaRef}
@@ -991,10 +1002,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                   type="button"
                   className={clsx(
                     "h-9 px-2 rounded-[14px] text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1 border shrink-0",
-                    targetingSubagent
-                      ? "bg-violet-500/12 border-violet-500/25 text-violet-600 dark:text-violet-300"
-                      : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg"
+                    !targetingSubagent && "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg",
                   )}
+                  style={targetingSubagent ? {
+                    background: agentSoft(12),
+                    borderColor: agentSoft(28),
+                    color: 'var(--agent-accent)',
+                  } : undefined}
                   title="Pick which agent to steer"
                 >
                   {targetingSubagent ? (
@@ -1003,7 +1017,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                       <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
                     </span>
                   ) : (
-                    <Sparkles className="w-3 h-3" strokeWidth={2.5} />
+                    <Workflow className="w-3 h-3" strokeWidth={2.5} />
                   )}
                   <span className="normal-case tracking-normal text-[10.5px] font-bold truncate max-w-[100px]">
                     {steerTargetLabel}
@@ -1025,11 +1039,12 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     className={clsx(
                       "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
                       steerTarget === 'orchestrator'
-                        ? "bg-primary/10 text-primary"
+                        ? "text-primary"
                         : "text-theme-fg hover:bg-theme-hover"
                     )}
+                    style={steerTarget === 'orchestrator' ? { background: brandSoft(10) } : undefined}
                   >
-                    <CornerDownRight className="w-3.5 h-3.5 text-primary/70 shrink-0" strokeWidth={2.4} />
+                    <CornerDownRight className="w-3.5 h-3.5 text-primary shrink-0" strokeWidth={2.4} />
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold">Orchestrator</div>
                       <div className="text-[10px] text-theme-muted truncate">Main conversation</div>
@@ -1047,10 +1062,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                           onSelect={() => onSteerTargetChange?.(sa.id)}
                           className={clsx(
                             "group text-[12px] flex items-center gap-2 px-2.5 py-2 rounded-lg outline-none transition-colors cursor-pointer",
-                            steerTarget === sa.id
-                              ? "bg-violet-500/12 text-violet-700 dark:text-violet-300"
-                              : "text-theme-fg hover:bg-theme-hover"
+                            steerTarget !== sa.id && "text-theme-fg hover:bg-theme-hover",
                           )}
+                          style={steerTarget === sa.id ? { background: agentSoft(12), color: 'var(--agent-accent)' } : undefined}
                         >
                           <span className="relative flex h-2 w-2 shrink-0">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60" />
@@ -1060,7 +1074,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <div className="font-semibold truncate">{humanizeSubagentKind(sa.kind)} agent</div>
                             <div className="text-[10px] text-theme-muted truncate">Mid-task nudge</div>
                           </div>
-                          {steerTarget === sa.id && <span className="text-[9px] uppercase tracking-wider font-black text-violet-600 dark:text-violet-300">Active</span>}
+                          {steerTarget === sa.id && <span className="text-[9px] uppercase tracking-wider font-black" style={{ color: 'var(--agent-accent)' }}>Active</span>}
                         </DropdownMenu.Item>
                       ))}
                     </>
@@ -1080,31 +1094,30 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             </button>
           ) : query.trim() ? (
             <>
+              {/* While a turn is running, Enter / the filled button QUEUE the
+                  message — the calm default. Steer is the deliberate opt-in: a
+                  quiet up-arrow (⌘↵) that injects it into the live step now. */}
               {canSteer && (
                 <button
                   type="button"
                   onClick={onSteer}
-                  className={clsx(
-                    "h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 border",
-                    targetingSubagent
-                      ? "bg-violet-500/15 border-violet-500/30 text-violet-600 dark:text-violet-300 hover:bg-violet-500/25"
-                      : "bg-theme-hover/60 border-theme/10 text-theme-muted hover:text-theme-fg hover:bg-theme-hover"
-                  )}
+                  className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 bg-theme-hover/60 hover:bg-theme-hover"
+                  style={{ color: targetingSubagent ? 'var(--agent-accent)' : 'var(--primary)' }}
                   title={
                     targetingSubagent
-                      ? `Steer ${steerTargetLabel} (Cmd/Ctrl+Enter)`
-                      : "Steer current step (Cmd/Ctrl+Enter)"
+                      ? `Steer ${steerTargetLabel} now — interrupt the current step (⌘↵)`
+                      : "Steer now — interrupt the current step (⌘↵)"
                   }
                 >
-                  <CornerDownRight className="w-5 h-5" strokeWidth={2.5} />
+                  <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
                 </button>
               )}
               <button
                 onClick={onSend}
                 className="h-10 w-10 rounded-[18px] flex items-center justify-center transition-all hover:scale-105 active:scale-95 hover:opacity-90 flex-shrink-0 bg-primary text-primary-fg"
-                title={canSteer ? "Queue after this turn" : "Send message"}
+                title={canSteer ? "Queue — sends after this turn (↵)" : "Send message"}
               >
-                <ArrowUp className="w-5 h-5" strokeWidth={2.5} />
+                {canSteer ? <ListPlus className="w-5 h-5" strokeWidth={2.2} /> : <ArrowUp className="w-5 h-5" strokeWidth={2.5} />}
               </button>
             </>
           ) : null}
