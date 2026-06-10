@@ -1,6 +1,7 @@
 import React, { memo, useState } from 'react';
 import clsx from 'clsx';
 import { toMediaSrc } from '../helpers/media';
+import { ScrollableImagePane } from './ScrollableImagePane';
 
 // Image component that handles loading states and local/web URLs (memoized).
 // While the image is fetching we hold its place with a fixed loading "box" so
@@ -8,11 +9,16 @@ import { toMediaSrc } from '../helpers/media';
 // ready. `size="thumb"` renders the compact variant used inside the
 // chain-of-thought trace; the default is the larger inline size used in message
 // bodies.
-export const InlineImage: React.FC<{ src: string; alt?: string; size?: 'default' | 'thumb' }> = memo(({ src, alt, size = 'default' }) => {
+export const InlineImage: React.FC<{ src: string; alt?: string; size?: 'default' | 'thumb' | 'scroll' }> = memo(({ src, alt, size = 'default' }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imageSrc = toMediaSrc(src || '');
   const isThumb = size === 'thumb';
+  const isScroll = size === 'scroll';
+
+  if (isScroll) {
+    return <ScrollableImagePane src={src} alt={alt} maxHeight={160} bare className="my-1" />;
+  }
 
   // Footprint of the placeholder box while the image loads / on error.
   const boxSize = isThumb ? 'w-[176px] h-[120px]' : 'w-[280px] h-[200px]';

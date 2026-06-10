@@ -11,10 +11,7 @@ import { browser_use_status, browser_use_configure, browser_use_navigate, browse
 import { describe_desktop_control_capabilities, get_desktop_wallpaper, set_desktop_wallpaper, get_system_volume, set_system_volume, list_bluetooth_devices, connect_bluetooth_device, disconnect_bluetooth_device, get_display_brightness, set_display_brightness, get_power_status } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
-import { deployHeadlessAgent } from '../../tools/deploy-headless-agent';
-import { getHeadlessAgentStatus } from '../../tools/get-headless-agent-status';
-import { listHeadlessAgentTasks } from '../../tools/list-headless-agent-tasks';
-import { stopHeadlessAgent } from '../../tools/stop-headless-agent';
+import { maps_static_map, maps_distance_matrix, maps_search_places, maps_place_details } from '../../tools/google-maps-tools';
 import { telnyx_send_sms, telnyx_send_mms, telnyx_send_voice_note, telnyx_voice_call, telnyx_call_control, telnyx_phone_status, telnyx_list_voice_providers, telnyx_list_active_calls, telnyx_hangup_call } from '../../tools/telnyx-tools';
 import { whatsapp_send_message, whatsapp_send_media, whatsapp_send_reaction, whatsapp_mark_read, whatsapp_upload_media, whatsapp_get_media_url, whatsapp_download_media, whatsapp_status, whatsapp_send_voice_note, whatsapp_transcribe_voice_note, whatsapp_voice_call, whatsapp_make_call, whatsapp_send_template } from '../../tools/whatsapp-tools';
 import {
@@ -56,10 +53,10 @@ const RAW_ALL_TOOLS = {
   analyze_media: analyzeMediaTool,
   web_search,
   scrape_url,
-  deploy_headless_agent: deployHeadlessAgent,
-  get_headless_agent_status: getHeadlessAgentStatus,
-  list_headless_agent_tasks: listHeadlessAgentTasks,
-  stop_headless_agent: stopHeadlessAgent,
+  maps_static_map,
+  maps_distance_matrix,
+  maps_search_places,
+  maps_place_details,
   // AI Agent workflow nodes (synchronous inline agents)
   agent_node,
   agent_decision,

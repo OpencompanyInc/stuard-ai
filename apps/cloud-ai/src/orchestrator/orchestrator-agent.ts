@@ -55,10 +55,6 @@ import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
 import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { analyzeMediaTool } from '../tools/analyze-media';
-import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
-import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
-import { stopHeadlessAgent } from '../tools/stop-headless-agent';
 import { get_skill_info } from '../tools/skill-tools';
 import {
   search_past_conversations,
@@ -223,6 +219,7 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
 | agent       | Proactive agent status/ask workflows, including agent ids/names and manual wake-ups |
 | bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
+| custom      | An ad-hoc subagent you define on the fly. Pass \`tools\` (exact tool names it may use) and \`system_prompt\` (its role/instructions) alongside \`instruction\`. Use when no built-in subagent fits the job. |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
 ${OUTLOOK_INTEGRATION_ENABLED ? '| outlook     | Outlook mail & calendar |\n' : ''}| github      | Repos, issues, PRs, branches, actions |
 ${META_INTEGRATION_ENABLED ? '| meta        | Facebook, Instagram, Threads |\n' : ''}${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
@@ -344,12 +341,6 @@ function getOrchestratorActiveTools(
 
     // Task tracking
     agent_todo,
-
-    // Background agents
-    deploy_headless_agent: deployHeadlessAgent,
-    get_headless_agent_status: getHeadlessAgentStatus,
-    list_headless_agent_tasks: listHeadlessAgentTasks,
-    stop_headless_agent: stopHeadlessAgent,
 
     // Skills
     get_skill_info,

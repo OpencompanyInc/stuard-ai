@@ -8,7 +8,7 @@ import {
   Database, Calendar, FileSpreadsheet, GitBranch, ListOrdered, Workflow,
   Box, PenLine, BookOpen, ToggleLeft, PlusCircle, ListPlus, Trash2,
   Package, List, Layout, X, Wand2, Rocket, Terminal, Bell,
-  Monitor, Volume2, Search, Globe, Brain, Calculator, Sigma,
+  Monitor, Volume2, Search, Globe, Brain, Calculator, Sigma, MapPin, Navigation,
   Sparkles, BarChart3, Hash, Speaker, Download, Archive, CheckCircle,
   MessageSquare, ListChecks, GitPullRequest, Play, Inbox,
   Send, User, Activity, Radio, Bot, Phone, PhoneCall,
@@ -66,6 +66,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       // { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', icon: Database, args: { profile: 'default', onlyNew: true, includeFolders: false } },
       { k: 'trigger', t: 'schedule.cron', label: 'Schedule', icon: Clock, args: { cron: '*/5 * * * *' } },
       { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', icon: Folder, args: { path: '', pattern: '*.*', recursive: true } },
+      { k: 'trigger', t: 'clipboard.change', label: 'On Clipboard Change', icon: Clipboard, args: { types: [], pollMs: 600 } },
       { k: 'trigger', t: 'command.watch', label: 'Custom Script (watch)', icon: FileCode, args: { cmd: 'python', args: ['script.py'] } },
     ],
   },
@@ -137,6 +138,18 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     items: [
       { k: 'cloud.tool', t: 'web_search', label: 'Web Search', icon: Search, args: { query: 'latest AI news' } },
       { k: 'cloud.tool', t: 'scrape_url', label: 'Scrape URL', icon: Globe, args: { urls: ['https://example.com'] } },
+    ],
+  },
+  {
+    id: 'maps',
+    label: 'Maps & Location',
+    icon: MapPin,
+    color: 'red',
+    items: [
+      { k: 'cloud.tool', t: 'maps_search_places', label: 'Find Places', icon: Search, args: { query: 'coffee shops in Chicago', max_results: 10 } },
+      { k: 'cloud.tool', t: 'maps_place_details', label: 'Place Details', icon: FileText, args: { place_id: '', include_reviews: true } },
+      { k: 'cloud.tool', t: 'maps_distance_matrix', label: 'Distance & Time', icon: Navigation, args: { origins: ['Chicago, IL'], destinations: ['Milwaukee, WI'], mode: 'driving', units: 'imperial' } },
+      { k: 'cloud.tool', t: 'maps_static_map', label: 'Map Image', icon: ImageIcon, args: { center: 'Willis Tower, Chicago', zoom: 14, size: '640x400', maptype: 'roadmap' } },
     ],
   },
 
@@ -695,7 +708,7 @@ export const PALETTE_GROUPS: { id: string; label: string; categoryIds: string[] 
   { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use'] },
   { id: 'media_ai', label: 'Media Tooling & Local AI', categoryIds: ['ffmpeg', 'mediapipe', 'ollama', 'tts'] },
   { id: 'google', label: 'Google', categoryIds: ['gmail', 'google_drive', 'google_calendar', 'google_sheets', 'google_docs', 'google_tasks'] },
-  { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'telnyx', 'x'] },
+  { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'telnyx', 'x', 'maps'] },
 ];
 
 /** Lookup: category id → group id. Used by the palette to render dividers. */

@@ -486,6 +486,28 @@ class CDPBrowser:
         self._active_id = target_id
         return self._pages[target_id]
 
+    async def get_page(self, target_id: str) -> CDPConnection:
+        """Return the CDP connection for a tab WITHOUT bringing it to front.
+
+        Unlike activate_target, this does not call /json/activate and preserves the
+        current _active_id. Used to drive background tabs concurrently (one tab per
+        parallel browser session) without thrashing the visible/foreground tab.
+        """
+        conn = self._pages.get(target_id)
+        if conn is not None and conn.is_connected:
+            return conn
+
+        prev_active = self._active_id
+        targets = await self.list_targets()
+        for t in targets:
+            if t["id"] == target_id:
+                conn = await self._attach(t)
+                # _attach sets _active_id to the freshly attached tab; restore the
+                # previous foreground tab so background attachment is non-disruptive.
+                self._active_id = prev_active if prev_active in self._pages else target_id
+                return conn
+        raise RuntimeError(f"Target {target_id} not found")
+
     async def close_target(self, target_id: str) -> None:
         conn = self._pages.pop(target_id, None)
         if conn:

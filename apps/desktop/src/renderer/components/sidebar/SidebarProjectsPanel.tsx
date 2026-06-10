@@ -316,7 +316,7 @@ const EmptyState: React.FC<{ count: number }> = ({ count }) => (
       <p className="text-xs text-theme-muted/60 mt-1 max-w-[260px]">
         {count > 0
           ? 'Select one on the left to see its instructions, knowledge, files, and timeline.'
-          : 'Ask Stuard to create a project, or use the Python agent to migrate from Spaces.'}
+          : 'Ask Stuard to create a project, or create one from the chat sidebar.'}
       </p>
     </div>
   </div>

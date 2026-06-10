@@ -787,6 +787,7 @@ async function resolveProjectPromptOptions(args: {
       digest: project.digest ?? null,
       icon: project.icon ?? null,
       color: project.color ?? null,
+      settings: project.settings ?? null,
     };
 
     const recentJournal: JournalEntryPayload[] = Array.isArray(journalResult?.entries)

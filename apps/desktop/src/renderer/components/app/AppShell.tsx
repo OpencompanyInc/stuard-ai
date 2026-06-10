@@ -9,7 +9,7 @@ import { NotificationProvider, NotificationController } from '../NotificationSys
 import { InteractiveTour } from '../onboarding/InteractiveTour';
 import { OnboardingTooltipContainer } from '../onboarding';
 import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
-import { ActiveProjectChip, ExitProjectToast } from '../chat/modes/window/parts/ActiveProjectBar';
+import { ExitProjectToast } from '../chat/modes/window/parts/ActiveProjectBar';
 import { ChatView } from '../chat/modes/window/ChatView';
 import { LauncherView } from '../chat/modes/launcher/LauncherView';
 import InputArea from '../chat/shared/input/InputArea';
@@ -97,6 +97,7 @@ export function AppShell(props: any) {
     setQuery,
     handleSend,
     handleQuickSend,
+    handleScreenshotSend,
     handleSteer,
     stopGeneration,
     isStreaming,
@@ -142,6 +143,7 @@ export function AppShell(props: any) {
     miniOutputHasContent,
     miniOutputStreaming,
     miniOutputPrompt,
+    miniOutputUserAttachments,
     showMiniOutput,
     setShowMiniOutput,
     backgroundTaskCount,
@@ -457,17 +459,13 @@ export function AppShell(props: any) {
             </div>
           ) : (
             <div className="flex-1 flex flex-col relative">
-              {activeProject && (
-                <div className="absolute top-1 left-2 z-50 max-w-[calc(100%-5.5rem)]">
-                  <ActiveProjectChip project={activeProject} onClick={handleShowWindow} />
-                </div>
-              )}
               <InputArea
                 ref={inputRef}
                 query={query}
                 setQuery={setQuery}
                 onSend={handleSend}
                 onQuickSend={handleQuickSend}
+                onScreenshotSend={handleScreenshotSend}
                 onSteer={handleSteer}
                 attachments={attachments}
                 onRemoveAttachment={handleRemoveAttachment}
@@ -520,11 +518,13 @@ export function AppShell(props: any) {
                 miniOutputHasContent={miniOutputHasContent}
                 miniOutputStreaming={miniOutputStreaming}
                 miniOutputPrompt={miniOutputPrompt}
+                miniOutputUserAttachments={miniOutputUserAttachments}
                 showMiniOutput={showMiniOutput}
                 setShowMiniOutput={setShowMiniOutput}
                 backgroundTaskCount={backgroundTaskCount}
                 compactHubTabs={compactHubTabs}
                 currentToolCalls={currentToolCalls}
+                currentReasoning={currentReasoning}
                 onSubmitToolOutput={submitToolOutput}
                 onGenUIResponse={handleGenUIResponse}
               />

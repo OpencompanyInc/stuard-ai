@@ -98,6 +98,10 @@ export interface DelegationRequest {
   timeoutMs?: number;
   /** Override the default capability pack tool names */
   extraToolNames?: string[];
+  /** For kind === 'custom': the exact tool names this ad-hoc subagent may use. */
+  customToolNames?: string[];
+  /** For kind === 'custom': the system prompt / role for this ad-hoc subagent. */
+  customSystemPrompt?: string;
 }
 
 // ─── Delegation result (child → orchestrator) ───────────────────────────────

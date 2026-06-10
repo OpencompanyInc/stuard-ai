@@ -1,4 +1,6 @@
 import HeroSection from '@/components/sections/HeroSection';
+import AboutSection from '@/components/sections/AboutSection';
+import UseCasesSection from '@/components/sections/UseCasesSection';
 import ProductShowcase from '@/components/sections/ProductShowcase';
 import BeyondTheChatSection from '@/components/sections/BeyondTheChatSection';
 import ConnectedAppsSection from '@/components/sections/ConnectedAppsSection';
@@ -7,6 +9,7 @@ import MarketplacePromoSection from '@/components/sections/MarketplacePromoSecti
 import CloudAgentsSection from '@/components/sections/CloudAgentsSection';
 import PrivacySection from '@/components/sections/PrivacySection';
 import PricingSection from '@/components/sections/PricingSection';
+import FAQ from '@/components/sections/FAQ';
 
 export default function Home() {
   const organizationSchema = {
@@ -51,7 +54,7 @@ export default function Home() {
       ratingCount: '150',
     },
     description:
-      'Stuard lives on your PC, not in a tab. Local-first assistant for files, apps, workflows, mini-apps, and proactive agents — cloud only when you ask.',
+      'Stuard AI is a personal AI assistant app for Windows. It organizes your files, manages Gmail and Calendar, works your apps, and turns repeated tasks into one-click automations, mini-apps, and scheduled agents — local-first, cloud only when you ask.',
     featureList: [
       'Desktop chat that controls your PC',
       'Visual workflow builder',
@@ -82,15 +85,26 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
       />
+      {/*
+        Page narrative, in order:
+        1. What it is (Hero + About) — purpose stated above the fold, statically rendered
+        2. What I'd use it for (UseCases) — concrete prompts visitors can steal
+        3. Proof it's real (Showcase + Demo)
+        4. How it grows with you (Ecosystem ladder → Toolbelt → Marketplace → Cloud)
+        5. Trust and cost (Privacy → Pricing → FAQ)
+      */}
       <HeroSection />
+      <AboutSection />
+      <UseCasesSection />
       <ProductShowcase />
       <BeyondTheChatSection />
-      <ConnectedAppsSection />
       <HowItWorksIntroSection />
+      <ConnectedAppsSection />
       <MarketplacePromoSection />
       <CloudAgentsSection />
       <PrivacySection />
       <PricingSection />
+      <FAQ />
     </>
   );
 }

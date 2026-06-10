@@ -72,6 +72,8 @@ interface CompactSearchDropdownProps {
   /** Section actions. */
   onAskStuard: () => void;
   onWebSearch: () => void;
+  /** Capture the screen (Stuard excluded) and send it with the query. */
+  onScreenshotSend?: () => void;
   activeEngineName: string;
   /** All available web search engines + the active id and a setter, so users
    *  can switch the default engine from inside the dropdown. */
@@ -120,6 +122,7 @@ export const CompactSearchDropdown: React.FC<CompactSearchDropdownProps> = ({
   offsets,
   onAskStuard,
   onWebSearch,
+  onScreenshotSend,
   activeEngineName,
   searchEngines,
   activeEngineId,
@@ -218,6 +221,53 @@ export const CompactSearchDropdown: React.FC<CompactSearchDropdownProps> = ({
                 </button>
               );
             })()}
+
+            {/* Screenshot & send — second quick action, between Ask Stuard and
+                Search. Captures the screen with Stuard excluded from the frame,
+                then sends it alongside the typed query. Mouse click mirrors the
+                Ctrl+Shift+Enter shortcut; it has its own hotkey so it's outside
+                the arrow-key selection set. */}
+            {onScreenshotSend && (
+              <button
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--compact-pill-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                onClick={onScreenshotSend}
+                className="w-full flex items-center"
+                style={{ ...FIGMA_ROW_BASE, gap: 10 }}
+              >
+                <div
+                  className="flex-1 min-w-0 flex flex-col items-start text-left"
+                  style={{ gap: 6 }}
+                >
+                  <div
+                    className="truncate w-full"
+                    style={{
+                      fontSize: 12,
+                      lineHeight: '16px',
+                      color: 'rgb(var(--compact-pill-fg))',
+                    }}
+                  >
+                    &ldquo;{query.trim()}&rdquo;
+                  </div>
+                  <div
+                    className="truncate w-full"
+                    style={{
+                      fontSize: 10,
+                      lineHeight: '14px',
+                      color: 'rgb(var(--compact-pill-fg-muted))',
+                    }}
+                  >
+                    Screenshot &amp; send
+                  </div>
+                </div>
+                <span
+                  className="shrink-0 whitespace-nowrap"
+                  style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}
+                >
+                  Ctrl + Shift + Enter
+                </span>
+              </button>
+            )}
 
             {/* Search Engine */}
             {(() => {

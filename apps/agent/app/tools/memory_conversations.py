@@ -1,8 +1,8 @@
 """
 Conversation Memory Tools
 
-Handles conversation storage, retrieval, search, and space management
-for the encrypted local-first memory system.
+Handles conversation storage, retrieval, search, and project/memory/journal
+management for the encrypted local-first memory system.
 """
 
 from __future__ import annotations
@@ -18,8 +18,6 @@ from ..storage.memory_db import (
     Conversation,
     Message,
     ConversationSegment,
-    Space,
-    SpaceItem,
     Project,
     Memory,
     JournalEntry,
@@ -626,621 +624,6 @@ async def collection_summary_list(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SPACE HANDLERS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def space_create(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a new space for organizing knowledge.
-
-    Spaces are containers for organizing notes, links, code snippets, files, and other content.
-    They can be used for projects, research, topics, or general reference.
-
-    Args:
-        name (str): Name of the space (required)
-        type (str): Type of space - 'project', 'topic', 'research', 'reference', or 'custom' (default: 'topic')
-        description (str): Optional description
-        icon (str): Optional icon
-        color (str): Optional color
-
-    Returns:
-        dict with 'ok': True and 'space' containing the created space data
-    """
-    try:
-        name = args.get("name")
-        space_type = args.get("type", "custom")
-        
-        if not name:
-            return {"ok": False, "error": "missing name"}
-        
-        db = get_memory_db()
-        space = db.create_space(
-            name=name,
-            space_type=space_type,
-            description=args.get("description"),
-            icon=args.get("icon", "📁"),
-            color=args.get("color", "#6366f1"),
-            embedding=args.get("embedding")
-        )
-        
-        return {"ok": True, "space": space.to_dict()}
-    except Exception as e:
-        logger.exception("space_create failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_get(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get a space by ID."""
-    try:
-        space_id = args.get("space_id") or args.get("id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        
-        db = get_memory_db()
-        space = db.get_space(space_id)
-        
-        if not space:
-            return {"ok": False, "error": "not_found"}
-        
-        return {"ok": True, "space": space.to_dict()}
-    except Exception as e:
-        logger.exception("space_get failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_list(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List all spaces, optionally filtered by type.
-
-    Args:
-        type (str): Optional filter by space type ('project', 'topic', 'research', 'reference', 'custom')
-        include_archived (bool): Include archived spaces (default: False)
-        limit (int): Maximum number of spaces to return (default: 50, max: 200)
-
-    Returns:
-        dict with 'ok': True, 'spaces': list of space data, and 'count': number of spaces
-    """
-    try:
-        db = get_memory_db()
-        space_type = args.get("type")
-        include_archived = args.get("include_archived", False)
-        limit = min(int(args.get("limit", 50)), 200)
-        
-        spaces = db.list_spaces(
-            space_type=space_type,
-            include_archived=include_archived,
-            limit=limit
-        )
-        
-        return {
-            "ok": True,
-            "spaces": [s.to_dict() for s in spaces],
-            "count": len(spaces)
-        }
-    except Exception as e:
-        logger.exception("space_list failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_update(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Update a space."""
-    try:
-        space_id = args.get("space_id") or args.get("id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        
-        db = get_memory_db()
-        space = db.update_space(
-            space_id=space_id,
-            name=args.get("name"),
-            description=args.get("description"),
-            icon=args.get("icon"),
-            color=args.get("color"),
-            archived=args.get("archived"),
-            embedding=args.get("embedding")
-        )
-        
-        if not space:
-            return {"ok": False, "error": "not_found"}
-        
-        return {"ok": True, "space": space.to_dict()}
-    except Exception as e:
-        logger.exception("space_update failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_delete(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Delete a space."""
-    try:
-        space_id = args.get("space_id") or args.get("id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        
-        db = get_memory_db()
-        deleted = db.delete_space(space_id)
-        
-        return {"ok": True, "deleted": deleted}
-    except Exception as e:
-        logger.exception("space_delete failed")
-        return {"ok": False, "error": str(e)}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SPACE ITEM HANDLERS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def space_item_add(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Add an item (note, link, code snippet, file, fact, or folder) to a space.
-
-    Items can be organized in folders using the parent_id parameter.
-
-    Args:
-        space_id (str): ID of the space to add to (required)
-        type (str): Type of item - 'note', 'link', 'snippet', 'file', 'fact', or 'folder' (default: 'note')
-        content (str): Content of the item (required) - URL for links, code for snippets, text for notes
-        title (str): Optional title for the item
-        parent_id (str): Optional folder ID to organize the item under
-        position (int): Optional position within parent folder
-        pinned (bool): Whether to pin the item (default: False)
-
-    Returns:
-        dict with 'ok': True and 'item' containing the created item data
-    """
-    try:
-        space_id = args.get("space_id")
-        item_type = args.get("type", "note")
-        content = args.get("content")
-
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        if not content:
-            return {"ok": False, "error": "missing content"}
-
-        db = get_memory_db()
-
-        # Verify the space exists before adding item
-        space = db.get_space(space_id)
-        if not space:
-            return {"ok": False, "error": f"space not found: {space_id}"}
-
-        item = db.add_space_item(
-            space_id=space_id,
-            item_type=item_type,
-            content=content,
-            title=args.get("title"),
-            metadata=args.get("metadata"),
-            added_by=args.get("added_by", "user"),
-            pinned=args.get("pinned", False),
-            embedding=args.get("embedding"),
-            parent_id=args.get("parent_id"),
-            position=args.get("position")
-        )
-
-        return {"ok": True, "item": item.to_dict()}
-    except Exception as e:
-        logger.exception("space_item_add failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_item_list(args: Dict[str, Any]) -> Dict[str, Any]:
-    """List all items in a space.
-
-    Returns a flat list of all items including folders, notes, links, snippets, etc.
-
-    Args:
-        space_id (str): ID of the space (required)
-        item_type (str): Optional filter by item type ('note', 'link', 'snippet', 'file', 'fact', 'folder')
-        parent_id (str): Optional filter to only items in a specific folder (use null string for root level)
-        limit (int): Maximum number of items to return (default: 100, max: 500)
-
-    Returns:
-        dict with 'ok': True, 'items': list of item data, and 'count': number of items
-    """
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-
-        db = get_memory_db()
-        items = db.get_space_items(
-            space_id=space_id,
-            item_type=args.get("type"),
-            pinned_only=args.get("pinned_only", False),
-            parent_id=args.get("parent_id"),
-            include_all=args.get("include_all", True),
-            limit=min(int(args.get("limit", 100)), 500)
-        )
-
-        return {
-            "ok": True,
-            "items": [i.to_dict() for i in items],
-            "count": len(items)
-        }
-    except Exception as e:
-        logger.exception("space_item_list failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_item_update(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Update an existing space item's content, title, or other properties.
-
-    Args:
-        item_id (str): ID of the item to update (required)
-        title (str): New title (optional)
-        content (str): New content (optional)
-        pinned (bool): Pin/unpin the item (optional)
-        parent_id (str): Move to a different folder (optional)
-        position (int): Change position (optional)
-
-    Returns:
-        dict with 'ok': True and 'item' containing the updated item data
-    """
-    try:
-        item_id = args.get("item_id") or args.get("id")
-        if not item_id:
-            return {"ok": False, "error": "missing item_id"}
-
-        db = get_memory_db()
-        item = db.update_space_item(
-            item_id=item_id,
-            title=args.get("title"),
-            content=args.get("content"),
-            metadata=args.get("metadata"),
-            pinned=args.get("pinned"),
-            parent_id=args.get("parent_id"),
-            position=args.get("position")
-        )
-
-        if not item:
-            return {"ok": False, "error": "not_found"}
-
-        return {"ok": True, "item": item.to_dict()}
-    except Exception as e:
-        logger.exception("space_item_update failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_item_delete(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Delete a space item."""
-    try:
-        item_id = args.get("item_id") or args.get("id")
-        if not item_id:
-            return {"ok": False, "error": "missing item_id"}
-
-        db = get_memory_db()
-        deleted = db.delete_space_item(item_id)
-
-        return {"ok": True, "deleted": deleted}
-    except Exception as e:
-        logger.exception("space_item_delete failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_item_move(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Move a space item to a new parent folder and/or position."""
-    try:
-        item_id = args.get("item_id") or args.get("id")
-        if not item_id:
-            return {"ok": False, "error": "missing item_id"}
-
-        db = get_memory_db()
-        # Use empty string to move to root, None to keep current
-        new_parent = args.get("parent_id")
-        if new_parent == "":
-            new_parent = None
-
-        item = db.move_space_item(
-            item_id=item_id,
-            new_parent_id=new_parent,
-            new_position=args.get("position")
-        )
-
-        if not item:
-            return {"ok": False, "error": "not_found"}
-
-        return {"ok": True, "item": item.to_dict()}
-    except Exception as e:
-        logger.exception("space_item_move failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_folder_create(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a folder to organize items in a space.
-
-    Folders can be nested by specifying a parent_id.
-
-    Args:
-        space_id (str): ID of the space (required)
-        name (str): Name of the folder (required)
-        parent_id (str): Optional parent folder ID to create a nested folder
-        position (int): Optional position within parent
-
-    Returns:
-        dict with 'ok': True and 'folder' containing the created folder data
-    """
-    try:
-        space_id = args.get("space_id")
-        name = args.get("name")
-
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        if not name:
-            return {"ok": False, "error": "missing name"}
-
-        db = get_memory_db()
-
-        # Verify the space exists
-        space = db.get_space(space_id)
-        if not space:
-            return {"ok": False, "error": f"space not found: {space_id}"}
-
-        folder = db.add_space_item(
-            space_id=space_id,
-            item_type="folder",
-            content="",  # Folders have empty content
-            title=name,
-            parent_id=args.get("parent_id"),
-            position=args.get("position")
-        )
-
-        return {"ok": True, "folder": folder.to_dict()}
-    except Exception as e:
-        logger.exception("space_folder_create failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_get_tree(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get the folder tree structure for a space."""
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-
-        db = get_memory_db()
-        tree = db.get_folder_tree(space_id)
-
-        return {"ok": True, "tree": tree}
-    except Exception as e:
-        logger.exception("space_get_tree failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_item_get(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get a single space item by ID."""
-    try:
-        item_id = args.get("item_id") or args.get("id")
-        if not item_id:
-            return {"ok": False, "error": "missing item_id"}
-
-        db = get_memory_db()
-        item = db.get_space_item(item_id)
-
-        if not item:
-            return {"ok": False, "error": "not_found"}
-
-        return {"ok": True, "item": item.to_dict()}
-    except Exception as e:
-        logger.exception("space_item_get failed")
-        return {"ok": False, "error": str(e)}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SPACE SHARING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def space_share(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Share a space with others."""
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-
-        db = get_memory_db()
-
-        # Verify the space exists
-        space = db.get_space(space_id)
-        if not space:
-            return {"ok": False, "error": f"space not found: {space_id}"}
-
-        shared_with = args.get("shared_with", [])
-        if isinstance(shared_with, str):
-            shared_with = [shared_with]
-
-        # Update shared space info
-        with db._get_conn() as conn:
-            # Check if entry exists
-            existing = conn.execute(
-                "SELECT * FROM shared_space_info WHERE space_id = ?",
-                (space_id,)
-            ).fetchone()
-
-            password_hash = None
-            if args.get("password"):
-                password_hash = hash_password(args.get("password"))
-
-            if existing:
-                conn.execute(
-                    """UPDATE shared_space_info
-                       SET is_shared = 1, shared_with = ?, share_password_hash = COALESCE(?, share_password_hash)
-                       WHERE space_id = ?""",
-                    (json.dumps(shared_with), password_hash, space_id)
-                )
-            else:
-                conn.execute(
-                    """INSERT INTO shared_space_info (space_id, is_shared, shared_with, share_password_hash)
-                       VALUES (?, 1, ?, ?)""",
-                    (space_id, json.dumps(shared_with), password_hash)
-                )
-            conn.commit()
-
-        return {
-            "ok": True,
-            "space_id": space_id,
-            "is_shared": True,
-            "shared_with": shared_with
-        }
-    except Exception as e:
-        logger.exception("space_share failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_unshare(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Stop sharing a space."""
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-
-        db = get_memory_db()
-
-        with db._get_conn() as conn:
-            conn.execute(
-                """UPDATE shared_space_info
-                   SET is_shared = 0, shared_with = NULL
-                   WHERE space_id = ?""",
-                (space_id,)
-            )
-            conn.commit()
-
-        return {"ok": True, "space_id": space_id, "is_shared": False}
-    except Exception as e:
-        logger.exception("space_unshare failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_share_info(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get sharing info for a space."""
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-
-        db = get_memory_db()
-
-        with db._get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM shared_space_info WHERE space_id = ?",
-                (space_id,)
-            ).fetchone()
-
-        if not row:
-            return {
-                "ok": True,
-                "space_id": space_id,
-                "is_shared": False,
-                "shared_with": []
-            }
-
-        shared_with = []
-        if row['shared_with']:
-            try:
-                shared_with = json.loads(row['shared_with'])
-            except:
-                pass
-
-        return {
-            "ok": True,
-            "space_id": space_id,
-            "is_shared": bool(row['is_shared']),
-            "shared_with": shared_with,
-            "has_password": row['share_password_hash'] is not None
-        }
-    except Exception as e:
-        logger.exception("space_share_info failed")
-        return {"ok": False, "error": str(e)}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SPACE-CONVERSATION LINKING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-async def space_link_conversation(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Link a conversation to a space."""
-    try:
-        space_id = args.get("space_id")
-        conversation_id = args.get("conversation_id")
-        
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        if not conversation_id:
-            return {"ok": False, "error": "missing conversation_id"}
-        
-        db = get_memory_db()
-        db.link_conversation_to_space(
-            space_id=space_id,
-            conversation_id=conversation_id,
-            relevance_score=float(args.get("relevance_score", 1.0)),
-            auto_linked=args.get("auto_linked", False)
-        )
-        
-        return {"ok": True}
-    except Exception as e:
-        logger.exception("space_link_conversation failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_unlink_conversation(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Unlink a conversation from a space."""
-    try:
-        space_id = args.get("space_id")
-        conversation_id = args.get("conversation_id")
-        
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        if not conversation_id:
-            return {"ok": False, "error": "missing conversation_id"}
-        
-        db = get_memory_db()
-        unlinked = db.unlink_conversation_from_space(space_id, conversation_id)
-        
-        return {"ok": True, "unlinked": unlinked}
-    except Exception as e:
-        logger.exception("space_unlink_conversation failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def space_get_conversations(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get conversations linked to a space."""
-    try:
-        space_id = args.get("space_id")
-        if not space_id:
-            return {"ok": False, "error": "missing space_id"}
-        
-        db = get_memory_db()
-        results = db.get_space_conversations(space_id)
-        
-        return {
-            "ok": True,
-            "conversations": [
-                {"conversation": conv.to_dict(), "relevance_score": score}
-                for conv, score in results
-            ],
-            "count": len(results)
-        }
-    except Exception as e:
-        logger.exception("space_get_conversations failed")
-        return {"ok": False, "error": str(e)}
-
-
-async def conversation_get_spaces(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Get spaces that a conversation is linked to."""
-    try:
-        conversation_id = args.get("conversation_id")
-        if not conversation_id:
-            return {"ok": False, "error": "missing conversation_id"}
-        
-        db = get_memory_db()
-        spaces = db.get_conversation_spaces(conversation_id)
-        
-        return {
-            "ok": True,
-            "spaces": [s.to_dict() for s in spaces],
-            "count": len(spaces)
-        }
-    except Exception as e:
-        logger.exception("conversation_get_spaces failed")
-        return {"ok": False, "error": str(e)}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # SECURITY HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1401,10 +784,10 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                            changed at-or-after it are exported (row-level
                            incremental sync): conversations with updated_at >=
                            since plus their messages/segments/links, and
-                           collection_summaries / memories / projects / spaces /
-                           space_items by updated_at, journal_entries by
-                           created_at. The VM row-merges the partial export, so
-                           a smaller file syncs the same state.
+                           collection_summaries / memories / projects by
+                           updated_at, journal_entries by created_at. The VM
+                           row-merges the partial export, so a smaller file
+                           syncs the same state.
 
     Returns:
         { ok, output_path, conversations, messages, bytes, max_updated_at, mode }
@@ -1444,8 +827,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             ("collection_summaries", "updated_at"),
             ("memories", "updated_at"),
             ("projects", "updated_at"),
-            ("spaces", "updated_at"),
-            ("space_items", "updated_at"),
+            ("journal_entries", "updated_at"),
             ("journal_entries", "created_at"),
         ):
             try:
@@ -1554,17 +936,15 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                     for cid in changed_conv_ids:
                         _copy_where("messages", "conversation_id = ?", (cid,))
                         _copy_where("conversation_segments", "conversation_id = ?", (cid,))
-                        try:
-                            _copy_where("space_conversations", "conversation_id = ?", (cid,))
-                        except Exception:
-                            pass
-                    for _t in ("collection_summaries", "memories", "projects", "spaces", "space_items"):
+                    for _t in ("collection_summaries", "memories", "projects"):
                         try:
                             _copy_where(_t, "updated_at >= ?", (since,))
                         except Exception:
                             pass
                     try:
-                        _copy_where("journal_entries", "created_at >= ?", (since,))
+                        # updated_at can be NULL for pre-migration rows; fall
+                        # back to created_at so they still ride the cursor.
+                        _copy_where("journal_entries", "COALESCE(updated_at, created_at) >= ?", (since,))
                     except Exception:
                         pass
                     dst_inc.commit()
@@ -1692,18 +1072,11 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                     )
             except Exception:
                 logger.exception("title synthesis failed (non-fatal)")
-            # Segments, spaces, space_items, vault, notes — recode best-effort
-            # so every encrypted column in the schema becomes plaintext.
+            # Segments — recode best-effort so every encrypted column in the
+            # schema becomes plaintext. (Projects/memories/journal are handled
+            # by the main recode pass above.)
             try:
                 _recode("conversation_segments", "id", ["summary_enc", "topics_enc", "entity_ids_enc"])
-            except Exception:
-                pass
-            try:
-                _recode("spaces", "id", ["name_enc", "description_enc"])
-            except Exception:
-                pass
-            try:
-                _recode("space_items", "id", ["title_enc", "content_enc", "metadata_enc"])
             except Exception:
                 pass
 
@@ -1754,6 +1127,7 @@ async def project_create(args: Dict[str, Any]) -> Dict[str, Any]:
             pinned_paths=args.get("pinned_paths"),
             icon=args.get("icon", "📁"),
             color=args.get("color", "#71717a"),
+            settings=args.get("settings"),
             embedding=args.get("embedding"),
             project_id=args.get("project_id"),
         )
@@ -1811,6 +1185,7 @@ async def project_update(args: Dict[str, Any]) -> Dict[str, Any]:
             icon=args.get("icon"),
             color=args.get("color"),
             archived=args.get("archived"),
+            settings=args.get("settings"),
             embedding=args.get("embedding"),
         )
         if not project:
@@ -1911,6 +1286,29 @@ async def project_context_add(args: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── Memories ─────────────────────────────────────────────────────────────────
 
+# Values accepted by the memories.source CHECK constraint, plus aliases callers
+# have historically sent (e.g. 'ai-tool' is a *journal* source; 'user' came
+# from the desktop Notes composer). Normalizing here keeps a bad string from
+# ever reaching SQLite as an IntegrityError.
+_MEMORY_SOURCES = {"chat", "manual", "tool", "journal", "sync", "notion"}
+_MEMORY_SOURCE_ALIASES = {"ai-tool": "tool", "ai_tool": "tool", "user": "manual"}
+
+_JOURNAL_SOURCES = {"auto-chat", "auto-git", "auto-fs", "manual", "ai-tool"}
+_JOURNAL_SOURCE_ALIASES = {"tool": "ai-tool", "user": "manual"}
+
+
+def _normalize_memory_source(raw: Any) -> str:
+    value = str(raw or "manual").strip().lower()
+    value = _MEMORY_SOURCE_ALIASES.get(value, value)
+    return value if value in _MEMORY_SOURCES else "manual"
+
+
+def _normalize_journal_source(raw: Any) -> str:
+    value = str(raw or "manual").strip().lower()
+    value = _JOURNAL_SOURCE_ALIASES.get(value, value)
+    return value if value in _JOURNAL_SOURCES else "manual"
+
+
 async def memory_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new memory entry. Tag with project_ids to scope, or leave empty
     for a global (cross-project) memory."""
@@ -1918,6 +1316,9 @@ async def memory_create(args: Dict[str, Any]) -> Dict[str, Any]:
         content = args.get("content")
         if not content:
             return {"ok": False, "error": "missing content"}
+        added_by = args.get("added_by")
+        if added_by not in ("user", "ai"):
+            added_by = "user"
         db = get_memory_db()
         mem = db.create_memory(
             type=args.get("type", "note"),
@@ -1926,8 +1327,8 @@ async def memory_create(args: Dict[str, Any]) -> Dict[str, Any]:
             project_ids=args.get("project_ids") or [],
             metadata=args.get("metadata"),
             url=args.get("url"),
-            source=args.get("source", "manual"),
-            added_by=args.get("added_by", "user"),
+            source=_normalize_memory_source(args.get("source")),
+            added_by=added_by,
             pinned=bool(args.get("pinned", False)),
             embedding=args.get("embedding"),
             memory_id=args.get("memory_id"),
@@ -2006,14 +1407,55 @@ async def journal_add(args: Dict[str, Any]) -> Dict[str, Any]:
             type=args.get("type", "note"),
             title=title,
             body=args.get("body"),
-            source=args.get("source", "manual"),
+            source=_normalize_journal_source(args.get("source")),
             source_ref=args.get("source_ref"),
             embedding=args.get("embedding"),
             ts=args.get("ts"),
+            entry_id=args.get("entry_id"),
         )
         return {"ok": True, "entry": entry.to_dict()}
     except Exception as e:
         logger.exception("journal_add failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def journal_get(args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        eid = args.get("entry_id") or args.get("id")
+        if not eid:
+            return {"ok": False, "error": "missing entry_id"}
+        db = get_memory_db()
+        entry = db.get_journal_entry(eid)
+        if not entry:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, "entry": entry.to_dict()}
+    except Exception as e:
+        logger.exception("journal_get failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def journal_update(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Update a journal entry in place. Used by the auto-journal engine to
+    extend a live session entry as the conversation topic continues."""
+    try:
+        eid = args.get("entry_id") or args.get("id")
+        if not eid:
+            return {"ok": False, "error": "missing entry_id"}
+        db = get_memory_db()
+        entry = db.update_journal_entry(
+            entry_id=eid,
+            title=args.get("title"),
+            body=args.get("body"),
+            type=args.get("type"),
+            source_ref=args.get("source_ref"),
+            embedding=args.get("embedding"),
+            ts=args.get("ts"),
+        )
+        if not entry:
+            return {"ok": False, "error": "not_found"}
+        return {"ok": True, "entry": entry.to_dict()}
+    except Exception as e:
+        logger.exception("journal_update failed")
         return {"ok": False, "error": str(e)}
 
 

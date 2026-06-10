@@ -79,6 +79,12 @@ export interface NotificationConfig {
     className?: string;
     /** Orchestrator finished — injects an Open Chat action in the notification overlay */
     orchestratorDone?: boolean;
+    /**
+     * Small uppercase brand/source label shown above the title (with a red dot).
+     * Defaults to "Stuard" for Stuard-styled notifications; pass an empty string
+     * to suppress it.
+     */
+    eyebrow?: string;
 }
 
 export interface NotificationState extends Required<Pick<NotificationConfig, 'id' | 'title' | 'variant' | 'position' | 'dismissible'>> {
@@ -96,6 +102,7 @@ export interface NotificationState extends Required<Pick<NotificationConfig, 'id
     progress?: number;
     className?: string;
     orchestratorDone?: boolean;
+    eyebrow?: string;
     createdAt: number;
     duration: number;
 }

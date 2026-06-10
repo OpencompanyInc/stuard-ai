@@ -1,7 +1,7 @@
 
 import { type IncomingMessage, type ServerResponse } from 'http';
 import { verifyToken } from '../supabase';
-import { getExternalAccount, refreshGoogleTokenIfNeeded } from './integrations/google-shared';
+import { resolveGoogleAccountForRoute } from './integrations/google-shared';
 import { getCloudReminders, syncReminderToCloud } from '../tools/cloud-reminder-tools';
 
 function computeRange(view: string, refDate?: Date): { start: Date; end: Date } {
@@ -69,7 +69,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
       const view = viewParam === 'week' || viewParam === 'month' ? viewParam : 'today';
       const dateParam = parsedUrl.searchParams.get('date');
       
-      const acc = await getExternalAccount(authUser.userId, 'google');
+      const acc = await resolveGoogleAccountForRoute(authUser.userId);
       if (!acc) {
         const body = JSON.stringify({ ok: false, error: 'google_not_connected' });
         res.writeHead(200, {
@@ -82,7 +82,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
         return true;
       }
 
-      const scopes = Array.isArray(acc.scopes) ? acc.scopes.map((s: any) => String(s)) : [];
+      const scopes = acc.scopes;
       const needsScope = 'https://www.googleapis.com/auth/calendar.events';
       if (!scopes.includes(needsScope) && !scopes.includes('https://www.googleapis.com/auth/calendar')) {
         const body = JSON.stringify({ ok: false, error: 'missing_scopes', missing: [needsScope] });
@@ -97,8 +97,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
       }
 
       const { start, end } = computeRange(view, dateParam ? new Date(dateParam) : undefined);
-      let accessToken = String(acc.access_token || '');
-      accessToken = await refreshGoogleTokenIfNeeded(authUser.userId, acc);
+      const accessToken = acc.accessToken;
 
       const params = new URLSearchParams();
       params.set('singleEvents', 'true');
@@ -198,7 +197,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
       let updates: any = {};
       try { updates = JSON.parse(rawBody); } catch {}
 
-      const acc = await getExternalAccount(authUser.userId, 'google');
+      const acc = await resolveGoogleAccountForRoute(authUser.userId);
       if (!acc) {
         const body = JSON.stringify({ ok: false, error: 'google_not_connected' });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -206,7 +205,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
         return true;
       }
 
-      const scopes = Array.isArray(acc.scopes) ? acc.scopes.map((s: any) => String(s)) : [];
+      const scopes = acc.scopes;
       const needsScope = 'https://www.googleapis.com/auth/calendar.events';
       if (!scopes.includes(needsScope) && !scopes.includes('https://www.googleapis.com/auth/calendar')) {
         const body = JSON.stringify({ ok: false, error: 'missing_scopes', missing: [needsScope] });
@@ -215,8 +214,7 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
         return true;
       }
 
-      let accessToken = String(acc.access_token || '');
-      accessToken = await refreshGoogleTokenIfNeeded(authUser.userId, acc);
+      const accessToken = acc.accessToken;
 
       const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`;
       const apiRes = await fetch(url, {

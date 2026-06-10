@@ -152,8 +152,8 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'get_mouse_position', category: 'input', kind: 'local', description: 'Get the current mouse cursor position on screen', argsTemplate: {}, outputSchema: { ok: 'boolean', x: 'number', y: 'number' } },
   { id: 'move_cursor', category: 'input', kind: 'local', description: 'Move the mouse cursor to specific screen coordinates', argsTemplate: { x: 100, y: 100, duration: 0 }, outputSchema: { ok: 'boolean', x: 'number', y: 'number' } },
   { id: 'computer_use', category: 'input', kind: 'local', description: 'Perform GUI actions (mouse/keyboard) and optionally capture a screenshot', argsTemplate: { action: 'mouse_move', x: 100, y: 100, includeScreenshot: false }, outputSchema: { ok: 'boolean', action: 'string', filePath: 'string', screenshot: 'string', cursor: { x: 'number', y: 'number' }, display: { width: 'number', height: 'number' }, text: 'string' } },
-  { id: 'get_clipboard_content', category: 'input', kind: 'local', description: 'Read text from the clipboard', argsTemplate: {}, outputSchema: { ok: 'boolean', text: 'string' } },
-  { id: 'set_clipboard_content', category: 'input', kind: 'local', description: 'Set text into the clipboard', argsTemplate: { text: '' }, outputSchema: { ok: 'boolean' } },
+  { id: 'get_clipboard_content', category: 'input', kind: 'local', description: 'Read the clipboard with its type (text, image, files, html). Set saveImage to write a clipboard image to a PNG file.', argsTemplate: { saveImage: false, includeImageData: false }, outputSchema: { ok: 'boolean', type: 'string', types: 'string[]', text: 'string', html: 'string', files: 'string[]', hasImage: 'boolean', imageSize: { width: 'number', height: 'number' }, imagePath: 'string', imageDataUrl: 'string', formats: 'string[]' } },
+  { id: 'set_clipboard_content', category: 'input', kind: 'local', description: 'Write to the clipboard. Defaults to text; set type to html or image (with imagePath or imageDataUrl) for other formats.', argsTemplate: { type: 'text', text: '', html: '', imagePath: '', imageDataUrl: '' }, outputSchema: { ok: 'boolean', type: 'string' } },
 
   // --- VISION / MEDIA ---
   { id: 'take_screenshot', category: 'vision', kind: 'local', description: 'Capture screenshot and return a local file path', argsTemplate: { region: { x: 0, y: 0, width: 800, height: 600 }, hideUI: false }, outputSchema: { ok: 'boolean', filePath: 'string' } },
@@ -215,6 +215,12 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   // --- DATA / AI ---
   { id: 'ai_inference', category: 'data', kind: 'cloud', description: 'Unified AI inference — text, multimodal (image / audio / video / PDF / current screen), structured JSON, or embeddings. Routed via OpenRouter.', argsTemplate: { prompt: '', input: '', sources: [], mode: 'text', schema: {}, model: 'google/gemini-3.1-pro-preview', temperature: 0.3 }, outputSchema: { ok: 'boolean', text: 'string', json: 'any', embedding: 'number[]', model: 'string' } },
   { id: 'web_search', category: 'data', kind: 'cloud', description: 'Search the web using Perplexity AI', argsTemplate: { query: '', max_results: 5, max_tokens_per_page: 1024 }, outputSchema: { results: 'any[]', id: 'string' } },
+
+  // --- MAPS & LOCATION (Google Maps Platform) ---
+  { id: 'maps_search_places', category: 'data', kind: 'cloud', description: 'Find businesses & places near a location (Google Maps). Use a text query like "coffee shops in Chicago", or pass a place type + radius for a nearby search. Returns name, address, rating, phone, website, and hours.', argsTemplate: { query: 'coffee shops in Chicago', max_results: 10 }, outputSchema: { ok: 'boolean', mode: 'string', count: 'number', places: 'any[]', error: 'string' } },
+  { id: 'maps_place_details', category: 'data', kind: 'cloud', description: 'Get full details for one place by its Place ID (from Find Places) — phone, website, full weekly hours, and recent reviews.', argsTemplate: { place_id: '', include_reviews: true }, outputSchema: { ok: 'boolean', place: 'object', error: 'string' } },
+  { id: 'maps_distance_matrix', category: 'data', kind: 'cloud', description: 'Get travel distance and time between one or more starting points and destinations (Google Maps). Addresses, place names, or "lat,lng" all work.', argsTemplate: { origins: ['Chicago, IL'], destinations: ['Milwaukee, WI'], mode: 'driving', units: 'imperial' }, outputSchema: { ok: 'boolean', origin_addresses: 'any[]', destination_addresses: 'any[]', rows: 'any[]', error: 'string' } },
+  { id: 'maps_static_map', category: 'data', kind: 'cloud', description: 'Render a map image of a place or set of markers (Google Maps). Saves to the media gallery so it can be shown or attached.', argsTemplate: { center: 'Willis Tower, Chicago', zoom: 14, size: '640x400', maptype: 'roadmap' }, outputSchema: { ok: 'boolean', images: 'any[]', error: 'string' } },
 
   // --- UI ---
   { id: 'custom_ui', category: 'ui', kind: 'local', description: 'Show a custom desktop UI built with React JSX. Best for forms, overlays, live status panels, and mini-app flows. Supports Tailwind, Framer Motion, workflow data via useVar(), and Stuard APIs like submit, callTool, and callNode. Explicit window x/y and stuard.moveTo use the same screen coordinates as mouse tools.', argsTemplate: { id: 'my-panel', title: 'My Custom UI', component: '', css: '', data: {}, window: { width: 400, height: 500, position: 'center', alwaysOnTop: false, frameless: true, borderRadius: 12, resizable: false, draggable: true, minimizable: true, backgroundType: 'color', backgroundColor: '#1a1a2e', contentPadding: 24, shadow: { enabled: true, color: '#00000040', blur: 20, spread: 0, x: 0, y: 8 }, animation: { open: 'fade', close: 'fade', duration: 300, easing: 'ease-out' }, invisible: false, translucent: { color: '#1a1a2e', opacity: 0.7, blur: 12 } }, blocking: true }, outputSchema: { ok: 'boolean', action: 'string', data: 'object' } },
@@ -338,9 +344,6 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'get_marketplace_workflow', category: 'integrations', kind: 'cloud', description: 'Retrieve a workflow from the marketplace by slug', argsTemplate: { slug: '' }, outputSchema: { ok: 'boolean', workflow: 'object' } },
   { id: 'list_popular_workflows', category: 'integrations', kind: 'cloud', description: 'List popular workflows from the marketplace', argsTemplate: { category: '', sort_by: 'downloads', limit: 10 }, outputSchema: { ok: 'boolean', workflows: 'any[]', count: 'number' } },
   { id: 'list_marketplace_categories', category: 'integrations', kind: 'cloud', description: 'List all available workflow categories', argsTemplate: {}, outputSchema: { ok: 'boolean', categories: 'any[]' } },
-  { id: 'deploy_headless_agent', category: 'flow', kind: 'cloud', description: 'Deploy an autonomous sub-agent to run a task in the background', argsTemplate: { objective: '', tools_allowed: [], custom_system_prompt: '', model: 'fast' }, outputSchema: { ok: 'boolean', taskId: 'string', error: 'string' } },
-  { id: 'get_headless_agent_status', category: 'flow', kind: 'cloud', description: 'Get the status of a deployed sub-agent task', argsTemplate: { taskId: '' }, outputSchema: { ok: 'boolean', task: 'object', error: 'string' } },
-  { id: 'list_headless_agent_tasks', category: 'flow', kind: 'cloud', description: 'List recent sub-agent tasks', argsTemplate: { status: '', parent_id: '', limit: 25 }, outputSchema: { ok: 'boolean', tasks: 'any[]', error: 'string' } },
 
   // --- DATA / TASKS ---
   { id: 'task_crud', category: 'data', kind: 'local', description: 'Create/Read/Update/Delete tasks', argsTemplate: { action: 'create', task: {} }, outputSchema: { ok: 'boolean', task: 'object' } },
@@ -731,9 +734,35 @@ const WHATSAPP_MIME_TYPE_OPTIONS: ArgOption[] = [
   { value: 'application/pdf', label: 'PDF Document', description: 'PDF file upload' },
 ];
 
+const MAPS_TRAVEL_MODE_OPTIONS: ArgOption[] = [
+  { value: 'driving', label: 'Driving', description: 'By car' },
+  { value: 'walking', label: 'Walking', description: 'On foot' },
+  { value: 'bicycling', label: 'Bicycling', description: 'By bike' },
+  { value: 'transit', label: 'Transit', description: 'Public transport' },
+];
+
+const MAPS_UNITS_OPTIONS: ArgOption[] = [
+  { value: 'imperial', label: 'Miles (Imperial)', description: 'Distances in miles/feet' },
+  { value: 'metric', label: 'Kilometers (Metric)', description: 'Distances in km/meters' },
+];
+
+const MAPS_MAPTYPE_OPTIONS: ArgOption[] = [
+  { value: 'roadmap', label: 'Road Map', description: 'Standard street map' },
+  { value: 'satellite', label: 'Satellite', description: 'Aerial imagery' },
+  { value: 'terrain', label: 'Terrain', description: 'Physical relief + roads' },
+  { value: 'hybrid', label: 'Hybrid', description: 'Satellite with street labels' },
+];
+
 const TOOL_ARG_SELECT_OPTIONS: Record<string, Record<string, ArgOption[]>> = {
   get_datetime: {
     format: DATE_TIME_FORMAT_OPTIONS,
+  },
+  maps_distance_matrix: {
+    mode: MAPS_TRAVEL_MODE_OPTIONS,
+    units: MAPS_UNITS_OPTIONS,
+  },
+  maps_static_map: {
+    maptype: MAPS_MAPTYPE_OPTIONS,
   },
   capture_media: {
     kind: MEDIA_KIND_OPTIONS,
@@ -750,9 +779,6 @@ const TOOL_ARG_SELECT_OPTIONS: Record<string, Record<string, ArgOption[]>> = {
   },
   stream_create: {
     kind: STREAM_KIND_OPTIONS,
-  },
-  deploy_headless_agent: {
-    model: MODEL_OPTIONS,
   },
   ask_confirmation: {
     variant: VARIANT_OPTIONS,
@@ -875,6 +901,15 @@ const KNOWN_DESCRIPTIONS: Record<string, string> = {
   'events': 'Which file events to listen for.',
   'passthrough': 'Let the key press continue to other apps.',
   'hold': 'Fire on both key press AND release (for hold-to-record patterns).',
+  // Maps & location
+  'origins': 'Starting point(s) — an address, place name, or "lat,lng".',
+  'destinations': 'Destination(s) — an address, place name, or "lat,lng".',
+  'center': 'Map center — an address (e.g. "Eiffel Tower, Paris") or "lat,lng".',
+  'place_id': 'The Google Place ID, taken from a Find Places result.',
+  'included_type': 'Restrict to one place type, e.g. "restaurant", "lawyer", "gym".',
+  'radius_meters': 'How far to search around the location, in meters.',
+  'maptype': 'Map style to render.',
+  'include_reviews': 'Include recent customer reviews in the result.',
 };
 
 // User-friendly labels for argument keys  
@@ -888,6 +923,10 @@ const KNOWN_LABELS: Record<string, string> = {
   'url': 'URL',
   'workflowId': 'Workflow',
   'inputs': 'Input Data',
+  'place_id': 'Place ID',
+  'maptype': 'Map Type',
+  'radius_meters': 'Search Radius (meters)',
+  'included_type': 'Place Type',
 };
 
 function extractOutputKeys(schema: any, prefix = '', depth = 0): string[] {

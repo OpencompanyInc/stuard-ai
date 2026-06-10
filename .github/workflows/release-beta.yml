@@ -219,6 +219,7 @@ jobs:
           SECRETS="$SECRETS,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest"
           SECRETS="$SECRETS,ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest"
           SECRETS="$SECRETS,YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest"
+          SECRETS="$SECRETS,GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest"
           # OAuth credentials
           SECRETS="$SECRETS,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest"
           SECRETS="$SECRETS,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest"
@@ -477,14 +478,16 @@ jobs:
           else
             ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux dist/stuard-wakeword-linux 2>/dev/null || true
           fi
-          echo "=== Required: agent + browser + wakeword ==="
-          # Agent, browser, and wakeword are required; mediapipe is optional
+          echo "=== Required: agent + browser + wakeword + file-indexer ==="
+          # Agent, browser, wakeword, and the file indexer are required; mediapipe is optional.
+          # The file indexer powers local/launcher file search and has NO runtime
+          # fallback, so a build missing it ships broken file search — fail loudly.
           if [ "$RUNNER_OS" == "Windows" ]; then
-            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe
+            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe && test -f dist/stuard-file-indexer.exe
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos
+            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos && test -f dist/stuard-file-indexer-macos
           else
-            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux
+            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux && test -f dist/stuard-file-indexer-linux
           fi
         shell: bash
       
@@ -549,6 +552,9 @@ jobs:
           # @stuardai/* workspace packages' transitive imports. The pnpm-based
           # gate/local builds must NOT set this (it breaks .pnpm-store resolution).
           STUARD_DESKTOP_NPM_BUILD: "1"
+          # Fail the build if prepare:agent can't find the Rust file indexer, so a
+          # release can never silently ship with local file search disabled.
+          STUARD_REQUIRE_FILE_INDEXER: "1"
           # PostHog analytics enabled for beta only
           VITE_PUBLIC_POSTHOG_KEY: ${{ secrets.POSTHOG_API_KEY }}
           VITE_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"

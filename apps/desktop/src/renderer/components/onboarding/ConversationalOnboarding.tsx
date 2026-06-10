@@ -652,9 +652,9 @@ export function ConversationalOnboarding({ onComplete, onSkip }: Props) {
                   <ArrowRight size={16} />
                 </button>
               </div>
-              {supabaseName && !editing && supabaseName === name && (
+              {supabaseName.trim() && !editing && supabaseName.trim() === name.trim() && (
                 <p className="mt-3 text-center text-[11px] text-white/45">
-                  Not {pickFirstName(supabaseName, 'right')}?{' '}
+                  Not {pickFirstName(supabaseName, firstName)}?{' '}
                   <button onClick={() => { setEditing(true); setName(''); }} className="text-rose-200/80 underline-offset-2 hover:underline hover:text-rose-100">
                     Edit
                   </button>

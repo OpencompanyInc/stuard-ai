@@ -44,9 +44,13 @@ export const workflowMap = new Map<string, any>();
 // Falls back to execLocalTool for local-only tools.
 // Using lazy initialization to avoid circular dependency issues at module load time.
 let _cloudToolsCache: Map<string, any> | null = null;
+let _cloudToolsBuiltWithRegistry = false;
 
 function getCloudTools(): Map<string, any> {
-  if (_cloudToolsCache) return _cloudToolsCache;
+  // Cache only once the global tool registry was populated at build time —
+  // otherwise an early first call (before meta-tools finished registering) would
+  // cache a map missing every registry-only cloud tool (maps_*, x_*, notion_*…).
+  if (_cloudToolsCache && _cloudToolsBuiltWithRegistry) return _cloudToolsCache;
 
   const registry = new Map<string, any>();
   const add = (t: any) => {
@@ -130,7 +134,28 @@ function getCloudTools(): Map<string, any> {
   add(generate_image);
   add(ask_user);
 
+  // Overlay every cloud-located tool from the global registry that isn't already
+  // in the hand-curated set above. Without this, run_sequential / run_parallel /
+  // test_workflow_step resolve such a step's tool as NOT-cloud and dispatch it to
+  // the device bridge via execLocalTool — which returns `unknown_tool` because the
+  // tool only exists server-side. This is what broke maps_search_places (and the
+  // same latent bug affected x_*, notion_*, youtube_*, reddit_*, image/tts variants).
+  // Only `location: 'cloud'` tools are overlaid; device/compute tools intentionally
+  // keep routing through the bridge.
+  let mergedFromRegistry = false;
+  try {
+    const global = getToolRegistry();
+    for (const [id, t] of global.entries()) {
+      if (registry.has(id)) continue;
+      if (getToolMetadata(id)?.location === 'cloud' && typeof (t as any)?.execute === 'function') {
+        registry.set(id, t);
+      }
+    }
+    mergedFromRegistry = global.size > 0;
+  } catch { }
+
   _cloudToolsCache = registry;
+  _cloudToolsBuiltWithRegistry = mergedFromRegistry;
   return registry;
 }
 

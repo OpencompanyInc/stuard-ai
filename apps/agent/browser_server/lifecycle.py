@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -98,12 +99,31 @@ async def _restore_cookie_backup(profile_dir: Path) -> None:
 # Page state helpers
 # ---------------------------------------------------------------------------
 
+def _active_page() -> Optional["CDPConnectionLike"]:
+    """The CDP page connection for the CURRENT request.
+
+    Each aiohttp request task sets `state.current_page` to the tab it resolved (see
+    `browser_op` / `_ensure_browser_session`). Concurrent requests therefore each see
+    their own tab. When unset (legacy / session-less calls), fall back to the shared
+    default page so existing single-session behavior is unchanged.
+    """
+    page = state.current_page.get()
+    if page is not None:
+        return page
+    return state._page
+
+
+# Type alias kept loose to avoid importing CDPConnection here just for hints.
+CDPConnectionLike = Any
+
+
 async def _page_is_alive() -> bool:
-    if state._page is None or not state._page.is_connected:
+    page = _active_page()
+    if page is None or not page.is_connected:
         return False
     try:
         result = await asyncio.wait_for(
-            state._page.evaluate("() => true"), timeout=2.0
+            page.evaluate("() => true"), timeout=2.0
         )
         return result is True
     except Exception:
@@ -111,19 +131,21 @@ async def _page_is_alive() -> bool:
 
 
 async def _get_page_url() -> str:
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return ""
     try:
-        return str(await state._page.evaluate("() => window.location.href") or "")
+        return str(await page.evaluate("() => window.location.href") or "")
     except Exception:
         return ""
 
 
 async def _get_page_title(timeout: float | None = None) -> str:
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return ""
     try:
-        coro = state._page.evaluate("() => document.title")
+        coro = page.evaluate("() => document.title")
         if timeout:
             return str(await asyncio.wait_for(coro, timeout=timeout) or "")
         return str(await coro or "")
@@ -199,70 +221,137 @@ async def _release_tab_session(session_id: str) -> bool:
         return False
     target_id = state._tab_session_targets.pop(session_id, None)
     state._tab_session_touched.pop(session_id, None)
+    state._session_locks.pop(session_id, None)
     if target_id and state._tab_target_owners.get(target_id) == session_id:
         state._tab_target_owners.pop(target_id, None)
     return target_id is not None
 
 
-async def _resolve_tab_for_session(body: dict[str, Any] | None = None) -> None:
-    """Select the page owned by session_id, creating/claiming a tab as needed.
+async def _resolve_tab_for_session(body: dict[str, Any] | None = None):
+    """Resolve and RETURN the CDP page for this request's session.
 
-    Calls without session_id keep the legacy active-page behavior.
+    Each browser session (one per parallel subagent) owns a dedicated tab, tracked by
+    session ownership rather than by tab index — so two sessions never collide even
+    though Chrome's /json/list order is unstable. Session-less / legacy calls get the
+    shared default page. Does NOT mutate `state._page` (the default page) for sessions,
+    so the sidebar mirror and legacy callers keep pointing at the default tab.
+
+    Must be called while holding the structural lock (`state._lock`).
     """
     body = body or {}
     session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
     if not session_id:
-        return
+        return state._page
 
     browser = state._browser
     if browser is None:
-        return
+        return state._page
 
     live_target_ids = await _cleanup_tab_sessions()
+
+    # Reuse the tab this session already owns, if it's still alive.
     owned_target_id = state._tab_session_targets.get(session_id)
     if owned_target_id and owned_target_id in live_target_ids:
-        state._page = await browser.activate_target(owned_target_id)
         state._tab_session_touched[session_id] = time.monotonic()
-        return
+        return await browser.get_page(owned_target_id)
 
-    tab_index = _normalize_tab_index(body.get("tab_index") if "tab_index" in body else body.get("tabIndex"))
-    targets = await browser.list_targets()
+    # Otherwise reuse an unowned tab before creating a new one (caps tab growth across
+    # batches). Prefer a non-default tab so parallel siblings spread across tabs, but
+    # a lone session may adopt the default tab rather than leave a blank "New Tab"
+    # behind it — so a single browser subagent uses the existing tab, not a second one.
+    target_id: Optional[str] = None
+    fallback_default: Optional[str] = None
+    for t in await browser.list_targets():
+        tid = str(t.get("id") or "")
+        if not tid or tid in state._tab_target_owners:
+            continue
+        if tid == state._default_target_id:
+            fallback_default = tid
+            continue
+        target_id = tid
+        break
+    if target_id is None and fallback_default is not None:
+        target_id = fallback_default
 
-    if tab_index is not None:
-        while len(targets) <= tab_index:
-            page = await browser.new_page("about:blank")
-            state._page = page
+    if target_id is None:
+        # No reusable tab — create a fresh one for this session.
+        page = await browser.new_page("about:blank")
+        target_id = browser._active_id
+        if not target_id:
             targets = await browser.list_targets()
-        target_id = str(targets[tab_index]["id"])
-    else:
-        if not targets:
-            page = await browser.new_page("about:blank")
-            state._page = page
-            targets = await browser.list_targets()
-
-        first_target_id = str(targets[0]["id"])
-        owner = state._tab_target_owners.get(first_target_id)
-        if owner in (None, session_id):
-            target_id = first_target_id
-        else:
-            page = await browser.new_page("about:blank")
-            state._page = page
-            targets = await browser.list_targets()
-            target_id = str(targets[-1]["id"])
+            target_id = str(targets[-1]["id"]) if targets else None
+        if target_id is None:
+            return state._page
+        await _claim_tab_for_session(session_id, target_id)
+        return page
 
     await _claim_tab_for_session(session_id, target_id)
-    state._page = await browser.activate_target(target_id)
+    return await browser.get_page(target_id)
 
 
 async def _ensure_browser_session(body: dict[str, Any] | None = None) -> tuple[bool, Optional[str]]:
+    """Structural-path session ensure (used by tabs/cookies-style handlers).
+
+    Launches the browser if needed, resolves this request's tab, and pins it as the
+    per-request active page so the handler's helper calls target the right tab.
+    Operation handlers should use `browser_op` instead, which additionally avoids
+    holding the structural lock for the whole operation.
+    """
     ok, err = await _ensure_browser()
     if not ok:
         return ok, err
     try:
-        await _resolve_tab_for_session(body)
+        page = await _resolve_tab_for_session(body)
+        if page is not None:
+            state.current_page.set(page)
     except Exception as exc:
         return False, f"Browser tab session failed: {exc}"
     return True, None
+
+
+@asynccontextmanager
+async def browser_op(body: dict[str, Any] | None = None):
+    """Context manager for per-tab browser OPERATIONS that run concurrently.
+
+    Phase 1 (structural lock, brief): launch Chrome if needed and resolve/claim this
+    request's tab. Phase 2 (per-session lock, for the operation body): the structural
+    lock is released so requests on OTHER tabs run in parallel; the per-session lock
+    serializes only same-session requests. The resolved tab is pinned via the
+    `current_page` ContextVar for the duration of the body.
+
+    Usage:
+        async with browser_op(body) as (ok, err):
+            if not ok:
+                return _err(err or "Browser init failed", status=500)
+            ... operation using lifecycle helpers ...
+    """
+    body = body or {}
+    page = None
+    ok = False
+    err: Optional[str] = None
+
+    async with state._lock:
+        ok, err = await _ensure_browser()
+        if ok:
+            try:
+                page = await _resolve_tab_for_session(body)
+            except Exception as exc:
+                ok, err = False, f"Browser tab session failed: {exc}"
+
+    if not ok:
+        yield (False, err)
+        return
+    if page is None:
+        yield (False, err or "Browser init failed")
+        return
+
+    session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
+    token = state.current_page.set(page)
+    try:
+        async with state._session_lock(session_id):
+            yield (True, None)
+    finally:
+        state.current_page.reset(token)
 
 
 async def _tab_owner_snapshot() -> dict[str, str]:
@@ -277,7 +366,8 @@ async def _capture_screenshot(
     full_page: bool = False,
 ) -> bytes:
     """Capture a screenshot from the active page via CDP."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         raise RuntimeError("No active page")
 
     fmt = "jpeg" if str(image_format).lower() in ("jpeg", "jpg") else "png"
@@ -290,7 +380,7 @@ async def _capture_screenshot(
     if full_page:
         params["captureBeyondViewport"] = True
         try:
-            metrics = await state._page.send("Page.getLayoutMetrics")
+            metrics = await page.send("Page.getLayoutMetrics")
             content_size = metrics.get("contentSize", {})
             width = float(content_size.get("width", 0) or 0)
             height = float(content_size.get("height", 0) or 0)
@@ -305,7 +395,7 @@ async def _capture_screenshot(
         except Exception:
             pass
 
-    result = await state._page.send("Page.captureScreenshot", params)
+    result = await page.send("Page.captureScreenshot", params)
     data = str(result.get("data", "") or "")
     if not data:
         raise RuntimeError("Chrome returned an empty screenshot payload")
@@ -322,10 +412,11 @@ async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
     Supports 0, 1, or multiple args (multiple args passed as a list, matching
     Playwright's convention for destructured parameters).
     """
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return ""
     try:
-        coro = state._page.evaluate(js_arrow_fn, *args)
+        coro = page.evaluate(js_arrow_fn, *args)
         return await asyncio.wait_for(coro, timeout=30.0)
     except asyncio.TimeoutError:
         return ""
@@ -333,7 +424,10 @@ async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
         msg = str(exc).lower()
         if "context" in msg or "destroyed" in msg or "closed" in msg or "connection" in msg:
             print(f"[browser-server] Page connection lost, will re-launch: {exc}", flush=True)
-            state._page = None
+            # Only clear the shared default page (which gates re-launch). A dead
+            # background-tab connection is re-resolved on the session's next call.
+            if page is state._page:
+                state._page = None
         raise
 
 
@@ -342,7 +436,7 @@ async def _evaluate(js_arrow_fn: str, *args: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 async def _wait_for_ready(wait_until: str = "domcontentloaded", timeout: int = 30000) -> None:
-    if state._page is None:
+    if _active_page() is None:
         raise RuntimeError("No active page")
 
     timeout_s = max(0.25, float(timeout) / 1000.0)
@@ -411,12 +505,13 @@ async def _wait_for_selector(selector: str, timeout: int = 5000) -> bool:
 
 
 async def _goto(url: str, wait_until: str = "domcontentloaded", timeout: int = 30000) -> None:
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         raise RuntimeError("No active page")
     wait_until = _normalize_wait_until(wait_until)
     timeout = _clamp_int(timeout, 30000, 1000, 180000)
     # CDP Page.navigate starts the navigation; then we poll readyState
-    await state._page.send("Page.navigate", {"url": url})
+    await page.send("Page.navigate", {"url": url})
     await asyncio.sleep(0.1)
     await _wait_for_ready(wait_until=wait_until, timeout=timeout)
 
@@ -488,19 +583,20 @@ async def _smart_wait_for_element(selector: str = "", text: str = "", timeout: i
 
 async def _cdp_click_at(x: float, y: float, click_count: int = 1) -> None:
     """Dispatch CDP mouse events at the given viewport coordinates."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         raise RuntimeError("No active page")
     ix, iy = int(x), int(y)
-    await state._page.send("Input.dispatchMouseEvent",
-                           {"type": "mouseMoved", "x": ix, "y": iy})
+    await page.send("Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": ix, "y": iy})
     await asyncio.sleep(0.02)
-    await state._page.send("Input.dispatchMouseEvent",
-                           {"type": "mousePressed", "x": ix, "y": iy,
-                            "button": "left", "clickCount": click_count})
+    await page.send("Input.dispatchMouseEvent",
+                    {"type": "mousePressed", "x": ix, "y": iy,
+                     "button": "left", "clickCount": click_count})
     await asyncio.sleep(0.05)
-    await state._page.send("Input.dispatchMouseEvent",
-                           {"type": "mouseReleased", "x": ix, "y": iy,
-                            "button": "left", "clickCount": click_count})
+    await page.send("Input.dispatchMouseEvent",
+                    {"type": "mouseReleased", "x": ix, "y": iy,
+                     "button": "left", "clickCount": click_count})
 
 
 async def _cdp_click_selector(selector: str) -> bool:
@@ -563,28 +659,29 @@ async def _cdp_click_selector(selector: str) -> bool:
 
 async def _cdp_type_text(text: str) -> bool:
     """Type text char-by-char via CDP Input.dispatchKeyEvent."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return False
     try:
         for char in text:
             if char == "\n":
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "keyDown", "key": "Enter", "code": "Enter",
                      "windowsVirtualKeyCode": 13})
                 await asyncio.sleep(0.001)
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "char", "text": "\r", "key": "Enter"})
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "keyUp", "key": "Enter", "code": "Enter",
                      "windowsVirtualKeyCode": 13})
             else:
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "keyDown", "key": char,
                      "code": f"Key{char.upper()}" if char.isalpha() else char})
                 await asyncio.sleep(0.001)
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "char", "text": char, "key": char})
-                await state._page.send("Input.dispatchKeyEvent",
+                await page.send("Input.dispatchKeyEvent",
                     {"type": "keyUp", "key": char,
                      "code": f"Key{char.upper()}" if char.isalpha() else char})
             await asyncio.sleep(0.03)
@@ -595,7 +692,8 @@ async def _cdp_type_text(text: str) -> bool:
 
 async def _cdp_press_key(key: str) -> bool:
     """Press a key or key combo (e.g. 'Enter', 'Control+a') via CDP."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return False
 
     _KEY_CODES: dict[str, int] = {
@@ -628,7 +726,7 @@ async def _cdp_press_key(key: str) -> bool:
     try:
         # Press modifier keys down
         for mk in mod_keys:
-            await state._page.send("Input.dispatchKeyEvent", {
+            await page.send("Input.dispatchKeyEvent", {
                 "type": "keyDown", "key": mk, "code": mk + "Left",
                 "windowsVirtualKeyCode": _KEY_CODES.get(mk, 0),
                 "modifiers": modifiers,
@@ -638,18 +736,18 @@ async def _cdp_press_key(key: str) -> bool:
         if not key_code and len(main_key) == 1:
             key_code = ord(main_key.upper())
 
-        await state._page.send("Input.dispatchKeyEvent", {
+        await page.send("Input.dispatchKeyEvent", {
             "type": "keyDown", "key": main_key,
             "code": f"Key{main_key.upper()}" if len(main_key) == 1 and main_key.isalpha() else main_key,
             "windowsVirtualKeyCode": key_code,
             "modifiers": modifiers,
         })
         if len(main_key) == 1:
-            await state._page.send("Input.dispatchKeyEvent", {
+            await page.send("Input.dispatchKeyEvent", {
                 "type": "char", "text": main_key, "key": main_key,
                 "modifiers": modifiers,
             })
-        await state._page.send("Input.dispatchKeyEvent", {
+        await page.send("Input.dispatchKeyEvent", {
             "type": "keyUp", "key": main_key,
             "code": f"Key{main_key.upper()}" if len(main_key) == 1 and main_key.isalpha() else main_key,
             "windowsVirtualKeyCode": key_code,
@@ -658,7 +756,7 @@ async def _cdp_press_key(key: str) -> bool:
 
         # Release modifier keys
         for mk in reversed(mod_keys):
-            await state._page.send("Input.dispatchKeyEvent", {
+            await page.send("Input.dispatchKeyEvent", {
                 "type": "keyUp", "key": mk, "code": mk + "Left",
                 "modifiers": 0,
             })
@@ -726,6 +824,9 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
 
         state._browser = browser
         state._page = page
+        # Reserve the launch tab as the default page; sessions never claim it, so the
+        # sidebar mirror / legacy callers keep a stable foreground tab.
+        state._default_target_id = browser._active_id
         state._viewport_cache["w"] = 1280
         state._viewport_cache["h"] = 900
 
@@ -748,10 +849,11 @@ async def _ensure_browser() -> tuple[bool, Optional[str]]:
 
 async def _get_child_frames() -> list[dict]:
     """Get child frames (iframes) with their CDP execution context IDs."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return []
     try:
-        result = await state._page.send("Page.getFrameTree")
+        result = await page.send("Page.getFrameTree")
         frames: list[dict] = []
 
         def _collect(tree: dict, depth: int = 0) -> None:
@@ -762,7 +864,7 @@ async def _get_child_frames() -> list[dict]:
                     "frameId": fid,
                     "url": f.get("url", ""),
                     "name": f.get("name", ""),
-                    "contextId": state._page._frame_contexts.get(fid),
+                    "contextId": page._frame_contexts.get(fid),
                 })
                 _collect(child, depth + 1)
 
@@ -774,13 +876,14 @@ async def _get_child_frames() -> list[dict]:
 
 async def _evaluate_in_frame(frame_id: str, js_arrow_fn: str, *args: Any) -> Any:
     """Evaluate JS in a child frame's execution context."""
-    if state._page is None:
+    page = _active_page()
+    if page is None:
         return ""
-    ctx_id = state._page._frame_contexts.get(frame_id)
+    ctx_id = page._frame_contexts.get(frame_id)
     if ctx_id is None:
         return ""
     try:
-        coro = state._page.evaluate_in_context(ctx_id, js_arrow_fn, *args)
+        coro = page.evaluate_in_context(ctx_id, js_arrow_fn, *args)
         return await asyncio.wait_for(coro, timeout=30.0)
     except asyncio.TimeoutError:
         return ""
@@ -810,6 +913,8 @@ async def _close_browser(profile_dir: Path | None = None) -> None:
         pass
 
     state._browser = state._page = None
+    state._default_target_id = None
     state._tab_session_targets.clear()
     state._tab_target_owners.clear()
     state._tab_session_touched.clear()
+    state._session_locks.clear()

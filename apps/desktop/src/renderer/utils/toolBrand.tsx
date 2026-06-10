@@ -22,6 +22,7 @@ import {
   Globe,
   Image as ImageIcon,
   Link as LinkIcon,
+  MapPin,
   Monitor,
   MousePointer,
   Network,
@@ -93,6 +94,7 @@ const BRANDS: Record<string, ToolBrand> = {
 
   // ── System / capability categories (lucide icons) ──────────────────────────
   browser: { key: 'browser', label: 'Browser', icon: Globe, color: '#60A5FA' },
+  maps: { key: 'maps', label: 'Maps', icon: MapPin, color: '#EA4335' },
   search: { key: 'search', label: 'Web search', icon: Search, color: '#E5E7EB' },
   scrape: { key: 'scrape', label: 'Web scrape', icon: LinkIcon, color: '#22D3EE' },
   http: { key: 'http', label: 'HTTP request', icon: Network, color: '#22D3EE' },
@@ -144,6 +146,7 @@ export function toolToBrand(toolName: string): ToolBrand | null {
   if (name.startsWith('youtube_') || name.startsWith('yt_')) return BRANDS.youtube;
   if (name.startsWith('whatsapp_') || name.startsWith('wa_')) return BRANDS.whatsapp;
   if (name.startsWith('telnyx_')) return BRANDS.whatsapp; // SMS/voice share comms tile
+  if (name.startsWith('maps_')) return BRANDS.maps;
   if (name.startsWith('python_') || name === 'run_python_script' || name === 'pip_install') return BRANDS.python;
   if (name.startsWith('ffmpeg_') || name === 'transcode' || name === 'extract_audio') return BRANDS.ffmpeg;
   if (name.startsWith('ollama_')) return BRANDS.ollama;

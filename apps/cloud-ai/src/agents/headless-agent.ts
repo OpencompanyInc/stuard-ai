@@ -5,9 +5,6 @@ import { buildProviderModel } from '../utils/models';
 import { waitTool } from '../tools/wait';
 import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
 import { analyzeMediaTool } from '../tools/analyze-media';
-import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
-import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../tools/github-tools';
 import { google_get_userinfo, gmail_send_message, calendar_list_events, calendar_create_event, calendar_delete_event, tasks_list, sheets_read_range, sheets_create_spreadsheet, sheets_write_range, sheets_append_rows, sheets_clear_range, sheets_get_spreadsheet, sheets_add_sheet, sheets_format_cells, sheets_batch_update_values, sheets_delete_rows_columns, sheets_sort_range, sheets_auto_resize, docs_get_document, docs_create_document, docs_write_text } from '../tools/google-tools';
@@ -53,9 +50,6 @@ export function getHeadlessAgent(
     run_parallel: runParallelTool,
     analyze_media: analyzeMediaTool,
     web_search,
-    deploy_headless_agent: deployHeadlessAgent,
-    get_headless_agent_status: getHeadlessAgentStatus,
-    list_headless_agent_tasks: listHeadlessAgentTasks,
 
     // Integrations
     outlook_get_me,
@@ -121,7 +115,6 @@ export function getHeadlessAgent(
   // Always available tools
   const coreTools = [
     'wait', 'run_sequential', 'run_parallel', 'analyze_media', 'web_search',
-    'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks',
     'send_hotkey', 'glob', 'grep', 'capture_media',
     'describe_media_capture_capabilities', 'run_command',
     'calendar_crud', 'task_crud', 'task_reminders', 'planner_list_items',

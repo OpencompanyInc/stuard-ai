@@ -1,4 +1,4 @@
-import { getNotificationWindow, openNotificationWindow } from '../windows';
+import { getNotificationWindow, openNotificationWindow, isAnyAppWindowFocused } from '../windows';
 
 const notifiedKeys = new Map<string, number>();
 const DEDUPE_MS = 60_000;
@@ -45,6 +45,7 @@ function shouldNotify(requestId: string): boolean {
 /**
  * Notify when the orchestrator finishes a turn (`final` message).
  * Only fires for non-aborted completions. Subagent events are ignored.
+ * Skipped when a Stuard window is focused (the user can see the result already).
  */
 export function notifyOrchestratorDone(msg: any): void {
   if (!msg || String(msg.type || '').toLowerCase() !== 'final') return;
@@ -52,6 +53,10 @@ export function notifyOrchestratorDone(msg: any): void {
 
   const result = (msg.result && typeof msg.result === 'object') ? msg.result : {};
   if (result.finishReason === 'aborted') return;
+
+  // Don't interrupt with a toast if the user is already looking at Stuard —
+  // they can see the result in the chat. Only notify when we're in the background.
+  if (isAnyAppWindowFocused()) return;
 
   const requestId = String(msg.requestId || msg.id || '').trim();
   if (!shouldNotify(requestId || `final-${Date.now()}`)) return;

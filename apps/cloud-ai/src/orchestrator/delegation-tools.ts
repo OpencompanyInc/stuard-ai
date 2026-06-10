@@ -282,6 +282,10 @@ interface DelegateTaskInput {
   bot_name?: string;
   agent_id?: string;
   agent_name?: string;
+  /** For subagent === 'custom': exact tool names this ad-hoc subagent may use. */
+  tools?: string[];
+  /** For subagent === 'custom': the system prompt / role for this ad-hoc subagent. */
+  system_prompt?: string;
 }
 
 interface PreparedDelegateTask extends DelegateTaskInput {
@@ -373,11 +377,11 @@ function startDelegateTask(
   runSubagentImpl?: (args: any) => Promise<DelegationResult>,
 ): StartedDelegateTask {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'custom'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'vm' | 'bot' | 'agent';
+    : name as 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'vm' | 'bot' | 'agent' | 'custom';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const parentAbortSignal = bridgeSecrets?.__abortSignal;
   const isBrowserSubagent = kind === 'browser';
@@ -496,6 +500,12 @@ function startDelegateTask(
             task.skillContext,
             task.context,
           ),
+          ...(name === 'custom'
+            ? {
+                customToolNames: Array.isArray(task.tools) ? task.tools : undefined,
+                customSystemPrompt: task.system_prompt,
+              }
+            : {}),
         },
         runId,
         parentRunId: runId,
@@ -751,6 +761,7 @@ export const delegate = createTool({
     '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
     '  bot         — legacy proactive bot status/ask workflows by bot id or name\n' +
     '  agent       — proactive agent status/ask workflows by agent id or name\n' +
+    '  custom      — an ad-hoc subagent you define yourself: pass `tools` (exact tool names it may use) and `system_prompt` (its role/instructions). Use this when no built-in subagent fits.\n' +
     '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
     (OUTLOOK_INTEGRATION_ENABLED ? '  outlook     — Outlook mail & calendar\n' : '') +
     '  github      — repos, issues, PRs, branches, actions\n' +
@@ -795,6 +806,14 @@ export const delegate = createTool({
         .string()
         .optional()
         .describe('Optional target agent display name when subagent is "agent".'),
+      tools: z
+        .array(z.string())
+        .optional()
+        .describe('Only for subagent "custom": exact tool names this ad-hoc subagent may use. Omit to give it just the discovery meta-tools (search_tools/get_tool_schema/execute_tool).'),
+      system_prompt: z
+        .string()
+        .optional()
+        .describe('Only for subagent "custom": the role/instructions/system prompt for this ad-hoc subagent.'),
     })).min(1).max(10).describe('Array of tasks to delegate. Use 1 for a single task, or multiple for parallel execution.'),
   }),
   execute: async ({ tasks }) => {

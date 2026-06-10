@@ -6,6 +6,8 @@ from aiohttp import web
 from browser_server import state
 from browser_server.utils import _ok, _err
 from browser_server.lifecycle import (
+    browser_op,
+    _active_page,
     _claim_tab_for_session,
     _ensure_browser_session,
     _get_page_url,
@@ -59,6 +61,10 @@ async def handle_tabs(req: web.Request) -> web.Response:
                 url = body.get("url", "about:blank")
                 page = await browser.new_page(url)
                 state._page = page
+                # Point this request at the new tab so _get_page_url/title below
+                # report the newly opened page (the contextvar was pinned to the
+                # session's prior tab by _ensure_browser_session).
+                state.current_page.set(page)
                 session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
                 if session_id and browser._active_id:
                     await _claim_tab_for_session(session_id, browser._active_id)
@@ -74,6 +80,7 @@ async def handle_tabs(req: web.Request) -> web.Response:
                     target_id = targets[index]["id"]
                     page = await browser.activate_target(target_id)
                     state._page = page
+                    state.current_page.set(page)
                     session_id = _normalize_session_id(body.get("session_id") or body.get("sessionId"))
                     if session_id:
                         await _claim_tab_for_session(session_id, target_id)
@@ -100,6 +107,7 @@ async def handle_tabs(req: web.Request) -> web.Response:
                     else:
                         page = await browser.new_page()
                         state._page = page
+                    state.current_page.set(page)
                     return _ok({"closed": index, "remaining": len(remaining) if remaining else 1})
                 return _err("index is required for close action")
 
@@ -112,12 +120,11 @@ async def handle_cookies(req: web.Request) -> web.Response:
     body = await req.json()
     action = body.get("action", "get")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
-            page = state._page
+            page = _active_page()
             if page is None:
                 return _err("No active page", status=500)
 

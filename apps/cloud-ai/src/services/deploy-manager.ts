@@ -183,6 +183,7 @@ const VM_BLOCKED_TRIGGER_TYPES = new Map<string, string>([
   ['hotkey', 'global hotkey triggers require the desktop keyboard hook'],
   ['hotkey.release', 'global hotkey triggers require the desktop keyboard hook'],
   ['keystroke', 'keyboard triggers require the desktop keyboard hook'],
+  ['clipboard.change', 'clipboard change triggers require a physical desktop session'],
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -158,7 +158,13 @@ function main() {
     console.log(`[prepare-agent] Wakeword binary: NOT FOUND (will use Python fallback in dev)`);
   }
 
-  // 5. Native file indexer used by the Python agent for high-throughput scans.
+  // 5. Native file indexer — REQUIRED for local / launcher file search.
+  // There is no Python scanner fallback anymore: if this binary is missing,
+  // file indexing is silently disabled at runtime (see file-indexing.ts
+  // `ensureIndexerReady`). To guarantee release installers actually ship it,
+  // CI sets STUARD_REQUIRE_FILE_INDEXER=1 so a missing binary FAILS the build
+  // right here — before electron-builder copies build/agent -> resources/agent —
+  // instead of quietly producing an installer with broken file search.
   const fileIndexerCopied = copyServiceBinary(distDir, outDir, {
     winName: "stuard-file-indexer.exe",
     macName: "stuard-file-indexer-macos",
@@ -167,8 +173,25 @@ function main() {
   });
   if (fileIndexerCopied) {
     console.log(`[prepare-agent] File indexer binary: OK`);
+  } else if (process.env.STUARD_REQUIRE_FILE_INDEXER === "1") {
+    const expected =
+      process.platform === "win32"
+        ? "stuard-file-indexer.exe"
+        : process.platform === "darwin"
+          ? "stuard-file-indexer-macos (or stuard-file-indexer)"
+          : "stuard-file-indexer-linux (or stuard-file-indexer)";
+    console.error(
+      `[prepare-agent] FATAL: file indexer binary not found in ${distDir} but ` +
+        `STUARD_REQUIRE_FILE_INDEXER=1 — local file search would be broken in this ` +
+        `build. Make sure the "Build file indexer (Rust)" CI step ran and produced ` +
+        `dist/${expected} before packaging.`
+    );
+    process.exit(1);
   } else {
-    console.log(`[prepare-agent] File indexer binary: NOT FOUND (Python scanner fallback will be used)`);
+    console.warn(
+      `[prepare-agent] File indexer binary: NOT FOUND — local file search will be ` +
+        `DISABLED in this build (build the Rust indexer to enable it).`
+    );
   }
 
   // Summary

@@ -1,8 +1,7 @@
 /**
  * agent_node — Synchronous AI Agent workflow node
  *
- * Unlike deploy_headless_agent (which can run in wait or background mode),
- * this tool runs a lightweight AI agent inline within a workflow step, waits for
+ * This tool runs a lightweight AI agent inline within a workflow step, waits for
  * completion, and returns the result directly to the next node.
  *
  * Perfect for:

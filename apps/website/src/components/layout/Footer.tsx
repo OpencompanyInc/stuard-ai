@@ -8,22 +8,21 @@ import { Instagram, Facebook } from 'lucide-react';
 const productLinks = [
   { label: 'Features', href: '/features' },
   { label: 'Integrations', href: '/integrations' },
-  { label: 'Workflow Studio', href: '/workflow-studio' },
+  { label: 'Marketplace', href: '/marketplace' },
+  { label: 'Pricing', href: '/pricing' },
   { label: 'Download', href: '/download' },
 ];
 
 const companyLinks = [
-  { label: 'About', href: '/about' },
+  { label: 'What is Stuard', href: '/#about' },
+  { label: 'How It Works', href: '/how-it-works' },
   { label: 'Blog', href: '/blog' },
-  { label: 'Careers', href: '/careers' },
-  { label: 'Contact', href: '/contact' },
+  { label: 'Contact', href: 'mailto:support@stuard.ai' },
 ];
 
 const legalLinks = [
   { label: 'Privacy Policy', href: '/privacy' },
   { label: 'Terms of Service', href: '/terms' },
-  { label: 'Security', href: '/security' },
-  { label: 'Documentation', href: '/docs' },
 ];
 
 // TikTok icon (not available in lucide-react)
@@ -64,7 +63,11 @@ const Footer = () => {
               Stuard
             </span>
           </Link>
-          <p className="text-sm text-[#737373]">Built for your machine. Owned by you.</p>
+          <p className="max-w-[420px] text-sm leading-6 text-[#737373]">
+            Stuard AI is a personal AI assistant for your Windows PC — it organizes your files,
+            manages your email and calendar, and automates repeated work. Built for your machine.
+            Owned by you.
+          </p>
         </div>
 
         {/* Main grid */}

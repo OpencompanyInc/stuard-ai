@@ -4,6 +4,7 @@ import { FileEditDiffPreview } from '../previews/FileEditDiffPreview';
 import { WriteFilePreview } from '../previews/WriteFilePreview';
 import { ReadFilePreview } from '../previews/ReadFilePreview';
 import { AnalyzeMediaPreview } from '../previews/AnalyzeMediaPreview';
+import { GenerateImagePreview } from '../previews/GenerateImagePreview';
 import { MediaResultPreview } from '../previews/MediaResultPreview';
 import { MediaAudioPreview } from '../previews/MediaAudioPreview';
 import { ScrapeResultPreview } from '../previews/ScrapeResultPreview';
@@ -111,6 +112,15 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
 
     if (tool.tool === 'analyze_media' || tool.tool === 'browser_use_analyze_screenshot') {
       return <AnalyzeMediaPreview args={args} result={tool.result} />;
+    }
+
+    if (
+      tool.tool === 'generate_image'
+      || tool.tool === 'image_gen'
+      || tool.tool === 'create_image'
+      || tool.tool === 'edit_image'
+    ) {
+      return <GenerateImagePreview args={args} result={tool.result} />;
     }
 
     if (tool.tool === 'scrape_url') {

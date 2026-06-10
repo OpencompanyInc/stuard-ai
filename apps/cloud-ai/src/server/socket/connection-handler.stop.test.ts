@@ -6,7 +6,6 @@ import { setAbortController } from './state';
 
 const mocks = vi.hoisted(() => ({
   abortRunningSubagentsForRequest: vi.fn(() => 0),
-  abortHeadlessTasksForRequest: vi.fn(() => 0),
   enqueueSubagentSteer: vi.fn(() => 0),
   isSubagentRunning: vi.fn(() => false),
 }));
@@ -35,10 +34,6 @@ vi.mock('../../orchestrator/subagent-runtime', () => ({
   abortRunningSubagentsForRequest: mocks.abortRunningSubagentsForRequest,
   enqueueSubagentSteer: mocks.enqueueSubagentSteer,
   isSubagentRunning: mocks.isSubagentRunning,
-}));
-
-vi.mock('../../tools/deploy-headless-agent', () => ({
-  abortHeadlessTasksForRequest: mocks.abortHeadlessTasksForRequest,
 }));
 
 const { handleSocketConnection } = await import('./connection-handler');
@@ -72,7 +67,6 @@ describe('handleSocketConnection stop routing', () => {
     sendJson(ws, { type: 'stop' });
 
     expect(mocks.abortRunningSubagentsForRequest).not.toHaveBeenCalled();
-    expect(mocks.abortHeadlessTasksForRequest).not.toHaveBeenCalled();
     expect(ws.sent.at(-1)).toMatchObject({
       type: 'stopped',
       success: false,
@@ -87,7 +81,6 @@ describe('handleSocketConnection stop routing', () => {
     sendJson(ws, { type: 'stop' });
 
     expect(mocks.abortRunningSubagentsForRequest).toHaveBeenCalledWith(ws, 'req-1', 'client_stop');
-    expect(mocks.abortHeadlessTasksForRequest).toHaveBeenCalledWith(ws, 'req-1', 'client_stop');
     expect(ws.sent.at(-1)).toMatchObject({
       type: 'stopped',
       success: true,

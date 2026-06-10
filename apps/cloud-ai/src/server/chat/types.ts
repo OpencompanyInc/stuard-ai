@@ -12,9 +12,19 @@ export interface AuthUser {
 }
 
 export type StreamChunkRecord =
-  | { type: 'text'; content: string }
-  | { type: 'reasoning'; content: string }
-  | { type: 'tool'; tool: any };
+  | { type: 'text'; content: string; nested?: boolean; subagentId?: string }
+  | { type: 'reasoning'; content: string; nested?: boolean; subagentId?: string }
+  | { type: 'tool'; tool: any }
+  | {
+      type: 'status';
+      id?: string;
+      label?: string;
+      state?: 'active' | 'complete' | 'error';
+      variant?: string;
+      nested?: boolean;
+      subagentId?: string;
+      meta?: any;
+    };
 
 export interface PreparedChatRequest {
   ws: WebSocket;

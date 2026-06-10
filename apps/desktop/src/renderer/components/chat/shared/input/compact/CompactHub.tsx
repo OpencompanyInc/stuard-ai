@@ -31,8 +31,11 @@ interface CompactHubProps {
   onClose: () => void;
   onExpand: () => void;
   userPrompt?: string;
+  userAttachments?: readonly import('../../../../../utils/attachments').ChatAttachment[];
   assistantText?: string;
   isStreaming?: boolean;
+  isAiWorking?: boolean;
+  reasoningText?: string;
   toolCalls?: ReadonlyArray<{ id: string; tool: string; status: 'called' | 'running' | 'completed' | 'error' }>;
   translucentMode?: boolean;
   /** Distance from window edge to input bar — anchors the portaled panel. */
@@ -60,8 +63,11 @@ export const CompactHub: React.FC<CompactHubProps> = ({
   onClose,
   onExpand,
   userPrompt = '',
+  userAttachments = [],
   assistantText = '',
   isStreaming = false,
+  isAiWorking = false,
+  reasoningText = '',
   toolCalls,
   translucentMode = false,
   inputBarHeight = 88,
@@ -117,8 +123,11 @@ export const CompactHub: React.FC<CompactHubProps> = ({
               >
                 <CompactResponsePanel
                   userPrompt={userPrompt}
+                  userAttachments={userAttachments}
                   assistantText={assistantText}
                   isStreaming={isStreaming}
+                  isAiWorking={isAiWorking}
+                  reasoningText={reasoningText}
                   toolCalls={toolCalls}
                   onExpand={onExpand}
                   onCollapse={onClose}

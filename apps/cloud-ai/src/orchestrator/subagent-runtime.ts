@@ -17,6 +17,7 @@ import type { ModelSourcePreference } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
 import { mirrorToDesktop } from '../services/vm-stream-mirror';
+import { recordNestedSubagentEvent } from '../server/chat/nested-chunk-recorder';
 import {
   withActiveBridgeContext,
   setActiveBridge,
@@ -32,7 +33,7 @@ import type {
   SubagentQuestion,
   SubagentAnswer,
 } from './types';
-import { getCapabilityPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
+import { getCapabilityPack, buildCustomPack, buildIntegrationPack, resolveIntegrationTools } from './capability-packs';
 import { createInterjectionUserMessage } from '../server/chat/interjections';
 import { LiveUsageBillingTracker } from '../services/live-usage-billing';
 import { normalizeUsage } from '../utils/usage';
@@ -755,6 +756,9 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
       };
       pack = buildIntegrationPack(groupName, toolNames, identity);
     }
+  } else if (request.kind === 'custom') {
+    // Ad-hoc subagent: tools + system prompt supplied by the orchestrator.
+    pack = buildCustomPack(request.customToolNames, request.customSystemPrompt);
   } else {
     pack = getCapabilityPack(request.kind);
   }
@@ -883,6 +887,10 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     if (bridgeWs) {
       try { mirrorToDesktop(bridgeWs as any, msg); } catch {}
     }
+    // Persist this subagent activity into the orchestrator turn's chunk log so
+    // it survives a chat reopen (the live UI gets it via the WS message above;
+    // this is the saved-locally copy). Best-effort, keyed by the chat request.
+    try { recordNestedSubagentEvent(requestId, event, data, subagentId, request.kind); } catch {}
     onEvent?.({ ...msg });
   };
 
@@ -902,6 +910,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     vm: 'VM Agent',
     bot: 'Bot Agent',
     agent: 'Agent Subagent',
+    custom: 'Custom Agent',
   };
   const sourceLabel = `Subagent: ${kindLabels[request.kind] || request.kind}`;
   const parentConversationId =

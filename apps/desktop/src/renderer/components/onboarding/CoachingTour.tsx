@@ -33,17 +33,17 @@ const STEPS: Step[] = [
   },
   {
     id: 'find', eyebrow: 'Find anything', title: 'Jump straight there.',
-    body: 'Just start typing. Search to open your Dashboard, Settings, or Stuard Studio — plus your apps, files, and workflows.',
+    body: 'Try it now — type in the pill below. Search for Dashboard, Settings, or Stuard Studio and watch the menu update live.',
     keys: ['type to search'], target: 'pill',
   },
   {
     id: 'move', eyebrow: 'Move me', title: 'Put me anywhere.',
-    body: 'Hold Ctrl and the arrow keys to glide me around — so I never sit on top of what you’re working on.',
+    body: 'Try it now — hold Ctrl and press the arrow keys to glide me around, so I never sit on top of what you’re working on.',
     keys: ['Ctrl', '↑', '↓', '←', '→'], target: 'pill',
   },
   {
     id: 'context', eyebrow: 'Give me context', title: 'Hand me anything.',
-    body: 'Type @ to pull in files, folders, or what’s on your screen — or hit + to attach directly.',
+    body: 'Try it now — type @ in the pill to attach a file, or click + to add one directly.',
     keys: ['@', '+'], target: 'attach',
   },
   {
@@ -53,25 +53,53 @@ const STEPS: Step[] = [
   },
   {
     id: 'dismiss', eyebrow: 'Dismiss me', title: 'Tuck me away.',
-    body: 'Done for now? Press Esc, or tap your hotkey again — I’m gone, and always one shortcut from coming back.',
+    body: 'Try it now — press Esc to tuck me away. Your hotkey brings me right back.',
     keys: ['Esc'], target: 'pill',
   },
 ];
 
+
+const INTERACTIVE_STEPS = new Set<Step['id']>(['find', 'move', 'context', 'dismiss']);
+
 const PLACEHOLDER = 'Ask Stuard…';
 const HOME = { left: '50%', top: '30%' };
 
-// The "find" step cycles these three searches to show how the compact-mode
-// dropdown surfaces Stuard's own destinations. Titles / subtitles / grouping
-// mirror the real navigation entries (see utils/compactStuardNav.ts) so the
-// cloned dropdown reads exactly like the live one.
-interface NavDemoItem { group: 'dashboard' | 'studio'; title: string; subtitle: string; icon: LucideIcon }
-const NAV_DEMO: Record<string, NavDemoItem[]> = {
-  dashboard: [{ group: 'dashboard', title: 'Overview', subtitle: 'Dashboard · overview & activity', icon: LayoutDashboard }],
-  settings: [{ group: 'dashboard', title: 'Settings', subtitle: 'Dashboard · themes & preferences', icon: Settings }],
-  studio: [{ group: 'studio', title: 'Stuard Studio', subtitle: 'Open the studio home', icon: LayoutDashboard }],
-};
-const NAV_SEQUENCE = ['dashboard', 'settings', 'studio'];
+// Nav entries mirror the real compact-mode dropdown (see utils/compactStuardNav.ts).
+interface NavDemoItem {
+  group: 'dashboard' | 'studio';
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  keywords: string[];
+}
+
+const NAV_ITEMS: NavDemoItem[] = [
+  { group: 'dashboard', title: 'Overview', subtitle: 'Dashboard · overview & activity', icon: LayoutDashboard, keywords: ['overview', 'home', 'dashboard', 'dash'] },
+  { group: 'dashboard', title: 'Settings', subtitle: 'Dashboard · themes & preferences', icon: Settings, keywords: ['settings', 'setting', 'preferences', 'theme'] },
+  { group: 'studio', title: 'Stuard Studio', subtitle: 'Open the studio home', icon: LayoutDashboard, keywords: ['stuard', 'studio', 'workflow', 'workflows'] },
+];
+
+function scoreNavMatch(item: NavDemoItem, q: string): number {
+  const title = item.title.toLowerCase();
+  const subtitle = item.subtitle.toLowerCase();
+  if (title === q) return 100;
+  if (title.startsWith(q)) return 90;
+  if (title.includes(q)) return 80;
+  if (subtitle.includes(q)) return 70;
+  if (item.keywords.some((k) => k === q || k.startsWith(q) || q.startsWith(k))) return 75;
+  if (item.keywords.some((k) => k.includes(q) || q.includes(k))) return 60;
+  return 0;
+}
+
+function filterNavItems(query: string): NavDemoItem[] {
+  const q = query.toLowerCase().trim();
+  if (q.length < 2) return [];
+  return NAV_ITEMS
+    .map((item) => ({ item, score: scoreNavMatch(item, q) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .map(({ item }) => item);
+}
 
 export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: { onComplete: () => void; onSkip?: () => void; lastLabel?: string }) {
   const [idx, setIdx] = useState(0);
@@ -84,7 +112,8 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const [chip, setChip] = useState(false);
   const [keyhint, setKeyhint] = useState(false);
   const [cornerActive, setCornerActive] = useState(false);
-  const [navQuery, setNavQuery] = useState('dashboard');
+  const [userTried, setUserTried] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   // The user's real global hotkey, shown on the summon step instead of a
   // hardcoded Ctrl+Shift+Space. Falls back to the default until it loads.
   const [hotkeyKeys, setHotkeyKeys] = useState<string[]>(['Ctrl', 'Shift', 'Space']);
@@ -132,7 +161,18 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     return () => { cancelled = true; };
   }, []);
 
-  // ── per-step performance loop ──
+  // Reset try-state and focus the pill input when the step changes.
+  useEffect(() => {
+    setUserTried(false);
+    setTyped('');
+    setChip(false);
+    const t = setTimeout(() => {
+      if (INTERACTIVE_STEPS.has(step.id)) inputRef.current?.focus();
+    }, 350);
+    return () => clearTimeout(t);
+  }, [idx, step.id]);
+
+  // ── per-step performance loop (visual-only steps; interactive steps wait for the user) ──
   useEffect(() => {
     let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -143,59 +183,8 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     if (step.id === 'summon') {
       setGone(true);
       after(() => setGone(false), 220);
-    } else if (step.id === 'find') {
-      // Cycle through the three destinations, typing each query so the cloned
-      // dropdown updates live — teaching how to reach Dashboard, Settings, and
-      // Stuard Studio from the compact pill.
-      let qi = 0;
-      const runQuery = () => {
-        if (cancelled) return;
-        const q = NAV_SEQUENCE[qi];
-        setNavQuery(q);
-        const typeChar = (n: number) => {
-          if (cancelled) return;
-          setTyped(q.slice(0, n));
-          if (n < q.length) after(() => typeChar(n + 1), 75);
-          else after(() => {
-            setTyped('');
-            qi = (qi + 1) % NAV_SEQUENCE.length;
-            after(runQuery, 650);
-          }, 2200);
-        };
-        typeChar(1);
-      };
-      after(runQuery, 450);
     } else if (step.id === 'move') {
       setKeyhint(true);
-      const spots = [
-        { left: '50%', top: '30%' }, { left: '57%', top: '30%' }, { left: '57%', top: '37%' },
-        { left: '43%', top: '37%' }, { left: '43%', top: '30%' }, { left: '50%', top: '30%' },
-      ];
-      let i = 0;
-      const hop = () => {
-        if (cancelled) return;
-        // Finished a full lap (last spot is HOME) — rest a beat before looping
-        // again so the pill isn't perpetually mid-glide when the user reads the
-        // card or clicks Next.
-        if (i >= spots.length) { i = 0; after(hop, 1700); return; }
-        setPos(spots[i]);
-        i++;
-        after(hop, 900);
-      };
-      after(hop, 400);
-    } else if (step.id === 'context') {
-      const full = '@Documents/report.pdf';
-      const type = (n: number) => {
-        if (cancelled) return;
-        setTyped(full.slice(0, n));
-        if (n < full.length) after(() => type(n + 1), 55);
-        else {
-          after(() => setChip(true), 150);
-          // Hold the attached chip, then clear and rest before retyping.
-          after(() => { setChip(false); setTyped(''); after(() => type(1), 1300); }, 2600);
-        }
-      };
-      after(() => type(1), 500);
     } else if (step.id === 'expand') {
       // demonstrate the drag-to-expand corner: grip pops, pill stretches, holds
       // at full size so the resize reads, then releases and rests before looping.
@@ -209,13 +198,54 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         after(cycle, 5200);                          // rest as a compact pill before repeating
       };
       cycle();
-    } else if (step.id === 'dismiss') {
-      const cycle = () => { if (cancelled) return; setGone(false); after(() => setGone(true), 1100); after(cycle, 2700); };
-      after(cycle, 400);
     }
 
     return () => { cancelled = true; timers.forEach(clearTimeout); };
   }, [idx, step.id]);
+
+  // Interactive: Ctrl+arrow moves the pill on the move step.
+  useEffect(() => {
+    if (step.id !== 'move') return;
+    const nudge = (dx: number, dy: number) => {
+      setUserTried(true);
+      setPos((prev) => {
+        const left = parseFloat(String(prev.left)) + dx;
+        const top = parseFloat(String(prev.top)) + dy;
+        return {
+          left: `${Math.max(18, Math.min(82, left))}%`,
+          top: `${Math.max(12, Math.min(78, top))}%`,
+        };
+      });
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); nudge(0, -4); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); nudge(0, 4); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(-4, 0); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); nudge(4, 0); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [step.id]);
+
+  // Interactive: Esc dismisses the pill on the dismiss step.
+  useEffect(() => {
+    if (step.id !== 'dismiss') return;
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setUserTried(true);
+      setGone(true);
+      if (restoreTimer) clearTimeout(restoreTimer);
+      restoreTimer = setTimeout(() => setGone(false), 900);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (restoreTimer) clearTimeout(restoreTimer);
+    };
+  }, [step.id]);
 
   // ── glue ring (to the step target) + card (always below the pill) ──
   useEffect(() => {
@@ -268,9 +298,17 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const back = () => { if (idx > 0) setIdx(i => i - 1); };
 
   const isCompact = mode === 'compact';
-  const showCursor = step.id === 'context' || step.id === 'find';
+  const isInteractive = INTERACTIVE_STEPS.has(step.id);
   const showNavDropdown = step.id === 'find' && typed.trim().length >= 2;
-  const navItems = NAV_DEMO[navQuery] ?? [];
+  const navItems = filterNavItems(typed);
+
+  const handleInputChange = (value: string) => {
+    setUserTried(true);
+    setTyped(value);
+    if (step.id === 'context') {
+      setChip(/@[^\s]+\.pdf$/i.test(value.trim()));
+    }
+  };
   // The summon step reflects the user's real hotkey; every other step keeps its
   // own literal keycaps.
   const displayKeys = step.id === 'summon' ? hotkeyKeys : step.keys;
@@ -300,10 +338,11 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         className="absolute -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-700"
         style={{ left: pos.left, top: pos.top, transitionTimingFunction: 'cubic-bezier(.3,.8,.2,1)' }}
       >
-        <div className="coach-float">
+        <div className={clsx('coach-float', isInteractive && 'pointer-events-auto')}>
           <div
             ref={pillRef}
-            className={clsx('relative flex flex-col justify-center transition-all duration-500')}
+            data-interactive={isInteractive ? 'true' : undefined}
+            className={clsx('relative flex flex-col justify-center transition-all duration-500', isInteractive && 'pointer-events-auto')}
             style={{
               width: isCompact ? 380 : mode === 'sidebar' ? 320 : 540,
               height: isCompact ? 56 : mode === 'sidebar' ? 360 : 320,
@@ -334,24 +373,42 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
               <button
                 ref={attachRef}
                 type="button"
-                tabIndex={-1}
+                tabIndex={step.id === 'context' ? 0 : -1}
                 className="w-6 h-6 flex items-center justify-center flex-shrink-0"
                 style={{ color: 'rgb(var(--compact-pill-fg) / 0.9)' }}
                 title="Attach"
+                onClick={() => {
+                  if (step.id !== 'context') return;
+                  setUserTried(true);
+                  setChip(true);
+                  setTyped('');
+                }}
               >
                 <Plus className="w-6 h-6" strokeWidth={1.5} />
               </button>
 
-              <div className="flex-1 relative flex items-center justify-center min-h-[36px]" style={{ padding: 6 }}>
-                <span
-                  className="text-[12px] leading-4 font-normal whitespace-nowrap"
-                  style={{ color: `rgb(var(--compact-pill-fg) / ${typed ? 0.92 : 0.45})` }}
-                >
-                  {typed || PLACEHOLDER}
-                  {typed && showCursor && (
-                    <span className="inline-block align-[-2px] ml-px" style={{ width: 1.5, height: '1em', background: 'rgb(var(--compact-pill-fg) / 0.7)', animation: 'coach-blink 1s infinite' }} />
-                  )}
-                </span>
+              <div className="flex-1 relative flex items-center min-h-[36px]" style={{ padding: 6 }}>
+                {isInteractive && (step.id === 'find' || step.id === 'context') ? (
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={typed}
+                    onChange={(e) => handleInputChange(e.target.value)}
+                    onFocus={() => setUserTried(true)}
+                    placeholder={step.id === 'context' ? 'Type @ to attach a file…' : PLACEHOLDER}
+                    className="w-full bg-transparent border-none outline-none text-[12px] leading-4 font-normal text-center placeholder:text-[rgb(var(--compact-pill-fg)/0.45)]"
+                    style={{ color: 'rgb(var(--compact-pill-fg) / 0.92)' }}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                ) : (
+                  <span
+                    className="w-full text-center text-[12px] leading-4 font-normal whitespace-nowrap"
+                    style={{ color: `rgb(var(--compact-pill-fg) / ${typed ? 0.92 : 0.45})` }}
+                  >
+                    {typed || PLACEHOLDER}
+                  </span>
+                )}
               </div>
 
               <button type="button" tabIndex={-1} className="compact-voice-btn relative z-10 w-9 h-9 rounded-[14px] flex items-center justify-center flex-shrink-0" title="Voice">
@@ -515,6 +572,17 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         </p>
         <h3 className="text-[16px] font-medium text-white mb-1.5 tracking-[-0.01em]">{step.title}</h3>
         <p className="text-[13px] leading-relaxed font-light text-white/80">{step.body}</p>
+        {isInteractive && (
+          <p className="mt-2 text-[11px] font-medium tracking-wide text-emerald-300/80">
+            {userTried
+              ? 'Nice — keep exploring, or hit Next when ready.'
+              : step.id === 'find' || step.id === 'context'
+                ? 'Your turn — try it in the pill above.'
+                : step.id === 'move'
+                  ? 'Your turn — hold Ctrl and tap the arrow keys.'
+                  : 'Your turn — press Esc to dismiss me.'}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {displayKeys.map((k, i) => (
             <kbd key={i} className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-[3px] text-[11.5px] font-medium rounded-md bg-stone-900/80 border border-rose-200/20 text-rose-50/90 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">

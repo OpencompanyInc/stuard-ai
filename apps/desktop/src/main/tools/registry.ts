@@ -164,6 +164,12 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'google_cloud_ocr': { kind: 'cloud' },
   'web_search': { kind: 'cloud', handler: '/tools/web_search' },
   'scrape_url': { kind: 'cloud', handler: '/tools/scrape_url' },
+  // Google Maps Platform (cloud-ai). Without these the workflow runtime routes
+  // cloud.tool maps nodes to the local Python agent → unknown_tool.
+  'maps_search_places': { kind: 'cloud', handler: '/tools/maps_search_places' },
+  'maps_place_details': { kind: 'cloud', handler: '/tools/maps_place_details' },
+  'maps_distance_matrix': { kind: 'cloud', handler: '/tools/maps_distance_matrix' },
+  'maps_static_map': { kind: 'cloud', handler: '/tools/maps_static_map' },
   'text_to_speech': { kind: 'cloud', handler: '/tools/text_to_speech' },
   'generate_image': { kind: 'cloud', handler: '/tools/generate_image' },
   'list_tts_voices': { kind: 'cloud', handler: '/tools/list_tts_voices' },

@@ -30,4 +30,13 @@ export { deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syn
 export { syncTimezoneToVm, resetTimezoneSyncCache } from "./vm-settings";
 export type { VmTimezoneSyncResult } from "./vm-settings";
 export { botMemoryService } from "./bot-memory-service";
+export {
+  startProjectNotionSync,
+  stopProjectNotionSync,
+  syncProjectNotionNow,
+  searchProjectNotionTargets,
+  linkProjectNotion,
+  updateProjectNotion,
+  unlinkProjectNotion,
+} from "./project-notion-sync";
 export type { BotKanbanCard, BotKanbanStatus, BotRunLogEntry, BotMemoryActor } from "./bot-memory-service";

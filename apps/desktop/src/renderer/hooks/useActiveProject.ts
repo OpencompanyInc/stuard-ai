@@ -39,16 +39,25 @@ export function useActiveProject(
   const [loading, setLoading] = useState(false);
   const prevStreamingRef = useRef(isStreaming);
   const toolProjectRef = useRef<{ conversationId: string; project: Project } | null>(null);
+  // Monotonic token so a slow load for a previous tab/conversation can't
+  // clobber the state after the user has already switched tabs. Without this,
+  // switching A → B → A could leave tab A showing "no project" because B's
+  // (empty) result resolved last.
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     if (!conversationId) {
-      toolProjectRef.current = null;
+      // A fresh tab has no conversation yet — show no project, but keep
+      // toolProjectRef intact: it belongs to another conversation and is
+      // needed when the user switches back to that tab.
       setProject(null);
       return;
     }
     setLoading(true);
     try {
       const projectId = await fetchConversationProjectId(conversationId);
+      if (seq !== loadSeqRef.current) return; // stale — a newer load started
       if (!projectId) {
         if (toolProjectRef.current?.conversationId === conversationId) {
           setProject(toolProjectRef.current.project);
@@ -58,12 +67,13 @@ export function useActiveProject(
         return;
       }
       const fetched = await getProject(projectId);
+      if (seq !== loadSeqRef.current) return;
       if (fetched) {
         toolProjectRef.current = { conversationId, project: fetched };
       }
       setProject(fetched);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [conversationId]);
 
@@ -96,12 +106,27 @@ export function useActiveProject(
       const projectId = detail.projectId == null ? null : String(detail.projectId);
 
       if (tool === 'exit_project_mode' || (tool === 'conversation_set_project' && !projectId)) {
-        toolProjectRef.current = null;
-        setProject(null);
+        // Only hard-clear when the event provably targets THIS conversation.
+        // Tool events can originate from another tab's stream; if the
+        // conversation id is missing we re-fetch instead of clearing, so a
+        // background tab exiting project mode can't strip the active tab.
+        if (eventConversationId && eventConversationId === conversationId) {
+          toolProjectRef.current = null;
+          setProject(null);
+        } else {
+          void load();
+        }
         return;
       }
 
       if (tool === 'enter_project_mode' || (tool === 'conversation_set_project' && projectId)) {
+        // Optimistic apply only when the event provably targets this
+        // conversation — otherwise re-fetch so a background tab entering a
+        // project doesn't get painted onto the active tab.
+        if (!eventConversationId || eventConversationId !== conversationId) {
+          void load();
+          return;
+        }
         if (detail.project?.id) {
           const nextProject = detail.project as Project;
           if (conversationId) {

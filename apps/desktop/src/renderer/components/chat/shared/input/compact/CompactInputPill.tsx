@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import TextareaAutosize from 'react-textarea-autosize';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -7,16 +7,17 @@ import {
   AudioLines,
   CornerDownRight,
   LogIn,
+  Monitor,
   Plus as PlusLucide,
 } from 'lucide-react';
 
 import { AttachmentBar } from '../AttachmentBar';
+import {
+  AttachmentPreviewOverlay,
+  attachmentOverlayInset,
+} from '../../../../AttachmentPreview';
+import type { ChatAttachment } from '../../../../../utils/attachments';
 import type { ContextItem } from '../../../../FileNavigator';
-
-interface ChatAttachment {
-  type: 'image' | 'file';
-  name: string;
-}
 
 interface CompactInputPillProps {
   /** Show thinking-glow border instead of the static surface. */
@@ -33,6 +34,8 @@ interface CompactInputPillProps {
   onRemoveContext: (idx: number) => void;
   onAttachFiles: () => void;
   onAttachImages: () => void;
+  /** Capture the screen (Stuard excluded from the frame) and send it. */
+  onScreenshotSend?: () => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
 
   /** Textarea wiring. */
@@ -48,6 +51,8 @@ interface CompactInputPillProps {
 
   /** Steer is offered while a response is still streaming. */
   miniOutputStreaming: boolean;
+  /** Hide the text caret while idle or while the assistant is working (unless typing). */
+  isAiWorking?: boolean;
   onSteer?: () => void;
 
   /** Voice toggle. */
@@ -69,6 +74,7 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
   onRemoveContext,
   onAttachFiles,
   onAttachImages,
+  onScreenshotSend,
   onDrop,
   textareaRef,
   query,
@@ -79,15 +85,22 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
   placeholder,
   typingHint,
   miniOutputStreaming,
+  isAiWorking = false,
   onSteer,
   voiceActive,
   onToggleVoice,
 }) => {
+  const [inputFocused, setInputFocused] = useState(false);
+  const attachmentInset = attachmentOverlayInset(attachments.length);
+  const suppressCaret =
+    !query.trim() &&
+    (!inputFocused || isAiWorking || miniOutputStreaming);
+
   return (
     <div className={clsx('w-full relative', showThinkingGlow && 'compact-thinking-glow')}>
       <div
         className={clsx(
-          'drag w-full relative min-h-[56px] h-auto flex flex-col justify-center overflow-visible isolate',
+          'drag w-full relative min-h-[56px] h-auto flex flex-col justify-center overflow-hidden isolate',
           showThinkingGlow ? 'compact-thinking-glow__inner' : 'rounded-[26px]',
         )}
         style={{
@@ -110,12 +123,12 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
         onDrop={onDrop}
       >
         <div
-          className="relative w-full flex flex-col gap-2 no-drag"
+          className="relative w-full flex min-w-0 flex-col gap-2 no-drag overflow-hidden"
           style={{ zIndex: 2, padding: 10 }}
         >
-          {(attachments.length > 0 || (contextPaths?.length ?? 0) > 0) && (
+          {(contextPaths?.length ?? 0) > 0 && (
             <AttachmentBar
-              attachments={attachments}
+              attachments={[]}
               contextPaths={contextPaths}
               onRemoveAttachment={onRemoveAttachment}
               onRemoveContext={onRemoveContext}
@@ -123,8 +136,8 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
           )}
 
           <div
-            className="flex items-center w-full no-drag"
-            style={{ gap: 8, height: 36 }}
+            className="flex w-full min-w-0 items-center no-drag"
+            style={{ gap: 8, minHeight: 36 }}
             onKeyDownCapture={(e) => {
               if (e.key === 'Tab' && !e.shiftKey && signedIn) {
                 onKeyDown(e as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
@@ -173,14 +186,32 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                         <ImageIcon className="w-3.5 h-3.5 opacity-70" />
                         <span>Attach images</span>
                       </DropdownMenu.Item>
+                      {onScreenshotSend && (
+                        <DropdownMenu.Item
+                          onSelect={onScreenshotSend}
+                          className="group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-pill-fg/10 outline-none cursor-pointer transition-colors"
+                        >
+                          <Monitor className="w-3.5 h-3.5 opacity-70" />
+                          <span className="flex-1">Screenshot &amp; send</span>
+                          <kbd className="ml-2 text-[10px] leading-none font-medium text-pill-fg/45 whitespace-nowrap select-none">
+                            Ctrl+Shift+Enter
+                          </kbd>
+                        </DropdownMenu.Item>
+                      )}
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
 
                 <div
-                  className="flex-1 relative flex items-center justify-center min-h-[36px] rounded-[12px]"
-                  style={{ padding: 6, gap: 4 }}
+                  className="relative flex min-h-[36px] min-w-0 flex-1 items-center overflow-hidden rounded-[12px]"
+                  style={{ padding: 6, gap: 4, paddingLeft: attachmentInset > 0 ? attachmentInset + 6 : 6 }}
                 >
+                  {attachments.length > 0 && (
+                    <AttachmentPreviewOverlay
+                      attachments={attachments}
+                      onRemove={onRemoveAttachment}
+                    />
+                  )}
                   {typingHint && query.trim().length > 0 && (
                     <span
                       className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] leading-none font-normal text-pill-fg/35 whitespace-nowrap select-none"
@@ -195,17 +226,24 @@ export const CompactInputPill: React.FC<CompactInputPillProps> = ({
                     onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
                       setQuery(e.target.value)
                     }
+                    onFocus={() => setInputFocused(true)}
+                    onBlur={() => setInputFocused(false)}
                     onKeyDown={onKeyDown}
                     onPaste={onPaste}
                     onHeightChange={onHeightChange}
                     placeholder={placeholder}
                     tabIndex={0}
                     className={clsx(
-                      'w-full bg-transparent outline-none text-[12px] leading-4 p-0 resize-none scrollbar-hidden font-normal text-pill-fg placeholder:text-pill-fg',
+                      'w-full min-w-0 max-w-full bg-transparent outline-none text-[12px] leading-4 p-0 resize-none overflow-x-hidden overflow-y-auto scrollbar-hidden font-normal text-pill-fg placeholder:text-pill-fg break-words',
                       query.length > 0 ? 'text-left pr-[7.5rem]' : 'text-center',
                     )}
                     style={{
                       fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif",
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      caretColor: suppressCaret
+                        ? 'transparent'
+                        : 'rgb(var(--compact-pill-fg))',
                     }}
                     minRows={1}
                     maxRows={5}

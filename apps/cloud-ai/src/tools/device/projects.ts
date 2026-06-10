@@ -456,13 +456,13 @@ export const exit_project_mode = createTool({
 export const journal_add = createTool({
   id: 'journal_add',
   description:
-    'Append an entry to the project\'s **Timeline tab** — time-ordered events worth recalling later. Pick a specific type: `decision` (a meaningful choice), `finding` (a non-obvious discovery), `question` (open thread to investigate), `hypothesis` (a testable claim), `blocker` (something stuck + what unblocks it), `edit` (a significant code/file change — include source_ref.file_paths), `milestone` (rare; shipped work or major user-visible outcomes only). Use `note` only as a last resort — durable facts/snippets/links belong in `memory_add` (Notes tab), not here. Title ≤80 chars, scannable. Body carries the why. Include source_ref (commit_sha, file_paths, task_id, url) when relevant.',
+    'Append a high-signal entry to the project\'s **Timeline tab**. Chat sessions are journaled automatically by the system — never log routine progress or recaps. Use this only for moments that deserve their own mark: `decision` (a meaningful choice), `finding` (a non-obvious discovery), `question` (open thread to investigate), `hypothesis` (a testable claim), `blocker` (something stuck + what unblocks it), `edit` (a significant code/file change — include source_ref.file_paths), `milestone` (rare; shipped work only). Durable facts/snippets/links belong in `memory_add` (Notes tab), not here. Title ≤80 chars, scannable. Body carries the why. Include source_ref (commit_sha, file_paths, task_id, url) when relevant.',
   inputSchema: z.object({
     project_id: z.string(),
     type: z
-      .enum(['decision', 'finding', 'blocker', 'edit', 'chat_summary', 'task', 'milestone', 'note', 'question', 'hypothesis'])
+      .enum(['decision', 'finding', 'blocker', 'edit', 'milestone', 'question', 'hypothesis'])
       .default('finding')
-      .describe('Pick the most specific type. Avoid `note` — durable facts/snippets/links belong in memory_add (Notes tab). Avoid `milestone` unless work shipped.'),
+      .describe('Pick the most specific type. Avoid `milestone` unless work actually shipped.'),
     title: z.string().describe('Short, scannable headline (≤80 chars ideal).'),
     body: z.string().optional().describe('Optional supporting detail.'),
     source_ref: z
@@ -557,7 +557,9 @@ export const memory_add = createTool({
       project_ids: projectIds,
       url: c.url,
       pinned: !!c.pinned,
-      source: 'ai-tool',
+      // NOTE: memories.source CHECK allows ('chat','manual','tool','journal','sync','notion').
+      // 'ai-tool' is a *journal* source value — do not use it here.
+      source: 'tool',
       added_by: 'ai',
       embedding: embedding.length > 0 ? embedding : undefined,
     });

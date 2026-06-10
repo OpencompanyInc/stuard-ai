@@ -974,7 +974,7 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
       }
 
       // Fetch desktop memory stats (from cloud-ai's own memory service if bridge is available)
-      let desktopMemoryStats: { conversations: number; messages: number; spaces: number; space_items: number; segments: number } | null = null;
+      let desktopMemoryStats: { conversations: number; messages: number; projects: number; memories: number; journal_entries: number; segments: number } | null = null;
       try {
         const { getMemoryStats } = await import('../memory/conversations');
         desktopMemoryStats = await getMemoryStats();
@@ -1015,8 +1015,9 @@ export async function handleCloudEngineRoutes(req: IncomingMessage, res: ServerR
           desktop: desktopMemoryStats ? {
             conversations: desktopMemoryStats.conversations,
             messages: desktopMemoryStats.messages,
-            spaces: desktopMemoryStats.spaces,
-            spaceItems: desktopMemoryStats.space_items,
+            projects: desktopMemoryStats.projects,
+            memories: desktopMemoryStats.memories,
+            journalEntries: desktopMemoryStats.journal_entries,
             segments: desktopMemoryStats.segments,
           } : null,
         },

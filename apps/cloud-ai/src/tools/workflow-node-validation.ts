@@ -29,7 +29,6 @@ const ORCHESTRATOR_ONLY_TOOLS = new Set<string>([
   // Subagent / delegation entry points
   'route_to_workflow_agent',
   'delegate',
-  'deploy_headless_agent',
   'ask_user',
   'ask_orchestrator',
   'reply_to_subagent',

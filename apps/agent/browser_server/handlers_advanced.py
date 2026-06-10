@@ -10,7 +10,7 @@ from browser_server.utils import (
     _resolve_selector_target, INTERACTIVE_ID_ATTR,
 )
 from browser_server.lifecycle import (
-    _ensure_browser_session, _get_page_url, _get_page_title,
+    browser_op, _active_page, _get_page_url, _get_page_title,
     _evaluate, _wait_for_selector, _smart_wait_for_element,
     _cdp_press_key,
     _close_browser,
@@ -18,9 +18,10 @@ from browser_server.lifecycle import (
 
 
 async def _get_cdp_session():
-    """Return the active CDP connection for raw commands."""
-    if state._page is not None and state._page.is_connected:
-        return state._page
+    """Return the active CDP connection for raw commands (this request's tab)."""
+    page = _active_page()
+    if page is not None and page.is_connected:
+        return page
     return None
 
 
@@ -141,7 +142,7 @@ async def _cdp_type_text(text: str) -> bool:
 
     Works with whatever element currently has focus.
     """
-    page = state._page
+    page = _active_page()
     if page is None:
         return False
 
@@ -876,8 +877,7 @@ async def handle_hover(req: web.Request) -> web.Response:
     if not selector and not text:
         return _err("selector, elementId, or text is required")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -951,8 +951,7 @@ async def handle_select_option(req: web.Request) -> web.Response:
     if value is None and label is None and index is None and search is None:
         return _err("One of value, label, index, or search is required")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -985,8 +984,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
     if not selector:
         return _err("selector or elementId is required for get_dropdown_options")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1099,8 +1097,7 @@ async def handle_get_dropdown_options(req: web.Request) -> web.Response:
 async def handle_get_interactive_elements(req: web.Request) -> web.Response:
     body = await _safe_json(req) if req.content_length else {}
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1675,8 +1672,7 @@ async def handle_fill_form(req: web.Request) -> web.Response:
     if not fields or not isinstance(fields, (dict, list)):
         return _err("fields is required (object mapping selector/name to value, or array of {selector|elementId|name, value})")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1810,8 +1806,7 @@ async def handle_upload_file(req: web.Request) -> web.Response:
     if not file_path:
         return _err("file_path is required")
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:
@@ -1831,8 +1826,7 @@ async def handle_wait_for(req: web.Request) -> web.Response:
     wait_state = str(body.get("state", "visible")).strip()
     timeout = _clamp_int(body.get("timeout", 10000), 10000, 500, 60000)
 
-    async with state._lock:
-        ok, err = await _ensure_browser_session(body)
+    async with browser_op(body) as (ok, err):
         if not ok:
             return _err(err or "Browser init failed", status=500)
         try:

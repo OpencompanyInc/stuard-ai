@@ -98,11 +98,25 @@ export default function SignUpPage() {
           lg:flex-row
         "
       >
-        {/* LEFT — title */}
-        <div className="relative flex flex-1 items-center min-h-0 lg:min-h-[260px]">
-          <h1 className="max-w-[540px] text-[24px] leading-[1.15] sm:text-[30px] sm:leading-[1.15] md:text-[40px] md:leading-[1.15] font-normal text-white lg:text-[52px] lg:leading-[1.15]">
-            Your autonomous workspace awaits.
+        {/* LEFT — title + what you get */}
+        <div className="relative flex flex-1 flex-col justify-center gap-6 min-h-0 lg:min-h-[260px]">
+          <h1 className="max-w-[540px] text-[24px] leading-[1.15] sm:text-[30px] sm:leading-[1.15] md:text-[38px] md:leading-[1.15] font-normal text-white lg:text-[46px] lg:leading-[1.15]">
+            Set up your assistant in two minutes.
           </h1>
+          <ul className="flex max-w-[480px] flex-col gap-3 text-[14px] sm:text-[15px] leading-6 text-[#D4D4D4]">
+            <li className="flex items-start gap-3">
+              <CheckDot />
+              <span>Create your account, then download the Windows app — that&apos;s where Stuard does the work.</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckDot />
+              <span>Start free with ~15 starter credits. No credit card.</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckDot />
+              <span>Day one: ask for one chore — &ldquo;summarize my unread emails&rdquo; — and save it as a one-click automation.</span>
+            </li>
+          </ul>
         </div>
 
         {/* RIGHT — form */}
@@ -258,6 +272,14 @@ function AuthBackdrop({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+const CheckDot = () => (
+  <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[#FF383C]/40 bg-[#FF383C]/15">
+    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FF6B6E" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  </span>
+);
 
 const GoogleIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">

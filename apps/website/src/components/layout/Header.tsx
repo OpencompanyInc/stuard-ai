@@ -7,11 +7,11 @@ import Image from 'next/image';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 
 const navLinks = [
-  { href: '#about', label: 'About' },
-  { href: '#features', label: 'Features' },
+  { href: '/#about', label: 'What is Stuard' },
+  { href: '/#use-cases', label: 'Use cases' },
   { href: '/how-it-works', label: 'How It Works' },
   { href: '/pricing', label: 'Pricing' },
-  { href: '#faq', label: 'FAQ' },
+  { href: '/#faq', label: 'FAQ' },
 ];
 
 const Header = () => {

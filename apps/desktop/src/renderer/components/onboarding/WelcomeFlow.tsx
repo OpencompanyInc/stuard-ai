@@ -163,7 +163,7 @@ const PATH_OPTIONS: PathOption[] = [
     name: 'Workspace-first',
     description: 'Start from notes, reminders, planning, and organized project context.',
     icon: LayoutGrid,
-    tags: ['spaces', 'notes', 'planning'],
+    tags: ['projects', 'notes', 'planning'],
     bestFor: 'Best if you want one place to collect ideas, tasks, and follow-through.',
   },
   {

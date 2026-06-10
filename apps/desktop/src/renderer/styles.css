@@ -196,7 +196,32 @@
 /* Compact quick-response panel: keep <<>> attachments readable in a narrow card */
 .compact-response-md img,
 .compact-response-md video {
-  max-height: 160px;
+  max-height: 168px;
+}
+
+.compact-response-md .compact-media-image img,
+.compact-response-md .compact-media-video {
+  max-height: 168px;
+  width: 100%;
+}
+
+.compact-response-md .compact-media-link,
+.compact-response-md .compact-media-youtube,
+.compact-response-md .compact-media-file,
+.compact-response-md .compact-media-audio {
+  max-width: 100%;
+}
+
+/* Inline backticks flow with prose; fenced blocks stay in pre wrappers */
+.compact-response-md pre {
+  max-width: 100%;
+}
+
+.compact-response-md pre code {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: inherit;
 }
 
 .compact-rich-content-cta:hover {
@@ -205,6 +230,102 @@
 
 .compact-rich-content-cta:active {
   transform: scale(0.98);
+}
+
+/* Compact user-message bubble. Light mode gets a soft neutral surface so the
+   bubble is visible against the white panel without going stark; dark mode keeps
+   the existing white bubble. Text/chips inherit via currentColor. */
+.compact-user-bubble {
+  background: #eceef1;
+  color: #171717;
+}
+
+[data-theme='dark'] .compact-user-bubble {
+  background: #ffffff;
+  color: #171717;
+}
+
+/* ─── Compact thinking strip ───────────────────────────────────────────────
+   Seamless, borderless status whisper for compact mode. A shimmering label
+   plus reasoning thoughts that flow upward and dissolve via a top fade mask,
+   so progress is visible without an inset "card" breaking the pill aesthetic. */
+.compact-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 4px;
+  animation: compactThinkingIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.compact-thinking__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 14px;
+}
+
+/* Live label gently breathes its opacity — calm, monochrome, no accent color. */
+.compact-thinking__headline--live {
+  animation: compactThinkingBreathe 2.4s ease-in-out infinite;
+}
+
+.compact-thinking__ellipsis {
+  animation: compactThinkingEllipsis 1.4s steps(4, end) infinite;
+}
+
+/* Latest thoughts: small, muted, faded at the top so older lines dissolve
+   upward as new text streams in. Scroll is pinned to the bottom in JS. */
+.compact-thinking__stream {
+  max-height: 42px;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  opacity: 0.92;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.4) 28%,
+    #000 70%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.4) 28%,
+    #000 70%
+  );
+}
+
+@keyframes compactThinkingIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes compactThinkingBreathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes compactThinkingEllipsis {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-thinking,
+  .compact-thinking__headline--live,
+  .compact-thinking__ellipsis {
+    animation: none;
+  }
 }
 
 /* Window chat: messages scroll under the floating composer */
@@ -1198,9 +1319,9 @@ button.input-status-float:not(:disabled) {
   isolation: isolate;
   overflow: hidden;
   box-sizing: border-box;
-  padding: 14px 10px 16px;
-  min-height: 74px;
-  border-radius: 24px;
+  padding: 10px 10px 11px;
+  min-height: 54px;
+  border-radius: 20px;
   background:
     radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 42%, transparent) 0%, transparent 38%),
     radial-gradient(circle at 28% 0%, color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 48%),
@@ -1243,28 +1364,28 @@ button.input-status-float:not(:disabled) {
 .dashboard-sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 14px 10px 12px;
+  gap: 2px;
+  padding: 8px 10px 6px;
 }
 
 .dashboard-sidebar-nav-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
 .dashboard-sidebar-divider {
   flex: none;
   align-self: stretch;
   height: 1px;
-  margin: 8px 8px;
+  margin: 3px 8px;
   background: var(--dashboard-sidebar-divider);
   border: none;
 }
 
 .dashboard-sidebar-footer {
-  padding: 12px 10px 14px;
-  margin-top: 4px;
+  padding: 8px 10px 10px;
+  margin-top: 2px;
   border-top: 1px solid var(--dashboard-sidebar-divider);
 }
 

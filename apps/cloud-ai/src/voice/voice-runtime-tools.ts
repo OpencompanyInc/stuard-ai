@@ -4,10 +4,6 @@ import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { analyzeMediaTool } from '../tools/analyze-media';
 import { waitTool } from '../tools/wait';
-import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
-import { getHeadlessAgentStatus } from '../tools/get-headless-agent-status';
-import { listHeadlessAgentTasks } from '../tools/list-headless-agent-tasks';
-import { stopHeadlessAgent } from '../tools/stop-headless-agent';
 import { get_skill_info } from '../tools/skill-tools';
 import { agent_todo, search_local_workflows, run_workflow } from '../tools/device-tools';
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
@@ -59,10 +55,6 @@ const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
   agent_todo: 10_000,
   search_local_workflows: 15_000,
   run_workflow: 90_000,
-  deploy_headless_agent: 90_000,
-  get_headless_agent_status: 15_000,
-  list_headless_agent_tasks: 15_000,
-  stop_headless_agent: 15_000,
   get_skill_info: 10_000,
   wait: 60_000,
 };
@@ -430,65 +422,6 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
     },
   ),
   makeFunctionTool(
-    'deploy_headless_agent',
-    'Deploy autonomous headless sub-agents in parallel for longer-running background work. Pass tasks array. execution_mode: "wait" blocks until all finish, "background" returns taskIds immediately.',
-    {
-      type: 'object',
-      properties: {
-        tasks: {
-          type: 'array',
-          description: 'Array of sub-agent tasks. Each task has objective and optional fields (mode, tools_allowed, custom_system_prompt).',
-          items: { type: 'object' },
-          minItems: 1,
-        },
-        execution_mode: {
-          type: 'string',
-          enum: ['wait', 'background'],
-          description: 'wait = block until done; background = return taskIds.',
-        },
-        model: {
-          type: 'string',
-          enum: ['fast', 'balanced', 'smart'],
-          description: 'Model tier. Default fast.',
-        },
-      },
-      required: ['tasks'],
-    },
-  ),
-  makeFunctionTool(
-    'get_headless_agent_status',
-    'Get the status, logs, and result of a previously deployed headless sub-agent.',
-    {
-      type: 'object',
-      properties: {
-        taskId: { type: 'string', description: 'Task ID returned by deploy_headless_agent.' },
-      },
-      required: ['taskId'],
-    },
-  ),
-  makeFunctionTool(
-    'list_headless_agent_tasks',
-    'List recent headless sub-agent tasks (optionally filtered by status).',
-    {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['running', 'completed', 'failed'] },
-        limit: { type: 'number', description: 'Max results (1-100). Default 25.' },
-      },
-    },
-  ),
-  makeFunctionTool(
-    'stop_headless_agent',
-    'Stop a running headless sub-agent task.',
-    {
-      type: 'object',
-      properties: {
-        task_id: { type: 'string', description: 'Task ID returned by deploy_headless_agent.' },
-      },
-      required: ['task_id'],
-    },
-  ),
-  makeFunctionTool(
     'get_skill_info',
     'Get full details of a user-defined skill (a guidance playbook) by name or ID.',
     {
@@ -824,10 +757,6 @@ const KNOWN_VOICE_TOOLS = new Set([
   'agent_todo',
   'search_local_workflows',
   'run_workflow',
-  'deploy_headless_agent',
-  'get_headless_agent_status',
-  'list_headless_agent_tasks',
-  'stop_headless_agent',
   'get_skill_info',
   'wait',
 ]);
@@ -1041,41 +970,6 @@ async function dispatchVoiceTool(
           name: typeof args.name === 'string' ? args.name : undefined,
           args: args.args && typeof args.args === 'object' ? args.args : undefined,
           timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : 120_000,
-        }, {} as any),
-      );
-    }
-
-    case 'deploy_headless_agent': {
-      return bridge(async () =>
-        (deployHeadlessAgent as any).execute?.({
-          tasks: Array.isArray(args.tasks) ? args.tasks : [],
-          execution_mode: args.execution_mode || 'wait',
-          model: args.model || 'fast',
-        }, {} as any),
-      );
-    }
-
-    case 'get_headless_agent_status': {
-      return bridge(async () =>
-        (getHeadlessAgentStatus as any).execute?.({
-          taskId: String(args.taskId || ''),
-        }, {} as any),
-      );
-    }
-
-    case 'list_headless_agent_tasks': {
-      return bridge(async () =>
-        (listHeadlessAgentTasks as any).execute?.({
-          status: args.status,
-          limit: coerceLimit(args.limit, 25, 100),
-        }, {} as any),
-      );
-    }
-
-    case 'stop_headless_agent': {
-      return bridge(async () =>
-        (stopHeadlessAgent as any).execute?.({
-          task_id: String(args.task_id || ''),
         }, {} as any),
       );
     }

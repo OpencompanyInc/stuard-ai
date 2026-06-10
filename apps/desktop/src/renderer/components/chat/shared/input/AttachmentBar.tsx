@@ -1,86 +1,26 @@
 import React, { memo } from 'react';
 import { Cross2Icon } from '@radix-ui/react-icons';
-import { Image as ImageIconLucide, File as FileIconLucide, Folder, FileText, Music, Film } from 'lucide-react';
+import { Folder, FileText } from 'lucide-react';
 import type { ContextItem } from '../../../FileNavigator';
-import { getChatAttachmentKind } from '../../../../utils/attachments';
+import type { ChatAttachment } from '../../../../utils/attachments';
 
 interface AttachmentBarProps {
-  attachments: Array<{ type: 'image' | 'file'; name: string; mimeType?: string; source?: string }>;
+  attachments?: ChatAttachment[];
   contextPaths?: ContextItem[];
   onRemoveAttachment: (index: number) => void;
   onRemoveContext: (index: number) => void;
 }
 
-function AttachmentKindIcon({ attachment }: { attachment: AttachmentBarProps['attachments'][number] }) {
-  const kind = getChatAttachmentKind(attachment as any);
-  if (kind === 'image') {
-    return (
-      <div className="w-5 h-5 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-500">
-        <ImageIconLucide className="w-3 h-3" />
-      </div>
-    );
-  }
-  if (kind === 'audio') {
-    return (
-      <div className="w-5 h-5 rounded-md bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-        <Music className="w-3 h-3" />
-      </div>
-    );
-  }
-  if (kind === 'video') {
-    return (
-      <div className="w-5 h-5 rounded-md bg-rose-500/10 flex items-center justify-center text-rose-500">
-        <Film className="w-3 h-3" />
-      </div>
-    );
-  }
-  if (kind === 'document') {
-    return (
-      <div className="w-5 h-5 rounded-md bg-amber-500/10 flex items-center justify-center text-amber-500">
-        <FileText className="w-3 h-3" />
-      </div>
-    );
-  }
-  return (
-    <div className="w-5 h-5 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-500">
-      <FileIconLucide className="w-3 h-3" />
-    </div>
-  );
-}
-
-// Helper component for attachments & context
+/** Context-path chips only — image/file attachments use AttachmentPreviewOverlay. */
 export const AttachmentBar = memo(({
-  attachments,
   contextPaths,
-  onRemoveAttachment,
   onRemoveContext,
 }: AttachmentBarProps) => {
-  if (attachments.length === 0 && (!contextPaths || contextPaths.length === 0)) return null;
+  if (!contextPaths || contextPaths.length === 0) return null;
 
   return (
-    <div className="w-full flex flex-wrap gap-2 px-1 py-1 animate-in fade-in slide-in-from-bottom-1 duration-200 no-drag relative z-20">
-      {/* Attachments */}
-      {attachments.map((att, idx) => (
-        <div
-          key={`att-${idx}`}
-          className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-gray-200/50 border border-gray-300/30 hover:bg-gray-200/80 hover:border-gray-300/50 transition-all cursor-default select-none shadow-sm backdrop-blur-md"
-        >
-          <AttachmentKindIcon attachment={att} />
-          <span className="text-[11px] font-semibold text-theme-fg max-w-[120px] truncate">
-            {att.name}
-          </span>
-          <button
-            onClick={(e) => { e.stopPropagation(); onRemoveAttachment(idx); }}
-            className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-50 group-hover:opacity-100"
-            title="Remove attachment"
-          >
-            <Cross2Icon className="w-3 h-3" />
-          </button>
-        </div>
-      ))}
-
-      {/* Context Paths */}
-      {contextPaths?.map((c, i) => (
+    <div className="w-full flex flex-wrap gap-2 px-1 py-0.5 animate-in fade-in slide-in-from-bottom-1 duration-200 no-drag relative z-20">
+      {contextPaths.map((c, i) => (
         <div
           key={c.path}
           className="group relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-xl bg-primary/5 border border-primary/10 hover:bg-primary/10 hover:border-primary/20 transition-all cursor-default select-none shadow-sm backdrop-blur-md"

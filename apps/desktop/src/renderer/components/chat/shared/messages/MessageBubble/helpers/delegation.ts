@@ -5,11 +5,9 @@ import { getToolStepLabel } from './toolStepLabel';
 
 // Tool names that represent delegation to a subagent — rendered as a distinct rectangle card
 // so long-running delegated work is easy to track at a glance.
-// `delegate` is the orchestrator's specialised-subagent tool; `deploy_headless_agent`
-// is the general user-facing background-agent tool. Those are the only two real
-// spawn entry points — every other name (subagent_create, spawn_agent, run_subagent,
-// deploy_subagent) was a dead alias.
-export const DELEGATION_TOOL_NAMES = new Set(['delegate', 'deploy_headless_agent', 'route_to_workflow_agent']);
+// `delegate` is the orchestrator's unified subagent tool (including the `custom`
+// ad-hoc subagent); `route_to_workflow_agent` hands off to the Workflow Architect.
+export const DELEGATION_TOOL_NAMES = new Set(['delegate', 'route_to_workflow_agent']);
 
 // Workflow orchestration wrappers whose sub-steps stream in as nested children.
 // These render as an execution-group rectangle (fork→branches for parallel,
@@ -50,7 +48,7 @@ export function extractDelegationTasks(tool: ToolCall): DelegationTask[] {
   const kind = toolName === 'route_to_workflow_agent'
     ? 'workflow'
     : (args.subagent || args.kind || args.agent || args.agent_kind || 'subagent');
-  // `deploy_headless_agent` — flat args
+  // Fallback for flat-arg delegation shapes
   const instruction = args.objective || args.task || args.prompt || args.instruction;
   return [{
     subagent: String(kind),

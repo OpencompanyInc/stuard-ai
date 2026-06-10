@@ -70,8 +70,9 @@ export interface CloudSyncStatus {
   desktop: {
     conversations: number;
     messages: number;
-    spaces: number;
-    spaceItems: number;
+    projects: number;
+    memories: number;
+    journalEntries: number;
     segments: number;
   } | null;
 }

@@ -1549,13 +1549,10 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
       conversations: { inserted: 0, replaced: 0, skipped: 0 },
       messages: 0,
       segments: 0,
-      spaces: { inserted: 0, updated: 0, skipped: 0 },
-      spaceItems: { inserted: 0, updated: 0, skipped: 0 },
       collections: { inserted: 0, updated: 0, skipped: 0 },
       memories: { inserted: 0, updated: 0, skipped: 0 },
       projects: { inserted: 0, updated: 0, skipped: 0 },
       journal: { inserted: 0, updated: 0, skipped: 0 },
-      links: 0,
     };
 
     dest.pragma('foreign_keys = OFF');
@@ -1592,9 +1589,6 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
         if (local) {
           dest!.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
           dest!.prepare('DELETE FROM conversation_segments WHERE conversation_id = ?').run(id);
-          if (tableExists(dest!, 'space_conversations')) {
-            dest!.prepare('DELETE FROM space_conversations WHERE conversation_id = ?').run(id);
-          }
           dest!.prepare('DELETE FROM conversations WHERE id = ?').run(id);
           stats.conversations.replaced++;
         } else {
@@ -1604,37 +1598,22 @@ function mergeMemoryDb(incomingPath: string, localPath: string): { ok: boolean; 
         insertRow(dest!, 'conversations', conversationColumns, conv);
         stats.messages += copyRowsByColumn(src!, dest!, 'messages', 'conversation_id', id);
         stats.segments += copyRowsByColumn(src!, dest!, 'conversation_segments', 'conversation_id', id);
-        stats.links += copyRowsByColumn(src!, dest!, 'space_conversations', 'conversation_id', id);
       }
 
-      stats.spaces = mergeEntityTable(src!, dest!, 'spaces', 'id', ['name_enc', 'description_enc']);
-      stats.spaceItems = mergeEntityTable(src!, dest!, 'space_items', 'id', ['title_enc', 'content_enc', 'metadata_enc']);
       stats.collections = mergeEntityTable(src!, dest!, 'collection_summaries', 'topic', [], 'updated_at');
 
       // Project Mode tables — create on the dest first so a VM with an older
       // memory.db (pre-memories/projects) still receives them. memories holds
       // the user's atomic facts/notes; projects scope conversations; journal
-      // rows are timestamped project events (created_at is their only time col).
+      // rows are timestamped project events. Journal merges on updated_at so
+      // in-place auto-journal session updates propagate (older rows fall back
+      // to 0 and are simply replaced by the incoming copy).
       ensureTableExists(src!, dest!, 'projects');
       ensureTableExists(src!, dest!, 'memories');
       ensureTableExists(src!, dest!, 'journal_entries');
       stats.projects = mergeEntityTable(src!, dest!, 'projects', 'id', ['name_enc', 'description_enc', 'goals_enc', 'instructions_enc', 'digest_enc']);
       stats.memories = mergeEntityTable(src!, dest!, 'memories', 'id', ['title_enc', 'content_enc', 'metadata_enc', 'url_enc']);
-      stats.journal = mergeEntityTable(src!, dest!, 'journal_entries', 'id', ['title_enc', 'body_enc', 'source_ref_enc'], 'created_at');
-
-      const linkColumns = commonColumns(src!, dest!, 'space_conversations');
-      if (linkColumns.length > 0) {
-        const links = src!.prepare('SELECT * FROM space_conversations').all() as SqliteRow[];
-        for (const link of links) {
-          const exists = dest!
-            .prepare('SELECT 1 FROM space_conversations WHERE space_id = ? AND conversation_id = ?')
-            .get(link.space_id, link.conversation_id);
-          if (!exists) {
-            insertRow(dest!, 'space_conversations', linkColumns, link);
-            stats.links++;
-          }
-        }
-      }
+      stats.journal = mergeEntityTable(src!, dest!, 'journal_entries', 'id', ['title_enc', 'body_enc', 'source_ref_enc'], 'updated_at');
     });
 
     tx();

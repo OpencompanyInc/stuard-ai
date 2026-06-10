@@ -184,6 +184,37 @@ export function getToolStepLabel(tool: ToolCall): React.ReactNode {
       const verb = tool.tool === 'edit_image' ? v('Editing image', 'Edited image') : v('Generating image', 'Generated image');
       return prompt ? <span>{verb} <InlineCodeChip max={56}>{prompt}</InlineCodeChip></span> : verb;
     }
+    case 'maps_search_places': {
+      const q = typeof args.query === 'string' && args.query.trim() ? args.query.trim() : null;
+      const type = typeof args.included_type === 'string' && args.included_type.trim() ? args.included_type.trim().replace(/_/g, ' ') : null;
+      const term = q || type;
+      return term
+        ? <span>{v('Finding places', 'Found places')} <InlineCodeChip max={56}>{term}</InlineCodeChip></span>
+        : v('Finding places nearby', 'Found places nearby');
+    }
+    case 'maps_place_details': {
+      return v('Looking up place details', 'Looked up place details');
+    }
+    case 'maps_distance_matrix': {
+      const from = Array.isArray(args.origins) && args.origins.length ? String(args.origins[0]) : null;
+      const to = Array.isArray(args.destinations) && args.destinations.length ? String(args.destinations[0]) : null;
+      if (from && to) {
+        return (
+          <span>
+            {v('Measuring distance', 'Measured distance')} <InlineCodeChip max={32}>{from}</InlineCodeChip>
+            {' '}<span className="opacity-60">→</span>{' '}
+            <InlineCodeChip max={32}>{to}</InlineCodeChip>
+          </span>
+        );
+      }
+      return v('Measuring distance & travel time', 'Measured distance & travel time');
+    }
+    case 'maps_static_map': {
+      const center = typeof args.center === 'string' && args.center.trim() ? args.center.trim() : null;
+      return center
+        ? <span>{v('Rendering map of', 'Rendered map of')} <InlineCodeChip max={48}>{center}</InlineCodeChip></span>
+        : v('Rendering map', 'Rendered map');
+    }
   }
 
   // Prefer an explicit AI-supplied description when present.

@@ -562,46 +562,37 @@ async def http_memory_messages_list(conversation_id: str, limit: int | None = No
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-@router.get("/memory/spaces")
-async def http_memory_spaces_list(type: str | None = None, limit: int = 50) -> JSONResponse:
+@router.get("/memory/projects")
+async def http_memory_projects_list(status: str | None = None, limit: int = 100) -> JSONResponse:
     try:
         params: Dict[str, Any] = {"limit": limit}
-        if type:
-            params["type"] = type
-        res = await memory_tools.space_list(params)
-        return JSONResponse({"ok": True, "spaces": res.get("spaces", [])})
+        if status:
+            params["status"] = status
+        res = await memory_tools.project_list(params)
+        return JSONResponse({"ok": True, "projects": res.get("projects", [])})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-@router.post("/memory/spaces")
-async def http_memory_space_create(payload: Dict[str, Any]) -> JSONResponse:
+@router.get("/memory/projects/{project_id}")
+async def http_memory_project_get(project_id: str) -> JSONResponse:
     try:
-        res = await memory_tools.space_create(payload)
-        return JSONResponse({"ok": True, "space": res})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@router.get("/memory/spaces/{space_id}")
-async def http_memory_space_get(space_id: str) -> JSONResponse:
-    try:
-        res = await memory_tools.space_get({"space_id": space_id})
-        if not res:
+        res = await memory_tools.project_get({"project_id": project_id})
+        if not res.get("ok"):
             return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
-        return JSONResponse({"ok": True, "space": res})
+        return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-@router.get("/memory/spaces/{space_id}/items")
-async def http_memory_space_items_list(space_id: str, type: str | None = None, limit: int = 100) -> JSONResponse:
+@router.get("/memory/projects/{project_id}/journal")
+async def http_memory_project_journal(project_id: str, type: str | None = None, limit: int = 50) -> JSONResponse:
     try:
-        params: Dict[str, Any] = {"space_id": space_id, "limit": limit}
+        params: Dict[str, Any] = {"project_id": project_id, "limit": limit}
         if type:
             params["type"] = type
-        res = await memory_tools.space_item_list(params)
-        return JSONResponse({"ok": True, "items": res.get("items", [])})
+        res = await memory_tools.journal_list(params)
+        return JSONResponse({"ok": True, "entries": res.get("entries", [])})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 

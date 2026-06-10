@@ -35,10 +35,6 @@ const TOOL_LABELS: Record<string, string> = {
   agent_todo: 'Tracking the task list',
   search_local_workflows: 'Finding a workflow',
   run_workflow: 'Running a workflow',
-  deploy_headless_agent: 'Spinning up a background agent',
-  get_headless_agent_status: 'Checking on the background agent',
-  list_headless_agent_tasks: 'Listing background agents',
-  stop_headless_agent: 'Stopping a background agent',
   get_skill_info: 'Looking up a skill',
   wait: 'Pausing for a moment',
 };
@@ -92,15 +88,6 @@ function detailFromArgs(name: string, args?: Record<string, any>): string | unde
     case 'run_workflow':
       return typeof args.name === 'string' ? truncate(args.name, 40)
         : typeof args.id === 'string' ? truncate(args.id, 40) : undefined;
-    case 'deploy_headless_agent': {
-      const tasks = Array.isArray(args.tasks) ? args.tasks : [];
-      if (tasks.length === 0) return undefined;
-      if (tasks.length === 1) {
-        const obj = tasks[0]?.objective;
-        return typeof obj === 'string' ? `"${truncate(obj, 40)}"` : undefined;
-      }
-      return `${tasks.length} agents`;
-    }
     case 'agent_todo':
       return typeof args.action === 'string' ? args.action : undefined;
     case 'get_skill_info':

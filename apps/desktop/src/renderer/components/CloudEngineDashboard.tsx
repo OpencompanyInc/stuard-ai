@@ -702,7 +702,7 @@ export function CloudEngineDashboard() {
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs"><span className="text-theme-muted">Conversations</span><span className="font-bold text-theme-fg">{syncStatus.desktop.conversations}</span></div>
                     <div className="flex justify-between text-xs"><span className="text-theme-muted">Messages</span><span className="font-bold text-theme-fg">{syncStatus.desktop.messages}</span></div>
-                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Spaces</span><span className="font-bold text-theme-fg">{syncStatus.desktop.spaces}</span></div>
+                    <div className="flex justify-between text-xs"><span className="text-theme-muted">Projects</span><span className="font-bold text-theme-fg">{syncStatus.desktop.projects}</span></div>
                     <div className="flex justify-between text-xs"><span className="text-theme-muted">Segments</span><span className="font-bold text-theme-fg">{syncStatus.desktop.segments}</span></div>
                   </div>
                 ) : (

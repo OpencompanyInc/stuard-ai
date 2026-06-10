@@ -93,10 +93,7 @@ declare global {
       openDashboard: (options?: { tab?: string }) => Promise<void>;
       openOnboarding: () => Promise<void>;
       openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => Promise<void>;
-      openSpaces: () => Promise<void>;
-      closeSpaces: () => Promise<void>;
-      toggleSpaces: () => Promise<void>;
-      // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
+      // Sidebar window (unified Terminal, Agent Tasks, Browser)
       openSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
       closeSidebar: () => Promise<void>;
       toggleSidebar: (options?: { tab?: SidebarTabId; expanded?: boolean }) => Promise<void>;
@@ -116,6 +113,7 @@ declare global {
       handleCloudWebhook: (payload: any) => Promise<any>;
       selectFiles: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
       selectImages: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
+      captureScreenClean: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
       listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
       pickFiles: (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; data?: string; mimeType?: string }>; error?: string }>;
       pickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ ok: boolean; folders?: Array<{ path: string }>; error?: string }>;

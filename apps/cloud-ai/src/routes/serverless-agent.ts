@@ -17,7 +17,6 @@ import { getModel } from '../agents/stuard/models';
 import { web_search } from '../tools/perplexity-tools';
 import { scrape_url } from '../tools/tavily-tools';
 import { buildAvailableSkillsPromptSection, get_skill_info, getSkillsFromContext } from '../tools/skill-tools';
-import { deployHeadlessAgent } from '../tools/deploy-headless-agent';
 import { waitTool } from '../tools/wait';
 import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
 
@@ -456,10 +455,6 @@ export async function runServerlessAgent(input: ServerlessAgentInput): Promise<S
       ...telnyxTools,
       ...(await getWhatsappTools()),
     };
-
-    if (deployHeadlessAgent) {
-      tools.deploy_headless_agent = deployHeadlessAgent;
-    }
 
     // 6. Build agent
     const selectedModel = getModel(modelChoice as ModelChoice);

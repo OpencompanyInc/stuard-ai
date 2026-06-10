@@ -2,7 +2,8 @@ import React, { memo, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { Check, ChevronDown, ChevronUp, Copy, ExternalLink, File, FileJson, FileText, Folder, Loader2, TriangleAlert } from 'lucide-react';
 import { toMediaSrc } from '../helpers/media';
-import { getFileExt } from '../helpers/filePaths';
+import { getFileExt, IMAGE_EXTS } from '../helpers/filePaths';
+import { ScrollableImagePane } from './ScrollableImagePane';
 
 const PREVIEW_BYTES = 128 * 1024;
 const PREVIEW_LINE_LIMIT = 140;
@@ -135,6 +136,7 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
   const mediaSrc = toMediaSrc(cleanedSrc);
   const isPdf = ext === 'pdf' || alt === 'pdf';
   const isJson = JSON_EXTS.has(ext) || alt === 'json';
+  const isImage = IMAGE_EXTS.has(ext) || alt === 'image';
   const isTextLike = TEXT_EXTS.has(ext) || alt === 'text' || isJson;
   const [copied, setCopied] = useState<'path' | 'preview' | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -148,7 +150,7 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
   }>({ loading: false });
 
   useEffect(() => {
-    if (!isTextLike || isPdf || !cleanedSrc) return;
+    if (!isTextLike || isPdf || isImage || !cleanedSrc) return;
     const controller = new AbortController();
     let disposed = false;
     const timeout = window.setTimeout(() => controller.abort(), 8000);
@@ -171,12 +173,12 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [cleanedSrc, ext, isPdf, isTextLike, mediaSrc]);
+  }, [cleanedSrc, ext, isImage, isPdf, isTextLike, mediaSrc]);
 
   const preview = useMemo(() => capPreviewLines(state.text || ''), [state.text]);
   const shownText = expanded ? (state.text || '') : preview.text;
   const canOpenExternal = isWebUrl(cleanedSrc);
-  const kindLabel = isPdf ? 'PDF' : isJson ? 'JSON' : ext ? ext.toUpperCase() : 'FILE';
+  const kindLabel = isPdf ? 'PDF' : isImage ? 'Image' : isJson ? 'JSON' : ext ? ext.toUpperCase() : 'FILE';
   const sizeLabel = formatBytes(state.totalSize);
   const hasMore = Boolean(state.truncated || (!expanded && preview.lineTruncated));
   const Icon = isJson ? FileJson : isTextLike ? FileText : File;
@@ -204,35 +206,63 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
     try { (window as any).desktopAPI?.showItemInFolder?.(cleanedSrc); } catch { }
   };
 
+  // Theme-aware tokens so the preview matches the active palette (dark / light /
+  // compact / custom) instead of a hardcoded white card that clashed with the UI.
+  const surfaceBg = 'color-mix(in srgb, var(--foreground) 4%, transparent)';
+  const headerBg = 'color-mix(in srgb, var(--foreground) 6%, transparent)';
+  const borderCol = 'color-mix(in srgb, var(--foreground) 12%, transparent)';
+  const fg = 'var(--foreground)';
+  const fgMuted = 'var(--foreground-muted)';
+  const fgFaint = 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)';
+  const iconBtn =
+    'rounded-lg p-1.5 transition-colors hover:bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)]';
+
+  if (isImage) {
+    return (
+      <div className="my-2 max-w-full">
+        <ScrollableImagePane src={cleanedSrc} alt={fileName} maxHeight={180} bare />
+      </div>
+    );
+  }
+
   return (
-    <div className="my-3 w-full max-w-2xl overflow-hidden rounded-2xl border border-theme/10 bg-white text-slate-900 shadow-sm">
-      <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <div className="mt-0.5 rounded-xl bg-slate-900 p-2 text-white shadow-sm">
+    <div
+      className="my-3 w-full max-w-2xl overflow-hidden rounded-2xl shadow-sm"
+      style={{ border: `1px solid ${borderCol}`, background: surfaceBg, color: fg }}
+    >
+      <div className="flex items-start gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${borderCol}`, background: headerBg }}>
+        <div
+          className="mt-0.5 rounded-xl p-2"
+          style={{ background: 'color-mix(in srgb, var(--foreground) 10%, transparent)', color: fg }}
+        >
           <Icon className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-bold text-slate-900" title={cleanedSrc}>{fileName}</span>
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-500">{kindLabel}</span>
-            {sizeLabel && <span className="text-[11px] font-medium text-slate-500">{sizeLabel}</span>}
+            <span className="truncate text-sm font-bold" style={{ color: fg }} title={cleanedSrc}>{fileName}</span>
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+              style={{ border: `1px solid ${borderCol}`, color: fgMuted }}
+            >{kindLabel}</span>
+            {sizeLabel && <span className="text-[11px] font-medium" style={{ color: fgMuted }}>{sizeLabel}</span>}
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-slate-500" title={cleanedSrc}>{cleanedSrc}</div>
+          <div className="mt-0.5 truncate text-[11px]" style={{ color: fgFaint }} title={cleanedSrc}>{cleanedSrc}</div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1" style={{ color: fgMuted }}>
           {state.text && (
-            <button onClick={() => copy(state.text || '', 'preview')} className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900" title="Copy preview">
-              {copied === 'preview' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+            <button onClick={() => copy(state.text || '', 'preview')} className={iconBtn} title="Copy preview">
+              {copied === 'preview' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
           )}
-          <button onClick={() => copy(cleanedSrc, 'path')} className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900" title="Copy path">
-            {copied === 'path' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+          <button onClick={() => copy(cleanedSrc, 'path')} className={iconBtn} title="Copy path">
+            {copied === 'path' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
           {isLocalPath(cleanedSrc) && (
-            <button onClick={revealInFolder} className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900" title="Show in folder">
+            <button onClick={revealInFolder} className={iconBtn} title="Show in folder">
               <Folder className="h-3.5 w-3.5" />
             </button>
           )}
-          <button onClick={openFile} className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900" title={canOpenExternal ? 'Open link' : 'Open file'}>
+          <button onClick={openFile} className={iconBtn} title={canOpenExternal ? 'Open link' : 'Open file'}>
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -242,7 +272,8 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
         <div className="p-4">
           <button
             onClick={() => setPdfOpen((value) => !value)}
-            className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+            className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors"
+            style={{ border: `1px solid ${borderCol}`, background: headerBg, color: fg }}
           >
             <span>{pdfOpen ? 'Hide PDF preview' : 'Preview PDF'}</span>
             {pdfOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -251,34 +282,42 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
             <iframe
               src={mediaSrc}
               title={fileName}
-              className="mt-3 h-[420px] w-full rounded-xl border border-slate-200 bg-slate-100"
+              className="mt-3 h-[420px] w-full rounded-xl"
+              style={{ border: `1px solid ${borderCol}`, background: 'color-mix(in srgb, var(--foreground) 6%, transparent)' }}
               loading="lazy"
             />
           )}
         </div>
       ) : state.loading ? (
-        <div className="flex items-center gap-2 px-4 py-4 text-sm font-medium text-slate-500">
+        <div className="flex items-center gap-2 px-4 py-4 text-sm font-medium" style={{ color: fgMuted }}>
           <Loader2 className="h-4 w-4 animate-spin" />
           Preparing a safe preview...
         </div>
       ) : state.error ? (
-        <div className="flex items-start gap-2 px-4 py-4 text-sm text-amber-700">
+        <div className="flex items-start gap-2 px-4 py-4 text-sm text-amber-500">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>Preview unavailable. You can still open the file from the actions above.</span>
         </div>
       ) : state.text ? (
-        <div className="bg-white">
-          <pre className={clsx(
-            'm-0 overflow-auto p-4 font-mono text-[12px] leading-5 text-slate-800 custom-scrollbar whitespace-pre',
-            expanded ? 'max-h-[680px]' : 'max-h-[340px]'
-          )}>{shownText}</pre>
+        <div style={{ background: surfaceBg }}>
+          <pre
+            className={clsx(
+              'm-0 overflow-auto p-4 font-mono text-[12px] leading-5 custom-scrollbar whitespace-pre',
+              expanded ? 'max-h-[680px]' : 'max-h-[340px]'
+            )}
+            style={{ color: 'color-mix(in srgb, var(--foreground) 86%, transparent)' }}
+          >{shownText}</pre>
           {hasMore && (
-            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-4 py-2">
-              <span className="text-[11px] font-medium text-slate-500">
+            <div className="flex items-center justify-between px-4 py-2" style={{ borderTop: `1px solid ${borderCol}`, background: headerBg }}>
+              <span className="text-[11px] font-medium" style={{ color: fgFaint }}>
                 Showing a capped preview{state.truncated ? ` (${formatBytes(PREVIEW_BYTES)} max)` : ''}{preview.lineTruncated && !expanded ? `, first ${PREVIEW_LINE_LIMIT} lines` : ''}.
               </span>
               {preview.lineTruncated && (
-                <button onClick={() => setExpanded((value) => !value)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-900">
+                <button
+                  onClick={() => setExpanded((value) => !value)}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition-colors hover:bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)]"
+                  style={{ color: fgMuted }}
+                >
                   {expanded ? 'Collapse' : 'Show more'}
                   {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                 </button>
@@ -287,7 +326,7 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
           )}
         </div>
       ) : (
-        <div className="px-4 py-4 text-sm text-slate-500">Open this file to view it in the system viewer.</div>
+        <div className="px-4 py-4 text-sm" style={{ color: fgMuted }}>Open this file to view it in the system viewer.</div>
       )}
     </div>
   );

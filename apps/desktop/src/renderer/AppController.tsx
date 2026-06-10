@@ -25,6 +25,7 @@ import {
   createClipboardDocumentAttachment,
   getChatAttachmentKind,
   normalizeChatAttachment,
+  normalizeChatAttachments,
   shouldConvertPasteToDocumentAttachment,
   type ChatAttachment,
 } from './utils/attachments';
@@ -48,7 +49,6 @@ import {
   Mic,
   Plus,
   Layout,
-  LayoutGrid,
   Maximize2,
   Minimize2,
   File,
@@ -414,7 +414,11 @@ export function useAppController() {
   // Speech Hook
   const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
 
-  const { voice, voiceActive, handleToggleVoice, handleWakewordDetected } = useAppVoiceMode({ signedIn, overlayVisible });
+  const { voice, voiceActive, handleToggleVoice, handleWakewordDetected } = useAppVoiceMode({
+    signedIn,
+    overlayVisible,
+    onboardingComplete,
+  });
 
   // Planner Hook
   const plannerData = usePlannerData(accessToken);
@@ -722,6 +726,7 @@ export function useAppController() {
         const d = evt.data || {};
 
         if (evt.event === 'wakeword_detected') {
+          if (!onboardingComplete) return;
           await handleWakewordDetected();
           return;
         }
@@ -778,11 +783,12 @@ export function useAppController() {
       } catch { }
     });
     return () => { try { unsub?.(); } catch { } };
-  }, [subscribeProgress, handleWakewordDetected]);
+  }, [subscribeProgress, handleWakewordDetected, onboardingComplete]);
 
   // Wakeword service lifecycle
   useEffect(() => {
     if (!state?.connected) return;
+    if (!onboardingComplete) return;
     let canceled = false;
     const tryStart = async (retries = 5) => {
       for (let i = 0; i < retries && !canceled; i++) {
@@ -802,7 +808,7 @@ export function useAppController() {
     };
     tryStart();
     return () => { canceled = true; };
-  }, [wakewordEnabled, wakewordSensitivity, state?.connected]);
+  }, [wakewordEnabled, wakewordSensitivity, state?.connected, onboardingComplete]);
 
   // Auth & Updates
   useEffect(() => {
@@ -1132,6 +1138,50 @@ export function useAppController() {
   const handleQuickSend = useCallback((overrideText?: string) => {
     handleSendRef.current(overrideText, { quick: true });
   }, []);
+
+  // Capture the screen (with Stuard's own UI excluded via content-protection),
+  // surface it as an attachment chip in the compact overlay for a beat of visual
+  // feedback, then send it. Wired to the compact-mode Ctrl+Shift+Enter shortcut
+  // and the Quick Actions / attach-menu rows.
+  const capturingScreenshotRef = useRef(false);
+  const handleScreenshotSend = useCallback(async () => {
+    if (!signedIn) { handleSignIn(); return; }
+    if (capturingScreenshotRef.current) return;
+    capturingScreenshotRef.current = true;
+    try {
+      showAttachmentStatus('Capturing screen…');
+      const res = await window.desktopAPI?.captureScreenClean?.();
+      const dataUrl = res?.ok ? res.dataUrl : null;
+      if (!dataUrl) {
+        showAttachmentStatus(`Couldn't capture screen${res?.error ? `: ${res.error}` : ''}`, true);
+        return;
+      }
+      const comma = dataUrl.indexOf(',');
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      const shot = normalizeChatAttachment({
+        type: 'image',
+        name: `screenshot_${Date.now()}.png`,
+        data: base64,
+        mimeType: 'image/png',
+        source: 'picker',
+      });
+      // Show the captured shot in the input pill (visual feedback)…
+      setAttachments((prev) => [...prev, shot]);
+      showAttachmentStatus('Screenshot attached');
+      // …then send on the next painted frame. A double-rAF fires right after the
+      // thumbnail renders (≈2 frames, not half a second) and guarantees
+      // handleSend reads the committed attachments state — fast, no fixed delay.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          handleSendRef.current();
+        });
+      });
+    } catch (e: any) {
+      showAttachmentStatus(`Couldn't capture screen: ${String(e?.message || 'unknown error')}`, true);
+    } finally {
+      capturingScreenshotRef.current = false;
+    }
+  }, [signedIn, handleSignIn]);
 
   // Wrap editMessage so resends use the currently-selected model (matches handleSend),
   // instead of letting the server fall back to its default tier (e.g. "balanced").
@@ -1499,7 +1549,6 @@ export function useAppController() {
       clearInterval(interval);
     };
   }, [showCreditsLimitNotice, refreshCreditsAndClearNotice]);
-  const handleToggleSpaces = useCallback(() => window.desktopAPI.toggleSpaces(), []);
   const handleRemoveContext = useCallback((idx: number) => setContextPaths(prev => prev.filter((_, i) => i !== idx)), []);
   const handleAddContext = useCallback((item: ContextItem) => setContextPaths(prev => prev.some(p => p.path === item.path) ? prev : [...prev, item]), []);
   const handleRemoveAttachment = useCallback((i: number) => setAttachments(p => p.filter((_, idx) => idx !== i)), []);
@@ -1605,6 +1654,10 @@ export function useAppController() {
   const statusLabel = useMemo(() => {
     const p = (ai?.phase || '').toString();
     if (p === 'routing') {
+      // Window/sidebar launcher views don't show model-routing status.
+      if (overlayMode === 'window' || overlayMode === 'sidebar') {
+        return '';
+      }
       const m = (ai as any)?.model;
       return m ? `Routing (${m})` : 'Routing...';
     }
@@ -1622,7 +1675,7 @@ export function useAppController() {
       return 'Running tool...';
     }
     return ai?.statusText || 'Ready';
-  }, [ai]);
+  }, [ai, overlayMode]);
 
   // Determine if AI is currently streaming (for stop button)
   const isStreaming = useMemo(() => {
@@ -1821,7 +1874,6 @@ export function useAppController() {
       { id: 'toggle-sidebar', title: 'Sidebar layout', description: 'Switch to sidebar layout', icon: <Layout className="w-5 h-5" />, run: handleShowSidebar },
       { id: 'toggle-window', title: 'Window layout', description: 'Switch to window layout', icon: <Layout className="w-5 h-5" />, run: handleShowWindow },
 
-      { id: 'toggle-spaces', title: 'Spaces', description: 'Toggle spaces sidebar', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.toggleSpaces() },
       { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
       { id: 'attach-images', title: 'Attach images', description: 'Upload images', icon: <Image className="w-5 h-5" />, run: handleAttachImages },
       {
@@ -1941,7 +1993,7 @@ export function useAppController() {
     [currentResponse],
   );
 
-  const miniOutputPrompt = useMemo(() => {
+  const miniOutputUserTurn = useMemo(() => {
     const lastUser = [...messages].reverse().find((m) => m?.role === 'user');
     const lastMsg = messages[messages.length - 1];
     const inFlight =
@@ -1950,21 +2002,30 @@ export function useAppController() {
       || isAiWorking
       || lastMsg?.role === 'user';
 
-    if (inFlight && lastUser) {
-      return String(lastUser.text || '').trim();
-    }
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]?.role === 'assistant') {
-        for (let j = i - 1; j >= 0; j--) {
-          if (messages[j]?.role === 'user') return String(messages[j].text || '').trim();
+    let userMsg = (inFlight && lastUser) ? lastUser : null;
+    if (!userMsg) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]?.role === 'assistant') {
+          for (let j = i - 1; j >= 0; j--) {
+            if (messages[j]?.role === 'user') {
+              userMsg = messages[j];
+              break;
+            }
+          }
+          break;
         }
-        return '';
       }
+      if (!userMsg) userMsg = lastUser || null;
     }
 
-    return lastUser ? String(lastUser.text || '').trim() : '';
+    return {
+      text: String(userMsg?.text || '').trim(),
+      attachments: normalizeChatAttachments(userMsg?.attachments || []),
+    };
   }, [messages, currentResponse, currentReasoning, isAiWorking]);
+
+  const miniOutputPrompt = miniOutputUserTurn.text;
+  const miniOutputUserAttachments = miniOutputUserTurn.attachments;
 
   const lastAssistantIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2052,6 +2113,7 @@ export function useAppController() {
     setQuery,
     handleSend,
     handleQuickSend,
+    handleScreenshotSend,
     handleSteer,
     stopGeneration,
     isStreaming,
@@ -2098,6 +2160,7 @@ export function useAppController() {
     miniOutputHasContent,
     miniOutputStreaming,
     miniOutputPrompt,
+    miniOutputUserAttachments,
     showMiniOutput,
     setShowMiniOutput,
     backgroundTaskCount,

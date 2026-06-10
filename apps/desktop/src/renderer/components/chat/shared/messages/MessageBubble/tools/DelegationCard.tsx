@@ -33,6 +33,22 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
 
   const toolChildCount = childSteps.filter(c => c.kind === 'tool').length;
 
+  // The card header already names the agent and shows its status, so the
+  // absorbed "<kind> agent started" lifecycle row is a redundant duplicate of
+  // that label. Hide lifecycle status rows (started/finished) from the body —
+  // they're still used upstream to derive the card's status. The remaining
+  // rows are the subagent's actual reasoning / text / tool work.
+  const visibleChildSteps = useMemo(
+    () => childSteps.filter((child) => {
+      if (child.kind !== 'status') return true;
+      const id = typeof child.id === 'string' ? child.id : '';
+      if (id.startsWith('subagent-started-') || id.startsWith('subagent-finished-')) return false;
+      const label = typeof child.label === 'string' ? child.label.toLowerCase() : '';
+      return !(/\bagent started$/.test(label) || /\bsubagent (finished|started|cancelled)\b/.test(label));
+    }),
+    [childSteps],
+  );
+
   // Auto-expand while running so progress is visible, auto-collapse once done.
   const [expanded, setExpanded] = useState(isRunning || isError);
   const prevRunningRef = useRef(isRunning);
@@ -233,7 +249,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
         </button>
 
         <AnimatePresence initial={false}>
-          {expanded && childSteps.length > 0 ? (
+          {expanded && visibleChildSteps.length > 0 ? (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
@@ -245,11 +261,11 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
                 className="border-t px-3 pt-2.5 pb-1"
                 style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 12%, transparent)' }}
               >
-                {childSteps.map((child, idx) => (
+                {visibleChildSteps.map((child, idx) => (
                   <ChainOfThoughtStep
                     key={child.id}
                     status={child.status}
-                    isLast={idx === childSteps.length - 1}
+                    isLast={idx === visibleChildSteps.length - 1}
                     label={
                       child.status === 'active' ? (
                         <Shimmer as="span" duration={2} spread={3}>{child.label}</Shimmer>

@@ -37,6 +37,8 @@ export interface Conversation {
   source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
   owner_type?: MemoryOwnerType | null;
   owner_id?: string | null;
+  /** Project Mode scope — set by enter_project_mode, null/absent = unscoped. */
+  project_id?: string | null;
 }
 
 export type MemoryOwnerType = 'stuard' | 'bot' | 'agent' | 'workflow' | 'skill';
@@ -66,33 +68,6 @@ export interface ConversationSegment {
   end_turn: number | null;
   summary: string;
   topics: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Space {
-  id: string;
-  name: string;
-  description: string | null;
-  type: 'project' | 'topic' | 'research' | 'reference' | 'custom';
-  icon: string;
-  color: string;
-  created_at: string;
-  updated_at: string;
-  archived: boolean;
-}
-
-export interface SpaceItem {
-  id: string;
-  space_id: string;
-  type: 'note' | 'source' | 'link' | 'file' | 'fact' | 'snippet' | 'folder';
-  title: string | null;
-  content: string;
-  metadata: Record<string, any> | null;
-  added_by: 'user' | 'ai';
-  pinned: boolean;
-  parent_id?: string | null;
-  position?: number;
   created_at: string;
   updated_at: string;
 }
@@ -131,38 +106,6 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   } catch (error) {
     writeLog('embedding_error', { error: String(error) });
     return [];
-  }
-}
-
-export async function createSpaceFolder(
-  spaceId: string,
-  name: string,
-  options?: { parent_id?: string; position?: number }
-): Promise<SpaceItem | null> {
-  try {
-    const result = await execLocalTool('space_folder_create', {
-      space_id: spaceId,
-      name,
-      ...options,
-    });
-    if (result?.ok && result.folder) {
-      return result.folder as SpaceItem;
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function getSpaceTree(spaceId: string): Promise<any[] | null> {
-  try {
-    const result = await execLocalTool('space_get_tree', { space_id: spaceId });
-    if (result?.ok && result.tree) {
-      return result.tree as any[];
-    }
-    return null;
-  } catch (error) {
-    return null;
   }
 }
 
@@ -642,247 +585,6 @@ export async function searchSegmentsByEmbedding(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SPACE MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export async function createSpace(
-  name: string,
-  type: Space['type'],
-  options?: { description?: string; icon?: string; color?: string }
-): Promise<Space | null> {
-  try {
-    // Generate embedding for search
-    const text = `${name} ${options?.description || ''}`;
-    const embedding = await generateEmbedding(text);
-
-    const result = await execLocalTool('space_create', {
-      name,
-      type,
-      ...options,
-      embedding,
-    });
-
-    if (result?.ok && result.space) {
-      return result.space as Space;
-    }
-    return null;
-  } catch (error) {
-    writeLog('space_create_error', { error: String(error) });
-    return null;
-  }
-}
-
-export async function getSpace(spaceId: string): Promise<Space | null> {
-  try {
-    const result = await execLocalTool('space_get', { space_id: spaceId });
-    if (result?.ok && result.space) {
-      return result.space as Space;
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function listSpaces(options?: {
-  type?: Space['type'];
-  include_archived?: boolean;
-  limit?: number;
-}): Promise<Space[]> {
-  try {
-    const result = await execLocalTool('space_list', options || {});
-    if (result?.ok && result.spaces) {
-      return result.spaces as Space[];
-    }
-    return [];
-  } catch (error) {
-    return [];
-  }
-}
-
-export async function updateSpace(
-  spaceId: string,
-  updates: Partial<Pick<Space, 'name' | 'description' | 'icon' | 'color' | 'archived'>>
-): Promise<Space | null> {
-  try {
-    const result = await execLocalTool('space_update', {
-      space_id: spaceId,
-      ...updates,
-    });
-    if (result?.ok && result.space) {
-      return result.space as Space;
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function deleteSpace(spaceId: string): Promise<boolean> {
-  try {
-    const result = await execLocalTool('space_delete', { space_id: spaceId });
-    return result?.ok && result.deleted;
-  } catch (error) {
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SPACE ITEM MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export async function addSpaceItem(
-  spaceId: string,
-  type: SpaceItem['type'],
-  content: string,
-  options?: {
-    title?: string;
-    metadata?: Record<string, any>;
-    added_by?: 'user' | 'ai';
-    pinned?: boolean;
-    parent_id?: string;
-    position?: number;
-  }
-): Promise<SpaceItem | null> {
-  try {
-    // Generate embedding for search
-    const text = `${options?.title || ''} ${content}`.trim();
-    const embedding = await generateEmbedding(text);
-
-    const result = await execLocalTool('space_item_add', {
-      space_id: spaceId,
-      type,
-      content,
-      ...options,
-      embedding,
-    });
-
-    if (result?.ok && result.item) {
-      return result.item as SpaceItem;
-    }
-    return null;
-  } catch (error) {
-    writeLog('space_item_add_error', { error: String(error) });
-    return null;
-  }
-}
-
-export async function getSpaceItems(
-  spaceId: string,
-  options?: {
-    type?: SpaceItem['type'];
-    pinned_only?: boolean;
-    parent_id?: string;
-    include_all?: boolean;
-    limit?: number;
-  }
-): Promise<SpaceItem[]> {
-  try {
-    const result = await execLocalTool('space_item_list', {
-      space_id: spaceId,
-      ...options,
-    });
-    if (result?.ok && result.items) {
-      return result.items as SpaceItem[];
-    }
-    return [];
-  } catch (error) {
-    return [];
-  }
-}
-
-export async function updateSpaceItem(
-  itemId: string,
-  updates: Partial<Pick<SpaceItem, 'title' | 'content' | 'metadata' | 'pinned'>>
-): Promise<SpaceItem | null> {
-  try {
-    const result = await execLocalTool('space_item_update', {
-      item_id: itemId,
-      ...updates,
-    });
-    if (result?.ok && result.item) {
-      return result.item as SpaceItem;
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function deleteSpaceItem(itemId: string): Promise<boolean> {
-  try {
-    const result = await execLocalTool('space_item_delete', { item_id: itemId });
-    return result?.ok && result.deleted;
-  } catch (error) {
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SPACE-CONVERSATION LINKING
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export async function linkConversationToSpace(
-  spaceId: string,
-  conversationId: string,
-  options?: { relevance_score?: number; auto_linked?: boolean }
-): Promise<boolean> {
-  try {
-    const result = await execLocalTool('space_link_conversation', {
-      space_id: spaceId,
-      conversation_id: conversationId,
-      ...options,
-    });
-    return result?.ok || false;
-  } catch (error) {
-    return false;
-  }
-}
-
-export async function unlinkConversationFromSpace(
-  spaceId: string,
-  conversationId: string
-): Promise<boolean> {
-  try {
-    const result = await execLocalTool('space_unlink_conversation', {
-      space_id: spaceId,
-      conversation_id: conversationId,
-    });
-    return result?.ok && result.unlinked;
-  } catch (error) {
-    return false;
-  }
-}
-
-export async function getSpaceConversations(
-  spaceId: string
-): Promise<Array<{ conversation: Conversation; relevance_score: number }>> {
-  try {
-    const result = await execLocalTool('space_get_conversations', { space_id: spaceId });
-    if (result?.ok && result.conversations) {
-      return result.conversations;
-    }
-    return [];
-  } catch (error) {
-    return [];
-  }
-}
-
-export async function getConversationSpaces(conversationId: string): Promise<Space[]> {
-  try {
-    const result = await execLocalTool('conversation_get_spaces', {
-      conversation_id: conversationId,
-    });
-    if (result?.ok && result.spaces) {
-      return result.spaces as Space[];
-    }
-    return [];
-  } catch (error) {
-    return [];
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // SECURITY
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -951,8 +653,9 @@ export async function getMemoryStats(): Promise<{
   conversations: number;
   conversations_with_embedding?: number;
   messages: number;
-  spaces: number;
-  space_items: number;
+  projects: number;
+  memories: number;
+  journal_entries: number;
   segments: number;
   segments_with_embedding?: number;
   pending_sync: number;
@@ -1126,6 +829,73 @@ async function normalizeTopics(proposedTopics: string[], owner?: MemoryOwnerScop
   });
 }
 
+/**
+ * Auto-journal: keep one live "session" timeline entry per conversation
+ * segment when the conversation is in Project Mode. Runs inside the
+ * fire-and-forget turn processor, so the project Timeline stays current
+ * without the orchestrator ever calling a journal tool.
+ *
+ * The entry id is derived from the segment id (`jseg-<segmentId>`), so the
+ * same segment always maps to the same entry: new segments create an entry,
+ * topic continuations update it in place. Reuses the segment embedding so
+ * journal entries participate in semantic recall for free.
+ */
+async function upsertProjectSessionJournal(args: {
+  projectId: string;
+  conversationId: string;
+  segmentId: string;
+  summary: string;
+  topics: string[];
+  embedding?: number[];
+}): Promise<void> {
+  const { projectId, conversationId, segmentId, summary, topics } = args;
+  if (!projectId || !segmentId) return;
+
+  const entryId = `jseg-${segmentId}`;
+  const title = (topics || []).filter(Boolean).slice(0, 3).join(' · ')
+    || String(summary || '').slice(0, 64)
+    || 'Chat session';
+  const body = String(summary || '').trim() || undefined;
+  const embedding = args.embedding && args.embedding.length > 0 ? args.embedding : undefined;
+
+  try {
+    const updated = await execLocalTool('journal_update', {
+      entry_id: entryId,
+      title,
+      body,
+      source_ref: { conversation_id: conversationId, segment_id: segmentId },
+      embedding,
+    }, undefined, 10000, { silent: true });
+
+    if (updated?.ok) {
+      writeLog('auto_journal_updated', { projectId, conversationId, entryId });
+      return;
+    }
+
+    const created = await execLocalTool('journal_add', {
+      project_id: projectId,
+      entry_id: entryId,
+      type: 'chat_summary',
+      title,
+      body,
+      source: 'auto-chat',
+      source_ref: { conversation_id: conversationId, segment_id: segmentId },
+      embedding,
+    }, undefined, 10000, { silent: true });
+
+    if (created?.ok) {
+      writeLog('auto_journal_created', { projectId, conversationId, entryId });
+    } else {
+      writeLog('auto_journal_failed', {
+        projectId, conversationId, entryId,
+        error: String(created?.error || updated?.error || 'unknown'),
+      });
+    }
+  } catch (error) {
+    writeLog('auto_journal_error', { projectId, conversationId, error: String(error) });
+  }
+}
+
 export async function processConversationTurn(
   conversationId: string,
   messages: Array<{ role: string; content: any }>,
@@ -1189,6 +959,15 @@ export async function processConversationTurn(
       topics: analysis.topics
     });
 
+    // Auto-journal gate: only the user's main chat writes to a project's
+    // Timeline — bot/agent/workflow conversations never do, even if they
+    // somehow carry a project stamp.
+    const ownerType = options?.owner?.owner_type;
+    const autoJournalProjectId =
+      (options?.source ?? 'stuard') === 'stuard' && (!ownerType || ownerType === 'stuard')
+        ? (conversation.project_id ? String(conversation.project_id) : null)
+        : null;
+
     // Handle based on AI's decision
     switch (analysis.action) {
       case 'new':
@@ -1217,12 +996,23 @@ export async function processConversationTurn(
           await updateConversation(conversationId, { embedding });
         }
 
-        writeLog('segment_created', { 
-          conversationId, 
-          segmentId: newSegment?.id, 
+        writeLog('segment_created', {
+          conversationId,
+          segmentId: newSegment?.id,
           action: analysis.action,
-          topics: analysis.topics 
+          topics: analysis.topics
         });
+
+        if (autoJournalProjectId && newSegment?.id) {
+          await upsertProjectSessionJournal({
+            projectId: autoJournalProjectId,
+            conversationId,
+            segmentId: newSegment.id,
+            summary: analysis.summary,
+            topics: analysis.topics,
+            embedding: segmentEmbedding,
+          });
+        }
         break;
       }
 
@@ -1245,11 +1035,22 @@ export async function processConversationTurn(
             await updateConversation(conversationId, { embedding });
           }
 
-          writeLog('segment_corrected', { 
-            conversationId, 
-            segmentId: lastSegment.id, 
-            topics: analysis.topics 
+          writeLog('segment_corrected', {
+            conversationId,
+            segmentId: lastSegment.id,
+            topics: analysis.topics
           });
+
+          if (autoJournalProjectId) {
+            await upsertProjectSessionJournal({
+              projectId: autoJournalProjectId,
+              conversationId,
+              segmentId: lastSegment.id,
+              summary: analysis.summary,
+              topics: analysis.topics,
+              embedding: segmentEmbedding,
+            });
+          }
         } else {
           // No previous segment, treat as new
           const segmentText = `${analysis.summary} Topics: ${analysis.topics.join(', ')}`;
@@ -1268,10 +1069,21 @@ export async function processConversationTurn(
             await updateConversation(conversationId, { embedding });
           }
 
-          writeLog('segment_created_from_correction', { 
-            conversationId, 
-            segmentId: newSegment?.id 
+          writeLog('segment_created_from_correction', {
+            conversationId,
+            segmentId: newSegment?.id
           });
+
+          if (autoJournalProjectId && newSegment?.id) {
+            await upsertProjectSessionJournal({
+              projectId: autoJournalProjectId,
+              conversationId,
+              segmentId: newSegment.id,
+              summary: analysis.summary,
+              topics: analysis.topics,
+              embedding: segmentEmbedding,
+            });
+          }
         }
         break;
       }
@@ -1325,6 +1137,17 @@ export async function processConversationTurn(
             priorIndex: idx,
             topics: mergedTopics,
           });
+
+          if (autoJournalProjectId) {
+            await upsertProjectSessionJournal({
+              projectId: autoJournalProjectId,
+              conversationId,
+              segmentId: target.id,
+              summary: mergedSummary,
+              topics: mergedTopics,
+              embedding: segmentEmbedding,
+            });
+          }
         } else {
           // Bad index — fall back to creating a new segment.
           const segmentText = `${analysis.summary} Topics: ${analysis.topics.join(', ')}`;
@@ -1345,6 +1168,17 @@ export async function processConversationTurn(
             reason: 'invalid priorIndex',
             priorIndex: idx,
           });
+
+          if (autoJournalProjectId && newSegment?.id) {
+            await upsertProjectSessionJournal({
+              projectId: autoJournalProjectId,
+              conversationId,
+              segmentId: newSegment.id,
+              summary: analysis.summary,
+              topics: analysis.topics,
+              embedding: segmentEmbedding,
+            });
+          }
         }
         break;
       }

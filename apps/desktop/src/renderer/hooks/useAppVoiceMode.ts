@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { startBrowserSignIn } from '../auth/browserSignIn';
 import { useVoiceMode } from './useVoiceMode';
 
-export function useAppVoiceMode({ signedIn, overlayVisible }: { signedIn: boolean; overlayVisible: boolean }) {
+export function useAppVoiceMode({
+  signedIn,
+  overlayVisible,
+  onboardingComplete = true,
+}: {
+  signedIn: boolean;
+  overlayVisible: boolean;
+  onboardingComplete?: boolean;
+}) {
   const voice = useVoiceMode({});
   const [voiceActive, setVoiceActive] = useState(false);
   const lastVoiceErrorRef = useRef<string | null>(null);
@@ -126,12 +134,15 @@ export function useAppVoiceMode({ signedIn, overlayVisible }: { signedIn: boolea
     } catch { }
   }, [voiceActive, startVoiceSession]);
 
+  // During onboarding the overlay window runs its own wake-word practice; ignore
+  // detections here so the real pill doesn't pop up behind the wizard.
   useEffect(() => {
+    if (!onboardingComplete) return;
     const cleanup = window.desktopAPI?.onWakewordDetected?.(() => {
       void handleWakewordDetected();
     });
     return () => { cleanup?.(); };
-  }, [handleWakewordDetected]);
+  }, [handleWakewordDetected, onboardingComplete]);
 
   useEffect(() => {
     const cleanup = (window as any).desktopAPI?.onVoiceSetActive?.(async (active: boolean) => {

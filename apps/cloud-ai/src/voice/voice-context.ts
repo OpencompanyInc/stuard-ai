@@ -144,7 +144,6 @@ function buildVoiceSystemPrompt(opts: {
       '- search_memory / search_past_conversations / get_conversation_context — recall prior context.',
       '- search_local_workflows / run_workflow — discover and run the user\'s saved automations as custom tools.',
       '- analyze_media — describe a saved image, document, or media file the user references. **Do NOT use captureScreen:true to look at the user\'s current screen during voice mode.** If the user asks you to look at what they\'re doing right now, ask them to tap the screen-share button in the voice pill — that streams their screen to you in real time at ~1 FPS via the live vision channel. Once they enable it you\'ll start seeing frames automatically; don\'t call analyze_media for "look at my screen" requests.',
-      '- deploy_headless_agent / get_headless_agent_status / list_headless_agent_tasks / stop_headless_agent — long-running background agents.',
       '- get_skill_info — look up a user-defined skill (guidance playbook).',
       '- agent_todo — track multi-step tasks during the call.',
       '- send_sms — text the caller a follow-up (links, summaries, confirmations).',
@@ -156,8 +155,8 @@ function buildVoiceSystemPrompt(opts: {
       '- Provide context to subagents (history, IDs, preferences).',
       '- Do not use ask_user, chat_ui, or other visual/UI-only flows during a phone call. If you need more information, ask the caller verbally.',
       '- When calling any tool, briefly tell the user what you\'re doing (e.g. "Let me look that up for you").',
-      '- IMPORTANT — before calling delegate, reply_to_subagent, or deploy_headless_agent, ALWAYS speak a short acknowledgment first (e.g. "Give me a moment, I\'ll work on that"). The call goes silent while these run, so the caller needs to hear you acknowledge before you kick them off.',
-      '- Subagents and headless agents can take a minute or more. If the caller starts talking while you\'re waiting, chat — and when the result comes back, smoothly continue where you left off.',
+      '- IMPORTANT — before calling delegate or reply_to_subagent, ALWAYS speak a short acknowledgment first (e.g. "Give me a moment, I\'ll work on that"). The call goes silent while these run, so the caller needs to hear you acknowledge before you kick them off.',
+      '- Subagents can take a minute or more. If the caller starts talking while you\'re waiting, chat — and when the result comes back, smoothly continue where you left off.',
       '- If a tool result has "timedOut": true or says it was released so the call can continue, do NOT silently retry. Tell the caller you\'re still working on it, offer to text them a follow-up with send_sms, or ask whether to keep trying.',
       '- Never expose internal IDs, taskIds, or questionIds verbally — they are for tool calls only.',
     );

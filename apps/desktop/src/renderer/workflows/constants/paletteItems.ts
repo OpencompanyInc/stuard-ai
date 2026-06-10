@@ -13,6 +13,7 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   // { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
   { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', args: { path: '', pattern: '*.*', recursive: true } },
+  { k: 'trigger', t: 'clipboard.change', label: 'On Clipboard Change', args: { types: [], pollMs: 600 } },
   { k: 'trigger', t: 'command.watch', label: 'Custom Script (watch)', args: { cmd: 'python', args: ['script.py'] } },
 ];
 

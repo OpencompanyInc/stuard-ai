@@ -733,6 +733,60 @@ export const AGENT_PACK: CapabilityPack = {
   maxSteps: 25,
 };
 
+// ─── Custom (orchestrator-defined tools + system prompt) ─────────────────────
+
+/**
+ * Default tool surface for a custom subagent when the orchestrator does not
+ * specify its own `tools`. Meta-tools let the subagent discover and run any
+ * other tool on demand, so an unconfigured custom agent is still useful.
+ */
+const CUSTOM_DEFAULT_TOOLS = ['search_tools', 'get_tool_schema', 'execute_tool'] as const;
+
+const CUSTOM_SYSTEM_PROMPT_BASE = `You are a Custom Subagent for StuardAI.
+You were created on-demand by the orchestrator with a specific tool set and instructions for a single delegated task.
+
+## Rules
+
+1. Stay focused on the delegated task. Use only the tools you were given.
+2. If you need a tool you don't have, use search_tools + get_tool_schema + execute_tool to discover and run it.
+3. If you need information, credentials, or a decision the orchestrator/user must provide, call ask_orchestrator once. It blocks and returns the answer.
+4. When done, call return_control with a concise summary of what you accomplished.`;
+
+/**
+ * Build a capability pack on the fly from an orchestrator-supplied tool list
+ * and system prompt. This powers the `custom` subagent — the single escape
+ * hatch for ad-hoc subagents that don't fit a predefined pack.
+ */
+export function buildCustomPack(
+  toolNames?: string[],
+  systemPrompt?: string,
+): CapabilityPack {
+  const cleaned = Array.isArray(toolNames)
+    ? Array.from(new Set(toolNames.map((t) => String(t || '').trim()).filter(Boolean)))
+    : [];
+  const resolvedTools = cleaned.length > 0
+    ? cleaned
+    : [...CUSTOM_DEFAULT_TOOLS];
+  // Always give custom agents the discovery meta-tools so they can reach
+  // anything outside their declared set if the task demands it.
+  for (const meta of CUSTOM_DEFAULT_TOOLS) {
+    if (!resolvedTools.includes(meta)) resolvedTools.push(meta);
+  }
+
+  const customInstructions = systemPrompt?.trim();
+  const finalPrompt = customInstructions
+    ? `${customInstructions}\n\n## Orchestrator Handshake\n\n${CUSTOM_SYSTEM_PROMPT_BASE}`
+    : CUSTOM_SYSTEM_PROMPT_BASE;
+
+  return {
+    kind: 'custom',
+    label: 'Custom',
+    toolNames: resolvedTools,
+    systemPrompt: finalPrompt,
+    maxSteps: 40,
+  };
+}
+
 // ─── Integration Groups ─────────────────────────────────────────────────────
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
@@ -838,7 +892,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'custom'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

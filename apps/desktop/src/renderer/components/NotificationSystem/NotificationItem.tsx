@@ -191,13 +191,23 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         },
     };
 
-    const stuardIconClass = notification.orchestratorDone || notification.variant === 'success'
-        ? 'stuard-notification-icon stuard-notification-icon--success'
-        : notification.variant === 'warning'
-            ? 'stuard-notification-icon stuard-notification-icon--warning'
-            : notification.variant === 'error'
-                ? 'stuard-notification-icon stuard-notification-icon--error'
-                : 'stuard-notification-icon';
+    // Agent-done is a brand moment — red-tinted check that ties the completion
+    // back to Stuard. Plain success stays green; warning/error keep their hues.
+    const stuardIconClass = notification.orchestratorDone
+        ? 'stuard-notification-icon stuard-notification-icon--brand'
+        : notification.variant === 'success'
+            ? 'stuard-notification-icon stuard-notification-icon--success'
+            : notification.variant === 'warning'
+                ? 'stuard-notification-icon stuard-notification-icon--warning'
+                : notification.variant === 'error'
+                    ? 'stuard-notification-icon stuard-notification-icon--error'
+                    : 'stuard-notification-icon';
+
+    // Brand source label shown above the title for Stuard-styled toasts.
+    // Defaults to "Stuard"; callers can override or pass '' to hide it.
+    const eyebrowText = notification.eyebrow !== undefined
+        ? notification.eyebrow
+        : (isStuardNotification ? 'Stuard' : '');
 
     const config = variantConfig[notification.variant];
     const Icon = (isStuardNotification && (notification.orchestratorDone || notification.variant === 'success'))
@@ -290,6 +300,12 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
 
                     {/* Text content */}
                     <div className="flex-1 min-w-0 max-h-[68vh] overflow-y-auto custom-scrollbar pr-1">
+                        {eyebrowText && (
+                            <div className="stuard-notification-eyebrow">
+                                <span className="stuard-notification-dot" />
+                                <span>{eyebrowText}</span>
+                            </div>
+                        )}
                         <h4 className={clsx(
                             'font-medium text-[13px] text-theme-fg leading-tight truncate',
                             isStuardNotification && 'font-stuard tracking-tight'

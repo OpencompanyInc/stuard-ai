@@ -4,8 +4,9 @@ Encrypted Memory Database for Stuard AI
 Local-first storage for:
 - Conversations and messages
 - Conversation segments (topic tracking with summaries)
-- Spaces (collaborative folders)
-- Space items (notes, sources, links)
+- Projects (scoped containers for memories, journal entries, tasks, files)
+- Memories (atomic notes/facts/snippets, project-scoped or global)
+- Journal entries (per-project timeline)
 - Security settings
 
 All data is encrypted at rest using AES-256-GCM.
@@ -38,16 +39,16 @@ VECTOR_DIM = 3072  # text-embedding-3-large
 
 ConversationStatus = Literal['active', 'archived', 'deleted']
 MessageRole = Literal['user', 'assistant', 'system', 'tool']
-SpaceType = Literal['project', 'topic', 'research', 'reference', 'custom']
-SpaceItemType = Literal['note', 'source', 'link', 'file', 'fact', 'snippet', 'folder']
 AddedBy = Literal['user', 'ai']
 ConversationSource = Literal['stuard', 'workflow', 'skill', 'proactive']
 ConversationOwnerType = Literal['stuard', 'bot', 'agent', 'workflow', 'skill']
 
-# Project Mode types — successor to Spaces. See backfill_spaces_to_projects.py.
+# Project Mode types. Successor to the retired Spaces feature — legacy
+# spaces/space_items rows are backfilled into projects/memories on startup
+# (see _migrate_spaces_to_projects).
 ProjectStatus = Literal['active', 'paused', 'archived']
-MemoryType = Literal['note', 'snippet', 'link', 'fact', 'file', 'user', 'feedback', 'project', 'reference']
-MemorySource = Literal['chat', 'manual', 'tool', 'journal']
+MemoryType = Literal['note', 'snippet', 'link', 'fact', 'file', 'image', 'user', 'feedback', 'project', 'reference']
+MemorySource = Literal['chat', 'manual', 'tool', 'journal', 'sync', 'notion']
 JournalEntryType = Literal['decision', 'finding', 'blocker', 'edit', 'chat_summary', 'task', 'milestone', 'note', 'question', 'hypothesis']
 JournalEntrySource = Literal['auto-chat', 'auto-git', 'auto-fs', 'manual', 'ai-tool']
 
@@ -97,7 +98,8 @@ class Conversation:
     source: ConversationSource = 'stuard'
     owner_type: Optional[ConversationOwnerType] = 'stuard'
     owner_id: Optional[str] = None
-    
+    project_id: Optional[str] = None  # Project Mode scope (nullable = unscoped)
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d['embedding'] = None  # Don't include in API responses
@@ -144,50 +146,6 @@ class ConversationSegment:
 
 
 @dataclass
-class Space:
-    id: str
-    name: str
-    description: Optional[str]
-    type: SpaceType
-    icon: str = '📁'
-    color: str = '#6366f1'
-    embedding: Optional[List[float]] = None
-    created_at: str = ''
-    updated_at: str = ''
-    archived: bool = False
-    sync_id: Optional[str] = None
-    synced_at: Optional[str] = None
-    needs_sync: bool = False
-    
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d['embedding'] = None
-        return d
-
-
-@dataclass
-class SpaceItem:
-    id: str
-    space_id: str
-    type: SpaceItemType
-    title: Optional[str]
-    content: str
-    metadata: Optional[Dict[str, Any]] = None
-    added_by: AddedBy = 'user'
-    pinned: bool = False
-    embedding: Optional[List[float]] = None
-    parent_id: Optional[str] = None  # For folder hierarchy
-    position: int = 0  # For ordering within folder
-    created_at: str = ''
-    updated_at: str = ''
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d['embedding'] = None
-        return d
-
-
-@dataclass
 class SecuritySettings:
     memory_lock_enabled: bool = False
     vault_lock_enabled: bool = False
@@ -197,26 +155,6 @@ class SecuritySettings:
     sync_enabled: bool = False
     sync_salt: Optional[str] = None  # Base64 encoded
     last_sync_at: Optional[str] = None
-
-
-@dataclass
-class SharedSpaceInfo:
-    """Tracks a locally-synced shared space."""
-    id: str                          # Local space ID
-    cloud_id: Optional[str] = None   # Cloud shared_spaces.id
-    synced_at: Optional[str] = None
-    is_shared: bool = False          # Whether this space is shared with others
-    shared_with: Optional[List[str]] = None  # List of emails shared with
-    share_password_hash: Optional[str] = None  # Hash of the share password
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'id': self.id,
-            'cloud_id': self.cloud_id,
-            'synced_at': self.synced_at,
-            'is_shared': self.is_shared,
-            'shared_with': self.shared_with,
-        }
 
 
 @dataclass
@@ -234,6 +172,7 @@ class Project:
     icon: str = '📁'
     color: str = '#6366f1'
     archived: bool = False
+    settings: Optional[Dict[str, Any]] = None  # feature config, e.g. {"notion": {...}}
     embedding: Optional[List[float]] = None
     created_at: str = ''
     updated_at: str = ''
@@ -246,7 +185,7 @@ class Project:
 
 @dataclass
 class Memory:
-    """Atomic memory entry — replaces space_items in project mode.
+    """Atomic memory entry — a project-scoped or global note/fact/snippet.
 
     `project_ids` is a JSON array. Empty list = global (cross-project).
     """
@@ -280,9 +219,10 @@ class JournalEntry:
     title: str
     body: Optional[str] = None
     source: JournalEntrySource = 'manual'
-    source_ref: Optional[Dict[str, Any]] = None  # { conversation_id?, commit_sha?, file_paths?, task_id? }
+    source_ref: Optional[Dict[str, Any]] = None  # { conversation_id?, commit_sha?, file_paths?, task_id?, segment_id? }
     embedding: Optional[List[float]] = None
     created_at: str = ''
+    updated_at: str = ''
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -543,56 +483,6 @@ class MemoryDB:
                 )
             """)
 
-            # Spaces
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS spaces (
-                    id TEXT PRIMARY KEY,
-                    name_enc TEXT NOT NULL,
-                    description_enc TEXT,
-                    type TEXT NOT NULL CHECK(type IN ('project', 'topic', 'research', 'reference', 'custom')),
-                    icon TEXT DEFAULT '📁',
-                    color TEXT DEFAULT '#6366f1',
-                    embedding BLOB,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    archived INTEGER DEFAULT 0,
-                    sync_id TEXT,
-                    synced_at TEXT,
-                    needs_sync INTEGER DEFAULT 0
-                )
-            """)
-            
-            # Space items
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS space_items (
-                    id TEXT PRIMARY KEY,
-                    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-                    type TEXT NOT NULL CHECK(type IN ('note', 'source', 'link', 'file', 'fact', 'snippet', 'folder')),
-                    title_enc TEXT,
-                    content_enc TEXT NOT NULL,
-                    metadata_enc TEXT,
-                    added_by TEXT NOT NULL CHECK(added_by IN ('user', 'ai')),
-                    pinned INTEGER DEFAULT 0,
-                    embedding BLOB,
-                    parent_id TEXT REFERENCES space_items(id) ON DELETE SET NULL,
-                    position INTEGER DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-            """)
-            
-            # Space-conversation links
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS space_conversations (
-                    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    relevance_score REAL DEFAULT 1.0,
-                    auto_linked INTEGER DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (space_id, conversation_id)
-                )
-            """)
-            
             # Sync queue
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sync_queue (
@@ -607,21 +497,9 @@ class MemoryDB:
                 )
             """)
             
-            # Shared spaces tracking
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS shared_space_info (
-                    space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
-                    cloud_id TEXT,
-                    synced_at TEXT,
-                    is_shared INTEGER DEFAULT 0,
-                    shared_with TEXT,
-                    share_password_hash TEXT
-                )
-            """)
-
-            # ─── Project Mode (successor to Spaces) ────────────────────────────
-            # Projects — top-level scope. Replaces `spaces` (project|topic|research|
-            # reference|custom collapses to a single Project entity with tags).
+            # ─── Project Mode ───────────────────────────────────────────────────
+            # Projects — top-level scope for memories, journal entries, tasks,
+            # and pinned files. (Successor to the retired Spaces feature.)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY,
@@ -637,6 +515,7 @@ class MemoryDB:
                     icon TEXT DEFAULT '📁',
                     color TEXT DEFAULT '#6366f1',
                     archived INTEGER DEFAULT 0,
+                    settings_json TEXT,
                     embedding BLOB,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -647,19 +526,23 @@ class MemoryDB:
                 cur.execute("ALTER TABLE projects ADD COLUMN instructions_enc TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+            try:
+                cur.execute("ALTER TABLE projects ADD COLUMN settings_json TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             # Memories — atomic facts/notes/snippets/etc with embeddings.
             # `project_ids_json` is a JSON array; empty array = global (cross-project).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL CHECK(type IN ('note','snippet','link','fact','file','user','feedback','project','reference')),
+                    type TEXT NOT NULL CHECK(type IN ('note','snippet','link','fact','file','image','user','feedback','project','reference')),
                     title_enc TEXT,
                     content_enc TEXT NOT NULL,
                     metadata_enc TEXT,
                     url_enc TEXT,
                     project_ids_json TEXT NOT NULL DEFAULT '[]',
-                    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('chat','manual','tool','journal')),
+                    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('chat','manual','tool','journal','sync','notion')),
                     added_by TEXT NOT NULL DEFAULT 'user' CHECK(added_by IN ('user','ai')),
                     pinned INTEGER DEFAULT 0,
                     embedding BLOB,
@@ -668,21 +551,90 @@ class MemoryDB:
                 )
             """)
 
+            # Migration: older memories tables are missing the 'image' type and
+            # 'sync'/'notion' sources in their CHECK constraints. SQLite can't
+            # alter CHECKs, so recreate the table once when the constraint is stale.
+            self._recreate_table_if_check_stale(
+                cur,
+                table="memories",
+                missing_markers=("'image'", "'sync'", "'notion'"),
+                create_sql="""
+                    CREATE TABLE memories_new (
+                        id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL CHECK(type IN ('note','snippet','link','fact','file','image','user','feedback','project','reference')),
+                        title_enc TEXT,
+                        content_enc TEXT NOT NULL,
+                        metadata_enc TEXT,
+                        url_enc TEXT,
+                        project_ids_json TEXT NOT NULL DEFAULT '[]',
+                        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('chat','manual','tool','journal','sync','notion')),
+                        added_by TEXT NOT NULL DEFAULT 'user' CHECK(added_by IN ('user','ai')),
+                        pinned INTEGER DEFAULT 0,
+                        embedding BLOB,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """,
+                copy_sql="""
+                    INSERT INTO memories_new
+                    SELECT id, type, title_enc, content_enc, metadata_enc, url_enc,
+                           project_ids_json, source, added_by, pinned, embedding,
+                           created_at, updated_at
+                    FROM memories
+                """,
+            )
+
             # Journal entries — timestamped project events. Auto + manual.
+            # `updated_at` exists so live auto-journal session entries can be
+            # extended in place as a chat topic continues.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS journal_entries (
                     id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                     ts TEXT NOT NULL,
-                    type TEXT NOT NULL CHECK(type IN ('decision','finding','blocker','edit','chat_summary','task','milestone','note')),
+                    type TEXT NOT NULL CHECK(type IN ('decision','finding','blocker','edit','chat_summary','task','milestone','note','question','hypothesis')),
                     title_enc TEXT NOT NULL,
                     body_enc TEXT,
                     source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('auto-chat','auto-git','auto-fs','manual','ai-tool')),
                     source_ref_enc TEXT,
                     embedding BLOB,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT
                 )
             """)
+
+            # Migration: older journal tables are missing question/hypothesis in
+            # the type CHECK (inserts of those types failed) and updated_at.
+            try:
+                cur.execute("ALTER TABLE journal_entries ADD COLUMN updated_at TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            self._recreate_table_if_check_stale(
+                cur,
+                table="journal_entries",
+                missing_markers=("'question'",),
+                create_sql="""
+                    CREATE TABLE journal_entries_new (
+                        id TEXT PRIMARY KEY,
+                        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        ts TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK(type IN ('decision','finding','blocker','edit','chat_summary','task','milestone','note','question','hypothesis')),
+                        title_enc TEXT NOT NULL,
+                        body_enc TEXT,
+                        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('auto-chat','auto-git','auto-fs','manual','ai-tool')),
+                        source_ref_enc TEXT,
+                        embedding BLOB,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT
+                    )
+                """,
+                copy_sql="""
+                    INSERT INTO journal_entries_new
+                    SELECT id, project_id, ts, type, title_enc, body_enc, source,
+                           source_ref_enc, embedding, created_at, updated_at
+                    FROM journal_entries
+                """,
+            )
 
             # Conversations get a project_id link (nullable = unscoped chat).
             try:
@@ -690,87 +642,8 @@ class MemoryDB:
             except sqlite3.OperationalError:
                 pass  # Column already exists
             
-            # Migration: Add parent_id and position columns if they don't exist
-            try:
-                cur.execute("ALTER TABLE space_items ADD COLUMN parent_id TEXT REFERENCES space_items(id) ON DELETE SET NULL")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            try:
-                cur.execute("ALTER TABLE space_items ADD COLUMN position INTEGER DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            
-            # Migration: Update CHECK constraint to include 'folder' type
-            # SQLite doesn't support altering CHECK constraints, so we need to recreate the table
-            try:
-                # Check if the constraint already includes 'folder'
-                cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='space_items'")
-                table_sql = cur.fetchone()
-                if table_sql and "'folder'" not in table_sql[0]:
-                    logger.info("Migrating space_items table to include 'folder' type")
-
-                    # Clean up any existing space_items_new table from previous failed migration
-                    cur.execute("DROP TABLE IF EXISTS space_items_new")
-
-                    # Disable foreign key constraints temporarily
-                    cur.execute("PRAGMA foreign_keys=OFF")
-
-                    # Recreate table with new constraint
-                    cur.execute("""
-                        CREATE TABLE space_items_new (
-                            id TEXT PRIMARY KEY,
-                            space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-                            type TEXT NOT NULL CHECK(type IN ('note', 'source', 'link', 'file', 'fact', 'snippet', 'folder')),
-                            title_enc TEXT,
-                            content_enc TEXT NOT NULL,
-                            metadata_enc TEXT,
-                            added_by TEXT NOT NULL CHECK(added_by IN ('user', 'ai')),
-                            pinned INTEGER DEFAULT 0,
-                            embedding BLOB,
-                            parent_id TEXT REFERENCES space_items(id) ON DELETE SET NULL,
-                            position INTEGER DEFAULT 0,
-                            created_at TEXT NOT NULL,
-                            updated_at TEXT NOT NULL
-                        )
-                    """)
-
-                    # Copy data from old table (handle missing columns gracefully)
-                    try:
-                        cur.execute("""
-                            INSERT INTO space_items_new
-                            SELECT id, space_id, type, title_enc, content_enc, metadata_enc,
-                                   added_by, pinned, embedding, parent_id, position, created_at, updated_at
-                            FROM space_items
-                        """)
-                    except sqlite3.OperationalError:
-                        # If parent_id/position don't exist in old table, use defaults
-                        cur.execute("""
-                            INSERT INTO space_items_new
-                            (id, space_id, type, title_enc, content_enc, metadata_enc,
-                             added_by, pinned, embedding, parent_id, position, created_at, updated_at)
-                            SELECT id, space_id, type, title_enc, content_enc, metadata_enc,
-                                   added_by, pinned, embedding, NULL, 0, created_at, updated_at
-                            FROM space_items
-                        """)
-
-                    # Drop old table
-                    cur.execute("DROP TABLE space_items")
-
-                    # Rename new table
-                    cur.execute("ALTER TABLE space_items_new RENAME TO space_items")
-
-                    # Re-enable foreign key constraints
-                    cur.execute("PRAGMA foreign_keys=ON")
-
-                    logger.info("space_items table migration completed successfully")
-            except Exception as e:
-                logger.error(f"space_items migration failed: {e}")
-                # Re-enable foreign keys even if migration failed
-                try:
-                    cur.execute("PRAGMA foreign_keys=ON")
-                except:
-                    pass
-                raise
+            # One-time backfill: Spaces → Projects, then drop the legacy tables.
+            self._migrate_spaces_to_projects(cur)
 
             # Indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_date ON conversations(created_at DESC)")
@@ -778,9 +651,6 @@ class MemoryDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner_type, owner_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, turn_index)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_seg_conv ON conversation_segments(conversation_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_items_space ON space_items(space_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_items_parent ON space_items(parent_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_items_position ON space_items(space_id, parent_id, position)")
 
             # Project Mode indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status, archived)")
@@ -792,7 +662,129 @@ class MemoryDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)")
 
             conn.commit()
-    
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SCHEMA MIGRATION HELPERS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _recreate_table_if_check_stale(
+        self,
+        cur: sqlite3.Cursor,
+        table: str,
+        missing_markers: Tuple[str, ...],
+        create_sql: str,
+        copy_sql: str,
+    ) -> None:
+        """Recreate `table` with an updated schema when its stored CREATE TABLE
+        SQL is missing any of `missing_markers` (SQLite cannot alter CHECK
+        constraints in place). `create_sql` must create `<table>_new`; `copy_sql`
+        must copy rows into it."""
+        try:
+            row = cur.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if not row or not row[0]:
+                return
+            if all(marker in row[0] for marker in missing_markers):
+                return
+            logger.info(f"Recreating {table} with updated CHECK constraints")
+            cur.execute("PRAGMA foreign_keys=OFF")
+            cur.execute(f"DROP TABLE IF EXISTS {table}_new")
+            cur.execute(create_sql)
+            cur.execute(copy_sql)
+            cur.execute(f"DROP TABLE {table}")
+            cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+            cur.execute("PRAGMA foreign_keys=ON")
+            logger.info(f"{table} migration completed successfully")
+        except Exception as e:
+            logger.error(f"{table} migration failed: {e}")
+            try:
+                cur.execute("PRAGMA foreign_keys=ON")
+            except Exception:
+                pass
+            raise
+
+    def _migrate_spaces_to_projects(self, cur: sqlite3.Cursor) -> None:
+        """One-time backfill from the retired Spaces feature (2026-06).
+
+        Spaces become projects (same id, so conversation links carry over),
+        non-folder space items become project-scoped memories, and
+        space_conversations become conversations.project_id stamps. Both table
+        families share the same CryptoManager, so encrypted columns copy as-is.
+        On success the legacy tables are dropped; on failure they are left in
+        place and the migration retries on next startup.
+        """
+        has_spaces = cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='spaces'"
+        ).fetchone()
+        if not has_spaces:
+            return
+        try:
+            space_count = cur.execute("SELECT COUNT(*) FROM spaces").fetchone()[0]
+
+            # Spaces → projects. The old space `type` is preserved as a tag.
+            # String concat (not json_array) so we don't depend on the json1
+            # extension; type values are a fixed safe set, ids are UUIDs.
+            cur.execute("""
+                INSERT OR IGNORE INTO projects
+                    (id, name_enc, description_enc, goals_enc, instructions_enc, status,
+                     tags_json, pinned_paths_json, digest_enc, digest_updated_at,
+                     icon, color, archived, settings_json, embedding, created_at, updated_at)
+                SELECT id, name_enc, description_enc, NULL, NULL,
+                       CASE WHEN COALESCE(archived, 0) = 1 THEN 'archived' ELSE 'active' END,
+                       '["' || type || '"]', '[]', NULL, NULL,
+                       COALESCE(icon, '📁'), COALESCE(color, '#6366f1'),
+                       COALESCE(archived, 0), NULL, embedding, created_at, updated_at
+                FROM spaces
+            """)
+
+            # Space items → memories (skip structural folders). 'source' items
+            # map to the 'reference' memory type; everything else maps 1:1.
+            has_items = cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='space_items'"
+            ).fetchone()
+            if has_items:
+                cur.execute("""
+                    INSERT OR IGNORE INTO memories
+                        (id, type, title_enc, content_enc, metadata_enc, url_enc,
+                         project_ids_json, source, added_by, pinned, embedding,
+                         created_at, updated_at)
+                    SELECT id,
+                           CASE type WHEN 'source' THEN 'reference' ELSE type END,
+                           title_enc, content_enc, metadata_enc, NULL,
+                           '["' || space_id || '"]', 'manual',
+                           COALESCE(added_by, 'user'), COALESCE(pinned, 0), embedding,
+                           created_at, updated_at
+                    FROM space_items
+                    WHERE type != 'folder'
+                """)
+
+            # Linked conversations keep their scope as a project stamp (best
+            # match wins when a conversation was linked to several spaces).
+            has_links = cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='space_conversations'"
+            ).fetchone()
+            if has_links:
+                cur.execute("""
+                    UPDATE conversations
+                    SET project_id = (
+                        SELECT sc.space_id FROM space_conversations sc
+                        WHERE sc.conversation_id = conversations.id
+                        ORDER BY sc.relevance_score DESC LIMIT 1
+                    )
+                    WHERE project_id IS NULL
+                      AND id IN (SELECT conversation_id FROM space_conversations)
+                """)
+
+            cur.execute("DELETE FROM sync_queue WHERE table_name IN ('spaces', 'space_items')")
+            logger.info(f"Spaces→Projects backfill: migrated {space_count} spaces")
+        except Exception:
+            logger.exception("Spaces→Projects backfill failed; leaving legacy tables in place")
+            return
+
+        for table in ("shared_space_info", "space_conversations", "space_items", "spaces"):
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
+
     # ═══════════════════════════════════════════════════════════════════════════
     # SECURITY SETTINGS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -921,7 +913,8 @@ class MemoryDB:
         source = row['source'] if 'source' in row.keys() else 'stuard'
         owner_type = row['owner_type'] if 'owner_type' in row.keys() else None
         owner_id = row['owner_id'] if 'owner_id' in row.keys() else None
-        
+        project_id = row['project_id'] if 'project_id' in row.keys() else None
+
         return Conversation(
             id=row['id'],
             title=title,
@@ -938,7 +931,8 @@ class MemoryDB:
             type=conv_type or 'chat',
             source=source or 'stuard',
             owner_type=owner_type,
-            owner_id=owner_id
+            owner_id=owner_id,
+            project_id=project_id
         )
     
     def list_conversations(
@@ -995,6 +989,7 @@ class MemoryDB:
             row_source = row['source'] if 'source' in row.keys() else 'stuard'
             row_owner_type = row['owner_type'] if 'owner_type' in row.keys() else None
             row_owner_id = row['owner_id'] if 'owner_id' in row.keys() else None
+            row_project_id = row['project_id'] if 'project_id' in row.keys() else None
             result.append(Conversation(
                 id=row['id'],
                 title=title,
@@ -1011,7 +1006,8 @@ class MemoryDB:
                 type=row_type or 'chat',
                 source=row_source or 'stuard',
                 owner_type=row_owner_type,
-                owner_id=row_owner_id
+                owner_id=row_owner_id,
+                project_id=row_project_id
             ))
         
         return result
@@ -1061,6 +1057,18 @@ class MemoryDB:
         
         self._queue_sync('conversations', conversation_id, 'upsert')
         return self.get_conversation(conversation_id)
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        """Hard delete a conversation and all its messages."""
+        with self._get_conn() as conn:
+            cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            conn.commit()
+            deleted = cur.rowcount > 0
+
+        if deleted:
+            self._queue_sync('conversations', conversation_id, 'delete')
+
+        return deleted
 
     def get_extraction_offset(self, conversation_id: str) -> int:
         """B1: highest turn index already fed through knowledge extraction.
@@ -1892,556 +1900,6 @@ class MemoryDB:
         ]
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # SPACES
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    def create_space(
-        self,
-        name: str,
-        space_type: SpaceType,
-        description: Optional[str] = None,
-        icon: str = '📁',
-        color: str = '#6366f1',
-        embedding: Optional[List[float]] = None
-    ) -> Space:
-        """Create a new space."""
-        sid = str(uuid.uuid4())
-        now = _now_iso()
-        
-        with self._get_conn() as conn:
-            conn.execute(
-                """INSERT INTO spaces
-                   (id, name_enc, description_enc, type, icon, color, embedding, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    sid,
-                    _encrypt_content(name, self._crypto),
-                    _encrypt_content(description, self._crypto) if description else None,
-                    space_type, icon, color,
-                    _serialize_vector(embedding),
-                    now, now
-                )
-            )
-            conn.commit()
-        
-        self._queue_sync('spaces', sid, 'upsert')
-        
-        return Space(
-            id=sid,
-            name=name,
-            description=description,
-            type=space_type,
-            icon=icon,
-            color=color,
-            embedding=embedding,
-            created_at=now,
-            updated_at=now
-        )
-    
-    def get_space(self, space_id: str) -> Optional[Space]:
-        """Get space by ID."""
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT * FROM spaces WHERE id = ?", (space_id,)).fetchone()
-        
-        if not row:
-            return None
-        
-        return Space(
-            id=row['id'],
-            name=_decrypt_content(row['name_enc'], self._crypto),
-            description=_decrypt_content(row['description_enc'], self._crypto) if row['description_enc'] else None,
-            type=row['type'],
-            icon=row['icon'],
-            color=row['color'],
-            embedding=_deserialize_vector(row['embedding']),
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            archived=bool(row['archived']),
-            sync_id=row['sync_id'],
-            synced_at=row['synced_at'],
-            needs_sync=bool(row['needs_sync'])
-        )
-    
-    def list_spaces(
-        self,
-        space_type: Optional[SpaceType] = None,
-        include_archived: bool = False,
-        limit: int = 50
-    ) -> List[Space]:
-        """List spaces."""
-        with self._get_conn() as conn:
-            query = "SELECT * FROM spaces WHERE 1=1"
-            params: List[Any] = []
-            
-            if not include_archived:
-                query += " AND archived = 0"
-            if space_type:
-                query += " AND type = ?"
-                params.append(space_type)
-            
-            query += " ORDER BY updated_at DESC LIMIT ?"
-            params.append(limit)
-            
-            rows = conn.execute(query, tuple(params)).fetchall()
-        
-        return [
-            Space(
-                id=row['id'],
-                name=_decrypt_content(row['name_enc'], self._crypto),
-                description=_decrypt_content(row['description_enc'], self._crypto) if row['description_enc'] else None,
-                type=row['type'],
-                icon=row['icon'],
-                color=row['color'],
-                embedding=None,
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                archived=bool(row['archived'])
-            )
-            for row in rows
-        ]
-    
-    def update_space(
-        self,
-        space_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        icon: Optional[str] = None,
-        color: Optional[str] = None,
-        archived: Optional[bool] = None,
-        embedding: Optional[List[float]] = None
-    ) -> Optional[Space]:
-        """Update a space."""
-        updates = ["updated_at = ?", "needs_sync = 1"]
-        values: List[Any] = [_now_iso()]
-        
-        if name is not None:
-            updates.append("name_enc = ?")
-            values.append(_encrypt_content(name, self._crypto))
-        if description is not None:
-            updates.append("description_enc = ?")
-            values.append(_encrypt_content(description, self._crypto) if description else None)
-        if icon is not None:
-            updates.append("icon = ?")
-            values.append(icon)
-        if color is not None:
-            updates.append("color = ?")
-            values.append(color)
-        if archived is not None:
-            updates.append("archived = ?")
-            values.append(1 if archived else 0)
-        if embedding is not None:
-            updates.append("embedding = ?")
-            values.append(_serialize_vector(embedding))
-        
-        values.append(space_id)
-        
-        with self._get_conn() as conn:
-            conn.execute(
-                f"UPDATE spaces SET {', '.join(updates)} WHERE id = ?",
-                tuple(values)
-            )
-            conn.commit()
-        
-        self._queue_sync('spaces', space_id, 'upsert')
-        return self.get_space(space_id)
-    
-    def delete_conversation(self, conversation_id: str) -> bool:
-        """Hard delete a conversation and all its messages."""
-        with self._get_conn() as conn:
-            cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
-            conn.commit()
-            deleted = cur.rowcount > 0
-
-        if deleted:
-            self._queue_sync('conversations', conversation_id, 'delete')
-
-        return deleted
-
-    def delete_space(self, space_id: str) -> bool:
-        """Delete a space and all its items."""
-        with self._get_conn() as conn:
-            cur = conn.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
-            conn.commit()
-            deleted = cur.rowcount > 0
-        
-        if deleted:
-            self._queue_sync('spaces', space_id, 'delete')
-        
-        return deleted
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SPACE ITEMS
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    def add_space_item(
-        self,
-        space_id: str,
-        item_type: SpaceItemType,
-        content: str,
-        title: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        added_by: AddedBy = 'user',
-        pinned: bool = False,
-        embedding: Optional[List[float]] = None,
-        parent_id: Optional[str] = None,
-        position: Optional[int] = None
-    ) -> SpaceItem:
-        """Add an item to a space."""
-        iid = str(uuid.uuid4())
-        now = _now_iso()
-
-        with self._get_conn() as conn:
-            # Auto-calculate position if not provided
-            if position is None:
-                row = conn.execute(
-                    """SELECT COALESCE(MAX(position), -1) + 1 as next_pos
-                       FROM space_items WHERE space_id = ? AND parent_id IS ?""",
-                    (space_id, parent_id)
-                ).fetchone()
-                position = row['next_pos'] if row else 0
-
-            conn.execute(
-                """INSERT INTO space_items
-                   (id, space_id, type, title_enc, content_enc, metadata_enc, added_by, pinned, embedding, parent_id, position, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    iid, space_id, item_type,
-                    _encrypt_content(title, self._crypto) if title else None,
-                    _encrypt_content(content, self._crypto),
-                    _encrypt_json(metadata, self._crypto),
-                    added_by,
-                    1 if pinned else 0,
-                    _serialize_vector(embedding),
-                    parent_id,
-                    position,
-                    now, now
-                )
-            )
-
-            # Update space timestamp
-            conn.execute(
-                "UPDATE spaces SET updated_at = ?, needs_sync = 1 WHERE id = ?",
-                (now, space_id)
-            )
-            conn.commit()
-
-        self._queue_sync('spaces', space_id, 'upsert')
-
-        return SpaceItem(
-            id=iid,
-            space_id=space_id,
-            type=item_type,
-            title=title,
-            content=content,
-            metadata=metadata,
-            added_by=added_by,
-            pinned=pinned,
-            embedding=embedding,
-            parent_id=parent_id,
-            position=position,
-            created_at=now,
-            updated_at=now
-        )
-    
-    def get_space_items(
-        self,
-        space_id: str,
-        item_type: Optional[SpaceItemType] = None,
-        pinned_only: bool = False,
-        parent_id: Optional[str] = None,
-        include_all: bool = True,
-        limit: int = 100
-    ) -> List[SpaceItem]:
-        """Get items in a space.
-
-        Args:
-            space_id: The space to get items from
-            item_type: Filter by item type
-            pinned_only: Only return pinned items
-            parent_id: Filter by parent folder (None = root level, use include_all=True for all)
-            include_all: If True, return all items; if False, filter by parent_id
-            limit: Maximum items to return
-        """
-        with self._get_conn() as conn:
-            query = "SELECT * FROM space_items WHERE space_id = ?"
-            params: List[Any] = [space_id]
-
-            if item_type:
-                query += " AND type = ?"
-                params.append(item_type)
-            if pinned_only:
-                query += " AND pinned = 1"
-            if not include_all:
-                if parent_id is None:
-                    query += " AND parent_id IS NULL"
-                else:
-                    query += " AND parent_id = ?"
-                    params.append(parent_id)
-
-            query += " ORDER BY type = 'folder' DESC, pinned DESC, position ASC, created_at DESC LIMIT ?"
-            params.append(limit)
-
-            rows = conn.execute(query, tuple(params)).fetchall()
-
-        return [
-            SpaceItem(
-                id=row['id'],
-                space_id=row['space_id'],
-                type=row['type'],
-                title=_decrypt_content(row['title_enc'], self._crypto) if row['title_enc'] else None,
-                content=_decrypt_content(row['content_enc'], self._crypto),
-                metadata=_decrypt_json(row['metadata_enc'], self._crypto),
-                added_by=row['added_by'],
-                pinned=bool(row['pinned']),
-                embedding=None,
-                parent_id=row['parent_id'] if 'parent_id' in row.keys() else None,
-                position=row['position'] if 'position' in row.keys() else 0,
-                created_at=row['created_at'],
-                updated_at=row['updated_at']
-            )
-            for row in rows
-        ]
-    
-    def update_space_item(
-        self,
-        item_id: str,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        pinned: Optional[bool] = None,
-        parent_id: Optional[str] = None,
-        position: Optional[int] = None
-    ) -> Optional[SpaceItem]:
-        """Update a space item."""
-        updates = ["updated_at = ?"]
-        values: List[Any] = [_now_iso()]
-
-        if title is not None:
-            updates.append("title_enc = ?")
-            values.append(_encrypt_content(title, self._crypto) if title else None)
-        if content is not None:
-            updates.append("content_enc = ?")
-            values.append(_encrypt_content(content, self._crypto))
-        if metadata is not None:
-            updates.append("metadata_enc = ?")
-            values.append(_encrypt_json(metadata, self._crypto))
-        if pinned is not None:
-            updates.append("pinned = ?")
-            values.append(1 if pinned else 0)
-        if parent_id is not None:
-            updates.append("parent_id = ?")
-            values.append(parent_id if parent_id != '' else None)
-        if position is not None:
-            updates.append("position = ?")
-            values.append(position)
-
-        values.append(item_id)
-
-        with self._get_conn() as conn:
-            conn.execute(
-                f"UPDATE space_items SET {', '.join(updates)} WHERE id = ?",
-                tuple(values)
-            )
-            conn.commit()
-
-        return self.get_space_item(item_id)
-
-    def move_space_item(
-        self,
-        item_id: str,
-        new_parent_id: Optional[str] = None,
-        new_position: Optional[int] = None
-    ) -> Optional[SpaceItem]:
-        """Move a space item to a new parent folder and/or position."""
-        with self._get_conn() as conn:
-            # Get current item
-            row = conn.execute("SELECT * FROM space_items WHERE id = ?", (item_id,)).fetchone()
-            if not row:
-                return None
-
-            space_id = row['space_id']
-            now = _now_iso()
-
-            # Calculate new position if not provided
-            if new_position is None:
-                pos_row = conn.execute(
-                    """SELECT COALESCE(MAX(position), -1) + 1 as next_pos
-                       FROM space_items WHERE space_id = ? AND parent_id IS ?""",
-                    (space_id, new_parent_id)
-                ).fetchone()
-                new_position = pos_row['next_pos'] if pos_row else 0
-
-            conn.execute(
-                "UPDATE space_items SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",
-                (new_parent_id, new_position, now, item_id)
-            )
-
-            # Update space timestamp
-            conn.execute(
-                "UPDATE spaces SET updated_at = ?, needs_sync = 1 WHERE id = ?",
-                (now, space_id)
-            )
-            conn.commit()
-
-        self._queue_sync('spaces', space_id, 'upsert')
-        return self.get_space_item(item_id)
-
-    def get_space_item(self, item_id: str) -> Optional[SpaceItem]:
-        """Get space item by ID."""
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT * FROM space_items WHERE id = ?", (item_id,)).fetchone()
-
-        if not row:
-            return None
-
-        return SpaceItem(
-            id=row['id'],
-            space_id=row['space_id'],
-            type=row['type'],
-            title=_decrypt_content(row['title_enc'], self._crypto) if row['title_enc'] else None,
-            content=_decrypt_content(row['content_enc'], self._crypto),
-            metadata=_decrypt_json(row['metadata_enc'], self._crypto),
-            added_by=row['added_by'],
-            pinned=bool(row['pinned']),
-            embedding=_deserialize_vector(row['embedding']),
-            parent_id=row['parent_id'] if 'parent_id' in row.keys() else None,
-            position=row['position'] if 'position' in row.keys() else 0,
-            created_at=row['created_at'],
-            updated_at=row['updated_at']
-        )
-
-    def get_folder_tree(self, space_id: str) -> List[Dict[str, Any]]:
-        """Get the entire folder tree for a space as a nested structure."""
-        all_items = self.get_space_items(space_id, include_all=True, limit=1000)
-
-        # Build lookup tables
-        items_by_id = {item.id: item for item in all_items}
-        children_by_parent: Dict[Optional[str], List[SpaceItem]] = {}
-
-        for item in all_items:
-            parent = item.parent_id
-            if parent not in children_by_parent:
-                children_by_parent[parent] = []
-            children_by_parent[parent].append(item)
-
-        # Sort children by position
-        for children in children_by_parent.values():
-            children.sort(key=lambda x: (x.type != 'folder', x.position, x.created_at))
-
-        def build_tree(parent_id: Optional[str]) -> List[Dict[str, Any]]:
-            result = []
-            for item in children_by_parent.get(parent_id, []):
-                node = item.to_dict()
-                if item.type == 'folder':
-                    node['children'] = build_tree(item.id)
-                result.append(node)
-            return result
-
-        return build_tree(None)
-
-    def delete_space_item(self, item_id: str) -> bool:
-        """Delete a space item."""
-        with self._get_conn() as conn:
-            # Get space_id before delete for sync
-            row = conn.execute("SELECT space_id FROM space_items WHERE id = ?", (item_id,)).fetchone()
-            space_id = row['space_id'] if row else None
-
-            cur = conn.execute("DELETE FROM space_items WHERE id = ?", (item_id,))
-            conn.commit()
-            deleted = cur.rowcount > 0
-
-        if deleted and space_id:
-            self._queue_sync('spaces', space_id, 'upsert')
-
-        return deleted
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SPACE-CONVERSATION LINKS
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    def link_conversation_to_space(
-        self,
-        space_id: str,
-        conversation_id: str,
-        relevance_score: float = 1.0,
-        auto_linked: bool = False
-    ) -> None:
-        """Link a conversation to a space."""
-        now = _now_iso()
-        
-        with self._get_conn() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO space_conversations
-                   (space_id, conversation_id, relevance_score, auto_linked, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (space_id, conversation_id, relevance_score, 1 if auto_linked else 0, now)
-            )
-            conn.commit()
-    
-    def get_space_conversations(self, space_id: str) -> List[Tuple[Conversation, float]]:
-        """Get conversations linked to a space."""
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """SELECT c.*, sc.relevance_score FROM conversations c
-                   JOIN space_conversations sc ON c.id = sc.conversation_id
-                   WHERE sc.space_id = ?
-                   ORDER BY sc.relevance_score DESC, c.updated_at DESC""",
-                (space_id,)
-            ).fetchall()
-        
-        results = []
-        for row in rows:
-            title = _decrypt_content(row['title_enc'], self._crypto) if row['title_enc'] else None
-            conv = Conversation(
-                id=row['id'],
-                title=title,
-                model=row['model'],
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                message_count=row['message_count'],
-                status=row['status']
-            )
-            results.append((conv, row['relevance_score']))
-        
-        return results
-    
-    def get_conversation_spaces(self, conversation_id: str) -> List[Space]:
-        """Get spaces that a conversation is linked to."""
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """SELECT s.* FROM spaces s
-                   JOIN space_conversations sc ON s.id = sc.space_id
-                   WHERE sc.conversation_id = ?
-                   ORDER BY sc.relevance_score DESC""",
-                (conversation_id,)
-            ).fetchall()
-        
-        return [
-            Space(
-                id=row['id'],
-                name=_decrypt_content(row['name_enc'], self._crypto),
-                description=_decrypt_content(row['description_enc'], self._crypto) if row['description_enc'] else None,
-                type=row['type'],
-                icon=row['icon'],
-                color=row['color'],
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                archived=bool(row['archived'])
-            )
-            for row in rows
-        ]
-    
-    def unlink_conversation_from_space(self, space_id: str, conversation_id: str) -> bool:
-        """Unlink a conversation from a space."""
-        with self._get_conn() as conn:
-            cur = conn.execute(
-                "DELETE FROM space_conversations WHERE space_id = ? AND conversation_id = ?",
-                (space_id, conversation_id)
-            )
-            conn.commit()
-            return cur.rowcount > 0
-    
-    # ═══════════════════════════════════════════════════════════════════════════
     # SYNC QUEUE
     # ═══════════════════════════════════════════════════════════════════════════
     
@@ -2493,7 +1951,7 @@ class MemoryDB:
             conn.commit()
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # PROJECTS (Project Mode — successor to Spaces)
+    # PROJECTS (Project Mode)
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _row_to_project(self, row: sqlite3.Row) -> Project:
@@ -2511,6 +1969,7 @@ class MemoryDB:
             icon=row["icon"] or "📁",
             color=row["color"] or "#6366f1",
             archived=bool(row["archived"]),
+            settings=json.loads(row["settings_json"]) if row["settings_json"] else None,
             embedding=_deserialize_vector(row["embedding"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -2527,6 +1986,7 @@ class MemoryDB:
         pinned_paths: Optional[List[str]] = None,
         icon: str = "📁",
         color: str = "#6366f1",
+        settings: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None,
         project_id: Optional[str] = None,
     ) -> Project:
@@ -2537,8 +1997,8 @@ class MemoryDB:
                 """INSERT INTO projects
                    (id, name_enc, description_enc, goals_enc, instructions_enc, status, tags_json,
                     pinned_paths_json, digest_enc, digest_updated_at, icon, color,
-                    archived, embedding, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?, ?)""",
+                    archived, settings_json, embedding, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?, ?, ?)""",
                 (
                     pid,
                     _encrypt_content(name, self._crypto),
@@ -2550,6 +2010,7 @@ class MemoryDB:
                     json.dumps(pinned_paths or []),
                     icon,
                     color,
+                    json.dumps(settings) if settings else None,
                     _serialize_vector(embedding),
                     now, now,
                 ),
@@ -2557,7 +2018,7 @@ class MemoryDB:
             conn.commit()
         return Project(
             id=pid, name=name, description=description, goals=goals, instructions=instructions, status=status,
-            tags=tags or [], pinned_paths=pinned_paths or [], icon=icon, color=color,
+            tags=tags or [], pinned_paths=pinned_paths or [], icon=icon, color=color, settings=settings,
             embedding=embedding, created_at=now, updated_at=now,
         )
 
@@ -2599,6 +2060,7 @@ class MemoryDB:
         icon: Optional[str] = None,
         color: Optional[str] = None,
         archived: Optional[bool] = None,
+        settings: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None,
     ) -> Optional[Project]:
         updates = ["updated_at = ?"]
@@ -2638,6 +2100,9 @@ class MemoryDB:
         if archived is not None:
             updates.append("archived = ?")
             values.append(1 if archived else 0)
+        if settings is not None:
+            updates.append("settings_json = ?")
+            values.append(json.dumps(settings) if settings else None)
         if embedding is not None:
             updates.append("embedding = ?")
             values.append(_serialize_vector(embedding))
@@ -2805,6 +2270,7 @@ class MemoryDB:
             source_ref=_decrypt_json(row["source_ref_enc"], self._crypto),
             embedding=_deserialize_vector(row["embedding"]),
             created_at=row["created_at"],
+            updated_at=row["updated_at"] or row["created_at"],
         )
 
     def create_journal_entry(
@@ -2817,15 +2283,18 @@ class MemoryDB:
         source_ref: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None,
         ts: Optional[str] = None,
+        entry_id: Optional[str] = None,
     ) -> JournalEntry:
-        jid = str(uuid.uuid4())
+        # Caller-supplied ids let the auto-journal upsert deterministically
+        # (one live entry per conversation segment, id derived from segment id).
+        jid = entry_id or str(uuid.uuid4())
         now = _now_iso()
         ts = ts or now
         with self._get_conn() as conn:
             conn.execute(
                 """INSERT INTO journal_entries
-                   (id, project_id, ts, type, title_enc, body_enc, source, source_ref_enc, embedding, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (id, project_id, ts, type, title_enc, body_enc, source, source_ref_enc, embedding, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     jid, project_id, ts, type,
                     _encrypt_content(title, self._crypto),
@@ -2833,7 +2302,7 @@ class MemoryDB:
                     source,
                     _encrypt_json(source_ref, self._crypto),
                     _serialize_vector(embedding),
-                    now,
+                    now, now,
                 ),
             )
             # Bump project updated_at so it surfaces in recently-active lists.
@@ -2841,8 +2310,63 @@ class MemoryDB:
             conn.commit()
         return JournalEntry(
             id=jid, project_id=project_id, ts=ts, type=type, title=title, body=body,
-            source=source, source_ref=source_ref, embedding=embedding, created_at=now,
+            source=source, source_ref=source_ref, embedding=embedding,
+            created_at=now, updated_at=now,
         )
+
+    def get_journal_entry(self, entry_id: str) -> Optional[JournalEntry]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM journal_entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+        return self._row_to_journal_entry(row) if row else None
+
+    def update_journal_entry(
+        self,
+        entry_id: str,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        type: Optional[JournalEntryType] = None,
+        source_ref: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None,
+        ts: Optional[str] = None,
+    ) -> Optional[JournalEntry]:
+        """Update an existing journal entry in place. Used by the auto-journal
+        engine to extend a live session entry as a chat topic continues."""
+        now = _now_iso()
+        updates = ["updated_at = ?"]
+        values: List[Any] = [now]
+        if title is not None:
+            updates.append("title_enc = ?")
+            values.append(_encrypt_content(title, self._crypto))
+        if body is not None:
+            updates.append("body_enc = ?")
+            values.append(_encrypt_content(body, self._crypto) if body else None)
+        if type is not None:
+            updates.append("type = ?")
+            values.append(type)
+        if source_ref is not None:
+            updates.append("source_ref_enc = ?")
+            values.append(_encrypt_json(source_ref, self._crypto))
+        if embedding is not None:
+            updates.append("embedding = ?")
+            values.append(_serialize_vector(embedding))
+        if ts is not None:
+            updates.append("ts = ?")
+            values.append(ts)
+        values.append(entry_id)
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"UPDATE journal_entries SET {', '.join(updates)} WHERE id = ?",
+                tuple(values),
+            )
+            if cur.rowcount > 0:
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = (SELECT project_id FROM journal_entries WHERE id = ?)",
+                    (now, entry_id),
+                )
+            conn.commit()
+        return self.get_journal_entry(entry_id)
 
     def list_journal_entries(
         self,
@@ -2882,203 +2406,6 @@ class MemoryDB:
             return cur.rowcount > 0
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # SHARED SPACES
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def get_shared_space_info(self, space_id: str) -> Optional[SharedSpaceInfo]:
-        """Get shared space info for a local space."""
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM shared_space_info WHERE space_id = ?", (space_id,)
-            ).fetchone()
-        
-        if not row:
-            return None
-        
-        shared_with = None
-        if row['shared_with']:
-            try:
-                shared_with = json.loads(row['shared_with'])
-            except:
-                shared_with = None
-        
-        return SharedSpaceInfo(
-            id=row['space_id'],
-            cloud_id=row['cloud_id'],
-            synced_at=row['synced_at'],
-            is_shared=bool(row['is_shared']),
-            shared_with=shared_with,
-            share_password_hash=row['share_password_hash']
-        )
-    
-    def set_shared_space_info(
-        self,
-        space_id: str,
-        cloud_id: Optional[str] = None,
-        synced_at: Optional[str] = None,
-        is_shared: Optional[bool] = None,
-        shared_with: Optional[List[str]] = None,
-        share_password_hash: Optional[str] = None
-    ) -> SharedSpaceInfo:
-        """Create or update shared space info."""
-        existing = self.get_shared_space_info(space_id)
-        
-        with self._get_conn() as conn:
-            if existing:
-                updates = []
-                values: List[Any] = []
-                
-                if cloud_id is not None:
-                    updates.append("cloud_id = ?")
-                    values.append(cloud_id)
-                if synced_at is not None:
-                    updates.append("synced_at = ?")
-                    values.append(synced_at)
-                if is_shared is not None:
-                    updates.append("is_shared = ?")
-                    values.append(1 if is_shared else 0)
-                if shared_with is not None:
-                    updates.append("shared_with = ?")
-                    values.append(json.dumps(shared_with))
-                if share_password_hash is not None:
-                    updates.append("share_password_hash = ?")
-                    values.append(share_password_hash)
-                
-                if updates:
-                    values.append(space_id)
-                    conn.execute(
-                        f"UPDATE shared_space_info SET {', '.join(updates)} WHERE space_id = ?",
-                        tuple(values)
-                    )
-                    conn.commit()
-            else:
-                conn.execute(
-                    """INSERT INTO shared_space_info 
-                       (space_id, cloud_id, synced_at, is_shared, shared_with, share_password_hash)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        space_id,
-                        cloud_id,
-                        synced_at or _now_iso(),
-                        1 if is_shared else 0,
-                        json.dumps(shared_with) if shared_with else None,
-                        share_password_hash
-                    )
-                )
-                conn.commit()
-        
-        return self.get_shared_space_info(space_id) or SharedSpaceInfo(id=space_id)
-    
-    def list_synced_spaces(self) -> List[Tuple[Space, SharedSpaceInfo]]:
-        """List all locally synced spaces with their share info."""
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """SELECT s.*, si.cloud_id, si.synced_at as share_synced_at, 
-                          si.is_shared, si.shared_with
-                   FROM spaces s
-                   JOIN shared_space_info si ON s.id = si.space_id
-                   WHERE si.cloud_id IS NOT NULL
-                   ORDER BY si.synced_at DESC"""
-            ).fetchall()
-        
-        results = []
-        for row in rows:
-            space = Space(
-                id=row['id'],
-                name=_decrypt_content(row['name_enc'], self._crypto),
-                description=_decrypt_content(row['description_enc'], self._crypto) if row['description_enc'] else None,
-                type=row['type'],
-                icon=row['icon'],
-                color=row['color'],
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                archived=bool(row['archived'])
-            )
-            
-            shared_with = None
-            if row['shared_with']:
-                try:
-                    shared_with = json.loads(row['shared_with'])
-                except:
-                    pass
-            
-            info = SharedSpaceInfo(
-                id=row['id'],
-                cloud_id=row['cloud_id'],
-                synced_at=row['share_synced_at'],
-                is_shared=bool(row['is_shared']),
-                shared_with=shared_with
-            )
-            results.append((space, info))
-        
-        return results
-    
-    def prepare_space_for_sync(self, space_id: str) -> Optional[Dict[str, Any]]:
-        """Prepare a space and its items for cloud sync (encrypted)."""
-        space = self.get_space(space_id)
-        if not space:
-            return None
-        
-        items = self.get_space_items(space_id, limit=500)
-        
-        # Re-encrypt with the original encrypted values for cloud storage
-        with self._get_conn() as conn:
-            space_row = conn.execute(
-                "SELECT name_enc, description_enc FROM spaces WHERE id = ?",
-                (space_id,)
-            ).fetchone()
-            
-            items_rows = conn.execute(
-                """SELECT id, type, title_enc, content_enc, metadata_enc, 
-                          added_by, pinned, created_at, updated_at
-                   FROM space_items WHERE space_id = ?
-                   ORDER BY pinned DESC, created_at DESC""",
-                (space_id,)
-            ).fetchall()
-        
-        items_data = [
-            {
-                'id': row['id'],
-                'type': row['type'],
-                'title_enc': row['title_enc'],
-                'content_enc': row['content_enc'],
-                'metadata_enc': row['metadata_enc'],
-                'added_by': row['added_by'],
-                'pinned': bool(row['pinned']),
-                'created_at': row['created_at'],
-                'updated_at': row['updated_at'],
-            }
-            for row in items_rows
-        ]
-        
-        import hashlib
-        checksum_data = json.dumps({
-            'name': space_row['name_enc'],
-            'items': [i['content_enc'] for i in items_data]
-        }, sort_keys=True)
-        checksum = hashlib.sha256(checksum_data.encode()).hexdigest()[:32]
-        
-        return {
-            'local_space_id': space_id,
-            'name_encrypted': space_row['name_enc'],
-            'description_encrypted': space_row['description_enc'],
-            'type': space.type,
-            'icon': space.icon,
-            'color': space.color,
-            'items_encrypted': json.dumps(items_data),
-            'checksum': checksum,
-        }
-    
-    def delete_shared_space_info(self, space_id: str) -> bool:
-        """Delete shared space info (unsync a space)."""
-        with self._get_conn() as conn:
-            cur = conn.execute(
-                "DELETE FROM shared_space_info WHERE space_id = ?", (space_id,)
-            )
-            conn.commit()
-            return cur.rowcount > 0
-    
-    # ═══════════════════════════════════════════════════════════════════════════
     # STATS
     # ═══════════════════════════════════════════════════════════════════════════
     
@@ -3092,40 +2419,27 @@ class MemoryDB:
                 "SELECT COUNT(*) FROM conversations WHERE embedding IS NOT NULL"
             ).fetchone()[0]
             msg_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-            space_count = conn.execute(
-                "SELECT COUNT(*) FROM spaces WHERE archived = 0"
+            project_count = conn.execute(
+                "SELECT COUNT(*) FROM projects WHERE archived = 0 AND status != 'archived'"
             ).fetchone()[0]
-            item_count = conn.execute("SELECT COUNT(*) FROM space_items").fetchone()[0]
+            memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            journal_count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
             segment_count = conn.execute("SELECT COUNT(*) FROM conversation_segments").fetchone()[0]
             segment_with_embedding = conn.execute(
                 "SELECT COUNT(*) FROM conversation_segments WHERE embedding IS NOT NULL"
             ).fetchone()[0]
             pending_sync = conn.execute("SELECT COUNT(*) FROM sync_queue").fetchone()[0]
-            
-            # Shared spaces stats
-            synced_spaces = 0
-            shared_spaces = 0
-            try:
-                synced_spaces = conn.execute(
-                    "SELECT COUNT(*) FROM shared_space_info WHERE cloud_id IS NOT NULL"
-                ).fetchone()[0]
-                shared_spaces = conn.execute(
-                    "SELECT COUNT(*) FROM shared_space_info WHERE is_shared = 1"
-                ).fetchone()[0]
-            except:
-                pass
-        
+
         return {
             "conversations": conv_count,
             "conversations_with_embedding": conv_with_embedding,
             "messages": msg_count,
-            "spaces": space_count,
-            "space_items": item_count,
+            "projects": project_count,
+            "memories": memory_count,
+            "journal_entries": journal_count,
             "segments": segment_count,
             "segments_with_embedding": segment_with_embedding,
             "pending_sync": pending_sync,
-            "synced_spaces": synced_spaces,
-            "shared_spaces": shared_spaces,
         }
 
 

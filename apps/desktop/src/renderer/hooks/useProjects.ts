@@ -12,6 +12,23 @@ import { useCallback, useEffect, useState } from 'react';
 
 export type ProjectStatus = 'active' | 'paused' | 'archived';
 
+/** Notion sync state stored in projects.settings_json.notion (see
+ * apps/desktop/src/main/services/project-notion-sync.ts). */
+export interface ProjectNotionSettings {
+  page_id?: string | null;
+  database_id?: string | null;
+  title?: string | null;
+  url?: string | null;
+  icon?: string | null;
+  push_enabled?: boolean;
+  profile?: string | null;
+  linked_at?: string | null;
+  last_synced_at?: string | null;
+  last_pulled_at?: string | null;
+  last_pushed_at?: string | null;
+  last_error?: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -26,6 +43,7 @@ export interface Project {
   icon: string;
   color: string;
   archived: boolean;
+  settings?: { notion?: ProjectNotionSettings; [key: string]: any } | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +70,7 @@ export interface JournalEntry {
   source?: string;
   source_ref?: Record<string, any> | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export type MemoryType = 'note' | 'fact' | 'snippet' | 'link' | 'file' | 'image';
@@ -182,4 +201,75 @@ export async function setConversationProject(
     project_id: projectId,
   });
   return !!result.ok;
+}
+
+// ── Notion sync (via main-process project-notion-sync service) ───────────────
+
+export interface NotionSearchResult {
+  id: string;
+  type: 'page' | 'database';
+  title: string;
+  url: string | null;
+  icon: string | null;
+  last_edited_time: string | null;
+}
+
+function notionApi(): any {
+  return (window as any).desktopAPI;
+}
+
+export async function searchNotionTargets(
+  query: string,
+): Promise<{ ok: boolean; results: NotionSearchResult[]; error?: string }> {
+  try {
+    const res = await notionApi()?.projectNotionSearch?.(query);
+    return { ok: !!res?.ok, results: res?.results || [], error: res?.error };
+  } catch (e: any) {
+    return { ok: false, results: [], error: String(e?.message || e) };
+  }
+}
+
+export async function linkProjectNotion(
+  projectId: string,
+  target: NotionSearchResult,
+  options?: { push_enabled?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await notionApi()?.projectNotionLink?.(projectId, target, options);
+    return { ok: !!res?.ok, error: res?.error };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+export async function updateProjectNotion(
+  projectId: string,
+  patch: { push_enabled?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await notionApi()?.projectNotionUpdate?.(projectId, patch);
+    return { ok: !!res?.ok, error: res?.error };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+export async function unlinkProjectNotion(projectId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await notionApi()?.projectNotionUnlink?.(projectId);
+    return { ok: !!res?.ok, error: res?.error };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+export async function syncProjectNotionNow(
+  projectId: string,
+): Promise<{ ok: boolean; pulled?: number; pushed?: number; updated?: number; error?: string }> {
+  try {
+    const res = await notionApi()?.projectNotionSync?.(projectId);
+    return res || { ok: false, error: 'no_response' };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }

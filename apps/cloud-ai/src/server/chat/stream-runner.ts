@@ -34,6 +34,7 @@ import {
 } from './interjections';
 import type { PreparedChatRequest, StreamChunkRecord } from './types';
 import { isQuickChatRequest } from './quick-request';
+import { registerNestedRecorder, unregisterNestedRecorder } from './nested-chunk-recorder';
 
 interface RuntimeState {
   didSendFinal: boolean;
@@ -130,6 +131,10 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
   };
   const toolCallsMap = new Map<string, any>();
   const streamChunks: StreamChunkRecord[] = [];
+  // Let delegated subagents (which stream out-of-band via emitToClient) weave
+  // their reasoning/text/tool activity into this same chunk log so it persists
+  // locally and replays on reopen. Cleared in the function's finally.
+  registerNestedRecorder(requestId, streamChunks);
   const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
   const sourceLabel = agentType === 'workflow'
     ? 'Workflow Architect'
@@ -780,6 +785,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       conversationId: conversationId || undefined,
     });
   } finally {
+    unregisterNestedRecorder(requestId);
     // Safety net: never leave a delegated subagent hung on ask_orchestrator
     // after the orchestrator turn ends. In the normal case the orchestrator
     // replies first — reply_to_subagent blocks the stream until the subagent
@@ -1102,7 +1108,10 @@ function appendTextChunk(text: string, runtime: RuntimeState, streamChunks: Stre
   runtime.sawAnyTextDelta = true;
   runtime.aggregatedText += text;
   const lastChunk = streamChunks[streamChunks.length - 1];
-  if (lastChunk?.type === 'text') {
+  // Only coalesce into the previous orchestrator text chunk — never a nested
+  // subagent text chunk, or the orchestrator's reply would corrupt a delegated
+  // agent's narration (and vice-versa).
+  if (lastChunk?.type === 'text' && !lastChunk.nested) {
     lastChunk.content += text;
   } else {
     streamChunks.push({ type: 'text', content: text });

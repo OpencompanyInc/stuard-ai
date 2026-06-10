@@ -43,6 +43,11 @@ import { displayConversationTitle } from '../../../../utils/conversationTitle';
 import { chooseDropdownPlacement } from '../../../../utils/dropdownPlacement';
 import { TabHistoryMenu, estimateCompactTabMenuHeight, type ConversationHistoryItem } from '../TabHistoryMenu';
 import { useChatTabs } from '../ChatTabsContext';
+import {
+  filterFileSearchResults,
+  mergeHybridAndQuickFileResults,
+} from '../fileSearchMerge';
+import type { ChatAttachment } from '../../../../utils/attachments';
 
 interface InputAreaProps {
   query: string;
@@ -50,8 +55,10 @@ interface InputAreaProps {
   onSend: () => void;
   /** Compact mode: Tab sends with fast tier, skipping memory I/O. */
   onQuickSend?: () => void;
+  /** Compact mode: Ctrl+Shift+Enter captures the screen (Stuard excluded) and sends it. */
+  onScreenshotSend?: () => void;
   onSteer?: () => void;
-  attachments: Array<{ type: 'image' | 'file'; name: string; mimeType?: string; source?: string }>;
+  attachments: ChatAttachment[];
   onRemoveAttachment: (index: number) => void;
   onAttachFiles: () => void;
   onAttachImages: () => void;
@@ -127,10 +134,13 @@ interface InputAreaProps {
   miniOutputHasContent?: boolean;
   miniOutputStreaming?: boolean;
   miniOutputPrompt?: string;
+  miniOutputUserAttachments?: import('../../../../utils/attachments').ChatAttachment[];
   showMiniOutput?: boolean;
   setShowMiniOutput?: React.Dispatch<React.SetStateAction<boolean>>;
   /** In-flight tool calls from the current assistant turn — feeds compact brand chips. */
   currentToolCalls?: ReadonlyArray<{ id: string; tool: string; status: 'called' | 'running' | 'completed' | 'error' }>;
+  /** In-flight reasoning/thinking text for compact response panel. */
+  currentReasoning?: string;
   onSubmitToolOutput?: (id: string, result: any) => void;
   onGenUIResponse?: (component: string, result: any) => void;
 
@@ -173,6 +183,10 @@ const COMPACT_TITLE_BUMP_OVERLAP = 10;
 const COMPACT_TITLE_BAR_HEIGHT = COMPACT_TITLE_BUMP_HEIGHT - COMPACT_TITLE_BUMP_OVERLAP + 2;
 /** Fallback before the response panel reports its first measured height. */
 const COMPACT_QUICK_RESPONSE_MIN_HEIGHT = 96;
+/** Extra clearance before a dropdown is considered too close to a screen edge. */
+const COMPACT_DROPDOWN_FLIP_MARGIN = 144;
+/** Room advantage required before overflow can override the current side. */
+const COMPACT_DROPDOWN_ROOM_HYSTERESIS = 0;
 /** Gap between response panel bottom and input bar + top shadow clearance. */
 const COMPACT_QUICK_RESPONSE_CHROME = 20;
 
@@ -226,7 +240,7 @@ function compactSearchUrl(engineId: string | null | undefined, query: string): s
 
 const InputArea = forwardRef(function InputArea(
   {
-    query, setQuery, onSend, onQuickSend, onSteer,
+    query, setQuery, onSend, onQuickSend, onScreenshotSend, onSteer,
     attachments, onRemoveAttachment, onAttachFiles, onAttachImages,
     onPaste, onDrop,
     signedIn, onSignIn,
@@ -254,9 +268,11 @@ const InputArea = forwardRef(function InputArea(
     miniOutputHasContent,
     miniOutputStreaming,
     miniOutputPrompt = '',
+    miniOutputUserAttachments = [],
     showMiniOutput,
     setShowMiniOutput,
     currentToolCalls,
+    currentReasoning = '',
     onSubmitToolOutput,
     onGenUIResponse,
     isAiWorking = false,
@@ -291,6 +307,22 @@ const InputArea = forwardRef(function InputArea(
   const semanticReqIdRef = useRef(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const semanticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const FILE_SEARCH_RESULT_LIMIT = 12;
+  const quickFileResultsRef = useRef<any[]>([]);
+  const hybridFileResultsRef = useRef<any[]>([]);
+
+  const applyMergedFileResults = useCallback(() => {
+    setFileResults(
+      mergeHybridAndQuickFileResults(
+        hybridFileResultsRef.current,
+        quickFileResultsRef.current,
+        FILE_SEARCH_RESULT_LIMIT,
+      ),
+    );
+    setFileSearchMode(
+      hybridFileResultsRef.current.length > 0 ? 'hybrid' : 'quick',
+    );
+  }, []);
 
   // Ref for File Navigator to control selection
   const fileNavRef = useRef<FileNavRef>(null);
@@ -478,8 +510,8 @@ const InputArea = forwardRef(function InputArea(
             String(r.kind || '').toLowerCase() !== 'application'
           ));
           setAppResults(apps);
-          setFileResults(files);
-          setFileSearchMode('quick');
+          quickFileResultsRef.current = files;
+          applyMergedFileResults();
           qaLog('search:unified_results', {
             query: q,
             appCount: apps.length,
@@ -492,12 +524,16 @@ const InputArea = forwardRef(function InputArea(
           });
         } else {
           setAppResults([]);
+          quickFileResultsRef.current = [];
+          hybridFileResultsRef.current = [];
           setFileResults([]);
           setFileError(String(res?.error || 'Search failed'));
         }
       } catch (e: any) {
         if (searchReqIdRef.current !== reqId) return;
         setAppResults([]);
+        quickFileResultsRef.current = [];
+        hybridFileResultsRef.current = [];
         setFileResults([]);
         setFileError(String(e?.message || 'Search failed'));
       } finally {
@@ -519,25 +555,28 @@ const InputArea = forwardRef(function InputArea(
 
       if (searchReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results)
-          ? res.results.filter((r: any) => String(r?.kind || '').toLowerCase() !== 'application')
-          : []);
+        quickFileResultsRef.current = filterFileSearchResults(res.results);
+        hybridFileResultsRef.current = [];
+        applyMergedFileResults();
         setAppResults([]);
-        setFileSearchMode('quick');
       } else {
+        quickFileResultsRef.current = [];
+        hybridFileResultsRef.current = [];
         setFileResults([]);
         setAppResults([]);
         setFileError(String(res?.error || 'Search failed'));
       }
     } catch (e: any) {
       if (searchReqIdRef.current !== reqId) return;
+      quickFileResultsRef.current = [];
+      hybridFileResultsRef.current = [];
       setFileResults([]);
       setAppResults([]);
       setFileError(String(e?.message || 'Search failed'));
     } finally {
       if (searchReqIdRef.current === reqId) setFileLoading(false);
     }
-  }, []);
+  }, [applyMergedFileResults]);
 
   // Semantic/hybrid file search
   const doSemanticRefine = useCallback(async (q: string) => {
@@ -570,17 +609,15 @@ const InputArea = forwardRef(function InputArea(
 
       if (semanticReqIdRef.current !== reqId) return;
       if (res?.ok) {
-        setFileResults(Array.isArray(res.results)
-          ? res.results.filter((r: any) => String(r?.kind || '').toLowerCase() !== 'application')
-          : []);
-        setFileSearchMode('hybrid');
+        hybridFileResultsRef.current = filterFileSearchResults(res.results);
+        applyMergedFileResults();
       }
     } catch {
       // ignore
     } finally {
       if (semanticReqIdRef.current === reqId) setFileSemanticLoading(false);
     }
-  }, [CLOUD_AI_HTTP, accessToken, indexStats?.indexed_files]);
+  }, [CLOUD_AI_HTTP, accessToken, indexStats?.indexed_files, applyMergedFileResults]);
 
   // Trigger file search when query changes
   useEffect(() => {
@@ -598,6 +635,8 @@ const InputArea = forwardRef(function InputArea(
     }
 
     if (q.length < 2) {
+      quickFileResultsRef.current = [];
+      hybridFileResultsRef.current = [];
       setFileResults([]);
       setAppResults([]);
       setFileError('');
@@ -605,6 +644,8 @@ const InputArea = forwardRef(function InputArea(
       setFileSemanticLoading(false);
       return;
     }
+
+    hybridFileResultsRef.current = [];
 
     // Quick search (instant-ish)
     searchDebounceRef.current = setTimeout(() => {
@@ -940,6 +981,21 @@ const InputArea = forwardRef(function InputArea(
       return;
     }
 
+    // Screenshot & send (Ctrl/Cmd+Shift+Enter) — capture the screen with Stuard
+    // excluded from the frame (content-protection) and send it as an image.
+    // Compact mode only; must run before the plain Ctrl+Enter branch below.
+    if (isEnter && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      if (overlayMode === 'compact' && onScreenshotSend) {
+        qaLog('keydown:enter', { handler: 'textarea', branch: 'ctrl_shift_enter_screenshot' });
+        e.preventDefault();
+        e.stopPropagation();
+        userDismissedHubRef.current = false;
+        openCompactHub(true);
+        onScreenshotSend();
+        return;
+      }
+    }
+
     // Web Search Shortcut (Ctrl+Enter) — steer when streaming, otherwise open search
     if (isEnter && (e.ctrlKey || e.metaKey)) {
       qaLog('keydown:enter', { handler: 'textarea', branch: 'ctrl_enter_web_or_steer' });
@@ -982,7 +1038,7 @@ const InputArea = forwardRef(function InputArea(
       openCompactHub(true);
       onSend();
     }
-  }, [onSend, onQuickSend, onSteer, query, setQuery, miniOutputStreaming, openCompactHub, closeCompactHub, overlayMode, openTabs, activeTabId, switchTab, setSelectedIndexSynced]);
+  }, [onSend, onQuickSend, onScreenshotSend, onSteer, query, setQuery, miniOutputStreaming, openCompactHub, closeCompactHub, overlayMode, openTabs, activeTabId, switchTab, setSelectedIndexSynced]);
 
   // File Navigation State for @ mentions
   const [showFileNav, setShowFileNav] = useState(false);
@@ -1216,6 +1272,7 @@ const InputArea = forwardRef(function InputArea(
    * cancels the previous RAF and schedules a new one; only the last fires.
    */
   const pendingResizeRafRef = useRef<number | null>(null);
+  const pendingVisualPlacementTimerRef = useRef<number | null>(null);
   const compactMousePassthroughRef = useRef(false);
   const lastPlacementFlipAtRef = useRef(0);
   const COMPACT_WINDOW_PY = 14;
@@ -1224,55 +1281,96 @@ const InputArea = forwardRef(function InputArea(
     try {
       const screenTop = (window?.screen as any)?.availTop ?? 0;
       const screenHeight = window?.screen?.availHeight || 1080;
+      const screenBottom = screenTop + screenHeight;
+      const screenCenter = screenTop + screenHeight / 2;
+
       const windowTop = window?.screenY || window?.screenTop || 0;
       const windowHeight = window?.outerHeight || 88;
-      const hasAttachmentsForPlacement = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
+      const hasContextForPlacement = (contextPaths && contextPaths.length > 0);
       const inputBarHeightForPlacement = 88
         + extraInputHeightRef.current
         + 8
-        + (hasAttachmentsForPlacement ? 44 : 0);
+        + (hasContextForPlacement ? 44 : 0);
 
-      // Placement must be based on the visible pill, not the native window.
-      // In bottom-half mode the native window can be a tall transparent canvas
-      // (650px) while the pill sits at its bottom edge. Using windowTop would
-      // flip the dropdown while the pill is still visibly near the bottom,
-      // which looks like Ctrl+Up teleporting back down.
       const currentPlacement = dropdownPlacementRef.current;
-      const inputTop = currentPlacement === 'top'
-        ? windowTop + windowHeight - COMPACT_WINDOW_PY - inputBarHeightForPlacement
-        : windowTop + COMPACT_WINDOW_PY;
-      const inputBottom = inputTop + inputBarHeightForPlacement;
-      const needsDropdownForPlacement = showSearchOptions || showFileNav;
-      const dropdownHeightForPlacement = needsDropdownForPlacement
-        ? COMPACT_DROPDOWN_MAX_HEIGHT
-        : 0;
-      if (Date.now() - lastPlacementFlipAtRef.current < 140) {
+
+      // Where the input bar actually sits on screen. Prefer a LIVE DOM measure
+      // of the pill: it's placement-independent, so the estimate doesn't jump
+      // when we flip. The old estimate derived the bar position FROM the current
+      // placement, so each flip moved the estimate and could immediately flip it
+      // back — that feedback loop is what made the dropdown thrash at mid-screen.
+      let barTop: number;
+      let barBottom: number;
+      const rect = localTextareaRef.current?.getBoundingClientRect();
+      if (rect && rect.height > 0) {
+        const barScreenTop = windowTop + rect.top;
+        // The pill is a little taller than the textarea — pad to roughly its box.
+        barTop = barScreenTop - 10;
+        barBottom = barScreenTop + rect.height + 10;
+      } else {
+        const inputTop = currentPlacement === 'top'
+          ? windowTop + windowHeight - COMPACT_WINDOW_PY - inputBarHeightForPlacement
+          : windowTop + COMPACT_WINDOW_PY;
+        barTop = inputTop;
+        barBottom = inputTop + inputBarHeightForPlacement;
+      }
+      const barCenter = (barTop + barBottom) / 2;
+
+      // Hold briefly after a flip so the window reposition can settle before we
+      // re-evaluate on the next animation-frame move checks. Keep this short:
+      // at Ctrl+Arrow speeds, 220ms lets the panel travel visibly past an edge.
+      if (Date.now() - lastPlacementFlipAtRef.current < 72) {
         return currentPlacement;
       }
 
-      const screenBottom = screenTop + screenHeight;
-      const edgeMargin = 96;
-      const flipBias = 28;
+      const needsDropdownForPlacement = showSearchOptions || showFileNav;
+      const overlayPanel = document.querySelector<HTMLElement>('[data-compact-overlay-panel="true"]');
+      const overlayRect = overlayPanel?.getBoundingClientRect();
+      const dropdownHeightForPlacement = needsDropdownForPlacement
+        ? Math.min(
+            COMPACT_DROPDOWN_MAX_HEIGHT,
+            Math.max(96, overlayRect?.height || lockedOverlayHeightRef.current || COMPACT_DROPDOWN_MAX_HEIGHT),
+          )
+        : 0;
       const neededDropdownRoom = dropdownHeightForPlacement + COMPACT_OVERLAY_DROPDOWN_GAP;
-      const roomAbove = Math.max(0, inputTop - screenTop - edgeMargin);
-      const roomBelow = Math.max(0, screenBottom - inputBottom - edgeMargin);
-
-      // Flip as soon as the current side can't fit the dropdown — don't wait for
-      // the opposite side to win by `flipBias` while the current side is cramped
-      // (that lag is what made the swap feel "too late"). `flipBias` now only
-      // breaks ties when neither side can fully fit, so near the screen's middle
-      // we open on the roomier side instead of stubbornly staying put.
+      const roomAbove = Math.max(0, barTop - screenTop - COMPACT_DROPDOWN_FLIP_MARGIN);
+      const roomBelow = Math.max(0, screenBottom - barBottom - COMPACT_DROPDOWN_FLIP_MARGIN);
       const fitsAbove = roomAbove >= neededDropdownRoom;
       const fitsBelow = roomBelow >= neededDropdownRoom;
 
+      // Primary signal: which half of the screen the bar is in, with a deadband
+      // so the middle does NOT flip. Bar in the TOP half -> open downward
+      // ('bottom'); bar in the BOTTOM half -> open upward ('top'). The deadband is
+      // only crossed when the bar is clearly on one side, which is what stops the
+      // rapid flip-flop while the bar sits near the middle.
+      const deadband = Math.min(140, screenHeight * 0.1);
+      let next: 'top' | 'bottom' = currentPlacement;
       if (currentPlacement === 'top') {
-        if (fitsAbove) return 'top';
-        if (fitsBelow) return 'bottom';
-        return roomBelow > roomAbove + flipBias ? 'bottom' : 'top';
+        if (barCenter < screenCenter - deadband) next = 'bottom';
+      } else {
+        if (barCenter > screenCenter + deadband) next = 'top';
       }
-      if (fitsBelow) return 'bottom';
-      if (fitsAbove) return 'top';
-      return roomAbove > roomBelow + flipBias ? 'top' : 'bottom';
+
+      // Second trigger: edge overflow. This is intentionally based on the
+      // CURRENT side, not the tentative `next` side. If neither side can fit the
+      // full 560px panel, blindly flipping on "!fits" causes ping-pong. We only
+      // let overflow override when the other side fits, or has a meaningful room
+      // advantage.
+      if (
+        currentPlacement === 'top'
+        && !fitsAbove
+        && (fitsBelow || roomBelow > roomAbove + COMPACT_DROPDOWN_ROOM_HYSTERESIS)
+      ) {
+        next = 'bottom';
+      } else if (
+        currentPlacement === 'bottom'
+        && !fitsBelow
+        && (fitsAbove || roomAbove > roomBelow + COMPACT_DROPDOWN_ROOM_HYSTERESIS)
+      ) {
+        next = 'top';
+      }
+
+      return next;
     } catch {
       return 'top';
     }
@@ -1295,16 +1393,25 @@ const InputArea = forwardRef(function InputArea(
       const screenAvailH = window?.screen?.availHeight ?? 900;
       const screenAvailBottom = screenAvailTop + screenAvailH;
       const winTop = window?.screenY ?? window?.screenTop ?? 0;
-      const winH = window?.outerHeight ?? CAP_WINDOW_H;
-      const currentPlacement = dropdownPlacementRef.current;
-      const inputTop = currentPlacement === 'top'
-        ? winTop + winH - COMPACT_WINDOW_PY - inputBarH
-        : winTop + COMPACT_WINDOW_PY;
+      let inputTop: number;
+      const rect = localTextareaRef.current?.getBoundingClientRect();
+      if (rect && rect.height > 0) {
+        inputTop = winTop + rect.top - 10;
+      } else {
+        const winH = window?.outerHeight ?? CAP_WINDOW_H;
+        const currentPlacement = dropdownPlacementRef.current;
+        inputTop = currentPlacement === 'top'
+          ? winTop + winH - COMPACT_WINDOW_PY - inputBarH
+          : winTop + COMPACT_WINDOW_PY;
+      }
       const inputBottom = inputTop + inputBarH;
       const roomForDropdown = placement === 'top'
         ? inputTop - screenAvailTop
         : screenAvailBottom - inputBottom;
-      return Math.max(96, Math.min(COMPACT_DROPDOWN_MAX_HEIGHT, roomForDropdown - 32));
+      return Math.max(
+        96,
+        Math.min(COMPACT_DROPDOWN_MAX_HEIGHT, roomForDropdown - COMPACT_WINDOW_DROPDOWN_MARGIN),
+      );
     } catch {
       return 480;
     }
@@ -1387,8 +1494,8 @@ const InputArea = forwardRef(function InputArea(
     const baseTextareaHeight = 36;
     const extraHeight = Math.max(0, height - baseTextareaHeight);
 
-    const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
-    const attachmentHeight = hasAttachments ? 44 : 0;
+    const hasContextRows = (contextPaths && contextPaths.length > 0);
+    const attachmentHeight = hasContextRows ? 44 : 0;
     const showStatusPill = statusItemCount > 0;
     const statusPillHeight = showStatusPill ? 40 : 0;
     const compactTitleBarHeight = 0; // compact title bar is currently always hidden
@@ -1421,10 +1528,12 @@ const InputArea = forwardRef(function InputArea(
     // don't need a fixed reserve since their height is driven by content.
     if (needsDropdown) {
       if (!lockedOverlayHeightRef.current) {
-        const lockedP = lockedOverlayPlacementRef.current ?? calculatePlacement();
         const maxH = Math.min(
           COMPACT_DROPDOWN_MAX_HEIGHT,
-          computeMaxDropdownH(lockedP, inputBarHeightForCalc),
+          Math.max(
+            computeMaxDropdownH('top', inputBarHeightForCalc),
+            computeMaxDropdownH('bottom', inputBarHeightForCalc),
+          ),
         );
         lockedOverlayHeightRef.current = maxH;
         setLockedOverlayHeight(maxH);
@@ -1562,6 +1671,10 @@ const InputArea = forwardRef(function InputArea(
       cancelAnimationFrame(pendingResizeRafRef.current);
       pendingResizeRafRef.current = null;
     }
+    if (pendingVisualPlacementTimerRef.current !== null) {
+      window.clearTimeout(pendingVisualPlacementTimerRef.current);
+      pendingVisualPlacementTimerRef.current = null;
+    }
   }, []);
 
   const setCompactMousePassthrough = useCallback((ignore: boolean) => {
@@ -1640,11 +1753,9 @@ const InputArea = forwardRef(function InputArea(
   ]);
 
   // Drag-detection: the user can move the window via the title-bar drag
-  // region, which Electron doesn't surface as a DOM event. We poll on a
-  // 100ms cadence while an overlay is open. If the window moved across the
-  // screen-midline hysteresis, calculatePlacement returns the OTHER side and
-  // we re-lock; updateWindowSize then detects placementChanged and emits a
-  // single setBounds to translate the input bar.
+  // region, which Electron doesn't surface as a DOM event. While a dropdown is
+  // open we check on each animation frame so placement can flip before the
+  // native window edge clips the portal.
   const applyPlacementOnMove = useCallback(() => {
     if (expanded || overlayMode !== 'compact') return;
     const nextPlacement = calculatePlacement();
@@ -1658,20 +1769,29 @@ const InputArea = forwardRef(function InputArea(
       }
       lastPlacementFlipAtRef.current = Date.now();
       dropdownPlacementRef.current = nextPlacement;
-      setDropdownPlacement(nextPlacement);
       const inputBarHeightForCalc = 88
         + extraInputHeightRef.current + 8
-        + (attachments.length > 0 || (contextPaths && contextPaths.length > 0) ? 44 : 0)
+        + ((contextPaths && contextPaths.length > 0) ? 44 : 0)
         + (statusItemCount > 0 ? 40 : 0);
       if (lockedOverlayHeightRef.current) {
         const maxH = Math.min(
           COMPACT_DROPDOWN_MAX_HEIGHT,
-          computeMaxDropdownH(nextPlacement, inputBarHeightForCalc),
+          Math.max(
+            computeMaxDropdownH('top', inputBarHeightForCalc),
+            computeMaxDropdownH('bottom', inputBarHeightForCalc),
+          ),
         );
         lockedOverlayHeightRef.current = maxH;
         setLockedOverlayHeight(maxH);
       }
       updateWindowSize();
+      if (pendingVisualPlacementTimerRef.current !== null) {
+        window.clearTimeout(pendingVisualPlacementTimerRef.current);
+      }
+      pendingVisualPlacementTimerRef.current = window.setTimeout(() => {
+        pendingVisualPlacementTimerRef.current = null;
+        setDropdownPlacement(nextPlacement);
+      }, 48);
     }
   }, [
     expanded,
@@ -1690,8 +1810,33 @@ const InputArea = forwardRef(function InputArea(
 
   useEffect(() => {
     if (expanded || overlayMode !== 'compact') return;
-    const interval = setInterval(applyPlacementOnMove, 150);
-    return () => clearInterval(interval);
+    // Ctrl+Arrow moves the window at 900–1500px/s. A slow poll lets the dropdown
+    // slide well past the screen edge before the flip catches up, so while a
+    // flippable overlay is open we re-check placement on every frame (~16ms) and
+    // it can't visibly overshoot. Idle (no overlay) falls back to a cheap poll.
+    const overlayOpen = showSearchOptions || showFileNav || compactHubOpen;
+    if (!overlayOpen) {
+      const interval = setInterval(applyPlacementOnMove, 150);
+      return () => clearInterval(interval);
+    }
+    let rafId = 0;
+    let lastX = window.screenX;
+    let lastY = window.screenY;
+    const tick = () => {
+      // window.screenX/Y are cheap (no layout). Only run the placement check
+      // (which measures the bar via getBoundingClientRect) when the window has
+      // actually moved, so an idle-open dropdown doesn't thrash layout at 60fps.
+      const x = window.screenX;
+      const y = window.screenY;
+      if (x !== lastX || y !== lastY) {
+        lastX = x;
+        lastY = y;
+        applyPlacementOnMove();
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
   }, [
     expanded,
     overlayMode,
@@ -2007,8 +2152,8 @@ const InputArea = forwardRef(function InputArea(
   // Base: container p-2 (8px) + input card min-h (114px) + extra padding (~18px) = ~140px
   // Add gap for visual separation between dropdown and input bar
   const inputBarGap = 8;
-  const hasAttachments = attachments.length > 0 || (contextPaths && contextPaths.length > 0);
-  const attachmentOffset = hasAttachments ? 44 : 0;
+  const hasContextRows = (contextPaths && contextPaths.length > 0);
+  const attachmentOffset = hasContextRows ? 44 : 0;
   void statusMinutesUntil; // reserved for future tighter gating
 
   const hasStatusPill = overlayMode === 'compact' && !!currentStatusItem;
@@ -2130,6 +2275,7 @@ const InputArea = forwardRef(function InputArea(
             offsets={dropdownSelection.offsets}
             onAskStuard={() => handleSearchOption('chat')}
             onWebSearch={() => handleSearchOption('web', activeEngine.id)}
+            onScreenshotSend={overlayMode === 'compact' ? onScreenshotSend : undefined}
             activeEngineName={activeEngine.name}
             searchEngines={searchEngines.map((e) => ({
               id: e.id,
@@ -2210,8 +2356,11 @@ const InputArea = forwardRef(function InputArea(
             onToggleExpand();
           }}
           userPrompt={miniOutputPrompt || ''}
+          userAttachments={miniOutputUserAttachments}
           assistantText={miniOutputText || ''}
           isStreaming={!!miniOutputStreaming}
+          isAiWorking={isAiWorking}
+          reasoningText={currentReasoning || ''}
           toolCalls={currentToolCalls}
           translucentMode={translucentMode}
           inputBarHeight={inputBarHeight}
@@ -2259,6 +2408,7 @@ const InputArea = forwardRef(function InputArea(
             onRemoveContext={removeContext}
             onAttachFiles={onAttachFiles}
             onAttachImages={onAttachImages}
+            onScreenshotSend={onScreenshotSend}
             onDrop={onDrop}
             textareaRef={setTextareaRef}
             query={query}
@@ -2281,6 +2431,7 @@ const InputArea = forwardRef(function InputArea(
                 : 'Tab for quick answer'
             }
             miniOutputStreaming={!!miniOutputStreaming}
+            isAiWorking={isAiWorking}
             onSteer={onSteer}
             voiceActive={voiceActive}
             onToggleVoice={onToggleVoice}

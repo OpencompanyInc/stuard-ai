@@ -1,5 +1,5 @@
 
-import { app, BrowserWindow, globalShortcut, nativeImage, Tray, screen, powerMonitor, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, nativeImage, Tray, screen, powerMonitor, shell, desktopCapturer } from "electron";
 import path from "path";
 import fs from "fs";
 import { isDev } from "../env";
@@ -12,7 +12,6 @@ let win: BrowserWindow | null = null;
 let onboardingWin: BrowserWindow | null = null;
 let workflowsWin: BrowserWindow | null = null;
 let sidebarWin: BrowserWindow | null = null;
-let spacesWin: BrowserWindow | null = null; // Legacy alias
 let dashboardWin: BrowserWindow | null = null;
 let notificationWin: BrowserWindow | null = null;
 let voiceTestWin: BrowserWindow | null = null;
@@ -268,7 +267,6 @@ function updateLastActiveWindowHandle(source: string) {
   const overlayHandle = getNativeWindowHandleString(win);
   const handle = captureForegroundWindowHandle([
     overlayHandle,
-    getNativeWindowHandleString(spacesWin),
     getNativeWindowHandleString(onboardingWin),
   ]);
   if (!handle) return;
@@ -1266,20 +1264,6 @@ export function toggleSidebarExpanded() {
   return { expanded: true };
 }
 
-// Legacy Spaces window — Spaces have been removed. No-op stubs kept for IPC
-// surface compatibility; they simply open/close the sidebar (Todo tab).
-export function openSpacesWindow() {
-  openSidebarWindow({ tab: 'todo' });
-}
-
-export function closeSpacesWindow() {
-  closeSidebarWindow();
-}
-
-export function toggleSpacesWindow() {
-  toggleSidebarWindow({ tab: 'todo' });
-}
-
 // Voice Border Window â€” transparent click-through full-screen overlay that
 // renders the red ambient frame around the user's monitor while voice mode
 // is active.
@@ -1705,7 +1689,6 @@ export function setOverlayMode(mode: OverlayMode) {
       if (!capturedHandle || (overlayHandle && capturedHandle === overlayHandle)) {
         capturedHandle = captureForegroundWindowHandle([
           overlayHandle,
-          getNativeWindowHandleString(spacesWin),
           getNativeWindowHandleString(onboardingWin),
         ]);
         if (capturedHandle) lastActiveWindowHandle = capturedHandle;
@@ -2093,6 +2076,22 @@ export function resizeInternalSidebar(panelWidth: number): { width: number; pane
 
 export function getInternalSidebarState(): { open: boolean; panelWidth: number } {
   return { open: internalSidebarOpen, panelWidth: internalSidebarPanelWidth };
+}
+
+export function isAnyAppWindowFocused(): boolean {
+  // Use Electron's focused-window lookup so EVERY Stuard window counts —
+  // main/window mode, dashboard, workflows, sidebar, spaces, onboarding, board
+  // windows, etc. — without having to maintain an explicit list. The only
+  // window we exclude is the notification overlay itself (it's shown inactive
+  // and never takes focus, but guard against it just in case).
+  try {
+    const focused = BrowserWindow.getFocusedWindow();
+    if (!focused || focused.isDestroyed()) return false;
+    if (notificationWin && !notificationWin.isDestroyed() && focused === notificationWin) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function registerGlobalShortcuts() {
@@ -2570,6 +2569,62 @@ export function setScreenCaptureInvisible(enabled: boolean) {
   screenCaptureInvisibleEnabled = enabled;
   applyContentProtectionToAllWindows();
   logger.info(`Screen capture invisibility ${enabled ? 'enabled' : 'disabled'} for all windows`);
+}
+
+/**
+ * Capture the primary display while every Stuard window is excluded from the
+ * frame. Temporarily forces content-protection (WDA_EXCLUDEFROMCAPTURE on
+ * Windows) on all Stuard windows — including the always-on-top compact overlay,
+ * which is normally capturable — so the screenshot shows only what sits *behind*
+ * the app, then restores each window to its configured protection state.
+ *
+ * This is the "content policy" trick used by the compact-mode Ctrl+Shift+Enter
+ * shortcut: snap the screen without Stuard appearing in it, then send it.
+ */
+export async function captureScreenExcludingStuard(): Promise<{ ok: boolean; dataUrl?: string; error?: string }> {
+  const windows = BrowserWindow.getAllWindows().filter((w) => w && !w.isDestroyed());
+  try {
+    for (const w of windows) {
+      try { w.setContentProtection(true); } catch {}
+    }
+    // Give DWM a frame or two to apply the exclusion before grabbing the
+    // desktop — otherwise the overlay can bleed into the capture. Kept short
+    // (~70ms ≈ 4 frames) so pressing the hotkey captures almost immediately.
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    const primary = screen.getPrimaryDisplay();
+    const scale = primary.scaleFactor || 1;
+    // desktopCapturer renders a full bitmap of the display, and its cost scales
+    // with the requested pixel count — at 4K/hi-DPI a native-res grab can take
+    // 1-3s, which is the bulk of the hotkey→thumbnail latency. Cap the long edge
+    // to ~1920px so the grab is near-instant while staying sharp enough to read
+    // on-screen text. (DIP size already drops the device-pixel-ratio blowup.)
+    const nativeW = Math.round(primary.size.width * scale);
+    const nativeH = Math.round(primary.size.height * scale);
+    const MAX_EDGE = 1920;
+    const capScale = Math.min(1, MAX_EDGE / Math.max(nativeW, nativeH, 1));
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.max(1, Math.round(nativeW * capScale)),
+        height: Math.max(1, Math.round(nativeH * capScale)),
+      },
+    });
+    const source =
+      sources.find((s) => String(s.display_id) === String(primary.id)) || sources[0];
+    const dataUrl = source?.thumbnail && !source.thumbnail.isEmpty()
+      ? source.thumbnail.toDataURL()
+      : null;
+    if (!dataUrl) return { ok: false, error: 'no_capture_source' };
+    return { ok: true, dataUrl };
+  } catch (e: any) {
+    logger.warn('[window] captureScreenExcludingStuard failed', e);
+    return { ok: false, error: String(e?.message || 'capture_failed') };
+  } finally {
+    // Restore each window to its configured protection (global flag / overlay
+    // stays unprotected as before).
+    applyContentProtectionToAllWindows();
+  }
 }
 
 export function startOverlayScreenSnip() {

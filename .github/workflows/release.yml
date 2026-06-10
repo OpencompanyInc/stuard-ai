@@ -178,7 +178,7 @@ jobs:
             --min-instances 0 \
             --max-instances 5 \
             --set-env-vars NODE_ENV=${{ steps.env.outputs.NODE_ENV }},CLOUD_PUBLIC_URL=${{ steps.env.outputs.API_URL }},WEBSITE_BASE_URL=${{ steps.env.outputs.WEBSITE_URL }},SUPABASE_URL=${{ secrets.SUPABASE_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_ZONE=${{ secrets.GCP_ZONE || 'us-central1-a' }} \
-            --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,POLAR_ACCESS_TOKEN=POLAR_ACCESS_TOKEN:latest,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest
+            --set-secrets XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest,GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,POLAR_ACCESS_TOKEN=POLAR_ACCESS_TOKEN:latest,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest
 
       # Re-embed workflow doc chunks so search_workflow_docs stays in sync
       # with whatever shipped in this deploy. Incremental — only chunks
@@ -423,6 +423,19 @@ jobs:
         working-directory: apps/agent
         run: python build-services.py --services agent browser mediapipe wakeword
 
+      - name: Build file indexer (Rust, branded "Stuard AI")
+        shell: bash
+        run: |
+          cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml
+          mkdir -p dist
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer.exe dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-macos
+          else
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-linux
+          fi
+
       - name: Verify service binaries
         shell: bash
         run: |
@@ -434,13 +447,15 @@ jobs:
           else
             ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux dist/stuard-wakeword-linux 2>/dev/null || true
           fi
-          # Agent, browser, and wakeword are required for desktop voice mode
+          # Agent, browser, wakeword, and the file indexer are required; mediapipe
+          # is optional. The file indexer powers local/launcher file search and has
+          # NO runtime fallback, so a build missing it ships broken search.
           if [ "$RUNNER_OS" == "Windows" ]; then
-            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe
+            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe && test -f dist/stuard-file-indexer.exe
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos
+            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos && test -f dist/stuard-file-indexer-macos
           else
-            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux
+            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux && test -f dist/stuard-file-indexer-linux
           fi
 
       # ─── Build Electron App ───
@@ -503,6 +518,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOUD_PUBLIC_URL: ${{ steps.env.outputs.API_URL }}
+          # Fail the build if prepare:agent can't find the Rust file indexer, so a
+          # release can never silently ship with local file search disabled.
+          STUARD_REQUIRE_FILE_INDEXER: "1"
           # PostHog analytics (not in prod for privacy)
           VITE_PUBLIC_POSTHOG_KEY: ${{ inputs.environment != 'production' && secrets.POSTHOG_API_KEY || '' }}
           VITE_PUBLIC_POSTHOG_HOST: ${{ inputs.environment != 'production' && 'https://us.i.posthog.com' || '' }}

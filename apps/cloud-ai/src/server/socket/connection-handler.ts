@@ -9,7 +9,6 @@ import { handleBridgedToolExecution } from './bridged-tool-handler';
 import { abortAndCleanup, cleanupSocketState, conversations, countActiveRequests, enqueueInterjection, getOnlyActiveRequestId, wsAlive } from './state';
 import { extractClientType, extractQueryParam, send } from './helpers';
 import { abortRunningSubagentsForRequest, enqueueSubagentSteer, isSubagentRunning } from '../../orchestrator/subagent-runtime';
-import { abortHeadlessTasksForRequest } from '../../tools/deploy-headless-agent';
 
 export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
   try {
@@ -44,7 +43,6 @@ export function handleSocketConnection(ws: WebSocket, req: IncomingMessage) {
     ws.on('close', () => {
       writeLog('ws_disconnected');
       try { abortRunningSubagentsForRequest(ws, undefined, 'socket_closed'); } catch { }
-      try { abortHeadlessTasksForRequest(ws, undefined, 'socket_closed'); } catch { }
       cleanupSocketState(ws, 'socket_closed');
     });
   } catch { }
@@ -76,9 +74,8 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
     if (stopRequestId) {
       const aborted = abortAndCleanup(ws, stopRequestId, 'client_stop');
       const subagentsAborted = abortRunningSubagentsForRequest(ws, stopRequestId, 'client_stop');
-      const headlessAborted = abortHeadlessTasksForRequest(ws, stopRequestId, 'client_stop');
-      console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted} | subagents=${subagentsAborted} | headless=${headlessAborted}`);
-      send(ws, { type: 'stopped', success: aborted || subagentsAborted > 0 || headlessAborted > 0, requestId: stopRequestId, subagentsAborted, headlessAborted });
+      console.log(`[cloud-ai] Aborting stream for requestId=${stopRequestId}: ${aborted} | subagents=${subagentsAborted}`);
+      send(ws, { type: 'stopped', success: aborted || subagentsAborted > 0, requestId: stopRequestId, subagentsAborted });
     } else {
       // No requestId provided. To avoid wiping out parallel streams from other
       // tabs on a shared socket, only auto-abort when exactly one stream is in
@@ -99,12 +96,9 @@ async function handleSocketMessage(ws: WebSocket, rawData: WebSocket.RawData) {
       const subagentsAborted = soleRequestId
         ? abortRunningSubagentsForRequest(ws, soleRequestId, 'client_stop')
         : 0;
-      const headlessAborted = soleRequestId
-        ? abortHeadlessTasksForRequest(ws, soleRequestId, 'client_stop')
-        : 0;
-      if (aborted || subagentsAborted > 0 || headlessAborted > 0) {
-        console.log(`[cloud-ai] Bare stop aborted sole active work: stream=${aborted} requestId=${soleRequestId || '∅'} subagents=${subagentsAborted} headless=${headlessAborted}`);
-        send(ws, { type: 'stopped', success: true, requestId: soleRequestId, subagentsAborted, headlessAborted });
+      if (aborted || subagentsAborted > 0) {
+        console.log(`[cloud-ai] Bare stop aborted sole active work: stream=${aborted} requestId=${soleRequestId || '∅'} subagents=${subagentsAborted}`);
+        send(ws, { type: 'stopped', success: true, requestId: soleRequestId, subagentsAborted });
       } else {
         send(ws, { type: 'stopped', success: false, message: 'no active stream' });
       }

@@ -19,20 +19,14 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
 
   const resolvedToolName = tool.tool;
 
-  // For subagent tools, show the objective/task instead of generic tool name
-  const isSubagentTool = resolvedToolName === 'deploy_headless_agent';
-  const subagentObjective = isSubagentTool && tool.args?.objective
-    ? String(tool.args.objective).slice(0, 80) + (String(tool.args.objective).length > 80 ? '…' : '')
-    : null;
-
   // For delegate tool, show the subagent kind and live status
   const isDelegation = resolvedToolName === 'delegate';
   const delegationLabel = isDelegation
     ? `${humanizeToolName(tool.args?.subagent || 'subagent')} agent`
     : null;
 
-  // Use description from tool if available, objective for subagent tools, otherwise humanize tool name
-  const displayText = delegationLabel || subagentObjective || tool.description || humanizeToolName(resolvedToolName);
+  // Use description from tool if available, otherwise humanize tool name
+  const displayText = delegationLabel || tool.description || humanizeToolName(resolvedToolName);
 
   // Filter out internal IDs from display data
   const filterInternalIds = (obj: any): any => {

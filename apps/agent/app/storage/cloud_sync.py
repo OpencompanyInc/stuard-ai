@@ -1,7 +1,7 @@
 """
 Cloud Sync Service
 
-End-to-end encrypted cloud synchronization for conversations and spaces.
+End-to-end encrypted cloud synchronization for conversations.
 Data is encrypted locally before upload using a user-provided sync password.
 Supabase stores only encrypted blobs - no plaintext data.
 """
@@ -31,7 +31,7 @@ class SyncPacket:
     """Encrypted sync packet for cloud storage."""
     id: str  # Unique packet ID
     device_id: str  # Source device ID
-    entity_type: str  # 'conversation', 'message', 'segment', 'space', 'space_item'
+    entity_type: str  # 'conversation', 'message', 'segment'
     entity_id: str  # ID of the entity
     operation: str  # 'create', 'update', 'delete'
     encrypted_data: str  # Base64-encoded encrypted JSON
@@ -363,10 +363,6 @@ class CloudSyncService:
         if operation == "delete":
             if entity_type == "conversation":
                 memory_db.update_conversation(entity_id, status="deleted")
-            elif entity_type == "space":
-                memory_db.delete_space(entity_id)
-            elif entity_type == "space_item":
-                memory_db.delete_space_item(entity_id)
             return True
         
         if entity_type == "conversation":
@@ -406,336 +402,11 @@ class CloudSyncService:
                     )
             return True
         
-        if entity_type == "space":
-            existing = memory_db.get_space(entity_id)
-            if existing and existing.updated_at > remote_timestamp:
-                return False
-            
-            if operation == "create" and not existing:
-                memory_db.create_space(
-                    name=entity_data.get("name", "Synced Space"),
-                    space_type=entity_data.get("type", "custom"),
-                    description=entity_data.get("description"),
-                    icon=entity_data.get("icon"),
-                    color=entity_data.get("color"),
-                )
-            elif operation == "update" and existing:
-                memory_db.update_space(
-                    entity_id,
-                    name=entity_data.get("name"),
-                    description=entity_data.get("description"),
-                )
-            return True
-        
-        if entity_type == "space_item":
-            space_id = entity_data.get("space_id")
-            if space_id and operation == "create":
-                memory_db.add_space_item(
-                    space_id=space_id,
-                    item_type=entity_data.get("type", "note"),
-                    content=entity_data.get("content", ""),
-                    title=entity_data.get("title"),
-                    metadata=entity_data.get("metadata"),
-                )
-            return True
-        
         return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SHARED SPACE SYNC SERVICE
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class SharedSpaceSyncService:
-    """
-    Handles syncing local spaces to cloud for sharing.
-    
-    Flow:
-    1. User selects a space to sync/share
-    2. Space data is encrypted and uploaded to Supabase
-    3. User can share with email addresses
-    4. Recipients download and decrypt with shared password
-    """
-    
-    def __init__(self, user_id: str, auth_token: str):
-        self.user_id = user_id
-        self.auth_token = auth_token
-        self._api_url = os.getenv("CLOUD_API_URL", "https://api.stuard.ai")
-    
-    def is_configured(self) -> bool:
-        """Check if sync is properly configured."""
-        return bool(self.auth_token and self._api_url)
-    
-    async def sync_space_to_cloud(self, space_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Upload encrypted space data to cloud."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "Content-Type": "application/json",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self._api_url}/v1/shared-spaces/sync",
-                    headers=headers,
-                    json=space_data,
-                )
-                
-                if response.status_code not in (200, 201):
-                    return {"ok": False, "error": response.text}
-                
-                result = response.json()
-                return result
-        
-        except Exception as e:
-            logger.exception("sync_space_to_cloud failed")
-            return {"ok": False, "error": str(e)}
-    
-    async def share_space(
-        self,
-        cloud_space_id: str,
-        email: str,
-        permission: str = "read",
-        share_key_encrypted: Optional[str] = None,
-        expires_at: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Share a synced space with an email address."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "Content-Type": "application/json",
-            }
-            
-            payload = {
-                "email": email,
-                "permission": permission,
-            }
-            if share_key_encrypted:
-                payload["share_key_encrypted"] = share_key_encrypted
-            if expires_at:
-                payload["expires_at"] = expires_at
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self._api_url}/v1/shared-spaces/{cloud_space_id}/share",
-                    headers=headers,
-                    json=payload,
-                )
-                
-                if response.status_code not in (200, 201):
-                    return {"ok": False, "error": response.text}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("share_space failed")
-            return {"ok": False, "error": str(e)}
-    
-    async def list_my_synced_spaces(self) -> Dict[str, Any]:
-        """List spaces I've synced to cloud."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured", "spaces": []}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self._api_url}/v1/shared-spaces",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text, "spaces": []}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("list_my_synced_spaces failed")
-            return {"ok": False, "error": str(e), "spaces": []}
-    
-    async def list_spaces_shared_with_me(self) -> Dict[str, Any]:
-        """List spaces others have shared with me."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured", "shares": []}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self._api_url}/v1/shared-spaces/shared-with-me",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text, "shares": []}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("list_spaces_shared_with_me failed")
-            return {"ok": False, "error": str(e), "shares": []}
-    
-    async def get_shared_space(self, cloud_space_id: str) -> Dict[str, Any]:
-        """Download a shared space's encrypted data."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self._api_url}/v1/shared-spaces/{cloud_space_id}",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("get_shared_space failed")
-            return {"ok": False, "error": str(e)}
-    
-    async def accept_share(self, share_id: str) -> Dict[str, Any]:
-        """Accept a space share invitation."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "Content-Type": "application/json",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self._api_url}/v1/shared-spaces/accept/{share_id}",
-                    headers=headers,
-                    json={},
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("accept_share failed")
-            return {"ok": False, "error": str(e)}
-    
-    async def list_space_shares(self, cloud_space_id: str) -> Dict[str, Any]:
-        """List who a space is shared with."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured", "shares": []}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self._api_url}/v1/shared-spaces/{cloud_space_id}/shares",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text, "shares": []}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("list_space_shares failed")
-            return {"ok": False, "error": str(e), "shares": []}
-    
-    async def revoke_share(self, cloud_space_id: str, share_id: str) -> Dict[str, Any]:
-        """Revoke a share."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(
-                    f"{self._api_url}/v1/shared-spaces/{cloud_space_id}/shares/{share_id}",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("revoke_share failed")
-            return {"ok": False, "error": str(e)}
-    
-    async def delete_synced_space(self, cloud_space_id: str) -> Dict[str, Any]:
-        """Delete a synced space from cloud."""
-        if not self.is_configured():
-            return {"ok": False, "error": "sync_not_configured"}
-        
-        try:
-            import httpx
-            
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(
-                    f"{self._api_url}/v1/shared-spaces/{cloud_space_id}",
-                    headers=headers,
-                )
-                
-                if response.status_code != 200:
-                    return {"ok": False, "error": response.text}
-                
-                return response.json()
-        
-        except Exception as e:
-            logger.exception("delete_synced_space failed")
-            return {"ok": False, "error": str(e)}
 
 
 # Singleton instances
 _sync_service: Optional[CloudSyncService] = None
-_shared_space_service: Optional[SharedSpaceSyncService] = None
 
 
 def get_sync_service(user_id: str, device_id: str) -> CloudSyncService:
@@ -744,11 +415,3 @@ def get_sync_service(user_id: str, device_id: str) -> CloudSyncService:
     if _sync_service is None or _sync_service.user_id != user_id:
         _sync_service = CloudSyncService(user_id, device_id)
     return _sync_service
-
-
-def get_shared_space_service(user_id: str, auth_token: str) -> SharedSpaceSyncService:
-    """Get or create the shared space sync service singleton."""
-    global _shared_space_service
-    if _shared_space_service is None or _shared_space_service.user_id != user_id:
-        _shared_space_service = SharedSpaceSyncService(user_id, auth_token)
-    return _shared_space_service

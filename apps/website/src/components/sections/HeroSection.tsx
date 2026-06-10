@@ -1,8 +1,75 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useAuthContext } from '@/components/providers/AuthProvider';
+
+const ROTATING_TASKS = [
+  'send your emails',
+  'organize your tasks',
+  'run CLIs like Claude Code',
+  'clean up your downloads',
+  'call you with updates',
+  'text you reminders',
+  'schedule your week',
+  'build you mini-apps',
+] as const;
+
+/** Longest phrase reserves the width so the line never jitters as tasks rotate. */
+const LONGEST_TASK = ROTATING_TASKS.reduce((a, b) => (b.length > a.length ? b : a));
+
+const ROTATE_INTERVAL_MS = 2400;
+
+/**
+ * "Just Ask Stuard — to <task>" — the motto stays put while tasks fly up and out
+ * and the next one rises from beneath. Width is reserved by an invisible copy of
+ * the longest phrase; the animated phrases are absolutely positioned inside that
+ * box so nothing around them shifts.
+ */
+function RotatingTaskLine() {
+  const reduce = useReducedMotion();
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    if (reduce) return;
+    const timer = setInterval(() => {
+      setIndex((i) => (i + 1) % ROTATING_TASKS.length);
+    }, ROTATE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [reduce]);
+
+  return (
+    <p
+      style={{ fontFamily: 'var(--font-general-sans)' }}
+      className="
+        flex items-baseline justify-center gap-[0.45em]
+        text-[17px] sm:text-[20px] lg:text-[23px]
+        font-normal tracking-[-0.01em]
+      "
+    >
+      <span className="font-medium text-white">Just Ask Stuard</span>
+      <span className="text-[#8A8A91]">to</span>
+      <span className="relative inline-block overflow-hidden align-baseline">
+        {/* invisible width-reserver */}
+        <span className="invisible whitespace-nowrap font-medium">{LONGEST_TASK}</span>
+        <AnimatePresence initial={false} mode="popLayout">
+          <motion.span
+            key={ROTATING_TASKS[index]}
+            initial={reduce ? { y: 0, opacity: 1 } : { y: '110%', opacity: 0, filter: 'blur(6px)' }}
+            animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+            exit={reduce ? { opacity: 0 } : { y: '-110%', opacity: 0, filter: 'blur(6px)' }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0 whitespace-nowrap text-left font-medium text-[#FF6B6E]"
+          >
+            {ROTATING_TASKS[index]}
+            <span className="text-white/70">.</span>
+          </motion.span>
+        </AnimatePresence>
+      </span>
+    </p>
+  );
+}
 
 const HeroSection = () => {
   const { user } = useAuthContext();
@@ -33,28 +100,30 @@ const HeroSection = () => {
                 className="
                   w-full font-normal tracking-[-0.02em]
                   bg-gradient-to-b from-white to-white/75 bg-clip-text text-transparent
-                  text-[42px] leading-[1.05]
-                  sm:text-[60px]
-                  md:text-[76px]
-                  lg:text-[92px]
+                  text-[40px] leading-[1.05]
+                  sm:text-[58px]
+                  md:text-[72px]
+                  lg:text-[86px]
                 "
               >
                 Your personal AI workspace on your PC
               </h1>
 
+              <RotatingTaskLine />
+
               <p
                 className="
-                  max-w-[600px]
-                  text-[14px] leading-[20px]
-                  sm:text-[15px] sm:leading-[22px]
-                  lg:text-[17px] lg:leading-[26px]
+                  max-w-[640px]
+                  text-[14px] leading-[21px]
+                  sm:text-[15px] sm:leading-[23px]
+                  lg:text-[17px] lg:leading-[27px]
                   font-normal
-                  text-[#A3A3A3]
+                  text-[#D4D4D4]
                 "
               >
-                It remembers every single conversation, so you never repeat yourself. Your projects,
-                your files, and how you like to work stay in context, then it puts them to work right
-                on your machine.
+                Stuard AI turns your Windows PC into an AI-powered workspace. Ask in plain English —
+                it organizes your files, manages your Gmail and Calendar, and works your apps — then
+                save any task as a one-click automation that runs whenever you need it.
               </p>
 
               <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
@@ -202,12 +271,12 @@ function MacLinuxWaitlist() {
                     setPlatform(value);
                     if (error === 'Please select macOS, Linux, or Both.') setError('');
                   }}
-                  className={`
-                    flex-1 rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors
-                    ${selected
-                      ? 'border-[#FF383C]/60 bg-[#FF383C]/15 text-white'
-                      : 'border-white/15 bg-[#0A0A0B] text-[#A3A3A3] hover:border-white/25 hover:text-white'}
-                  `}
+                  className={
+                    "flex-1 rounded-xl border px-3 py-2 text-[13px] font-medium transition-colors " +
+                    (selected
+                      ? "border-[#FF383C]/60 bg-[#FF383C]/15 text-white"
+                      : "border-white/15 bg-[#0A0A0B] text-[#A3A3A3] hover:border-white/25 hover:text-white")
+                  }
                 >
                   {label}
                 </button>
@@ -238,7 +307,7 @@ function MacLinuxWaitlist() {
               disabled:opacity-50
             "
           >
-            {loading ? 'Joining…' : 'Join waitlist'}
+            {loading ? 'Joining...' : 'Join waitlist'}
           </button>
         </div>
       </form>

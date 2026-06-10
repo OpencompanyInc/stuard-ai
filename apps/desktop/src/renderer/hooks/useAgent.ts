@@ -2024,19 +2024,6 @@ export function useAgent(options?: string | UseAgentOptions) {
                       newHiddenState.terminals = termMap;
                     }
                   }
-                  if (toolName === 'deploy_headless_agent') {
-                    const taskId = result?.taskId || result?.id || args?.taskId;
-                    if (taskId) {
-                      const subagentMap = new Map(t.hiddenState.subagents);
-                      subagentMap.set(taskId, {
-                        taskId,
-                        objective: args?.objective || args?.prompt || '',
-                        status: 'running',
-                        createdAt: now,
-                      });
-                      newHiddenState.subagents = subagentMap;
-                    }
-                  }
                   if (result?.terminalId && (result?.status === 'exited' || result?.done === true)) {
                     const termMap = new Map(t.hiddenState.terminals);
                     const existing = termMap.get(result.terminalId);
@@ -2471,20 +2458,6 @@ export function useAgent(options?: string | UseAgentOptions) {
                             newHiddenState.terminals = termMap;
                           }
                         }
-                        // Track subagent creation
-                        if (tool === 'deploy_headless_agent' && result?.taskId) {
-                          const subagentMap = new Map(t.hiddenState.subagents);
-                          const existingArgs = t.currentToolCalls.find(findMatch)?.args;
-                          subagentMap.set(result.taskId, {
-                            taskId: result.taskId,
-                            objective: existingArgs?.objective || existingArgs?.prompt || '',
-                            status: result?.status || 'running',
-                            result: result?.result,
-                            createdAt: Date.now(),
-                          });
-                          newHiddenState.subagents = subagentMap;
-                        }
-
                         // Track file modifications for revert support
                         if (FILE_MODIFYING_TOOLS.has(tool) && normalizedStatus === 'completed') {
                           const existingArgs = t.currentToolCalls.find(findMatch)?.args || d.args;

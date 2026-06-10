@@ -461,13 +461,6 @@ export const agent_todo = createTool({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SUB-AGENTS (HEADLESS)
-// ═══════════════════════════════════════════════════════════════════════════════
-export { deployHeadlessAgent } from './deploy-headless-agent';
-export { listHeadlessAgentTasks } from './list-headless-agent-tasks';
-export { getHeadlessAgentStatus } from './get-headless-agent-status';
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // AI AGENT WORKFLOW NODES — Synchronous agent steps for workflows
 // ═══════════════════════════════════════════════════════════════════════════════
 export { agent_node, agent_decision, agent_extract } from './device/agent-node';

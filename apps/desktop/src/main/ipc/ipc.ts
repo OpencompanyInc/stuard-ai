@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSpacesWindow, closeSpacesWindow, toggleSpacesWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow } from "../windows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, captureScreenExcludingStuard, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow, isAnyAppWindowFocused } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
@@ -370,11 +370,6 @@ export function setupIpc() {
       }
     } catch { }
   });
-
-  // Spaces window (legacy - redirects to sidebar)
-  ipcMain.handle('spaces:open', () => openSpacesWindow());
-  ipcMain.handle('spaces:close', () => closeSpacesWindow());
-  ipcMain.handle('spaces:toggle', () => toggleSpacesWindow());
 
   // Latest agent to-do plan, cached so a freshly-opened detached sidebar
   // window can render the current plan immediately instead of waiting for the
@@ -763,6 +758,14 @@ export function setupIpc() {
   });
   ipcMain.handle("system:notify", (_e, payload: any) => {
     try {
+      // Task-complete toasts shouldn't interrupt when the user is already in
+      // Stuard (any window focused, incl. window/overlay mode) — the result is
+      // visible in the chat. Other notifications (permissions, reminders,
+      // check-ins) still come through regardless of focus.
+      if (payload?.orchestratorDone && isAnyAppWindowFocused()) {
+        return { ok: true, skipped: 'focused' };
+      }
+
       const title = String(payload?.title || 'Stuard AI');
       // Normalize body/message
       const message = String(payload?.message || payload?.body || '');
@@ -1019,6 +1022,16 @@ export function setupIpc() {
     try {
       setScreenCaptureInvisible(!!enabled);
       return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  });
+
+  // Capture the screen with all Stuard windows excluded from the frame (the
+  // compact-mode Ctrl+Shift+Enter "screenshot & send" shortcut).
+  ipcMain.handle('screen:captureClean', async () => {
+    try {
+      return await captureScreenExcludingStuard();
     } catch (e: any) {
       return { ok: false, error: String(e?.message || 'failed') };
     }
@@ -2226,6 +2239,17 @@ export function setupIpc() {
   ipcMain.handle('unified-tasks:delete-agent-assignment', (_e, taskId: string, assignmentId: string) => unifiedTasksService.deleteAgentAssignment(taskId, assignmentId));
   ipcMain.handle('unified-tasks:get-pending-assignments', () => unifiedTasksService.getPendingAssignments());
   ipcMain.handle('unified-tasks:get-calendar-items', () => unifiedTasksService.getCalendarItems());
+
+  // ==========================================
+  // PROJECT ↔ NOTION SYNC
+  // ==========================================
+  const projectNotion = require('../services/project-notion-sync');
+
+  ipcMain.handle('projects:notion-search', (_e: any, query: string) => projectNotion.searchProjectNotionTargets(query));
+  ipcMain.handle('projects:notion-link', (_e: any, projectId: string, target: any, options?: any) => projectNotion.linkProjectNotion(projectId, target, options));
+  ipcMain.handle('projects:notion-update', (_e: any, projectId: string, patch: any) => projectNotion.updateProjectNotion(projectId, patch));
+  ipcMain.handle('projects:notion-unlink', (_e: any, projectId: string) => projectNotion.unlinkProjectNotion(projectId));
+  ipcMain.handle('projects:notion-sync', (_e: any, projectId: string) => projectNotion.syncProjectNotionNow(projectId));
 
   // ==========================================
   // OFFLINE CALENDAR EVENTS

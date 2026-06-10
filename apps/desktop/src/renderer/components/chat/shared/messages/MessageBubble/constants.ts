@@ -43,7 +43,6 @@ export const HIDDEN_TOOL_NAMES = new Set([
   'conversation_update',
   'conversation_delete',
   'conversation_search',
-  'conversation_get_spaces',
   'message_add',
   'message_list',
   // Project-mode bookkeeping is represented by the active project UI, not

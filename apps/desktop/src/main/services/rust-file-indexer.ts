@@ -364,10 +364,10 @@ class IndexerDaemon {
             // with the matching open_db pragmas).
             STUARD_INDEXER_CACHE_MB: DAEMON_CACHE_MB,
             STUARD_INDEXER_MMAP_MB: DAEMON_MMAP_MB,
-            // Cross-modal (text→image) cosine runs lower than text→text; 0.3 keeps
+            // Cross-modal (text→image) cosine runs lower than text→text; 0.385 keeps
             // correct image matches that a 0.4 floor silently dropped.
             STUARD_INDEXER_SEMANTIC_MIN:
-              process.env.STUARD_INDEXER_SEMANTIC_MIN || '0.3',
+              process.env.STUARD_INDEXER_SEMANTIC_MIN || '0.385',
           },
         });
       } catch (err: any) {

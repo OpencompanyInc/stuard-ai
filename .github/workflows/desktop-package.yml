@@ -104,6 +104,19 @@ jobs:
         working-directory: apps/agent
         run: python build-services.py --services agent wakeword
 
+      - name: Build file indexer (Rust, branded "Stuard AI")
+        shell: bash
+        run: |
+          cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml
+          mkdir -p dist
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer.exe dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-macos
+          else
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-linux
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -132,6 +145,9 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fail if prepare:agent can't find the Rust file indexer, so a packaged
+          # build can never silently ship with local file search disabled.
+          STUARD_REQUIRE_FILE_INDEXER: "1"
         run: npm run dist
 
       - name: Upload packaged app

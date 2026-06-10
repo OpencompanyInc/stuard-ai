@@ -13,33 +13,37 @@ type LadderRung = {
 const LADDER_RUNGS: LadderRung[] = [
   {
     step: '1',
-    title: 'Chat',
-    subtitle: 'butler',
-    description: 'Tell Stuard what you want. It uses your computer to get it done.',
+    title: 'Ask',
+    subtitle: 'chat',
+    description:
+      'Start by just asking. "Clean up my Downloads." Stuard uses your computer to get it done — that\'s the whole product on day one.',
     proof: 'This actually ran',
     icon: MessageSquare,
   },
   {
     step: '2',
-    title: 'Workflows',
-    subtitle: 'repeatable',
-    description: 'Do something twice? Stuard saves the recipe. Run it again with one click.',
+    title: 'Save it',
+    subtitle: 'workflow',
+    description:
+      'Asked for the same thing twice? Save it as a workflow. From now on it\'s one click instead of a conversation.',
     proof: 'Saved as a workflow',
     icon: Workflow,
   },
   {
     step: '3',
-    title: 'Mini-apps',
-    subtitle: 'UI on top',
-    description: 'Wrap a workflow in a UI and it becomes a tool that lives in your workspace.',
+    title: 'Make it a tool',
+    subtitle: 'mini-app',
+    description:
+      'Give a workflow buttons and inputs and it becomes a mini-app in your workspace — or install one someone else already built.',
     proof: 'Lives in your workspace',
     icon: AppWindow,
   },
   {
     step: '4',
-    title: 'Proactive agents',
-    subtitle: 'runs on its own',
-    description: 'Schedule them, trigger them, let them run while you sleep.',
+    title: 'Let it run itself',
+    subtitle: 'agent',
+    description:
+      'Put it on a schedule or a trigger and stop thinking about it. On your PC, or in the cloud when your laptop\'s closed.',
     proof: 'Ran at 6:00 AM',
     icon: CalendarClock,
   },
@@ -54,15 +58,16 @@ const HowItWorksIntroSection = () => {
       <div className="mx-auto flex w-full max-w-[1000px] flex-col items-center gap-10 sm:gap-12 lg:gap-14">
         <SectionReveal className="flex w-full max-w-[780px] flex-col items-center gap-4 sm:gap-5 lg:gap-7 text-center">
           <p className="text-[12px] sm:text-[13px] lg:text-[14px] font-semibold leading-tight text-[#FF383C] tracking-wider">
-            THE LADDER
+            THE ECOSYSTEM
           </p>
 
           <h2 className="text-[22px] leading-[1.2] sm:text-[28px] sm:leading-[1.2] lg:text-[36px] lg:leading-[1.2] font-normal text-white">
-            One assistant. Four ways to use it.
+            It&apos;s not a chatbot. It&apos;s a workspace that compounds.
           </h2>
 
           <p className="max-w-[720px] text-[14px] leading-[22px] sm:text-[15px] sm:leading-[24px] lg:text-[16px] lg:leading-[26px] font-normal text-[#E5E5E5]">
-            Each rung is more automatic than the last. You climb when you&apos;re ready.
+            You only need step 1 to get value today. Everything after that is the same task getting
+            more automatic — ask once, save it, give it a UI, let it run itself.
           </p>
         </SectionReveal>
 

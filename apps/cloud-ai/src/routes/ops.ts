@@ -404,7 +404,6 @@ export async function handleOpsRoutes(
 
       // Gather stats from all sync-related tables in parallel
       const [
-        sharedSpacesResult,
         memoryOutboxResult,
         webhooksResult,
         webhookEventsResult,
@@ -415,7 +414,6 @@ export async function handleOpsRoutes(
         marketplaceResult,
         feedbackResult,
       ] = await Promise.all([
-        supabase.from("shared_spaces").select("id, synced_at", { count: "exact", head: false }).order("synced_at", { ascending: false }).limit(5),
         supabase.from("memory_outbox").select("id, status, attempts, created_at", { count: "exact", head: false }),
         supabase.from("webhooks").select("id, is_active, trigger_count", { count: "exact", head: false }),
         supabase.from("webhook_events").select("id, status, created_at", { count: "exact", head: false }).order("created_at", { ascending: false }).limit(10),
@@ -465,11 +463,6 @@ export async function handleOpsRoutes(
         ok: true,
         timestamp: new Date().toISOString(),
         systems: {
-          sharedSpaces: {
-            status: "operational",
-            total: sharedSpacesResult.count || 0,
-            recentSync: sharedSpacesResult.data?.[0]?.synced_at || null,
-          },
           memoryOutbox: {
             status: failedOutbox > 10 ? "degraded" : "operational",
             total: memoryOutboxResult.count || 0,
@@ -535,7 +528,7 @@ export async function handleOpsRoutes(
 
       const tables = [
         "profiles", "conversations", "messages", "devices", "usage_events",
-        "shared_spaces", "space_shares", "memory_outbox",
+        "memory_outbox",
         "webhooks", "webhook_events", "webhook_providers", "webhook_queue",
         "marketplace_workflows", "marketplace_workflow_versions", "marketplace_ratings", "marketplace_downloads",
         "external_accounts", "beta_users", "waitlist", "feedback", "feedback_comments",

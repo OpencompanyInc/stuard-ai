@@ -11,6 +11,7 @@ import { prepareForSave, prepareForLoad, isEncrypted } from "../crypto";
 import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } from "../workflow-variables";
 import { getTimezone } from "../settings";
 import { waitForAgentReady } from "../services/agent";
+import { readClipboardSnapshot } from "../tools/clipboard-snapshot";
 // Lazy-imported inside handlers to avoid circular deps with bot-trigger-dispatcher
 // → bot-service → proactive-service → … → workflows.
 let _routeWebhookToBots: ((slug: string, payload: any) => number) | null = null;
@@ -1210,6 +1211,46 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
         rt.fsWatchers.push(watcher);
         started++;
       } catch { }
+    } else if (type === 'clipboard.change') {
+      // Electron exposes no native clipboard-change event, so poll and diff a
+      // cheap content signature. `types` optionally restricts which clipboard
+      // kinds fire the workflow (e.g. ['text'] or ['files','image']).
+      try {
+        const pollMs = Math.max(200, Number(args?.pollMs || 600));
+        const wantTypes: string[] = Array.isArray(args?.types)
+          ? args.types.map((s: any) => String(s).trim().toLowerCase()).filter(Boolean)
+          : [];
+        const tId = triggerId; // Capture for closure
+        let lastSig: string | null = null;
+        let primed = false;
+        const h = setInterval(() => {
+          try {
+            const snap = readClipboardSnapshot();
+            // Skip the very first read so we only fire on changes after start.
+            if (!primed) { lastSig = snap.signature; primed = true; return; }
+            if (snap.signature === lastSig) return;
+            lastSig = snap.signature;
+            if (snap.type === 'empty') return;
+            if (wantTypes.length && !wantTypes.includes(snap.type)) return;
+            executeWorkflowFromTrigger(safe, `clipboard.change:${snap.type}`, {
+              event: 'clipboard.change',
+              type: snap.type,
+              types: snap.types,
+              text: snap.text,
+              html: snap.html,
+              files: snap.files,
+              hasImage: snap.hasImage,
+              imageSize: snap.imageSize,
+              formats: snap.formats,
+            }, tId);
+          } catch { }
+        }, pollMs);
+        rt.intervals.push(h);
+        started++;
+        console.log('[Workflows] Clipboard change trigger registered:', { pollMs, wantTypes });
+      } catch (e) {
+        console.error('[Workflows] Failed to register clipboard.change trigger:', e);
+      }
     } else if (type === 'schedule.cron' && nodeCron && typeof nodeCron.schedule === 'function') {
       try {
         const cronExp = String(args?.cron || '*/5 * * * *');

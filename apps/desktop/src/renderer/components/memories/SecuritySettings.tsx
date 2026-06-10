@@ -35,8 +35,8 @@ interface SecurityState {
 interface MemoryStats {
   conversations: number;
   messages: number;
-  spaces: number;
-  space_items: number;
+  projects: number;
+  memories: number;
   segments: number;
   pending_sync: number;
 }
@@ -315,7 +315,7 @@ export function SecuritySettings() {
             <StatCard icon={MessageSquare} label="Conversations" value={memStats?.conversations ?? 0} color="bg-blue-500" />
             <StatCard icon={Database} label="Messages" value={memStats?.messages ?? 0} color="bg-indigo-500" />
             <StatCard icon={Brain} label="Knowledge" value={knowledgeStats?.facts ?? 0} color="bg-violet-500" />
-            <StatCard icon={HardDrive} label="Spaces" value={memStats?.spaces ?? 0} color="bg-emerald-500" />
+            <StatCard icon={HardDrive} label="Projects" value={memStats?.projects ?? 0} color="bg-emerald-500" />
             <StatCard icon={Database} label="Topics" value={memStats?.segments ?? 0} color="bg-amber-500" />
             <StatCard icon={Brain} label="Entities" value={knowledgeStats?.entities ?? 0} color="bg-rose-500" />
           </div>

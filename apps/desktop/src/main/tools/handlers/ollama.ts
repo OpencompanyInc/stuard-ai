@@ -44,9 +44,6 @@ const OLLAMA_AGENT_BLOCKED_TOOLS = new Set([
   'agent_node',
   'agent_decision',
   'agent_extract',
-  'deploy_headless_agent',
-  'get_headless_agent_status',
-  'list_headless_agent_tasks',
 ]);
 
 let workflowToolSchemaModulePromise: Promise<typeof import('../../../renderer/workflows/constants/tool-schemas')> | null = null;

@@ -73,10 +73,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   openDashboard: (options?: { tab?: string }) => ipcRenderer.invoke('system:openDashboard', options),
   openOnboarding: () => ipcRenderer.invoke('system:openOnboarding'),
   openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => ipcRenderer.invoke('system:openWorkflows', options),
-  openSpaces: () => ipcRenderer.invoke('spaces:open'),
-  closeSpaces: () => ipcRenderer.invoke('spaces:close'),
-  toggleSpaces: () => ipcRenderer.invoke('spaces:toggle'),
-  // Sidebar window (unified Spaces, Terminal, Agent Tasks, Browser)
+  // Sidebar window (unified Terminal, Agent Tasks, Browser)
   openSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
   closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
   toggleSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
@@ -333,6 +330,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   },
   sendStuardsUiEvent: (stuardId: string, event: string, data?: any) => ipcRenderer.invoke('stuards:ui:event', { stuardId, event, data }),
   setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
+  /** Capture the screen with all Stuard windows excluded from the frame.
+   *  Returns a PNG data URL of whatever sits behind the app. */
+  captureScreenClean: (): Promise<{ ok: boolean; dataUrl?: string; error?: string }> =>
+    ipcRenderer.invoke('screen:captureClean'),
   getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
   setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
   /** Sync the desktop's current effective timezone to the running VM
@@ -545,6 +546,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   selectFolder: (options?: { title?: string; multiple?: boolean }) => ipcRenderer.invoke('files:selectFolder', options),
 
   // Unified Tasks System
+  // Project ↔ Notion sync
+  projectNotionSearch: (query: string) => ipcRenderer.invoke('projects:notion-search', query),
+  projectNotionLink: (projectId: string, target: any, options?: any) => ipcRenderer.invoke('projects:notion-link', projectId, target, options),
+  projectNotionUpdate: (projectId: string, patch: any) => ipcRenderer.invoke('projects:notion-update', projectId, patch),
+  projectNotionUnlink: (projectId: string) => ipcRenderer.invoke('projects:notion-unlink', projectId),
+  projectNotionSync: (projectId: string) => ipcRenderer.invoke('projects:notion-sync', projectId),
   unifiedTasksList: () => ipcRenderer.invoke('unified-tasks:list'),
   unifiedTasksGet: (taskId: string) => ipcRenderer.invoke('unified-tasks:get', taskId),
   unifiedTasksAdd: (task: any) => ipcRenderer.invoke('unified-tasks:add', task),

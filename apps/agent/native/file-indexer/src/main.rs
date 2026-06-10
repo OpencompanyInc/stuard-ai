@@ -1840,18 +1840,18 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
 /// Minimum cosine similarity for vector-only semantic hits. Matches below this
 /// are dropped so hybrid/semantic search does not surface unrelated files.
 ///
-/// Default 0.3, NOT 0.4: cross-modal similarity (a TEXT query against an IMAGE
+/// Default 0.385, NOT 0.4: cross-modal similarity (a TEXT query against an IMAGE
 /// embedding) runs systematically lower than text→text, so genuinely-correct
 /// image matches land around 0.30–0.42 (e.g. a white-shirt photo scored 0.34 for
 /// the query "white shirt"). A 0.4 floor silently dropped those correct hits.
-/// The clearly-irrelevant floor sits ~0.24, so 0.3 keeps good separation.
+/// The clearly-irrelevant floor sits ~0.24, so 0.385 keeps good separation.
 /// Override via STUARD_INDEXER_SEMANTIC_MIN to tune without a rebuild.
 fn semantic_similarity_min() -> f64 {
     std::env::var("STUARD_INDEXER_SEMANTIC_MIN")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|v| (0.0..=1.0).contains(v))
-        .unwrap_or(0.3)
+        .unwrap_or(0.385)
 }
 
 /// Brute-force vector search over the embedded subset. Cheap in practice

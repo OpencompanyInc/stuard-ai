@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
+import { motion } from 'framer-motion';
 
 import {
   COMPACT_OVERLAY_WIDTH_CLASS,
@@ -36,9 +37,21 @@ export const CompactOverlayPortal: React.FC<CompactOverlayPortalProps> = ({
         zIndex: COMPACT_OVERLAY_Z,
       }}
     >
-      <div className={clsx('pointer-events-auto', widthClassName)} data-compact-hit-area="true">
+      {/* Keyed on placement so a top↔bottom flip re-runs the entrance: the panel
+          eases in from the bar on the new side instead of hard-cutting. The bar
+          itself stays put across a flip, so animating just the dropdown is what
+          makes the swap read as smooth rather than a teleport. */}
+      <motion.div
+        key={placement}
+        initial={{ opacity: 0, y: placement === 'top' ? 14 : -14, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        className={clsx('pointer-events-auto', widthClassName)}
+        data-compact-hit-area="true"
+        data-compact-overlay-panel="true"
+      >
         {children}
-      </div>
+      </motion.div>
     </div>,
     document.body,
   );

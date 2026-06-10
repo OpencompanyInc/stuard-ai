@@ -71,9 +71,18 @@ import { FileNavigatorOverlay } from "../window/parts/FileNavigatorOverlay";
 import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 import { CreditsLimitNotice } from "../../shared/CreditsLimitNotice";
 import { AttachmentBar } from "../../shared/input/AttachmentBar";
+import {
+  AttachmentPreviewOverlay,
+  attachmentOverlayInset,
+} from "../../../AttachmentPreview";
 import { IntegrationSuggestionChip } from "../../shared/input/suggestions/IntegrationSuggestionChip";
 import { HighlightMatch } from "../../shared/input/HighlightMatch";
 import { getFileKindConfig } from "../../shared/input/fileKind";
+import {
+  filterFileSearchResults,
+  mergeHybridAndQuickFileResults,
+} from "../../shared/fileSearchMerge";
+import type { ChatAttachment } from "../../../../utils/attachments";
 
 interface LauncherViewProps {
   query: string;
@@ -86,7 +95,7 @@ interface LauncherViewProps {
   isRecording?: boolean;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
-  attachments?: Array<{ type: "image" | "file"; name: string; mimeType?: string; source?: string }>;
+  attachments?: ChatAttachment[];
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
   onRemoveAttachment?: (index: number) => void;
@@ -343,6 +352,22 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   const semanticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const FILE_SEARCH_RESULT_LIMIT = 12;
+  const quickFileResultsRef = useRef<any[]>([]);
+  const hybridFileResultsRef = useRef<any[]>([]);
+
+  const applyMergedFileResults = useCallback(() => {
+    setFileResults(
+      mergeHybridAndQuickFileResults(
+        hybridFileResultsRef.current,
+        quickFileResultsRef.current,
+        FILE_SEARCH_RESULT_LIMIT,
+      ),
+    );
+    setFileSearchMode(
+      hybridFileResultsRef.current.length > 0 ? "hybrid" : "quick",
+    );
+  }, []);
 
   const refreshIndexMeta = useCallback(async () => {
     try {
@@ -448,18 +473,24 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         });
         if (searchReqIdRef.current !== reqId) return;
         if (res?.ok) {
-          setFileResults(
-            Array.isArray(res.results) ? res.results.slice(0, 6) : [],
+          quickFileResultsRef.current = filterFileSearchResults(res.results).slice(
+            0,
+            6,
           );
+          hybridFileResultsRef.current = [];
+          applyMergedFileResults();
           setAppResults([]);
-          setFileSearchMode("quick");
         } else {
+          quickFileResultsRef.current = [];
+          hybridFileResultsRef.current = [];
           setFileResults([]);
           setAppResults([]);
           setFileError(String(res?.error || "search_failed"));
         }
       } catch (e: any) {
         if (searchReqIdRef.current !== reqId) return;
+        quickFileResultsRef.current = [];
+        hybridFileResultsRef.current = [];
         setFileResults([]);
         setAppResults([]);
         setFileError(String(e?.message || "search_failed"));
@@ -493,22 +524,26 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
           r.source !== "app-discovery" && String(r.kind || "").toLowerCase() !== "application"
         ));
         setAppResults(apps);
-        setFileResults(files);
-        setFileSearchMode("quick");
+        quickFileResultsRef.current = files;
+        applyMergedFileResults();
       } else {
         setAppResults([]);
+        quickFileResultsRef.current = [];
+        hybridFileResultsRef.current = [];
         setFileResults([]);
         setFileError(String(res?.error || "search_failed"));
       }
     } catch (e: any) {
       if (searchReqIdRef.current !== reqId) return;
       setAppResults([]);
+      quickFileResultsRef.current = [];
+      hybridFileResultsRef.current = [];
       setFileResults([]);
       setFileError(String(e?.message || "search_failed"));
     } finally {
       if (searchReqIdRef.current === reqId) setFileLoading(false);
     }
-  }, []);
+  }, [applyMergedFileResults]);
 
   const doSemanticRefine = useCallback(
     async (q: string, rootId?: string) => {
@@ -548,14 +583,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
         if (semanticReqIdRef.current !== reqId) return;
         if (res?.ok) {
-          // Match the compact dropdown: keep all hybrid hits (capped by the
-          // query limit of 10), don't re-slice to 8.
-          setFileResults(
-            Array.isArray(res.results)
-              ? res.results.filter((r: any) => String(r?.kind || "").toLowerCase() !== "application")
-              : [],
-          );
-          setFileSearchMode("hybrid");
+          hybridFileResultsRef.current = filterFileSearchResults(res.results);
+          applyMergedFileResults();
         }
       } catch {
         // ignore
@@ -563,7 +592,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
         if (semanticReqIdRef.current === reqId) setFileSemanticLoading(false);
       }
     },
-    [CLOUD_AI_HTTP, accessToken, indexStats?.indexed_files],
+    [CLOUD_AI_HTTP, accessToken, indexStats?.indexed_files, applyMergedFileResults],
   );
 
   useEffect(() => {
@@ -580,6 +609,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     if (q.length < 2) {
       searchReqIdRef.current += 1;
       semanticReqIdRef.current += 1;
+      quickFileResultsRef.current = [];
+      hybridFileResultsRef.current = [];
       setAppResults([]);
       setFileResults([]);
       setFileError("");
@@ -587,6 +618,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
       setFileSemanticLoading(false);
       return;
     }
+
+    hybridFileResultsRef.current = [];
 
     searchDebounceRef.current = setTimeout(() => {
       doUnifiedSearch(q, selectedRootId || undefined);
@@ -1588,7 +1621,6 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 <div className="flex flex-col gap-1.5">
                   {!isCompact && onRemoveAttachment && (
                     <AttachmentBar
-                      attachments={attachments}
                       contextPaths={contextPaths}
                       onRemoveAttachment={onRemoveAttachment}
                       onRemoveContext={(idx) => onRemoveContext?.(idx)}
@@ -1639,7 +1671,20 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                       : "gap-1.5 px-0.5",
                   )}
                 >
-                  <div className="min-w-0 w-full">
+                  <div
+                    className="min-w-0 w-full relative"
+                    style={
+                      attachmentOverlayInset(attachments.length) > 0
+                        ? { paddingLeft: attachmentOverlayInset(attachments.length) }
+                        : undefined
+                    }
+                  >
+                    {attachments.length > 0 && onRemoveAttachment && (
+                      <AttachmentPreviewOverlay
+                        attachments={attachments}
+                        onRemove={onRemoveAttachment}
+                      />
+                    )}
                     <TextareaAutosize
                       ref={textareaRef}
                       className={clsx(

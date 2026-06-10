@@ -2,10 +2,10 @@ import type { Metadata } from 'next';
 import { getRequestSiteUrl } from '@/lib/site-url';
 
 const sharedDescription =
-  'Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first. Download for Windows; join the waitlist for macOS and Linux.';
+  'Stuard AI is a personal AI assistant app for Windows. It organizes your files, manages your Gmail and Calendar, works your apps, and turns repeated tasks into one-click automations — local-first, cloud only when you ask.';
 
 const sharedOgDescription =
-  'Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.';
+  'A personal AI assistant for your Windows PC — it organizes files, manages email and calendar, and automates repeated work.';
 
 export async function buildRootMetadata(): Promise<Metadata> {
   const baseUrl = await getRequestSiteUrl();
@@ -13,7 +13,7 @@ export async function buildRootMetadata(): Promise<Metadata> {
   return {
     metadataBase: new URL(baseUrl),
     title: {
-      default: 'Stuard — The AI workspace for your PC',
+      default: 'Stuard AI — The personal AI assistant for your Windows PC',
       template: '%s | Stuard',
     },
     description: sharedDescription,
@@ -67,7 +67,7 @@ export async function buildRootMetadata(): Promise<Metadata> {
       canonical: baseUrl,
     },
     openGraph: {
-      title: 'Stuard — The AI workspace for your PC',
+      title: 'Stuard AI — The personal AI assistant for your Windows PC',
       description: sharedOgDescription,
       url: baseUrl,
       siteName: 'Stuard AI',
@@ -87,7 +87,7 @@ export async function buildRootMetadata(): Promise<Metadata> {
       card: 'summary_large_image',
       site: '@stuardai',
       creator: '@stuardai',
-      title: 'Stuard — The AI workspace for your PC',
+      title: 'Stuard AI — The personal AI assistant for your Windows PC',
       description: sharedOgDescription,
       images: ['/og-image.png'],
     },

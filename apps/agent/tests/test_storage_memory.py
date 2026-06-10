@@ -306,46 +306,184 @@ class TestVectorSearch:
         assert len(results) <= 3
 
 
-class TestSpaces:
-    """Tests for Space operations."""
+class TestProjects:
+    """Tests for Project Mode operations (successor to Spaces)."""
 
-    def test_create_space(self, tmp_path):
+    def test_create_project_with_settings(self, tmp_path):
         from app.storage.memory_db import MemoryDB
 
         db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
 
-        space = db.create_space(
+        project = db.create_project(
             name="My Project",
             description="A test project",
-            space_type="project",
+            settings={"notion": {"page_id": "abc123", "direction": "pull"}},
         )
 
-        assert space.id is not None
-        assert space.name == "My Project"
-        assert space.description == "A test project"
-        assert space.type == "project"
+        assert project.id is not None
+        assert project.name == "My Project"
+        assert project.settings == {"notion": {"page_id": "abc123", "direction": "pull"}}
 
-    def test_list_spaces(self, tmp_path):
-        from app.storage.memory_db import MemoryDB
-
-        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
-        db.create_space(name="Space 1", space_type="project")
-        db.create_space(name="Space 2", space_type="topic")
-
-        spaces = db.list_spaces()
-
-        assert len(spaces) == 2
-
-    def test_get_space(self, tmp_path):
-        from app.storage.memory_db import MemoryDB
-
-        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
-        created = db.create_space(name="Test Space", space_type="research")
-
-        fetched = db.get_space(created.id)
-
+        fetched = db.get_project(project.id)
         assert fetched is not None
-        assert fetched.name == "Test Space"
+        assert fetched.settings == {"notion": {"page_id": "abc123", "direction": "pull"}}
+
+    def test_update_project_settings(self, tmp_path):
+        from app.storage.memory_db import MemoryDB
+
+        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+        project = db.create_project(name="P")
+
+        updated = db.update_project(project.id, settings={"notion": {"page_id": "x"}})
+        assert updated is not None
+        assert updated.settings == {"notion": {"page_id": "x"}}
+
+        # Other fields untouched
+        assert updated.name == "P"
+
+    def test_journal_question_and_hypothesis_types(self, tmp_path):
+        from app.storage.memory_db import MemoryDB
+
+        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+        project = db.create_project(name="P")
+
+        q = db.create_journal_entry(project.id, "question", "Open question?")
+        h = db.create_journal_entry(project.id, "hypothesis", "Maybe X causes Y")
+
+        assert q.type == "question"
+        assert h.type == "hypothesis"
+
+    def test_journal_update_in_place(self, tmp_path):
+        from app.storage.memory_db import MemoryDB
+
+        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+        project = db.create_project(name="P")
+
+        entry = db.create_journal_entry(
+            project.id, "chat_summary", "Session: initial topic",
+            body="First summary", source="auto-chat",
+            source_ref={"segment_id": "seg-1"},
+            entry_id="jseg-seg-1",
+        )
+        assert entry.id == "jseg-seg-1"
+
+        updated = db.update_journal_entry(
+            "jseg-seg-1", title="Session: refined topic", body="Updated summary",
+        )
+        assert updated is not None
+        assert updated.title == "Session: refined topic"
+        assert updated.body == "Updated summary"
+        assert updated.source_ref == {"segment_id": "seg-1"}
+
+        entries = db.list_journal_entries(project.id)
+        assert len(entries) == 1
+
+    def test_memory_image_type(self, tmp_path):
+        from app.storage.memory_db import MemoryDB
+
+        db = MemoryDB(db_path=str(tmp_path / "memory.db"), user_password="test")
+        mem = db.create_memory(type="image", content="C:/pics/diagram.png")
+        assert mem.type == "image"
+
+
+class TestSpacesBackfill:
+    """The legacy spaces tables are migrated into projects on startup."""
+
+    def _create_legacy_spaces(self, db_path):
+        """Open a fresh DB, then graft old-style spaces tables onto it."""
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE spaces (
+                id TEXT PRIMARY KEY, name_enc TEXT NOT NULL, description_enc TEXT,
+                type TEXT NOT NULL, icon TEXT, color TEXT, embedding BLOB,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                archived INTEGER DEFAULT 0, sync_id TEXT, synced_at TEXT,
+                needs_sync INTEGER DEFAULT 0
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE space_items (
+                id TEXT PRIMARY KEY, space_id TEXT NOT NULL, type TEXT NOT NULL,
+                title_enc TEXT, content_enc TEXT NOT NULL, metadata_enc TEXT,
+                added_by TEXT NOT NULL, pinned INTEGER DEFAULT 0, embedding BLOB,
+                parent_id TEXT, position INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE space_conversations (
+                space_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                relevance_score REAL DEFAULT 1.0, auto_linked INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL, PRIMARY KEY (space_id, conversation_id)
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def test_spaces_backfill_to_projects(self, tmp_path):
+        from app.storage.memory_db import MemoryDB
+        from app.storage.memory_db import _encrypt_content
+
+        db_path = str(tmp_path / "memory.db")
+
+        # First boot creates the modern schema; we then graft legacy tables
+        # with rows encrypted by the same crypto manager.
+        db = MemoryDB(db_path=db_path, user_password="test")
+        crypto = db._crypto
+        conv = db.create_conversation(title="Linked chat", model="m")
+
+        self._create_legacy_spaces(db_path)
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO spaces VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, NULL, NULL, 0)",
+            ("space-1", _encrypt_content("Research Space", crypto),
+             _encrypt_content("Old space", crypto), "research", "🔬", "#123456",
+             "2025-01-01T00:00:00", "2025-01-02T00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO space_items VALUES (?, ?, ?, ?, ?, NULL, 'user', 1, NULL, NULL, 0, ?, ?)",
+            ("item-1", "space-1", "source",
+             _encrypt_content("A source", crypto), _encrypt_content("Useful content", crypto),
+             "2025-01-01T00:00:00", "2025-01-01T00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO space_conversations VALUES (?, ?, 1.0, 0, ?)",
+            ("space-1", conv.id, "2025-01-01T00:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Re-init triggers the backfill migration.
+        db2 = MemoryDB(db_path=db_path, user_password="test")
+
+        project = db2.get_project("space-1")
+        assert project is not None
+        assert project.name == "Research Space"
+        assert project.tags == ["research"]
+
+        memories = db2.list_memories(project_id="space-1")
+        assert len(memories) == 1
+        assert memories[0].type == "reference"  # 'source' maps to 'reference'
+        assert memories[0].content == "Useful content"
+        assert memories[0].pinned is True
+
+        refreshed = db2.get_conversation(conv.id)
+        assert refreshed is not None
+
+        # Legacy tables are dropped after a successful backfill.
+        import sqlite3 as s3
+        conn = s3.connect(db_path)
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        conn.close()
+        assert "spaces" not in tables
+        assert "space_items" not in tables
+        assert "space_conversations" not in tables
 
 
 class TestSecuritySettings:

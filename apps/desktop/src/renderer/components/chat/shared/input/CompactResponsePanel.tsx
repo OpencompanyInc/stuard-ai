@@ -9,16 +9,21 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
-import { uniqueBrands, toolToBrand, type ToolBrand } from '../../../../utils/toolBrand';
-import { AudioPlayer } from '../../../AudioPlayer';
-import { LinkPreview } from '../../../LinkPreview';
+import { uniqueBrands, toolToBrand, hasInFlightToolCalls, usingToolStatusText, type ToolBrand } from '../../../../utils/toolBrand';
 import { extractContentSegments } from '../messages/MessageBubble/helpers/content';
-import { toMediaSrc } from '../messages/MessageBubble/helpers/media';
 import type { ContentSegment } from '../messages/MessageBubble/types';
-import { InlineFilePreview } from '../messages/MessageBubble/inline/InlineFilePreview';
-import { InlineImage } from '../messages/MessageBubble/inline/InlineImage';
-import { InlineVideo } from '../messages/MessageBubble/inline/InlineVideo';
-import { YouTubeEmbed } from '../messages/MessageBubble/inline/YouTubeEmbed';
+import type { ChatAttachment } from '../../../../utils/attachments';
+import {
+  CompactAudio,
+  CompactFileChip,
+  CompactImage,
+  CompactLinkPreview,
+  CompactVideo,
+  CompactYouTubeEmbed,
+  renderCompactMediaFromUrl,
+} from './compact/CompactMedia';
+import { CompactThinkingBlock } from './compact/CompactThinkingBlock';
+import { CompactUserAttachments } from './compact/CompactUserAttachments';
 
 interface ToolCallLike {
   id: string;
@@ -29,10 +34,16 @@ interface ToolCallLike {
 interface CompactResponsePanelProps {
   /** The user's most recent prompt, shown as a right-aligned bubble. */
   userPrompt: string;
+  /** Images/files the user attached to that prompt. */
+  userAttachments?: readonly ChatAttachment[];
   /** The assistant's streamed reply, shown as a left-aligned bubble. */
   assistantText?: string;
   /** Show a "…" pulse while the assistant is still mid-stream. */
   isStreaming?: boolean;
+  /** AI turn in progress (thinking, tools, responding) — may be true before text streams. */
+  isAiWorking?: boolean;
+  /** In-flight reasoning/thinking text for this turn. */
+  reasoningText?: string;
   /** Tool calls from the in-flight assistant turn — feeds the brand chips. */
   toolCalls?: readonly ToolCallLike[];
   /** Expand to full chat window. */
@@ -57,7 +68,8 @@ const ACTIVE_RING = '#FF383C';
 const MUTED_FG = 'rgb(var(--compact-pill-fg-muted))';
 const TEXT_FG = 'rgb(var(--compact-pill-fg))';
 
-// User-message bubble in compact response panel.
+// White surface used by brand chips + the "open full view" CTA — these sit on
+// brand logos / buttons that are designed against white, so they stay fixed.
 const USER_BUBBLE_BG = '#FFFFFF';
 const USER_BUBBLE_FG = '#171717';
 
@@ -176,82 +188,172 @@ const BrandChip: React.FC<{ brand: ToolBrand; active: boolean }> = ({
   );
 };
 
+const COMPACT_INLINE_CODE_STYLE: React.CSSProperties = {
+  fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+  fontSize: '0.85em',
+  fontWeight: 500,
+  padding: '1px 5px',
+  borderRadius: 5,
+  border: `0.5px solid ${CARD_BORDER}`,
+  background: 'rgb(var(--compact-pill-fg) / 0.06)',
+  verticalAlign: 'baseline',
+  wordBreak: 'break-word',
+};
+
 /** Minimal markdown renderer for compact text segments. Media from <<path>>
- *  markers is handled by extractContentSegments before markdown runs. */
+ *  markers is handled by extractContentSegments before markdown runs.
+ *
+ *  react-markdown v10 no longer passes `inline` on `code` — block fences use
+ *  `pre` > `code`; inline backticks are bare `code` only. */
 const COMPACT_MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
-  p: ({ node, children, ...props }) => (
-    <p style={{ margin: '0 0 6px 0' }} {...props}>
-      {children}
-    </p>
-  ),
-  ul: ({ node, children, ...props }) => (
-    <ul style={{ paddingLeft: 18, margin: '0 0 6px 0' }} {...props}>
+  p: ({ children, ...props }) => {
+    const childArr = Array.isArray(children) ? children : [children];
+    const isEmpty = childArr
+      .filter((c) => c !== null && c !== undefined)
+      .every((c) => typeof c === 'string' && String(c).trim().length === 0);
+    if (isEmpty) return null;
+    return (
+      <p style={{ margin: '0 0 6px 0', lineHeight: '18px' }} {...props}>
+        {children}
+      </p>
+    );
+  },
+  ul: ({ children, ...props }) => (
+    <ul style={{ paddingLeft: 18, margin: '0 0 6px 0', listStyleType: 'disc' }} {...props}>
       {children}
     </ul>
   ),
-  ol: ({ node, children, ...props }) => (
-    <ol style={{ paddingLeft: 18, margin: '0 0 6px 0' }} {...props}>
+  ol: ({ children, ...props }) => (
+    <ol style={{ paddingLeft: 18, margin: '0 0 6px 0', listStyleType: 'decimal' }} {...props}>
       {children}
     </ol>
   ),
-  li: ({ node, children, ...props }) => (
-    <li style={{ margin: '0 0 2px 0' }} {...props}>
+  li: ({ children, ...props }) => (
+    <li style={{ margin: '0 0 2px 0', lineHeight: '18px' }} {...props}>
       {children}
     </li>
   ),
-  code: ({ node, inline, className, children, ...props }: any) =>
-    inline ? (
-      <code
-        style={{
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-          fontSize: '0.92em',
-          padding: '1px 4px',
-          borderRadius: 4,
-          background: 'rgb(var(--compact-pill-fg) / 0.08)',
-        }}
-        {...props}
-      >
-        {children}
-      </code>
-    ) : (
-      <pre
-        style={{
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-          fontSize: 11,
-          padding: 8,
-          borderRadius: 8,
-          background: 'rgb(var(--compact-pill-fg) / 0.06)',
-          overflowX: 'auto',
-          margin: '0 0 6px 0',
-        }}
-      >
-        <code {...props}>{children}</code>
-      </pre>
-    ),
-  a: ({ href, children, ...props }: any) => (
-    <a
-      href={href}
-      onClick={(e) => {
-        if (typeof href === 'string' && !/^(javascript|vbscript):/i.test(href)) {
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            (window as any).desktopAPI?.openExternal?.(href);
-          } catch {
-            // ignore — external open is best-effort
-          }
-        }
-      }}
+  strong: ({ children, ...props }) => (
+    <strong style={{ fontWeight: 600, color: TEXT_FG }} {...props}>
+      {children}
+    </strong>
+  ),
+  em: ({ children, ...props }) => (
+    <em style={{ fontStyle: 'italic' }} {...props}>
+      {children}
+    </em>
+  ),
+  blockquote: ({ children, ...props }) => (
+    <blockquote
       style={{
-        color: '#818CF8',
-        textDecoration: 'underline',
-        textUnderlineOffset: 2,
+        margin: '0 0 6px 0',
+        paddingLeft: 10,
+        borderLeft: `2px solid ${CARD_BORDER}`,
+        color: MUTED_FG,
       }}
       {...props}
     >
       {children}
-    </a>
+    </blockquote>
   ),
+  pre: ({ children, ...props }) => (
+    <pre
+      style={{
+        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontSize: 11,
+        lineHeight: '16px',
+        padding: '8px 10px',
+        borderRadius: 8,
+        border: `0.5px solid ${CARD_BORDER}`,
+        background: 'rgb(var(--compact-pill-fg) / 0.05)',
+        overflowX: 'auto',
+        margin: '0 0 6px 0',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}
+      {...props}
+    >
+      {children}
+    </pre>
+  ),
+  code: ({ className, children, ...props }: any) => {
+    // Fenced blocks: inner `code` keeps language class; styling comes from `pre`.
+    if (className?.startsWith('language-')) {
+      return (
+        <code
+          className={className}
+          style={{
+            fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+            fontSize: 'inherit',
+            background: 'transparent',
+            padding: 0,
+            border: 'none',
+          }}
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code style={COMPACT_INLINE_CODE_STYLE} {...props}>
+        {children}
+      </code>
+    );
+  },
+  a: ({ href, children, ...props }: any) => {
+    if (href === '#highlight' || href === '?highlight') {
+      return (
+        <span
+          style={{
+            background: 'rgb(245 158 11 / 0.18)',
+            color: TEXT_FG,
+            padding: '1px 5px',
+            borderRadius: 5,
+            fontWeight: 600,
+            border: '0.5px solid rgb(245 158 11 / 0.35)',
+          }}
+        >
+          {children}
+        </span>
+      );
+    }
+    if (href === '#underline' || href === '?underline') {
+      return (
+        <span style={{ textDecoration: 'underline', textUnderlineOffset: 2, fontWeight: 500 }}>
+          {children}
+        </span>
+      );
+    }
+    if (typeof href === 'string') {
+      const media = renderCompactMediaFromUrl(href, typeof children === 'string' ? children : undefined);
+      if (media) return <>{media}</>;
+    }
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          if (typeof href === 'string' && !/^(javascript|vbscript):/i.test(href)) {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              (window as any).desktopAPI?.openExternal?.(href);
+            } catch {
+              // ignore — external open is best-effort
+            }
+          }
+        }}
+        style={{
+          color: '#818CF8',
+          textDecoration: 'underline',
+          textUnderlineOffset: 2,
+        }}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
   h1: ({ node, children, ...props }) => (
     <div style={{ fontWeight: 600, fontSize: 14, margin: '0 0 6px 0' }} {...props}>
       {children}
@@ -267,15 +369,58 @@ const COMPACT_MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['compone
       {children}
     </div>
   ),
-  img: ({ node, src, alt, ...props }: any) => {
-    const nodeUrl = (node && (node.url || (node.properties && node.properties.src))) || '';
-    const finalSrc = src || nodeUrl || '';
-    const isAudio = /\.(wav|mp3|ogg|m4a|aac)(\?|$)/i.test(finalSrc) || alt === 'audio';
-    const isVideo = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(finalSrc) || alt === 'video';
-    if (isAudio) return <AudioPlayer src={toMediaSrc(finalSrc)} />;
-    if (isVideo) return <InlineVideo src={finalSrc} />;
-    return <InlineImage src={finalSrc} alt={alt} />;
+  img: ({ src, alt }: any) => {
+    const finalSrc = src || '';
+    const media = renderCompactMediaFromUrl(finalSrc, alt);
+    if (media) return <>{media}</>;
+    return <CompactImage src={finalSrc} alt={alt} />;
   },
+  table: ({ children, ...props }) => (
+    <div
+      className="my-1 overflow-x-auto custom-scrollbar"
+      style={{ border: `0.5px solid ${CARD_BORDER}`, borderRadius: 8 }}
+    >
+      <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }} {...props}>
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children, ...props }) => (
+    <thead style={{ background: 'rgb(var(--compact-pill-fg) / 0.06)' }} {...props}>{children}</thead>
+  ),
+  th: ({ children, ...props }) => (
+    <th
+      style={{
+        padding: '4px 8px',
+        textAlign: 'left',
+        fontWeight: 600,
+        borderBottom: `0.5px solid ${CARD_BORDER}`,
+      }}
+      {...props}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children, ...props }) => (
+    <td
+      style={{
+        padding: '4px 8px',
+        borderBottom: `0.5px solid rgb(var(--compact-pill-fg) / 0.08)`,
+      }}
+      {...props}
+    >
+      {children}
+    </td>
+  ),
+  hr: () => (
+    <hr
+      style={{
+        margin: '6px 0',
+        border: 'none',
+        borderTop: `0.5px solid ${CARD_BORDER}`,
+      }}
+    />
+  ),
 };
 
 const CompactRichContentPlaceholder: React.FC<{
@@ -385,22 +530,22 @@ function renderCompactSegment(
     );
   }
   if (seg.kind === 'image') {
-    return <InlineImage key={`compact-img-${idx}`} src={seg.src} />;
+    return <CompactImage key={`compact-img-${idx}`} src={seg.src} />;
   }
   if (seg.kind === 'video') {
-    return <InlineVideo key={`compact-vid-${idx}`} src={seg.src} />;
+    return <CompactVideo key={`compact-vid-${idx}`} src={seg.src} />;
   }
   if (seg.kind === 'audio') {
-    return <AudioPlayer key={`compact-aud-${idx}`} src={toMediaSrc(seg.src)} />;
+    return <CompactAudio key={`compact-aud-${idx}`} src={seg.src} />;
   }
   if (seg.kind === 'file') {
-    return <InlineFilePreview key={`compact-file-${idx}`} src={seg.src} />;
+    return <CompactFileChip key={`compact-file-${idx}`} src={seg.src} />;
   }
   if (seg.kind === 'youtube') {
-    return <YouTubeEmbed key={`compact-yt-${idx}`} videoId={seg.videoId} url={seg.url} />;
+    return <CompactYouTubeEmbed key={`compact-yt-${idx}`} videoId={seg.videoId} url={seg.url} />;
   }
   if (seg.kind === 'link_preview') {
-    return <LinkPreview key={`compact-lp-${idx}`} url={seg.url} />;
+    return <CompactLinkPreview key={`compact-lp-${idx}`} url={seg.url} />;
   }
   if (seg.kind === 'text') {
     return (
@@ -491,8 +636,11 @@ const TypingDots: React.FC = () => (
  */
 export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
   userPrompt,
+  userAttachments = [],
   assistantText,
   isStreaming = false,
+  isAiWorking = false,
+  reasoningText,
   toolCalls,
   onExpand,
   onCollapse,
@@ -521,13 +669,16 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
     toolCalls && toolCalls.length > 0 ? toolCalls : cachedRef.current;
   const brands = uniqueBrands(effectiveCalls.map((t) => t.tool));
   const visibleBrands = brands.slice(-maxChips);
-  const activeKey = activeBrandKey(effectiveCalls);
-  const activeBrand =
-    visibleBrands.find((b) => b.key === activeKey) ??
-    visibleBrands[visibleBrands.length - 1] ??
-    null;
+  const toolsInFlight = hasInFlightToolCalls(effectiveCalls);
+  const turnInProgress = isStreaming || isAiWorking;
+  const activeKey = toolsInFlight ? activeBrandKey(effectiveCalls) : null;
+  const footerStatus = toolsInFlight ? usingToolStatusText(effectiveCalls) : null;
 
+  const hasUserPrompt = !!(userPrompt && userPrompt.trim());
+  const hasUserAttachments = userAttachments.length > 0;
+  const showUserBubble = hasUserPrompt || hasUserAttachments;
   const hasAssistantText = !!(assistantText && assistantText.trim());
+  const hasReasoning = !!(reasoningText && reasoningText.trim());
 
   const genUiToolName = useMemo(() => {
     for (let i = effectiveCalls.length - 1; i >= 0; i--) {
@@ -545,6 +696,9 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
   }, [assistantText]);
 
   const showGenUiFromTools = !!genUiToolName && !textHasRichBlocks;
+  const showThinking =
+    !hasAssistantText &&
+    (hasReasoning || turnInProgress || toolsInFlight);
 
   // Auto-scroll the body to the latest content as the assistant streams.
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -553,7 +707,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [assistantText]);
+  }, [assistantText, reasoningText]);
 
   useEffect(() => {
     if (!onMeasuredHeightChange) return;
@@ -568,7 +722,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
     const ro = new ResizeObserver(report);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [onMeasuredHeightChange, userPrompt, assistantText, isStreaming, embedded]);
+  }, [onMeasuredHeightChange, userPrompt, assistantText, reasoningText, isStreaming, isAiWorking, embedded]);
 
   return (
     <div
@@ -632,16 +786,20 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
           }}
         >
           <div className="flex justify-end shrink-0">
+            {showUserBubble && (
             <div
-              className="flex flex-col items-end"
+              className="compact-user-bubble flex flex-col items-end"
               style={{
                 maxWidth: 260,
                 padding: '7px 10px',
-                background: USER_BUBBLE_BG,
                 borderRadius: 14,
                 boxSizing: 'border-box',
               }}
             >
+              {hasUserAttachments && (
+                <CompactUserAttachments attachments={userAttachments} />
+              )}
+              {hasUserPrompt && (
               <div
                 className="self-stretch"
                 style={{
@@ -649,17 +807,19 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
                   fontWeight: 400,
                   fontSize: 12,
                   lineHeight: '18px',
-                  color: USER_BUBBLE_FG,
+                  color: 'inherit',
                   wordBreak: 'break-word',
                   whiteSpace: 'pre-wrap',
                 }}
               >
                 {userPrompt}
               </div>
+              )}
             </div>
+            )}
           </div>
 
-          {(hasAssistantText || isStreaming || showGenUiFromTools) && (
+          {(hasAssistantText || isStreaming || showGenUiFromTools || showThinking) && (
             <div
               className="self-stretch shrink-0 compact-response-md"
               style={{
@@ -672,6 +832,13 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
                 paddingTop: 2,
               }}
             >
+              {showThinking && (
+                <CompactThinkingBlock
+                  text={reasoningText}
+                  isLive={turnInProgress}
+                  statusHint={footerStatus}
+                />
+              )}
               {showGenUiFromTools && genUiToolName && (
                 <>
                   {!hasAssistantText && (
@@ -696,7 +863,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
               {hasAssistantText && (
                 <CompactAssistantContent text={assistantText!} onExpand={onExpand} />
               )}
-              {isStreaming && <TypingDots />}
+              {turnInProgress && hasAssistantText && <TypingDots />}
             </div>
           )}
         </div>
@@ -719,7 +886,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
                   />
                 ))}
               </div>
-              {activeBrand && (
+              {footerStatus && (
                 <span
                   style={{
                     fontFamily: "'General Sans', system-ui, sans-serif",
@@ -730,7 +897,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  using {activeBrand.label}...
+                  {footerStatus}
                 </span>
               )}
             </div>

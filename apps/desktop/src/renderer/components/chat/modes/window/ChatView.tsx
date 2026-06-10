@@ -32,6 +32,7 @@ import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../../../../hooks/useVoiceMode";
 import { ActiveProjectBar } from "./parts/ActiveProjectBar";
 import type { Project } from "../../../../hooks/useProjects";
+import type { ChatAttachment } from "../../../../utils/attachments";
 
 const AGENT_HTTP = (window as any).__AGENT_HTTP__ || "http://127.0.0.1:8765";
 
@@ -78,7 +79,7 @@ interface ChatViewProps {
   voiceActiveTools?: VoiceToolEvent[];
 
   // Attachments
-  attachments?: Array<{ type: "image" | "file"; name: string; mimeType?: string; source?: string }>;
+  attachments?: ChatAttachment[];
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
@@ -589,16 +590,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 />
               </div>
 
-              {/* Project Mode lock-in bar */}
-              {activeProject && (
-                <ActiveProjectBar
-                  project={activeProject}
-                  conversationId={activeConversationId}
-                  onExit={onExitProjectMode}
-                  onOpenHome={onOpenProjectHome}
-                />
-              )}
-
               {/* Pending memories (overlay-only; compact UI) */}
               {viewMode === "chat" &&
                 Array.isArray(pendingMemories) &&
@@ -652,6 +643,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
               {/* Messages / tasks — scroll full height; composer floats on top */}
               <div className="flex-1 min-h-0 relative overflow-hidden">
+                {activeProject && (
+                  <ActiveProjectBar
+                    project={activeProject}
+                    conversationId={activeConversationId}
+                    onExit={onExitProjectMode}
+                    onOpenHome={onOpenProjectHome}
+                  />
+                )}
                 <div className="absolute inset-0 flex flex-col overflow-hidden px-1">
                   {viewMode === "tasks" ? (
                     <div
@@ -776,16 +775,6 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onNewChat={onNewChat}
                 />
               </div>
-
-              {/* Project Mode lock-in bar */}
-              {activeProject && (
-                <ActiveProjectBar
-                  project={activeProject}
-                  conversationId={activeConversationId}
-                  onExit={onExitProjectMode}
-                  onOpenHome={onOpenProjectHome}
-                />
-              )}
 
               {/* Pending memories (overlay-only; compact UI) */}
               {viewMode === "chat" &&

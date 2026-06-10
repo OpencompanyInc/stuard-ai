@@ -23,6 +23,21 @@ interface AttachmentPreviewStripProps {
   className?: string;
 }
 
+interface AttachmentPreviewOverlayProps {
+  attachments: ChatAttachment[];
+  onRemove?: (index: number) => void;
+  className?: string;
+}
+
+/** Width reserved per overlaid image thumb (px). */
+export const ATTACHMENT_OVERLAY_THUMB = 40;
+export const ATTACHMENT_OVERLAY_GAP = 4;
+
+export function attachmentOverlayInset(count: number): number {
+  if (count <= 0) return 0;
+  return count * ATTACHMENT_OVERLAY_THUMB + (count - 1) * ATTACHMENT_OVERLAY_GAP + 8;
+}
+
 function attachmentMeta(attachment: ChatAttachment, kind: ReturnType<typeof getChatAttachmentKind>) {
   if (kind === 'document') {
     const parts: string[] = [];
@@ -32,12 +47,12 @@ function attachmentMeta(attachment: ChatAttachment, kind: ReturnType<typeof getC
     if (typeof attachment.charCount === 'number' && attachment.charCount > 0) {
       parts.push(`${attachment.charCount} chars`);
     }
-    return parts.join(' | ');
+    return parts.join(' · ');
   }
-  if (kind === 'audio') return 'Audio attachment';
-  if (kind === 'video') return 'Video attachment';
-  if (kind === 'image') return 'Image attachment';
-  return attachment.mimeType || 'File attachment';
+  if (kind === 'audio') return 'Audio';
+  if (kind === 'video') return 'Video';
+  if (kind === 'image') return 'Image';
+  return attachment.mimeType || 'File';
 }
 
 function cardIcon(kind: ReturnType<typeof getChatAttachmentKind>) {
@@ -48,81 +63,172 @@ function cardIcon(kind: ReturnType<typeof getChatAttachmentKind>) {
   return File;
 }
 
+const CARD_BG = 'color-mix(in srgb, var(--foreground) 5%, transparent)';
+const CARD_BORDER = 'color-mix(in srgb, var(--foreground) 12%, transparent)';
+const ICON_BG = 'color-mix(in srgb, var(--foreground) 9%, transparent)';
+const FG = 'var(--foreground)';
+const FG_MUTED = 'var(--foreground-muted)';
+const FG_FAINT = 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)';
+
 const AttachmentPreviewCard: React.FC<{
   attachment: ChatAttachment;
   index: number;
   onRemove?: (index: number) => void;
-}> = ({ attachment, index, onRemove }) => {
+  compact?: boolean;
+}> = ({ attachment, index, onRemove, compact = false }) => {
   const kind = getChatAttachmentKind(attachment);
   const previewUrl = getChatAttachmentDataUrl(attachment);
   const Icon = cardIcon(kind);
   const meta = attachmentMeta(attachment, kind);
 
-  return (
-    <div className="relative shrink-0">
-      {onRemove ? (
-        <button
-          type="button"
-          onClick={() => onRemove(index)}
-          className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-black/10 bg-white/90 text-slate-500 shadow-sm transition-colors hover:text-red-500"
-          title="Remove attachment"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      ) : null}
+  const removeButton = onRemove ? (
+    <button
+      type="button"
+      onClick={() => onRemove(index)}
+      className="absolute -right-1.5 -top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full transition-colors pointer-events-auto"
+      style={{
+        background: 'color-mix(in srgb, var(--background) 80%, transparent)',
+        border: `1px solid ${CARD_BORDER}`,
+        color: FG_MUTED,
+        backdropFilter: 'blur(6px)',
+      }}
+      title="Remove attachment"
+    >
+      <X className="h-3.5 w-3.5" />
+    </button>
+  ) : null;
 
-      {kind === 'image' && previewUrl ? (
-        <div className="group relative h-[96px] w-[156px] overflow-hidden rounded-[20px] border border-black/10 bg-slate-900 shadow-[0_12px_28px_-18px_rgba(15,23,42,0.8)]">
-          <img src={previewUrl} alt={attachment.name} className="h-full w-full object-cover" />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-3 pb-3 pt-8 text-white">
-            <div className="truncate text-[12px] font-semibold">{attachment.name}</div>
-            <div className="truncate text-[10px] text-white/70">{meta}</div>
-          </div>
+  if (kind === 'image' && previewUrl) {
+    return (
+      <div className="relative shrink-0 pointer-events-auto">
+        {removeButton}
+        <img
+          src={previewUrl}
+          alt={attachment.name}
+          title={attachment.name}
+          className={clsx(
+            'block shadow-sm',
+            compact
+              ? 'h-10 w-10 rounded-md object-cover'
+              : 'max-h-[220px] max-w-[280px] rounded-xl object-contain',
+          )}
+          style={{ border: `1px solid ${CARD_BORDER}` }}
+        />
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="relative shrink-0 pointer-events-auto max-w-[88px]">
+        {removeButton}
+        <div
+          className="flex h-8 items-center gap-1.5 rounded-md px-2 pr-5"
+          style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
+          title={attachment.name}
+        >
+          <Icon className="h-3 w-3 shrink-0" style={{ color: FG_MUTED }} />
+          <span className="truncate text-[10px] font-semibold" style={{ color: FG }}>
+            {attachment.name}
+          </span>
         </div>
-      ) : kind === 'document' ? (
-        <div className="relative h-[104px] w-[176px]">
-          <div className="absolute inset-[8px] rotate-[4deg] rounded-[22px] border border-amber-300/50 bg-amber-200/40 shadow-sm" />
-          <div className="relative h-full rotate-[-2deg] rounded-[22px] border border-stone-300/70 bg-gradient-to-br from-white via-stone-50 to-amber-50 px-4 py-3 shadow-[0_18px_30px_-24px_rgba(15,23,42,0.9)]">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
-                <FileText className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-[12px] font-semibold text-slate-800">{attachment.name}</div>
-                <div className="text-[10px] uppercase tracking-[0.18em] text-amber-700/80">Document</div>
-              </div>
-            </div>
-            <div className="mt-3 max-h-[38px] overflow-hidden whitespace-pre-wrap text-[11px] leading-[1.25] text-slate-600">
-              {attachment.previewText || 'Ready to send'}
-            </div>
-            <div className="mt-3 flex items-center gap-2 text-[10px] font-medium text-slate-500">
-              <span>{meta || 'Text attachment'}</span>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="flex h-[96px] w-[156px] flex-col justify-between rounded-[20px] border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-3 shadow-[0_16px_30px_-24px_rgba(15,23,42,0.7)]">
-          <div className="flex items-start gap-3">
+      </div>
+    );
+  }
+
+  if (kind === 'document') {
+    return (
+      <div className="relative shrink-0">
+        {removeButton}
+        <div
+          className="h-[104px] w-[184px] rounded-2xl px-3.5 py-3"
+          style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
+        >
+          <div className="flex items-start gap-2.5">
             <div
-              className={clsx(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl',
-                kind === 'video' && 'bg-rose-100 text-rose-600',
-                kind === 'audio' && 'bg-emerald-100 text-emerald-600',
-                kind === 'file' && 'bg-sky-100 text-sky-600',
-              )}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
+              style={{ background: ICON_BG, color: FG_MUTED }}
             >
-              <Icon className="h-4 w-4" />
+              <FileText className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[12px] font-semibold text-slate-800">{attachment.name}</div>
-              <div className="text-[10px] text-slate-500">{meta}</div>
+              <div className="truncate text-[12px] font-semibold" style={{ color: FG }} title={attachment.name}>
+                {attachment.name}
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: FG_FAINT }}>
+                Document
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">
-            <span>{kind}</span>
+          <div
+            className="mt-2.5 max-h-[34px] overflow-hidden whitespace-pre-wrap text-[11px] leading-[1.3]"
+            style={{ color: FG_MUTED }}
+          >
+            {attachment.previewText || 'Ready to send'}
+          </div>
+          {meta ? (
+            <div className="mt-2 text-[10px] font-medium" style={{ color: FG_FAINT }}>
+              {meta}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative shrink-0">
+      {removeButton}
+      <div
+        className="flex h-[96px] w-[156px] flex-col justify-between rounded-2xl p-3"
+        style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
+      >
+        <div className="flex items-start gap-2.5">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+            style={{ background: ICON_BG, color: FG_MUTED }}
+          >
+            <Icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-[12px] font-semibold" style={{ color: FG }} title={attachment.name}>
+              {attachment.name}
+            </div>
+            <div className="truncate text-[10px]" style={{ color: FG_MUTED }}>{meta}</div>
           </div>
         </div>
+        <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: FG_FAINT }}>
+          {kind}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** Floating attachment thumbs over the input surface (not a separate row). */
+export const AttachmentPreviewOverlay: React.FC<AttachmentPreviewOverlayProps> = ({
+  attachments,
+  onRemove,
+  className,
+}) => {
+  if (!attachments.length) return null;
+
+  return (
+    <div
+      className={clsx(
+        'absolute left-0 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 pointer-events-none',
+        className,
       )}
+    >
+      {attachments.map((attachment, index) => (
+        <AttachmentPreviewCard
+          key={`${attachment.name}-${index}-${attachment.mimeType || attachment.type}`}
+          attachment={attachment}
+          index={index}
+          onRemove={onRemove}
+          compact
+        />
+      ))}
     </div>
   );
 };
@@ -139,7 +245,7 @@ export const AttachmentPreviewStrip: React.FC<AttachmentPreviewStripProps> = ({
   return (
     <div
       className={clsx(
-        'flex gap-3',
+        'flex gap-2',
         layout === 'rail' ? 'overflow-x-auto pb-1 scrollbar-hidden' : 'flex-wrap',
         align === 'right' && 'justify-end',
         className,

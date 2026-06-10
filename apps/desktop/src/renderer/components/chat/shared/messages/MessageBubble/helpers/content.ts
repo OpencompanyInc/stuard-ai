@@ -1,6 +1,6 @@
 import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../../utils/text';
 import { GENUI_COMPONENT_MAP } from '../constants';
-import { extractYouTubeVideoId } from './media';
+import { extractYouTubeVideoId, isImageUrl } from './media';
 import { normalizeMarkdownSpacing } from './markdown';
 import type { ContentSegment } from '../types';
 
@@ -182,12 +182,21 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
         (urlStart <= m.start && urlEnd >= m.end)
     );
     if (!overlap) {
-      allMatches.push({
-        type: 'link_preview',
-        start: urlStart,
-        end: urlEnd,
-        data: { url: raw },
-      });
+      if (isImageUrl(raw)) {
+        allMatches.push({
+          type: 'image',
+          start: urlStart,
+          end: urlEnd,
+          data: { src: raw },
+        });
+      } else {
+        allMatches.push({
+          type: 'link_preview',
+          start: urlStart,
+          end: urlEnd,
+          data: { url: raw },
+        });
+      }
     }
   }
 

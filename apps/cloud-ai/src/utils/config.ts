@@ -128,6 +128,20 @@ export const LOG_BASENAME = clean(process.env.CLOUD_LOG_BASENAME || 'cloud-ai');
 export const PERPLEXITY_API_KEY = clean(process.env.PERPLEXITY_API_KEY || '');
 export const TAVILY_API_KEY = clean(process.env.TAVILY_API_KEY || '');
 
+// Google Maps Platform key (Static Maps, Distance Matrix, Places API + Places API New).
+// Kept SEPARATE from GOOGLE_API_KEY (which serves Gemini/embeddings/Vision) so the
+// Maps key can carry its own API + referrer restrictions and billing.
+export const GOOGLE_MAPS_API_KEY = clean(process.env.GOOGLE_MAPS_API_KEY || '');
+
+// Per-call USD cost billed to the user for each Maps tool (metered via logUsageEvent →
+// credit debit, same as the X integration). Defaults track Google's published list
+// prices; tunable via env so pricing can change without a redeploy. Distance Matrix is
+// priced per origin×destination element.
+export const GOOGLE_MAPS_PRICE_USD_STATIC = Number(process.env.GOOGLE_MAPS_PRICE_USD_STATIC || '0.002');
+export const GOOGLE_MAPS_PRICE_USD_DISTANCE_ELEMENT = Number(process.env.GOOGLE_MAPS_PRICE_USD_DISTANCE_ELEMENT || '0.005');
+export const GOOGLE_MAPS_PRICE_USD_PLACES_SEARCH = Number(process.env.GOOGLE_MAPS_PRICE_USD_PLACES_SEARCH || '0.032');
+export const GOOGLE_MAPS_PRICE_USD_PLACE_DETAILS = Number(process.env.GOOGLE_MAPS_PRICE_USD_PLACE_DETAILS || '0.017');
+
 // Dev mode bypasses credit/usage checks only for explicit local development.
 export const DEV_MODE = IS_DEVELOPMENT && process.env.DEV_MODE === '1';
 

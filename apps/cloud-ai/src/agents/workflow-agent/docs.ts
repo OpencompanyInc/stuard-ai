@@ -169,6 +169,8 @@ TRIGGER TYPES:
 │ schedule.cron    │ { cron: "0 9 * * *" } — cron expression                   │
 │ webhook.local    │ {} — HTTP POST to local endpoint                          │
 │ fs.watch         │ { path, pattern, recursive? } — filesystem events         │
+│ clipboard.change │ { types?: [], pollMs? } — fires when clipboard changes;    │
+│                  │   payload: { type, text, html, files, hasImage, ... }     │
 │ function         │ { inputParams?: [] } — called by call_function            │
 │ app_start        │ {} — runs once when Stuard starts                         │
 └──────────────────┴───────────────────────────────────────────────────────────┘

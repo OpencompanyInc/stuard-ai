@@ -216,13 +216,13 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
     <button
       type="button"
       className={clsx(
-        "dashboard-sidebar-item w-full flex items-center gap-2 px-2.5 py-2.5 h-10 text-[14px] font-medium leading-5",
+        "dashboard-sidebar-item w-full flex items-center gap-2 px-2.5 py-1.5 h-8 text-[13px] font-medium leading-5",
         active && "is-active"
       )}
       onClick={() => onClick(id)}
     >
       <Icon
-        className="w-5 h-5 shrink-0 text-current"
+        className="w-[18px] h-[18px] shrink-0 text-current"
         strokeWidth={1.25}
       />
       <span className="flex-1 text-left truncate">
@@ -1505,14 +1505,14 @@ function DashboardApp() {
         <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
         <div className="flex h-full gap-3 p-3 pt-5">
         {/* Sidebar */}
-        <aside className="dashboard-sidebar shrink-0 flex flex-col gap-7 relative z-20">
+        <aside className="dashboard-sidebar shrink-0 flex flex-col gap-3 relative z-20">
           <div className="dashboard-sidebar-brand shrink-0 select-none">
             <div className="dashboard-sidebar-brand-glow" aria-hidden="true" />
-            <div className="min-w-0 relative z-[1] flex flex-col gap-2">
-              <div className="text-[18px] font-medium text-theme-fg leading-6 tracking-tight">
+            <div className="min-w-0 relative z-[1] flex flex-col gap-0.5">
+              <div className="text-[16px] font-medium text-theme-fg leading-5 tracking-tight">
                 Stuard Dashboard
               </div>
-              <div className="text-[12px] font-medium text-theme-muted leading-5">
+              <div className="text-[11px] font-medium text-theme-muted leading-4">
                 Beta V {appVersion}
               </div>
             </div>

@@ -30,7 +30,7 @@ import { handleToolsRoutes } from './tools';
 import { handleKnowledgeRoutes } from './knowledge';
 import { handleMemoryRoutes } from './memory-routes';
 import { handleModelsRoutes } from './models';
-import { handleSharedSpacesRoutes } from './shared-spaces';
+import { handleProjectsNotionRoutes } from './projects-notion';
 import { handleMCPRoutes } from './mcp';
 import { handleFileIndexRoutes } from './file-index';
 import { handlePreferencesRoutes } from './preferences';
@@ -85,7 +85,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleToolsRoutes(req, res, parsedUrl)) return true;
   if (await handleKnowledgeRoutes(req, res, parsedUrl)) return true;
   if (await handleMemoryRoutes(req, res, parsedUrl)) return true;
-  if (await handleSharedSpacesRoutes(req, res, parsedUrl)) return true;
+  if (await handleProjectsNotionRoutes(req, res, parsedUrl)) return true;
   if (await handleMCPRoutes(req, res, parsedUrl)) return true;
   if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
   if (await handlePreferencesRoutes(req, res, parsedUrl)) return true;

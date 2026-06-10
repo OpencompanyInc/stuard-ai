@@ -1,7 +1,11 @@
-import { clipboard, Notification, shell } from 'electron';
+import { clipboard, nativeImage, Notification, shell } from 'electron';
 import { execCloseCustomUi as _execCloseCustomUi, execCustomUi as _execCustomUi, execUpdateCustomUi as _execUpdateCustomUi, execPlayAudio as _execPlayAudio, customUiWindows, sendEventToCustomUi, initCustomUiIpc } from '../../custom-ui';
 import { getNotificationWindow, openNotificationWindow } from '../../windows';
 import { pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { readClipboardSnapshot } from '../clipboard-snapshot';
 import { RouterContext } from '../types';
 
 export const execCustomUi = _execCustomUi;
@@ -94,9 +98,37 @@ export async function execListCustomUiWindows(args: any, ctx: RouterContext): Pr
 
 export async function execGetClipboardContent(args: any, ctx: RouterContext): Promise<any> {
   try {
-    const text = clipboard.readText();
-    ctx.logFn(`get_clipboard_content: Read ${text ? text.length : 0} chars: "${(text || '').slice(0, 50).replace(/\n/g, '\\n')}..."`);
-    return { ok: true, text };
+    const snap = readClipboardSnapshot();
+    const result: any = {
+      ok: true,
+      type: snap.type,
+      types: snap.types,
+      text: snap.text,
+      html: snap.html,
+      files: snap.files,
+      hasImage: snap.hasImage,
+      imageSize: snap.imageSize,
+      formats: snap.formats,
+    };
+
+    // Optionally surface a clipboard image as a saved PNG file and/or a data URL.
+    // Kept opt-in so the default payload stays small.
+    if (snap.hasImage && (args?.saveImage || args?.includeImageData)) {
+      try {
+        const img = clipboard.readImage();
+        if (args?.includeImageData) result.imageDataUrl = img.toDataURL();
+        if (args?.saveImage) {
+          const outPath = join(tmpdir(), `clipboard-${Date.now()}.png`);
+          writeFileSync(outPath, img.toPNG());
+          result.imagePath = outPath;
+        }
+      } catch (e: any) {
+        ctx.logFn(`get_clipboard_content: image export failed: ${e?.message}`);
+      }
+    }
+
+    ctx.logFn(`get_clipboard_content: type=${snap.type} text=${snap.text.length}c files=${snap.files.length} image=${snap.hasImage}`);
+    return result;
   } catch (e: any) {
     ctx.logFn(`get_clipboard_content: Failed: ${e?.message}`);
     return { ok: false, error: e?.message || 'clipboard_read_failed' };
@@ -105,9 +137,28 @@ export async function execGetClipboardContent(args: any, ctx: RouterContext): Pr
 
 export async function execSetClipboardContent(args: any, ctx: RouterContext): Promise<any> {
   try {
-    const text = String(args?.text || '');
-    clipboard.writeText(text);
-    return { ok: true };
+    const explicitType = String(args?.type || '').trim().toLowerCase();
+    const type = explicitType
+      || (args?.imagePath || args?.imageDataUrl ? 'image' : '')
+      || (args?.html ? 'html' : '')
+      || 'text';
+
+    if (type === 'image') {
+      let img: any = null;
+      if (args?.imagePath) img = nativeImage.createFromPath(String(args.imagePath));
+      else if (args?.imageDataUrl) img = nativeImage.createFromDataURL(String(args.imageDataUrl));
+      if (!img || img.isEmpty()) return { ok: false, error: 'clipboard_image_invalid' };
+      clipboard.writeImage(img);
+      return { ok: true, type: 'image' };
+    }
+
+    if (type === 'html') {
+      clipboard.writeHTML(String(args?.html ?? args?.text ?? ''));
+      return { ok: true, type: 'html' };
+    }
+
+    clipboard.writeText(String(args?.text || ''));
+    return { ok: true, type: 'text' };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'clipboard_write_failed' };
   }

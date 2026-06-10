@@ -11,7 +11,7 @@ type SidebarTabId = 'terminal' | 'todo' | 'projects';
 const SIDEBAR_TABS: Array<{
   id: SidebarTabId;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number | string }>;
 }> = [
   { id: 'todo', label: 'To-Do', icon: ListTodo },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
@@ -125,7 +125,7 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                   onMouseEnter={() => setHoveredTab(tab.id)}
                   onMouseLeave={() => setHoveredTab(null)}
                   className={clsx(
-                    'relative flex items-center justify-center w-full h-10 rounded-xl transition-all duration-200',
+                    'relative flex items-center justify-center w-full h-10 rounded-[14px] transition-all duration-200',
                     isActive
                       ? 'bg-theme-active text-theme-fg'
                       : 'text-theme-muted/70 hover:text-theme-fg hover:bg-theme-hover/50',
@@ -133,20 +133,23 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
                   title={tab.label}
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                 >
-                  <Icon className={clsx(
-                    "transition-transform duration-200",
-                    isActive ? "w-[18px] h-[18px]" : "w-[17px] h-[17px]",
-                    isHovered && !isActive && "scale-110"
-                  )} />
+                  <Icon
+                    strokeWidth={1.75}
+                    className={clsx(
+                      "transition-transform duration-200",
+                      isActive ? "w-[18px] h-[18px]" : "w-[17px] h-[17px]",
+                      isHovered && !isActive && "scale-110",
+                    )}
+                  />
 
                   {/* Activity dot */}
                   {showDot && (
                     <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-theme-bg animate-pulse" />
                   )}
 
-                  {/* Active indicator bar */}
+                  {/* Active indicator bar — brand accent, matching launcher & Studio */}
                   {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-theme-fg/70 rounded-r-full" />
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
                   )}
                 </button>
 
@@ -171,20 +174,20 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
         <div className="flex flex-col items-center gap-0.5 px-1.5 w-full">
           <button
             onClick={handleExpand}
-            className="flex items-center justify-center w-full h-9 rounded-xl text-theme-muted/60 hover:text-theme-fg hover:bg-theme-hover/60 transition-all duration-200"
+            className="flex items-center justify-center w-full h-9 rounded-[12px] text-theme-muted/60 hover:text-theme-fg hover:bg-theme-hover/60 transition-all duration-200"
             title={isExpanded ? "Collapse to sidebar" : "Expand to full window"}
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" strokeWidth={1.75} /> : <Maximize2 className="w-3.5 h-3.5" strokeWidth={1.75} />}
           </button>
 
           <button
             onClick={onClose}
-            className="flex items-center justify-center w-full h-9 rounded-xl text-theme-muted/60 hover:text-red-500 hover:bg-red-500/8 transition-all duration-200"
+            className="flex items-center justify-center w-full h-9 rounded-[12px] text-theme-muted/60 hover:text-red-500 hover:bg-red-500/10 transition-all duration-200"
             title="Close Sidebar"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-3.5 h-3.5" strokeWidth={1.75} />
           </button>
         </div>
       </div>
@@ -199,8 +202,8 @@ export const SidebarView: React.FC<SidebarViewProps> = ({
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {currentTab && (
               <>
-                <currentTab.icon className="w-4 h-4 text-theme-fg/70" />
-                <span className="text-[13px] font-bold text-theme-fg">{currentTab.label}</span>
+                <currentTab.icon className="w-3.5 h-3.5 text-theme-muted shrink-0" strokeWidth={1.75} />
+                <span className="text-[13px] font-semibold text-theme-fg">{currentTab.label}</span>
               </>
             )}
             {((activeTab === 'todo' && hasTodoActivity) || (activeTab === 'terminal' && hasTerminalActivity)) && (

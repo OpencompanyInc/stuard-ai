@@ -92,6 +92,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
             progress: config.progress,
             className: config.className,
             orchestratorDone: config.orchestratorDone,
+            eyebrow: config.eyebrow,
             createdAt: Date.now(),
             duration,
         };

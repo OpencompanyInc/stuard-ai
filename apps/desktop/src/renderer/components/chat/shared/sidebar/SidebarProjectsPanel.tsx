@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 import clsx from 'clsx';
-import { FolderOpen, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { FolderKanban, FolderOpen, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import {
   createProject,
   useProjects,
@@ -187,29 +187,29 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
       )}
       style={fill ? undefined : { width, minWidth: width }}
     >
-      <div className="shrink-0 p-2.5 border-b border-theme-sidebar flex items-center gap-2">
+      <div className="shrink-0 p-2.5 flex items-center gap-2">
         <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted/60 pointer-events-none" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-muted/60 pointer-events-none" strokeWidth={1.75} />
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search projects"
-            className="w-full pl-8 pr-3 py-1.5 text-[12px] rounded-lg bg-theme-hover/50 placeholder:text-theme-muted/50 text-theme-fg outline-none focus:bg-theme-hover/80 transition-colors"
+            className="w-full pl-8 pr-3 py-2 text-[12px] rounded-[12px] bg-theme-hover/50 border border-theme/10 placeholder:text-theme-muted/50 text-theme-fg outline-none focus:bg-theme-hover/80 focus:border-primary/30 transition-colors"
           />
         </div>
         <button
           onClick={() => setComposing(true)}
-          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-[11px] text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
           title="New project"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <Plus className="w-4 h-4" strokeWidth={1.75} />
         </button>
         <button
           onClick={onReload}
-          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-[11px] text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
           title="Refresh"
         >
-          <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} />
+          <RefreshCw className={clsx('w-3.5 h-3.5', loading && 'animate-spin')} strokeWidth={1.75} />
         </button>
       </div>
 
@@ -235,14 +235,17 @@ const ProjectsList: React.FC<ProjectsListProps> = ({
         {!loading && !error && projects.length === 0 && !composing && (
           <button
             onClick={() => setComposing(true)}
-            className="w-full m-1 p-3 rounded-[14px] text-left hover:bg-theme-hover/40 transition-colors"
+            className="launcher-suggestion-chip group m-1 flex w-[calc(100%-0.5rem)] items-start gap-3 p-3 rounded-[14px] text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 active:scale-[0.995]"
           >
-            <div className="flex items-center gap-2 text-[12px] font-semibold text-theme-fg">
-              <Plus className="w-3.5 h-3.5" /> Create your first project
-            </div>
-            <div className="mt-1 text-[11px] text-theme-muted/70 leading-snug">
-              Each project keeps its own instructions, knowledge, files, tasks, and timeline. Stuard can capture them as you chat.
-            </div>
+            <span className="launcher-suggestion-chip__icon flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] border border-theme/15">
+              <Plus className="h-4 w-4 text-theme-muted group-hover:text-primary transition-colors" strokeWidth={1.75} />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-[12.5px] font-semibold text-theme-fg">Create your first project</span>
+              <span className="mt-1 block text-[11px] text-theme-muted/70 leading-snug">
+                Each project keeps its own instructions, knowledge, files, tasks, and timeline. Stuard can capture them as you chat.
+              </span>
+            </span>
           </button>
         )}
         {projects.map((p) => (
@@ -298,18 +301,18 @@ const NewProjectComposer: React.FC<{
   };
 
   return (
-    <div className="shrink-0 px-2.5 pt-2.5 pb-2 bg-theme-card/30">
-      <div className="rounded-lg bg-theme-card/80 p-2.5 space-y-2">
+    <div className="shrink-0 px-2.5 pt-2.5 pb-2">
+      <div className="rounded-[14px] bg-theme-card/80 border border-theme/15 p-2.5 space-y-2 shadow-[var(--compact-pill-shadow)]">
         <div className="flex items-center justify-between">
-          <span className="text-[10.5px] font-bold uppercase tracking-wider text-theme-muted">
+          <span className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-theme-muted">
             New project
           </span>
           <button
             onClick={onCancel}
-            className="w-6 h-6 inline-flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
+            className="w-6 h-6 inline-flex items-center justify-center rounded-[8px] text-theme-muted hover:text-theme-fg hover:bg-theme-hover/60 transition-colors"
             title="Cancel"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-3.5 h-3.5" strokeWidth={1.75} />
           </button>
         </div>
         <input
@@ -352,10 +355,10 @@ const NewProjectComposer: React.FC<{
           }}
           placeholder="Project instructions (optional)"
           rows={3}
-          className="w-full px-2 py-1.5 text-[12px] bg-theme-hover/35 rounded-md text-theme-fg placeholder:text-theme-muted/50 outline-none resize-none"
+          className="w-full px-2 py-1.5 text-[12px] bg-theme-hover/35 rounded-[10px] text-theme-fg placeholder:text-theme-muted/50 outline-none resize-none"
         />
         {error && (
-          <div className="px-2 py-1 rounded-md bg-red-500/10 text-red-500 text-[11px]">
+          <div className="px-2 py-1 rounded-[10px] bg-red-500/10 text-red-500 text-[11px]">
             {error}
           </div>
         )}
@@ -364,7 +367,7 @@ const NewProjectComposer: React.FC<{
           <button
             onClick={submit}
             disabled={!name.trim() || submitting}
-            className="px-3 py-1 rounded-md text-[11px] font-semibold bg-theme-fg text-theme-bg disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity inline-flex items-center gap-1"
+            className="px-3 py-1.5 rounded-full text-[11px] font-semibold bg-primary text-primary-fg disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity inline-flex items-center gap-1"
           >
             {submitting && <Loader2 className="w-3 h-3 animate-spin" />}
             Create
@@ -375,6 +378,27 @@ const NewProjectComposer: React.FC<{
   );
 };
 
+/** Compact "2d" / "3h" style age for list rows. */
+function shortAge(iso: string | undefined | null): string | null {
+  if (!iso) return null;
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(diff) || diff < 0) return null;
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 1) return 'now';
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 5) return `${weeks}w`;
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch {
+    return null;
+  }
+}
+
 const ProjectRow: React.FC<{
   project: Project;
   active: boolean;
@@ -384,45 +408,73 @@ const ProjectRow: React.FC<{
   // so the list stays quiet for normal projects.
   const isNonActive = project.status && project.status !== 'active';
   const dot = isNonActive ? STATUS_COLOR[project.status] : null;
+  // Tie the row's icon chip to the project's own accent — the same treatment
+  // the project's detail header uses, so selecting a project feels continuous.
+  const accent = project.color || '#71717a';
+  const fileCount = (project.pinned_paths || []).length;
+  const age = shortAge(project.updated_at);
   return (
     <button
       onClick={onSelect}
       className={clsx(
-        'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-colors',
+        'group relative w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[14px] text-left transition-[background-color,transform] duration-200',
         active
           ? 'bg-theme-active text-theme-fg'
           : 'text-theme-fg/90 hover:bg-theme-hover/50',
       )}
     >
-      <span className="text-base leading-none shrink-0" aria-hidden>
+      {active && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-primary rounded-r-full" />
+      )}
+      <span
+        className="shrink-0 w-9 h-9 rounded-[11px] flex items-center justify-center text-base leading-none ring-1 ring-inset transition-colors"
+        style={{
+          backgroundColor: `${accent}14`,
+          // @ts-ignore — set ring color inline
+          ['--tw-ring-color' as any]: `${accent}26`,
+        }}
+        aria-hidden
+      >
         {project.icon || '📁'}
       </span>
       <span className="flex-1 min-w-0">
-        <span className="block truncate text-[12.5px] font-semibold">{project.name}</span>
-        {project.description && (
-          <span className="block truncate text-[11px] text-theme-muted/70">
-            {project.description}
-          </span>
-        )}
-        <span className="mt-1 flex items-center gap-1.5 overflow-hidden">
-          {(project.pinned_paths || []).length > 0 && (
-            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
-              {(project.pinned_paths || []).length} files
-            </span>
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="flex-1 min-w-0 truncate text-[12.5px] font-semibold">{project.name}</span>
+          {dot && (
+            <span className={clsx('shrink-0 w-1.5 h-1.5 rounded-full', dot)} title={project.status} />
           )}
-          {project.instructions && (
-            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
-              instructions
+          {age && (
+            <span className="shrink-0 text-[10px] tabular-nums text-theme-muted/50">
+              {age}
             </span>
           )}
         </span>
+        {project.description ? (
+          <span className="block truncate text-[11px] text-theme-muted/70">
+            {project.description}
+          </span>
+        ) : (
+          <span className="block truncate text-[11px] text-theme-muted/45">
+            {fileCount > 0
+              ? `${fileCount} file${fileCount === 1 ? '' : 's'}`
+              : 'No description'}
+          </span>
+        )}
+        {(fileCount > 0 || project.instructions) && project.description && (
+          <span className="mt-1 flex items-center gap-1.5 overflow-hidden">
+            {fileCount > 0 && (
+              <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
+                {fileCount} file{fileCount === 1 ? '' : 's'}
+              </span>
+            )}
+            {project.instructions && (
+              <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-theme-hover/60 text-[9.5px] font-semibold text-theme-muted">
+                instructions
+              </span>
+            )}
+          </span>
+        )}
       </span>
-      {dot && (
-        <span
-          className={clsx('shrink-0 w-1.5 h-1.5 rounded-full', dot)}
-          title={project.status}
-        />
-      )}
     </button>
   );
 };
@@ -461,15 +513,22 @@ const ResizeHandle: React.FC<{ onResize: (deltaX: number) => void }> = ({ onResi
 };
 
 const EmptyState: React.FC<{ count: number }> = ({ count }) => (
-  <div className="flex flex-col items-center justify-center h-full gap-3 p-6 text-center">
-    <div className="p-3 rounded-2xl bg-theme-hover/50">
-      <FolderOpen className="w-8 h-8 text-theme-muted/50" />
-    </div>
+  <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center select-none">
+    <span className="launcher-suggestion-chip__icon flex h-14 w-14 items-center justify-center rounded-[18px] border border-theme/15">
+      {count > 0 ? (
+        <FolderOpen className="w-6 h-6 text-theme-muted/70" strokeWidth={1.6} />
+      ) : (
+        <FolderKanban className="w-6 h-6 text-theme-muted/70" strokeWidth={1.6} />
+      )}
+    </span>
     <div>
-      <p className="text-sm font-semibold text-theme-muted">
-        {count > 0 ? 'Pick a project' : 'No projects yet'}
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-theme-muted leading-5">
+        Projects
       </p>
-      <p className="text-xs text-theme-muted/60 mt-1 max-w-[280px]">
+      <h2 className="mt-2 text-[18px] font-semibold tracking-tight text-theme-fg leading-tight">
+        {count > 0 ? 'Pick a project' : 'No projects yet'}
+      </h2>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-theme-muted max-w-[280px] mx-auto">
         {count > 0
           ? 'Select one on the left to see its Timeline, Tasks, Notes, and Files.'
           : 'Hit + above to create one, or ask Stuard to start one for you.'}

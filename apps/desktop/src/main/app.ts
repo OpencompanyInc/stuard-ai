@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { initEnv } from "./env";
 import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
 import { setupIpc } from "./ipc/index";
-import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService, startProactiveScheduler, stopProactiveScheduler, startBotTriggerDispatcher, stopBotTriggerDispatcher } from "./services/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService, startProactiveScheduler, stopProactiveScheduler, startBotTriggerDispatcher, stopBotTriggerDispatcher, startProjectNotionSync, stopProjectNotionSync } from "./services/index";
 import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
 import { stuards_autostart } from "./stuards";
 import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
@@ -369,6 +369,7 @@ app.whenReady().then(async () => {
   startStep("voice bridge", () => { startVoiceBridgeService(); }, 1900);
   startStep("proactive scheduler", () => { startProactiveScheduler(); }, 2200);
   startStep("bot trigger dispatcher", () => { startBotTriggerDispatcher(); }, 2400);
+  startStep("project notion sync", () => { startProjectNotionSync(); }, 2600);
   // Heaviest / least time-sensitive last: installed-app scan and the file-index
   // sweep. Browser pre-warm was removed from startup entirely — it spawned a
   // ~150MB Chromium server on every launch for anyone who'd ever used browser
@@ -398,6 +399,7 @@ async function runShutdownCleanup(): Promise<void> {
     try { stopSmsInbox(); } catch (e) { logger.error("Failed to stop SMS inbox during shutdown:", e); }
     try { stopProactiveScheduler(); } catch (e) { logger.error("Failed to stop proactive scheduler during shutdown:", e); }
     try { stopBotTriggerDispatcher(); } catch (e) { logger.error("Failed to stop bot trigger dispatcher during shutdown:", e); }
+    try { stopProjectNotionSync(); } catch (e) { logger.error("Failed to stop project notion sync during shutdown:", e); }
     try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
     try { shutdownWakewordListener(); } catch (e) { logger.error("Failed to stop wakeword listener during shutdown:", e); }
     try {

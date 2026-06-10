@@ -4,6 +4,7 @@ import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
 import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
+import { maps_static_map, maps_distance_matrix, maps_search_places, maps_place_details } from './google-maps-tools';
 import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
 import * as notionTools from './notion-tools';
@@ -563,7 +564,7 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Streaming');
     } else if (name.startsWith('_stream_') || name.startsWith('stream_')) {
         // Internal stream tools (prefixed with _) and deprecated stream_from_* — skip registration
-    } else if (['agent_node', 'agent_decision', 'agent_extract', 'deploy_headless_agent', 'get_headless_agent_status', 'list_headless_agent_tasks'].includes(name)) {
+    } else if (['agent_node', 'agent_decision', 'agent_extract'].includes(name)) {
         registerTool(t, 'AI');
     } else if (['agent_list', 'agent_get_status', 'agent_create', 'agent_deploy', 'agent_pause', 'agent_delete', 'ask_agent', 'agent_ask'].includes(name)) {
         registerTool(t, 'Agents');
@@ -604,6 +605,12 @@ registerTool(aiInferenceTool, 'AI');
 registerTool(generate_image, 'AI');
 registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
+
+// Google Maps Platform
+registerTool(maps_static_map, 'Maps');
+registerTool(maps_distance_matrix, 'Maps');
+registerTool(maps_search_places, 'Maps');
+registerTool(maps_place_details, 'Maps');
 
 Object.values(googleTools).forEach(t => registerTool(t, 'Google'));
 // Backward compatibility alias

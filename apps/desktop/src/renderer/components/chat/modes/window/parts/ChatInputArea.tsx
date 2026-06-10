@@ -16,6 +16,8 @@ import { describeTool, friendlyVoiceState } from '../../../../voice/voiceLabels'
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../../../hooks/useVoiceMode';
 import { CreditsLimitNotice } from '../../../shared/CreditsLimitNotice';
 import { ToolRunningIndicator } from '../../../shared/input/ToolRunningIndicator';
+import { AttachmentPreviewOverlay, attachmentOverlayInset } from '../../../../AttachmentPreview';
+import type { ChatAttachment } from '../../../../../utils/attachments';
 import { hasInFlightToolCalls, type ToolCallLike } from '../../../../../utils/toolBrand';
 
 // Brand / agent tint helpers — opacity modifiers on the manual --primary class
@@ -122,7 +124,7 @@ interface ChatInputAreaProps {
   onSteerTargetChange?: (target: string) => void;
   onStop?: () => void;
   isStreaming?: boolean;
-  attachments?: Array<{ type: 'image' | 'file'; name: string }>;
+  attachments?: ChatAttachment[];
   onRemoveAttachment?: (index: number) => void;
   onAttachFiles?: () => void;
   onAttachImages?: () => void;
@@ -222,6 +224,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
+  const attachmentInset = attachmentOverlayInset(attachments.length);
 
   const canSteer = Boolean(isStreaming && onSteer);
   const targetingSubagent = steerTarget !== 'orchestrator'
@@ -618,34 +621,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}
       </AnimatePresence>
 
-      {attachments.length > 0 && (
-        <div className="px-2 pt-2 pb-1 flex flex-wrap gap-2">
-          {attachments.map((att, idx) => (
-            <div
-              key={`att-${idx}`}
-              className="group flex items-center gap-1.5 px-2.5 py-1.5 bg-theme-active/50 hover:bg-theme-active rounded-xl text-[12px] text-theme-fg border border-theme/10"
-            >
-              {att.type === 'image' ? (
-                <Image className="w-3.5 h-3.5 text-primary" />
-              ) : (
-                <File className="w-3.5 h-3.5 text-theme-muted" />
-              )}
-              <span className="max-w-[160px] truncate font-semibold">{att.name}</span>
-              {onRemoveAttachment && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveAttachment(idx)}
-                  className="ml-0.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded p-0.5 transition-colors opacity-0 group-hover:opacity-100"
-                  title="Remove"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Realtime Voice Conversation Test Panel */}
       {rtOpen && (
         <div className="mx-2 mt-1 p-3 rounded-2xl bg-theme-hover/70 border border-theme/10 text-[12px] space-y-2">
@@ -855,7 +830,16 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}
         style={launcherSkin ? undefined : { ['--tw-ring-color' as any]: brandSoft(12) }}
         >
-          <div className="min-w-0 w-full px-1">
+          <div
+            className="min-w-0 w-full px-1 relative"
+            style={attachmentInset > 0 ? { paddingLeft: attachmentInset } : undefined}
+          >
+            {attachments.length > 0 && (
+              <AttachmentPreviewOverlay
+                attachments={attachments}
+                onRemove={onRemoveAttachment}
+              />
+            )}
             <TextareaAutosize
               ref={textareaRef}
               data-onboarding="chat-input"
