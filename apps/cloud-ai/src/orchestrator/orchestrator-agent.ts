@@ -20,6 +20,11 @@ import {
   type JournalEntryPayload,
   type ProjectRetrievedContextPayload,
 } from '../agents/stuard/prompts';
+import {
+  buildResearchModeSystemPrompt,
+  RESEARCH_MODE_GUIDANCE,
+} from '../agents/stuard/research-prompts';
+import { RESEARCH_MODE_TOOLS, type ResearchSessionView } from '../tools/research-mode';
 import type { ModelChoice } from '../router/model-router';
 import {
   DISCORD_INTEGRATION_ENABLED,
@@ -142,6 +147,8 @@ export interface OrchestratorPromptOptions {
   activeProject?: ProjectContextPayload | null;
   recentJournal?: JournalEntryPayload[];
   retrievedContext?: ProjectRetrievedContextPayload | null;
+  /** Active deep-research session — takes over the prompt like Project Mode. */
+  activeResearch?: ResearchSessionView | null;
   /** Compact Tab quick send: plain Q&A, no tools or delegation. */
   quickResponse?: boolean;
 }
@@ -166,6 +173,17 @@ function buildOrchestratorPrompt(
   bots: BotPromptSummary[] = [],
   promptOptions: OrchestratorPromptOptions = {},
 ): string {
+  // Research Mode wins over everything: the user explicitly entered a deep-
+  // research engagement, and its discipline (distill-don't-dump, source
+  // registry, compile step) breaks if the generic voice bleeds through.
+  if (promptOptions.activeResearch) {
+    return buildResearchModeSystemPrompt(promptOptions.activeResearch, {
+      conversationId: promptOptions.conversationId,
+      enabledIntegrations,
+      homeDir: DEFAULT_USER_HOME_DIR,
+    });
+  }
+
   // When Project Mode is active, fully take over the system prompt with a
   // research-lab persona that knows the project's native tool surface and
   // disciplines (journal types, memory, scoped search). The generic orchestrator
@@ -289,6 +307,8 @@ User-authored Stuard workflows act as custom tools. When a request matches somet
 - Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
 
 ${PROJECT_MODE_GUIDANCE}
+
+${RESEARCH_MODE_GUIDANCE}
 ${botSection}
 
 ## Rules
@@ -341,6 +361,11 @@ function getOrchestratorActiveTools(
 
     // Task tracking
     agent_todo,
+
+    // Research Mode — cloud-side (no bridge needed), so it works from desktop,
+    // website, and VM chat alike. Tools hard-gate on an active session, and
+    // being native means enter_research_mode → research_search works mid-turn.
+    ...RESEARCH_MODE_TOOLS,
 
     // Skills
     get_skill_info,

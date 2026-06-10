@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { isRedundantStreamingUpdate, mergeStreamingText } from '../../../../../utils/streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../utils/text';
 import 'katex/dist/katex.min.css';
-import { Archive, ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users } from 'lucide-react';
+import { Archive, ChevronRight, Folder, FileText, Play, ExternalLink, CheckCircle, XCircle, Loader2, Copy, Check, Terminal, Pencil, Undo2, Redo2, X, Send, Users, ArrowUpRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ToolCall, StreamChunk } from '../../../../../hooks/useAgent';
 
@@ -493,6 +493,25 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                     }
                     if (seg.kind === 'link_preview') {
                       return <LinkPreview key={`lp-${idx}`} url={seg.url} />;
+                    }
+                    if (seg.kind === 'report_button') {
+                      return (
+                        <button
+                          key={`report-${idx}`}
+                          onClick={() => window.dispatchEvent(new CustomEvent('open-research-report'))}
+                          className="my-2 inline-flex items-center gap-2.5 pl-2.5 pr-3.5 h-9 rounded-xl border text-[12.5px] font-semibold transition-colors"
+                          style={{
+                            backgroundColor: 'color-mix(in srgb, #06b6d4 12%, transparent)',
+                            borderColor: 'color-mix(in srgb, #06b6d4 33%, transparent)',
+                            color: '#06b6d4',
+                          }}
+                          title="Open the full research report"
+                        >
+                          <FileText className="w-4 h-4" strokeWidth={1.75} />
+                          <span>{seg.title ? `Open report: ${seg.title}` : 'Open full report'}</span>
+                          <ArrowUpRight className="w-3.5 h-3.5 opacity-70" strokeWidth={2} />
+                        </button>
+                      );
                     }
                     if (seg.kind === 'text') {
                       return (

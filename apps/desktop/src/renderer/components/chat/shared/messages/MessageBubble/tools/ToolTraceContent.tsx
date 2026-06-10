@@ -8,6 +8,16 @@ import { GenerateImagePreview } from '../previews/GenerateImagePreview';
 import { MediaResultPreview } from '../previews/MediaResultPreview';
 import { MediaAudioPreview } from '../previews/MediaAudioPreview';
 import { ScrapeResultPreview } from '../previews/ScrapeResultPreview';
+import {
+  ResearchSearchPreview,
+  ResearchReadPreview,
+  ResearchNotePreview,
+  ResearchStatusPreview,
+  ResearchCompilePreview,
+  ResearchReportPreview,
+  EnterResearchModePreview,
+  ExitResearchModePreview,
+} from '../previews/ResearchPreview';
 import { collectImageSources, collectAudioSources } from '../helpers/media';
 import {
   extractTerminalStatus,
@@ -128,6 +138,36 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
       if (results && results.length > 0) {
         return <ScrapeResultPreview results={results} />;
       }
+    }
+
+    // Research Mode tools — bespoke renderers (source cards, distilled notes,
+    // the registry dashboard, the delivered report). All fall through to the
+    // generic preview when the result is an `{ ok: false, error }` shape so the
+    // error surfaces normally.
+    const research = tool.result as any;
+    if (tool.tool === 'research_search' && Array.isArray(research?.searches)) {
+      return <ResearchSearchPreview result={research} />;
+    }
+    if (tool.tool === 'research_read' && research && research.ok !== false) {
+      return <ResearchReadPreview result={research} />;
+    }
+    if (tool.tool === 'research_note' && research?.ok !== false) {
+      return <ResearchNotePreview args={args} result={research} />;
+    }
+    if (tool.tool === 'research_status' && research?.ok !== false) {
+      return <ResearchStatusPreview result={research} />;
+    }
+    if (tool.tool === 'research_compile' && research?.ok !== false) {
+      return <ResearchCompilePreview result={research} />;
+    }
+    if (tool.tool === 'research_report' && research?.ok !== false) {
+      return <ResearchReportPreview result={research} />;
+    }
+    if (tool.tool === 'enter_research_mode' && research?.ok !== false) {
+      return <EnterResearchModePreview result={research} />;
+    }
+    if (tool.tool === 'exit_research_mode' && research?.ok !== false) {
+      return <ExitResearchModePreview />;
     }
 
     if (TERMINAL_OUTPUT_TOOL_NAMES.has(tool.tool)) {

@@ -31,6 +31,13 @@ import { buildContextUsageMetrics } from "../../../../utils/contextUsage";
 import { useFileNavigator } from "../../../../hooks/useFileNavigator";
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from "../../../../hooks/useVoiceMode";
 import { ActiveProjectBar } from "./parts/ActiveProjectBar";
+import {
+  ActiveResearchBar,
+  ResearchModeStyles,
+  RESEARCH_ACCENT,
+} from "./parts/ActiveResearchBar";
+import { ResearchReportViewer } from "./parts/ResearchReportViewer";
+import { useActiveResearch } from "../../../../hooks/useActiveResearch";
 import type { Project } from "../../../../hooks/useProjects";
 import type { ChatAttachment } from "../../../../utils/attachments";
 
@@ -433,6 +440,27 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
     handleOpenFileNav,
   } = useFileNavigator({ query, setQuery, onAddContext });
 
+  // Research Mode — cloud-side session surfaced via research-mode-changed
+  // events. Drives the breathing chat border, the floating capsule, and the
+  // report viewer (auto-opens when research_report ships a new document).
+  const { research, dismiss: dismissResearch } = useActiveResearch(activeConversationId);
+  const [reportOpen, setReportOpen] = useState(false);
+  const seenReportNonceRef = useRef(0);
+  useEffect(() => {
+    if (research?.report && research.reportNonce > seenReportNonceRef.current) {
+      seenReportNonceRef.current = research.reportNonce;
+      setReportOpen(true);
+    }
+  }, [research?.report, research?.reportNonce]);
+  // Inline "Open full report" buttons (the <<report>> segment in the summary
+  // message) dispatch this so any message can re-open the viewer.
+  useEffect(() => {
+    const handler = () => setReportOpen(true);
+    window.addEventListener('open-research-report', handler);
+    return () => window.removeEventListener('open-research-report', handler);
+  }, []);
+  const researchActive = !!research;
+
   const isLauncherChatLayout =
     overlayMode === "window" || overlayMode === "sidebar";
   const floatingComposerRef = useRef<HTMLDivElement>(null);
@@ -517,6 +545,13 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
 
   return (
     <>
+      {researchActive && <ResearchModeStyles />}
+      {reportOpen && research?.report && (
+        <ResearchReportViewer
+          report={research.report}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
       <FileNavigatorOverlay
         ref={fileNavRef}
         showFileNav={showFileNav}
@@ -536,6 +571,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           translucentMode={translucentMode}
           width={internalSidebarWidth}
           onResize={onInternalSidebarResize}
+          researchActive={researchActive}
+          researchStreaming={!!isStreaming}
         />
 
         {overlayMode === "window" || overlayMode === "sidebar" ? (
@@ -549,6 +586,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
               translucentMode
                 ? "bg-theme-bg backdrop-blur-2xl"
                 : "bg-theme-bg",
+              researchActive && "research-active-border",
+              researchActive && isStreaming && "research-streaming",
             )}
             style={{
               ...(translucentMode
@@ -557,9 +596,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       "color-mix(in srgb, var(--background) 76%, transparent)",
                   }
                 : {}),
-              ...(activeProject
-                ? { borderColor: `${activeProject.color}22` }
-                : {}),
+              ...(researchActive
+                ? { borderColor: `${RESEARCH_ACCENT}33` }
+                : activeProject
+                  ? { borderColor: `${activeProject.color}22` }
+                  : {}),
             }}
           >
             {/* Header & Messages — single launcher surface, no nested card */}
@@ -651,6 +692,14 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                     onOpenHome={onOpenProjectHome}
                   />
                 )}
+                {research && !research.hidden && (
+                  <ActiveResearchBar
+                    research={research}
+                    isStreaming={isStreaming}
+                    onOpenReport={() => setReportOpen(true)}
+                    onDismiss={dismissResearch}
+                  />
+                )}
                 <div className="absolute inset-0 flex flex-col overflow-hidden px-1">
                   {viewMode === "tasks" ? (
                     <div
@@ -740,13 +789,17 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                 translucentMode
                   ? "bg-theme-bg/25 backdrop-blur-2xl border border-theme/20"
                   : "bg-theme-card border border-theme/50",
+                researchActive && "research-active-border",
+                researchActive && isStreaming && "research-streaming",
               )}
               style={
-                activeProject
-                  ? {
-                      borderColor: `${activeProject.color}22`,
-                    }
-                  : undefined
+                researchActive
+                  ? { borderColor: `${RESEARCH_ACCENT}33` }
+                  : activeProject
+                    ? {
+                        borderColor: `${activeProject.color}22`,
+                      }
+                    : undefined
               }
             >
               {/* Top Header */}

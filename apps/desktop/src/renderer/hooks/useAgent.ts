@@ -2309,6 +2309,40 @@ export function useAgent(options?: string | UseAgentOptions) {
                 } catch {}
               }
 
+              // Research Mode lives cloud-side, so the UI learns about it purely
+              // from these tool events (enter/exit flips the chrome, search/note
+              // keep the live counters fresh, research_report carries the final
+              // markdown for the report viewer). Everything is read off `result`,
+              // NOT `args` — completed tool_events carry the result but not the
+              // call args, and the report markdown is re-attached to result by
+              // attachResearchReportForClient cloud-side. See useActiveResearch.ts.
+              if (
+                normalizedStatus === 'completed' &&
+                (tool === 'enter_research_mode' || tool === 'exit_research_mode' || tool.startsWith('research_'))
+              ) {
+                try {
+                  const result = evt.data?.result || {};
+                  const conversationId = result.conversation_id || evt.data?.args?.conversation_id;
+                  if (result.ok !== false && conversationId) {
+                    const report = result.report && typeof result.report.markdown === 'string'
+                      ? { title: String(result.report.title || 'Research report'), markdown: result.report.markdown }
+                      : undefined;
+                    window.dispatchEvent(new CustomEvent('research-mode-changed', {
+                      detail: {
+                        tool,
+                        conversationId,
+                        brief: typeof result.brief === 'string' ? result.brief : undefined,
+                        totalSources: typeof result.total_sources === 'number'
+                          ? result.total_sources
+                          : result?.stats?.total_sources,
+                        totalNotes: result.total_notes,
+                        report,
+                      },
+                    }));
+                  }
+                } catch {}
+              }
+
               // Track tool calls in currentToolCalls array AND currentStreamChunks
               // Deduplicate: only add if not already present, update if exists
               try {

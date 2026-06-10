@@ -10,6 +10,7 @@ import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
 import { withClientBridge, getBridgeWs, getBridgeSecrets } from '../../tools/bridge';
 import { getSessionWorkflow, getWorkflowById } from '../../tools/workflow';
+import { attachResearchReportForClient } from '../../tools/research-mode';
 import {
   addAssistantMessage,
   addUserMessage,
@@ -32,6 +33,7 @@ import {
   drainInterjectionPayload,
   type InterjectionPayload,
 } from './interjections';
+import { buildEmptyOutputMessage, mapStreamError, summarizeInputAttachments } from './error-messages';
 import type { PreparedChatRequest, StreamChunkRecord } from './types';
 import { isQuickChatRequest } from './quick-request';
 import { registerNestedRecorder, unregisterNestedRecorder } from './nested-chunk-recorder';
@@ -652,13 +654,24 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           deferInterjectionToQueuedTurn(carriedInterjection);
         }
 
+        let outputText = finalText;
+        if (emptyOutput) {
+          const mapped = await buildEmptyOutputMessage({
+            modelId: chosenModelId,
+            modelLabel,
+            attachments: summarizeInputAttachments(inputMessages),
+          });
+          outputText = `Error: ${mapped.message}`;
+          try { writeLog('empty_output', { code: mapped.code, model: chosenModelId || routedTier }); } catch { }
+        }
+
         send(ws, {
           type: 'final',
           origin: 'cloud-ai',
           model: chosenModelId || routedTier,
           conversationId,
           result: {
-            text: emptyOutput ? 'Error: Model returned no output. Please retry.' : finalText,
+            text: outputText,
             steps: [],
             finishReason: emptyOutput ? 'empty' : 'done',
           },
@@ -769,14 +782,24 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
       return;
     }
 
-    const errorText = runtime.aggregatedText ? runtime.aggregatedText.trim() : `Error: ${error?.message || String(error)}`;
+    const mappedError = mapStreamError(error, {
+      modelId: chosenModelId,
+      modelLabel,
+      attachments: summarizeInputAttachments(inputMessages),
+    });
+    const friendlyMessage = mappedError?.message || error?.message || String(error);
+    if (mappedError) {
+      try { writeLog('stream_error_mapped', { code: mappedError.code, model: chosenModelId || routedTier }); } catch { }
+    }
+
+    const errorText = runtime.aggregatedText ? runtime.aggregatedText.trim() : `Error: ${friendlyMessage}`;
     await persistAssistantText(errorText, 'error');
     await billingTracker.settleToUsageList(finishedSteps, {
       trigger: 'stream_error',
       partial: true,
     });
 
-    send(ws, { type: 'error', message: error?.message || String(error) }, requestId);
+    send(ws, { type: 'error', message: friendlyMessage, code: mappedError?.code }, requestId);
     setRequestTerminalResult({
       text: runtime.aggregatedText || '',
       finishReason: 'error',
@@ -1266,10 +1289,14 @@ export function handleStreamChunk({
         }
 
         if (!isSISMetaTool(toolName)) {
+          const clientResult = attachResearchReportForClient(
+            toolName,
+            attachWorkflowForClient(toolName, toolResult),
+          );
           send(ws, {
             type: 'progress',
             event: 'tool_event',
-            data: { tool: toolName, status: 'completed', toolCallId, result: attachWorkflowForClient(toolName, toolResult) },
+            data: { tool: toolName, status: 'completed', toolCallId, result: clientResult },
           }, requestId);
         }
         handledChunk = true;

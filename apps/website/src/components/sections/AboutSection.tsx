@@ -18,13 +18,13 @@ const PILLARS: Pillar[] = [
     icon: MessageSquare,
     title: 'An assistant that acts',
     description:
-      'Chat with Stuard like you would a person. Instead of just answering, it does the task — moves the files, drafts the email, books the meeting.',
+      'Chat with Stuard like you would a person. Instead of just answering, it does the task: moves the files, drafts the email, books the meeting.',
   },
   {
     icon: Plug,
     title: 'Connected to your world',
     description:
-      'It works with your local files and apps, and with accounts you choose to connect — Gmail, Google Calendar, Drive, GitHub, and more.',
+      'It works with your local files and apps, and with accounts you choose to connect, like Gmail, Google Calendar, Drive, GitHub, and more.',
   },
   {
     icon: Workflow,
@@ -46,13 +46,13 @@ const AboutSection = () => {
             WHAT IS STUARD AI?
           </p>
           <h2 className="text-[26px] leading-[1.2] sm:text-[34px] lg:text-[42px] font-normal text-white">
-            A personal AI assistant installed on your PC — built to finish work, not just talk
+            A personal AI assistant installed on your PC, built to finish work, not just talk
             about it.
           </h2>
           <p className="text-[16px] leading-[27px] sm:text-[17px] sm:leading-[29px] text-[#D4D4D4]">
             Stuard AI is a desktop application for Windows. It pairs an AI assistant with real
-            access to your computer and the accounts you connect, so everyday work — files, email,
-            calendar, repetitive chores — gets done for you. Most of its work happens locally on
+            access to your computer and the accounts you connect, so everyday work like files,
+            email, calendar, and repetitive chores gets done for you. Most of its work happens locally on
             your device; it only reaches the cloud or a connected account when a task you asked
             for requires it.
           </p>

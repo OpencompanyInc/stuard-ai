@@ -15,6 +15,8 @@ import {
   getChatAttachmentKind,
 } from '../utils/attachments';
 
+type AttachmentKind = ReturnType<typeof getChatAttachmentKind>;
+
 interface AttachmentPreviewStripProps {
   attachments: ChatAttachment[];
   onRemove?: (index: number) => void;
@@ -29,33 +31,16 @@ interface AttachmentPreviewOverlayProps {
   className?: string;
 }
 
-/** Width reserved per overlaid image thumb (px). */
-export const ATTACHMENT_OVERLAY_THUMB = 40;
-export const ATTACHMENT_OVERLAY_GAP = 4;
+/** Square edge length reserved per overlaid thumb (px). */
+export const ATTACHMENT_OVERLAY_THUMB = 36;
+export const ATTACHMENT_OVERLAY_GAP = 6;
 
 export function attachmentOverlayInset(count: number): number {
   if (count <= 0) return 0;
-  return count * ATTACHMENT_OVERLAY_THUMB + (count - 1) * ATTACHMENT_OVERLAY_GAP + 8;
+  return count * ATTACHMENT_OVERLAY_THUMB + (count - 1) * ATTACHMENT_OVERLAY_GAP + 10;
 }
 
-function attachmentMeta(attachment: ChatAttachment, kind: ReturnType<typeof getChatAttachmentKind>) {
-  if (kind === 'document') {
-    const parts: string[] = [];
-    if (typeof attachment.lineCount === 'number' && attachment.lineCount > 0) {
-      parts.push(`${attachment.lineCount} lines`);
-    }
-    if (typeof attachment.charCount === 'number' && attachment.charCount > 0) {
-      parts.push(`${attachment.charCount} chars`);
-    }
-    return parts.join(' · ');
-  }
-  if (kind === 'audio') return 'Audio';
-  if (kind === 'video') return 'Video';
-  if (kind === 'image') return 'Image';
-  return attachment.mimeType || 'File';
-}
-
-function cardIcon(kind: ReturnType<typeof getChatAttachmentKind>) {
+function cardIcon(kind: AttachmentKind) {
   if (kind === 'document') return FileText;
   if (kind === 'audio') return Music;
   if (kind === 'video') return Film;
@@ -63,12 +48,39 @@ function cardIcon(kind: ReturnType<typeof getChatAttachmentKind>) {
   return File;
 }
 
-const CARD_BG = 'color-mix(in srgb, var(--foreground) 5%, transparent)';
-const CARD_BORDER = 'color-mix(in srgb, var(--foreground) 12%, transparent)';
-const ICON_BG = 'color-mix(in srgb, var(--foreground) 9%, transparent)';
-const FG = 'var(--foreground)';
-const FG_MUTED = 'var(--foreground-muted)';
-const FG_FAINT = 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)';
+/** A single, short subtitle line — never a body of preview text. */
+function attachmentSubtitle(attachment: ChatAttachment, kind: AttachmentKind): string {
+  if (kind === 'document') {
+    if (typeof attachment.lineCount === 'number' && attachment.lineCount > 0) {
+      return `${attachment.lineCount.toLocaleString()} line${attachment.lineCount === 1 ? '' : 's'}`;
+    }
+    return 'Text';
+  }
+  if (kind === 'audio') return 'Audio';
+  if (kind === 'video') return 'Video';
+  if (kind === 'image') return 'Image';
+  const ext = (attachment.name.split('.').pop() || '').trim();
+  if (ext && ext.length <= 5 && ext !== attachment.name) return ext.toUpperCase();
+  return 'File';
+}
+
+const RemoveButton: React.FC<{ index: number; onRemove?: (index: number) => void }> = ({ index, onRemove }) => {
+  if (!onRemove) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onRemove(index)}
+      title="Remove attachment"
+      className={clsx(
+        'absolute -right-1.5 -top-1.5 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-full',
+        'border border-theme bg-theme-hover text-theme-muted shadow-sm backdrop-blur',
+        'opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:text-theme-fg pointer-events-auto',
+      )}
+    >
+      <X className="h-3 w-3" />
+    </button>
+  );
+};
 
 const AttachmentPreviewCard: React.FC<{
   attachment: ChatAttachment;
@@ -79,126 +91,63 @@ const AttachmentPreviewCard: React.FC<{
   const kind = getChatAttachmentKind(attachment);
   const previewUrl = getChatAttachmentDataUrl(attachment);
   const Icon = cardIcon(kind);
-  const meta = attachmentMeta(attachment, kind);
+  const isImage = kind === 'image' && !!previewUrl;
 
-  const removeButton = onRemove ? (
-    <button
-      type="button"
-      onClick={() => onRemove(index)}
-      className="absolute -right-1.5 -top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full transition-colors pointer-events-auto"
-      style={{
-        background: 'color-mix(in srgb, var(--background) 80%, transparent)',
-        border: `1px solid ${CARD_BORDER}`,
-        color: FG_MUTED,
-        backdropFilter: 'blur(6px)',
-      }}
-      title="Remove attachment"
-    >
-      <X className="h-3.5 w-3.5" />
-    </button>
-  ) : null;
-
-  if (kind === 'image' && previewUrl) {
+  // ── Compact (floating over the input): fixed square chips so the reserved
+  // inset always matches and nothing overlaps the typed text. ──────────────
+  if (compact) {
     return (
-      <div className="relative shrink-0 pointer-events-auto">
-        {removeButton}
+      <div
+        className="group relative shrink-0 pointer-events-auto"
+        style={{ width: ATTACHMENT_OVERLAY_THUMB, height: ATTACHMENT_OVERLAY_THUMB }}
+        title={attachment.name}
+      >
+        <RemoveButton index={index} onRemove={onRemove} />
+        {isImage ? (
+          <img
+            src={previewUrl!}
+            alt={attachment.name}
+            className="h-full w-full rounded-[10px] border border-theme object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center rounded-[10px] border border-theme bg-theme-hover text-theme-muted">
+            <Icon className="h-[15px] w-[15px]" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Image: clean thumbnail. ───────────────────────────────────────────────
+  if (isImage) {
+    return (
+      <div className="group relative shrink-0 pointer-events-auto">
+        <RemoveButton index={index} onRemove={onRemove} />
         <img
-          src={previewUrl}
+          src={previewUrl!}
           alt={attachment.name}
           title={attachment.name}
-          className={clsx(
-            'block shadow-sm',
-            compact
-              ? 'h-10 w-10 rounded-md object-cover'
-              : 'max-h-[220px] max-w-[280px] rounded-xl object-contain',
-          )}
-          style={{ border: `1px solid ${CARD_BORDER}` }}
+          className="block max-h-[160px] max-w-[220px] rounded-xl border border-theme object-contain"
         />
       </div>
     );
   }
 
-  if (compact) {
-    return (
-      <div className="relative shrink-0 pointer-events-auto max-w-[88px]">
-        {removeButton}
-        <div
-          className="flex h-8 items-center gap-1.5 rounded-md px-2 pr-5"
-          style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
-          title={attachment.name}
-        >
-          <Icon className="h-3 w-3 shrink-0" style={{ color: FG_MUTED }} />
-          <span className="truncate text-[10px] font-semibold" style={{ color: FG }}>
-            {attachment.name}
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  if (kind === 'document') {
-    return (
-      <div className="relative shrink-0">
-        {removeButton}
-        <div
-          className="h-[104px] w-[184px] rounded-2xl px-3.5 py-3"
-          style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
-        >
-          <div className="flex items-start gap-2.5">
-            <div
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
-              style={{ background: ICON_BG, color: FG_MUTED }}
-            >
-              <FileText className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-[12px] font-semibold" style={{ color: FG }} title={attachment.name}>
-                {attachment.name}
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: FG_FAINT }}>
-                Document
-              </div>
-            </div>
-          </div>
-          <div
-            className="mt-2.5 max-h-[34px] overflow-hidden whitespace-pre-wrap text-[11px] leading-[1.3]"
-            style={{ color: FG_MUTED }}
-          >
-            {attachment.previewText || 'Ready to send'}
-          </div>
-          {meta ? (
-            <div className="mt-2 text-[10px] font-medium" style={{ color: FG_FAINT }}>
-              {meta}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
+  // ── Everything else: one tidy horizontal chip — icon, name, short label. ──
   return (
-    <div className="relative shrink-0">
-      {removeButton}
-      <div
-        className="flex h-[96px] w-[156px] flex-col justify-between rounded-2xl p-3"
-        style={{ border: `1px solid ${CARD_BORDER}`, background: CARD_BG }}
-      >
-        <div className="flex items-start gap-2.5">
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-            style={{ background: ICON_BG, color: FG_MUTED }}
-          >
-            <Icon className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-[12px] font-semibold" style={{ color: FG }} title={attachment.name}>
-              {attachment.name}
-            </div>
-            <div className="truncate text-[10px]" style={{ color: FG_MUTED }}>{meta}</div>
-          </div>
+    <div className="group relative shrink-0 pointer-events-auto">
+      <RemoveButton index={index} onRemove={onRemove} />
+      <div className="flex max-w-[240px] items-center gap-2.5 rounded-xl border border-theme bg-theme-hover/60 py-2 pl-2 pr-3.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-theme-hover text-theme-muted">
+          <Icon className="h-[18px] w-[18px]" />
         </div>
-        <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: FG_FAINT }}>
-          {kind}
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-medium leading-tight text-theme-fg" title={attachment.name}>
+            {attachment.name}
+          </div>
+          <div className="truncate text-[11px] leading-tight text-theme-muted">
+            {attachmentSubtitle(attachment, kind)}
+          </div>
         </div>
       </div>
     </div>
@@ -216,9 +165,10 @@ export const AttachmentPreviewOverlay: React.FC<AttachmentPreviewOverlayProps> =
   return (
     <div
       className={clsx(
-        'absolute left-0 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 pointer-events-none',
+        'absolute left-0 top-1/2 z-20 flex -translate-y-1/2 items-center pointer-events-none',
         className,
       )}
+      style={{ gap: ATTACHMENT_OVERLAY_GAP }}
     >
       {attachments.map((attachment, index) => (
         <AttachmentPreviewCard

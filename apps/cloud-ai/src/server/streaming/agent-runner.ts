@@ -6,6 +6,7 @@ import { getBotAgentForUser } from '../../agents/bot-agent';
 import { getWorkflowAgentForUser, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
 import { getSkillAgentForUser, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
 import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
+import { attachResearchReportForClient } from '../../tools/research-mode';
 import { routeModel, ModelChoice } from '../../router/model-router';
 import {
   heuristicReasoningControl,
@@ -1524,6 +1525,37 @@ function handleStreamChunk(ws: WebSocket, chunk: any, sendFn?: (target: WebSocke
         break;
       }
 
+      // Tool INPUT streaming — the model emits these while it generates a
+      // tool call's arguments. For a big argument (e.g. a long research_report
+      // markdown), this phase can run 30–90s with no other output; without a
+      // forwarded chunk the WS goes idle and a proxy can drop it ("times out,
+      // comes back when done"). Forward a lightweight keepalive that also gives
+      // the UI an "preparing input…" signal. No payload text needed.
+      case 'tool-input-start':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName || chunk.payload?.tool || 'tool',
+            status: 'input_stream_start',
+            toolCallId: chunk.payload?.toolCallId || chunk.payload?.id,
+          }
+        });
+        break;
+
+      case 'tool-input-delta':
+      case 'tool-input-end':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName || chunk.payload?.tool || 'tool',
+            status: chunk?.type === 'tool-input-end' ? 'input_stream_end' : 'input_delta',
+            toolCallId: chunk.payload?.toolCallId || chunk.payload?.id,
+          }
+        });
+        break;
+
       case 'tool-call':
         _send(ws, {
           type: 'progress',
@@ -1545,7 +1577,10 @@ function handleStreamChunk(ws: WebSocket, chunk: any, sendFn?: (target: WebSocke
             tool: chunk.payload?.toolName,
             status: 'completed',
             toolCallId: chunk.payload?.toolCallId,
-            result: chunk.payload?.result
+            // Re-attach the full report markdown to the client copy so the
+            // desktop report viewer can open it (the model's result stays
+            // compact). Mirrors stream-runner's tool-result handling.
+            result: attachResearchReportForClient(chunk.payload?.toolName, chunk.payload?.result),
           }
         });
         break;

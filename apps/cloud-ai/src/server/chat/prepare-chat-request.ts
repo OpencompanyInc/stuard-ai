@@ -14,6 +14,7 @@ import type {
   ProjectRetrievedContextPayload,
 } from '../../agents/stuard/prompts';
 import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
+import { getResearchSessionView } from '../../tools/research-mode';
 import { routeModel, type ModelChoice } from '../../router/model-router';
 import { OUTLOOK_INTEGRATION_ENABLED, WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 import {
@@ -752,6 +753,15 @@ async function resolveProjectPromptOptions(args: {
 
   if (agentType !== 'stuard') return base;
   if (!conversationId) return base;
+
+  // Research Mode wins over Project Mode and needs no desktop bridge — the
+  // session lives cloud-side keyed by conversation, so website/VM chats get
+  // the takeover too. Cheap in-memory lookup, no round-trips.
+  const activeResearch = getResearchSessionView(conversationId);
+  if (activeResearch) {
+    return { conversationId, activeResearch };
+  }
+
   if (!hasClientBridge()) return base;
   // Brand-new conversations can't have a project yet — skip the bridge round-trip.
   if (conversationCreatedNow) return base;

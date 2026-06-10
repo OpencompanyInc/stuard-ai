@@ -109,7 +109,7 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
     result.push({ kind: 'text', value: t });
   };
 
-  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'file' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading'; start: number; end: number; data: any }> = [];
+  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'file' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading' | 'report_button'; start: number; end: number; data: any }> = [];
 
   // Add GenUI matches first (highest priority)
   for (const g of genuiMatches) {
@@ -132,6 +132,18 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
 
   while ((match = mediaRegex.exec(inputText)) !== null) {
     const src = String(match[1] || '').trim();
+    // <<report>> or <<report: Title>> — the research-mode "open the full report"
+    // affordance. Renders an inline button instead of a media attachment.
+    const reportMatch = src.match(/^report\s*(?::\s*(.+))?$/i);
+    if (reportMatch) {
+      allMatches.push({
+        type: 'report_button',
+        start: match.index,
+        end: match.index + match[0].length,
+        data: { title: reportMatch[1]?.trim() || undefined },
+      });
+      continue;
+    }
     allMatches.push({
       type: getAttachmentType(src),
       start: match.index,
@@ -222,6 +234,8 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
       result.push({ kind: 'youtube', videoId: m.data.videoId, url: m.data.url });
     } else if (m.type === 'link_preview') {
       result.push({ kind: 'link_preview', url: m.data.url });
+    } else if (m.type === 'report_button') {
+      result.push({ kind: 'report_button', title: m.data.title });
     }
     lastIndex = m.end;
   }

@@ -27,6 +27,10 @@ interface SidebarTabsPanelProps {
   translucentMode?: boolean;
   width?: number;
   onResize?: (deltaX: number) => void;
+  /** Tint + breathe the panel edge when Research Mode is active (matches chat). */
+  researchActive?: boolean;
+  /** Pulse the border while the agent is actively researching. */
+  researchStreaming?: boolean;
 }
 
 export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
@@ -37,6 +41,8 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
   translucentMode,
   width = 304,
   onResize,
+  researchActive = false,
+  researchStreaming = false,
 }) => {
   const outerBackground = translucentMode
     ? "color-mix(in srgb, var(--background) 76%, transparent)"
@@ -129,6 +135,8 @@ export const SidebarTabsPanel: React.FC<SidebarTabsPanelProps> = ({
           "launcher-compact-skin launcher-sidebar-panel relative h-full min-h-0 w-full flex flex-col overflow-hidden",
           "rounded-l-[32px] rounded-r-none",
           translucentMode ? "bg-theme-bg backdrop-blur-2xl" : "bg-theme-bg",
+          researchActive && "research-active-border",
+          researchActive && researchStreaming && "research-streaming",
         )}
         style={{
           background: outerBackground,

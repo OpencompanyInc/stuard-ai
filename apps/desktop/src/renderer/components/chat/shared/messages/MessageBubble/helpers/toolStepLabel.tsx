@@ -104,6 +104,44 @@ export function getToolStepLabel(tool: ToolCall): React.ReactNode {
       try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
       return <span>{v('Scraping', 'Scraped')} <InlineCodeChip title={url}>{host}</InlineCodeChip></span>;
     }
+    case 'enter_research_mode':
+      return v('Entering Research Mode', 'Entered Research Mode');
+    case 'exit_research_mode':
+      return v('Exiting Research Mode', 'Exited Research Mode');
+    case 'research_search': {
+      const queries = Array.isArray(args.queries) ? args.queries.filter((q: any) => typeof q === 'string' && q.trim()) : [];
+      if (queries.length === 1) {
+        return <span>{v('Researching', 'Researched')} <InlineCodeChip max={48}>{queries[0]}</InlineCodeChip></span>;
+      }
+      if (queries.length > 1) {
+        return <span>{v('Researching', 'Researched')} {queries.length} angles</span>;
+      }
+      return v('Searching sources', 'Searched sources');
+    }
+    case 'research_read': {
+      const src = typeof args.source === 'string' ? args.source : null;
+      if (!src) return v('Reading source', 'Read source');
+      let label = src;
+      if (/^https?:\/\//i.test(src)) { try { label = new URL(src).hostname.replace(/^www\./, ''); } catch {} }
+      return <span>{v('Reading', 'Read')} <InlineCodeChip title={src} max={40}>{label}</InlineCodeChip></span>;
+    }
+    case 'research_note': {
+      const count = Array.isArray(args.notes) ? args.notes.length : 0;
+      if (count > 0) {
+        return <span>{v('Noting', 'Noted')} {count} {count === 1 ? 'insight' : 'insights'}</span>;
+      }
+      return v('Distilling notes', 'Distilled notes');
+    }
+    case 'research_status':
+      return v('Reviewing research', 'Reviewed research');
+    case 'research_compile':
+      return v('Compiling research', 'Compiled research');
+    case 'research_report': {
+      const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim() : null;
+      return title
+        ? <span>{v('Writing report', 'Delivered report')} <InlineCodeChip max={48}>{title}</InlineCodeChip></span>
+        : v('Writing report', 'Delivered report');
+    }
     case 'glob': {
       const pat = typeof args.pattern === 'string' ? args.pattern : null;
       return pat

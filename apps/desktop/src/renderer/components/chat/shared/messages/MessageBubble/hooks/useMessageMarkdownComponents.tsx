@@ -56,9 +56,12 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
     ul: (props: any) => <ul className="list-disc pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm" {...props} />,
     ol: (props: any) => <ol className="list-decimal pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm marker:font-semibold" {...props} />,
     li: (props: any) => <li className="leading-[1.7] text-theme-fg/95 pl-1" {...props} />,
-    blockquote: (props: any) => (
-      <blockquote className="border-l-4 border-indigo-500/40 pl-4 my-4 py-2 bg-gradient-to-r from-indigo-500/10 to-transparent rounded-r-lg" {...props}>
-        <span className="text-theme-muted/90 italic leading-[1.7]">{props.children}</span>
+    blockquote: ({ children, ...props }: any) => (
+      <blockquote
+        className="my-4 rounded-xl bg-theme-card border border-theme shadow-sm px-4 py-3 [&>p]:mb-2 [&>p:last-child]:mb-0"
+        {...props}
+      >
+        <span className="text-theme-muted leading-[1.7]">{children}</span>
       </blockquote>
     ),
     h1: (props: any) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0 tracking-tight text-theme-fg border-b border-theme/10 pb-2" {...props} />,

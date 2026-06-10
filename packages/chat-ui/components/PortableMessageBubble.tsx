@@ -767,6 +767,13 @@ function extractContentSegments(text: string): ContentSegment[] {
       segments.push({ type: 'text', value: text.slice(lastIndex, matchIndex) });
     }
 
+    // <<report>> is the desktop research-report "open" affordance; there's no
+    // report viewer on web/VM, so swallow the marker rather than leak it.
+    if (/^report\s*(?::.*)?$/i.test(match[1] || '')) {
+      lastIndex = matchIndex + match[0].length;
+      continue;
+    }
+
     const media = classifyContentTarget(match[1] || '');
     if (media) {
       segments.push(media);

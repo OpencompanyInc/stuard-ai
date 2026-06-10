@@ -4,6 +4,7 @@ import * as deviceTools from './device-tools';
 import * as googleTools from './google-tools';
 import { web_search } from './perplexity-tools';
 import { scrape_url } from './tavily-tools';
+import { RESEARCH_MODE_TOOLS } from './research-mode';
 import { maps_static_map, maps_distance_matrix, maps_search_places, maps_place_details } from './google-maps-tools';
 import * as outlookTools from './outlook-tools';
 import * as githubTools from './github-tools';
@@ -605,6 +606,9 @@ registerTool(aiInferenceTool, 'AI');
 registerTool(generate_image, 'AI');
 registerTool(web_search, 'Search');
 registerTool(scrape_url, 'Search');
+
+// Research Mode (deep research with source registry + distilled notes)
+Object.values(RESEARCH_MODE_TOOLS).forEach(t => registerTool(t, 'Research'));
 
 // Google Maps Platform
 registerTool(maps_static_map, 'Maps');

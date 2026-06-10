@@ -16,7 +16,8 @@ export type ContentSegment =
   | { kind: 'youtube'; videoId: string; url: string }
   | { kind: 'link_preview'; url: string }
   | { kind: 'genui'; component: string; args: any; id: string }
-  | { kind: 'genui_loading'; component: string; title?: string };
+  | { kind: 'genui_loading'; component: string; title?: string }
+  | { kind: 'report_button'; title?: string };
 
 export type TraceStatus = 'complete' | 'active' | 'pending' | 'error';
 
