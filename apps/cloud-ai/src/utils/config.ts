@@ -115,6 +115,10 @@ export const INSTAGRAM_REDIRECT_PATH = normalizeMetaRedirectPath(process.env.INS
 export const THREADS_APP_ID = clean(process.env.THREADS_APP_ID || META_APP_ID || '');
 export const THREADS_APP_SECRET = clean(process.env.THREADS_APP_SECRET || META_APP_SECRET || '');
 export const THREADS_REDIRECT_PATH = normalizeMetaRedirectPath(process.env.THREADS_REDIRECT_PATH || '', '/integrations/threads/callback');
+// Token echoed back during Meta webhook verification (GET hub.challenge). Set the same value in the Meta App webhook config.
+export const META_WEBHOOK_VERIFY_TOKEN = clean(process.env.META_WEBHOOK_VERIFY_TOKEN || 'stuard-meta-hook-2026');
+// Secret used to sign X (Twitter) v2 webhook CRC responses + verify the x-twitter-webhooks-signature header. Defaults to the app's client secret.
+export const X_WEBHOOK_SECRET = clean(process.env.X_WEBHOOK_SECRET || process.env.X_CLIENT_SECRET || process.env.TWITTER_CLIENT_SECRET || '');
 
 export const WA_PHONE_NUMBER_ID = clean(process.env.WA_PHONE_NUMBER_ID || '');
 export const WA_ACCESS_TOKEN = clean(process.env.WA_ACCESS_TOKEN || '');

@@ -113,7 +113,7 @@ const PROVIDERS: ProviderConfig[] = [
     redirectPath: INSTAGRAM_REDIRECT_PATH,
     // New Instagram API with Instagram Login (replaces deprecated Basic Display API)
     authorizeUrl: 'https://www.instagram.com/oauth/authorize/',
-    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages',
+    requestedScopes: () => process.env.INSTAGRAM_SCOPES || 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_manage_insights',
     exchangeCode: async (code, redirectUri) => {
       const res = await fetch('https://api.instagram.com/oauth/access_token', {
         method: 'POST',

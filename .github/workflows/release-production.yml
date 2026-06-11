@@ -210,6 +210,11 @@ jobs:
           SECRETS="$SECRETS,DISCORD_CLIENT_SECRET=DISCORD_CLIENT_SECRET:latest"
           SECRETS="$SECRETS,META_APP_ID=META_APP_ID:latest"
           SECRETS="$SECRETS,META_APP_SECRET=META_APP_SECRET:latest"
+          # Instagram has its own app id/secret (distinct from the umbrella META app)
+          SECRETS="$SECRETS,INSTAGRAM_APP_ID=INSTAGRAM_APP_ID:latest"
+          SECRETS="$SECRETS,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest"
+          SECRETS="$SECRETS,META_WEBHOOK_VERIFY_TOKEN=META_WEBHOOK_VERIFY_TOKEN:latest"
+          # Threads/Facebook get their own app creds — add THREADS_APP_ID/SECRET + FACEBOOK_APP_ID/SECRET here once those products are configured in Meta + created in Secret Manager
           # X (Twitter) OAuth
           SECRETS="$SECRETS,X_CLIENT_ID=X_CLIENT_ID:latest"
           SECRETS="$SECRETS,X_CLIENT_SECRET=X_CLIENT_SECRET:latest"

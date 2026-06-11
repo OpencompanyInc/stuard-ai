@@ -12,6 +12,7 @@ import { handleXRoutes } from './integrations/x';
 import { handleNotionRoutes } from './integrations/notion';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
+import { handleSocialTriggerRoutes } from './integrations/social-triggers';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
 import {
   DISCORD_INTEGRATION_ENABLED,
@@ -68,6 +69,8 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleBetaRoutes(req, res, parsedUrl)) return true;
   if (await handleOpsRoutes(req, res, parsedUrl)) return true;
   if (await handleOAuthClaimRoute(req, res, parsedUrl)) return true;
+  // Social webhook receivers (Meta/Instagram + X) — must precede the provider OAuth routers so the webhook paths aren't intercepted.
+  if (await handleSocialTriggerRoutes(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (OUTLOOK_INTEGRATION_ENABLED && await handleOutlookRoutes(req, res, parsedUrl)) return true;
