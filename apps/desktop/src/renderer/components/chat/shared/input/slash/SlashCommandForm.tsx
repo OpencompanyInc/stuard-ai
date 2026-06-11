@@ -162,7 +162,22 @@ export const SlashCommandForm: React.FC<SlashCommandFormProps> = ({
                 {label}
                 {f.required && <span style={{ color: 'var(--primary)' }}> *</span>}
               </span>
-              {f.kind === 'select' && f.options ? (
+              {f.kind === 'select' && f.options && f.paramType === 'select' ? (
+                // Dropdown param — real <select> so the runner picks from the
+                // publisher's valid options (better than cycle-on-click for >2).
+                <select
+                  data-slash-field={f.key}
+                  value={String(values[f.key] || f.options[0])}
+                  onChange={(e) => onChange(f.key, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onCancel(); } }}
+                  className="w-full bg-theme-hover/50 outline-none text-[12.5px] text-theme-fg px-2.5 py-1.5 rounded-lg border border-theme/40 focus:border-theme transition-colors"
+                  title={f.hint}
+                >
+                  {f.options.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : f.kind === 'select' && f.options ? (
                 <span>
                   <button
                     type="button"

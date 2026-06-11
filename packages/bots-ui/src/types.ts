@@ -37,6 +37,14 @@ export type BotTriggerType =
   | 'fs.watch'
   | 'command.watch'
   | 'gmail.new_email'
+  | 'x.new_mention'
+  | 'x.new_comment'
+  | 'x.new_dm'
+  | 'x.new_follower'
+  | 'x.user_post'
+  | 'instagram.new_comment'
+  | 'instagram.new_mention'
+  | 'instagram.new_message'
   | 'manual';
 
 export interface BotTrigger {

@@ -6,6 +6,7 @@ import {
   uniqueBrands,
   type ToolCallLike,
 } from '../../../../utils/toolBrand';
+import { IntegrationLogo } from '../../../IntegrationLogo';
 
 interface ToolBrandStackProps {
   toolCalls: readonly ToolCallLike[];
@@ -35,8 +36,7 @@ export const ToolBrandStack: React.FC<ToolBrandStackProps> = ({
   size = 'md',
   activeBrandKey: activeBrandKeyProp,
 }) => {
-  const names = toolCalls.map((t) => t.tool);
-  const brands = uniqueBrands(names);
+  const brands = uniqueBrands(toolCalls);
   const activeBrandKey = activeBrandKeyProp ?? getActiveBrandKey(toolCalls);
 
   if (brands.length === 0) return null;
@@ -79,12 +79,11 @@ export const ToolBrandStack: React.FC<ToolBrandStackProps> = ({
                   : '0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent)',
               }}
             >
-              {brand.logo ? (
-                <img
-                  src={brand.logo}
+              {brand.logo || brand.useRemote ? (
+                <IntegrationLogo
+                  logoKey={brand.key}
+                  fallbackSrc={brand.logo}
                   alt={brand.label}
-                  className="object-contain select-none"
-                  draggable={false}
                   style={{ width: dim.logo, height: dim.logo }}
                 />
               ) : brand.icon ? (

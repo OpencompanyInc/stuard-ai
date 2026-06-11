@@ -1244,6 +1244,11 @@ const StandardCard: React.FC<StandardCardProps> = ({
       <p className="text-[12px] text-theme-muted leading-relaxed mb-4 line-clamp-2 flex-1 font-medium">
         {i.description}
       </p>
+      {'technicalDetail' in i && i.technicalDetail ? (
+        <p className="text-[10px] text-theme-muted/80 leading-relaxed -mt-3 mb-4 font-medium">
+          {i.technicalDetail}
+        </p>
+      ) : null}
 
       {/* Profile section for OAuth integrations */}
       {isOAuth && isConnected && cardProfiles.length > 0 && (

@@ -17,6 +17,7 @@ import {
   Bluetooth, BluetoothOff, Sun, Battery, Image as ImageIcon,
   type LucideIcon
 } from "lucide-react";
+import { META_INTEGRATION_ENABLED } from "../../../../../../shared/integration-flags";
 
 export interface PaletteCategoryItem {
   k: 'trigger' | 'local.tool' | 'cloud.tool';
@@ -61,6 +62,17 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'trigger', t: 'keystroke', label: 'Keystroke Sequence', icon: Command, args: { sequence: 'stuard' } },
       { k: 'trigger', t: 'function', label: 'Function (callable workflow)', icon: Workflow, args: {} },
       { k: 'trigger', t: 'webhook', label: 'Webhook', icon: Cloud, args: { mode: 'cloud' } },
+      // ── Social webhook triggers (cloud push via api.stuard.ai) ──
+      { k: 'trigger', t: 'x.new_mention', label: 'X: New Mention', icon: MessageSquare, args: { profile: 'default' } },
+      { k: 'trigger', t: 'x.new_comment', label: 'X: New Comment', icon: MessageSquare, args: { profile: 'default', post_id: '', only_direct_post_replies: false, from_username: '', contains_text: '' } },
+      { k: 'trigger', t: 'x.new_dm', label: 'X: New DM', icon: Send, args: { profile: 'default' } },
+      { k: 'trigger', t: 'x.new_follower', label: 'X: New Follower', icon: User, args: { profile: 'default' } },
+      { k: 'trigger', t: 'x.user_post', label: 'X: New Post (by you)', icon: Hash, args: { profile: 'default' } },
+      ...(META_INTEGRATION_ENABLED ? [
+        { k: 'trigger' as const, t: 'instagram.new_comment', label: 'Instagram: New Comment', icon: MessageSquare, args: { profile: 'default' } },
+        { k: 'trigger' as const, t: 'instagram.new_mention', label: 'Instagram: New Mention', icon: Bell, args: { profile: 'default' } },
+        { k: 'trigger' as const, t: 'instagram.new_message', label: 'Instagram: New DM', icon: Send, args: { profile: 'default' } },
+      ] : []),
       // ── Disabled pending Google CASA verification (push triggers need gmail.readonly / drive.readonly) ──
       // { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', icon: Mail, args: { profile: 'default', labelIds: ['INBOX'] } },
       // { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', icon: Database, args: { profile: 'default', onlyNew: true, includeFolders: false } },
@@ -225,7 +237,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     icon: FileCode,
     color: 'emerald',
     items: [
-      { k: 'local.tool', t: 'run_python_script', label: 'Python Script', icon: FileCode, args: { code: 'print("Hello!")', packages: [] } },
+      { k: 'local.tool', t: 'run_python_script', label: 'Run Script', icon: FileCode, args: { code: 'print("Hello!")', packages: [] } },
       { k: 'local.tool', t: 'run_node_script', label: 'Node.js Script', icon: FileCode, args: { code: 'console.log("Hello!")' } },
     ],
   },
@@ -405,23 +417,23 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
   // ── Media tooling + local AI ──────────────────────────────────────────────
   {
     id: 'ffmpeg',
-    label: 'FFmpeg',
+    label: 'Media Processing',
     icon: Film,
     color: 'violet',
     items: [
-      { k: 'local.tool', t: 'ffmpeg_status', label: 'FFmpeg Status', icon: Activity, args: {} },
-      { k: 'local.tool', t: 'ffmpeg_setup', label: 'Install FFmpeg', icon: Download, args: {} },
-      { k: 'local.tool', t: 'ffmpeg_probe_media', label: 'Probe File (Metadata)', icon: Search, args: { inputPath: '' } },
+      { k: 'local.tool', t: 'ffmpeg_status', label: 'Media Tools Status', icon: Activity, args: {} },
+      { k: 'local.tool', t: 'ffmpeg_setup', label: 'Set Up Media Tools', icon: Download, args: {} },
+      { k: 'local.tool', t: 'ffmpeg_probe_media', label: 'Read File Info', icon: Search, args: { inputPath: '' } },
       { k: 'local.tool', t: 'ffmpeg_convert_media', label: 'Convert Media', icon: Film, args: { inputPath: '', outputPath: '', overwrite: true } },
       { k: 'local.tool', t: 'ffmpeg_extract_audio', label: 'Extract Audio', icon: Mic, args: { inputPath: '', outputPath: '', overwrite: true } },
       { k: 'local.tool', t: 'ffmpeg_trim_media', label: 'Trim Media', icon: Scissors, args: { inputPath: '', outputPath: '', startSeconds: 0, durationSeconds: 30, overwrite: true } },
       { k: 'local.tool', t: 'ffmpeg_extract_frames', label: 'Extract Frames', icon: Camera, args: { inputPath: '', outputPattern: '', fps: 1, overwrite: true } },
-      { k: 'local.tool', t: 'ffmpeg_run', label: 'Custom FFmpeg Command', icon: Terminal, args: { args: [] } },
+      { k: 'local.tool', t: 'ffmpeg_run', label: 'Custom Media Command', icon: Terminal, args: { args: [] } },
     ],
   },
   {
     id: 'mediapipe',
-    label: 'MediaPipe (CV)',
+    label: 'Vision & Motion',
     icon: Scan,
     color: 'lime',
     items: [
@@ -436,19 +448,19 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
   },
   {
     id: 'ollama',
-    label: 'Ollama (Local AI)',
+    label: 'Private AI',
     icon: Bot,
     color: 'violet',
     items: [
       { k: 'local.tool', t: 'ollama_status', label: 'Check Status', icon: Activity, args: {} },
-      { k: 'local.tool', t: 'ollama_agent', label: 'Local AI Agent', icon: Bot, args: { model: 'llama3.2', prompt: '', outputMode: 'text', toolMode: 'curated', maxSteps: 8 } },
+      { k: 'local.tool', t: 'ollama_agent', label: 'Local AI Chat', icon: Bot, args: { model: 'llama3.2', prompt: '', outputMode: 'text', toolMode: 'curated', maxSteps: 8 } },
       { k: 'local.tool', t: 'ollama_embeddings', label: 'Embeddings', icon: Binary, args: { model: 'nomic-embed-text', input: '' } },
       { k: 'local.tool', t: 'ollama_models', label: 'Manage Models', icon: List, args: { action: 'list' } },
     ],
   },
   {
     id: 'tts',
-    label: 'ElevenLabs Voice',
+    label: 'Voice & Speech',
     icon: Speaker,
     color: 'purple',
     items: [

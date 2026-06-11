@@ -25,7 +25,7 @@ vi.mock('./vm-oauth', () => ({
   storeClientOAuthAccount: (...args: any[]) => storeClientOAuthAccountMock(...args),
 }));
 
-import { x_list_dms, x_reply_to_comment } from './x-tools';
+import { x_get_comments, x_list_dms, x_reply_to_comment } from './x-tools';
 
 function jsonResponse(body: any, init: Partial<Response> = {}) {
   return {
@@ -137,6 +137,127 @@ describe('x_list_dms', () => {
     const dmsUrl = decodeURIComponent((global.fetch as any).mock.calls[1][0]);
     expect(dmsUrl).toContain('/dm_conversations/with/222/dm_events?');
     expect(dmsUrl).toContain('pagination_token=PAGE123456789012');
+  });
+});
+
+describe('x_get_comments', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getClientOAuthAccountMock.mockResolvedValue({
+      access_token: 'x-access-token',
+      refresh_token: null,
+      scopes: ['tweet.read', 'users.read'],
+      profile_label: 'default',
+      account_email: '@self',
+      meta: {},
+    });
+    checkAccessMock.mockResolvedValue({ allowed: true });
+    logUsageEventMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('falls back to to:author search when conversation_id query returns nothing', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          id: 'post-root',
+          conversation_id: 'post-root',
+          author_id: '111',
+        },
+        includes: {
+          users: [{ id: '111', username: 'Ifesoll', name: 'Ifesoll' }],
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ data: [], meta: { result_count: 0 } }))
+      .mockResolvedValueOnce(jsonResponse({
+        data: [
+          {
+            id: 'reply-1',
+            text: 'NICE, I like that car.',
+            author_id: '222',
+            conversation_id: 'post-root',
+            created_at: '2026-06-10T12:00:00.000Z',
+            public_metrics: { like_count: 1, reply_count: 0, retweet_count: 0, quote_count: 0 },
+            referenced_tweets: [{ type: 'replied_to', id: 'post-root' }],
+          },
+        ],
+        includes: {
+          users: [{ id: '222', username: 'Jacob_Rhodes_', name: 'Jacob' }],
+        },
+        meta: { result_count: 1 },
+      })) as any;
+
+    const result = await x_get_comments.execute?.({
+      post_id: 'post-root',
+      only_direct_replies: true,
+    }, {} as any);
+
+    expect(result).toMatchObject({
+      mode: 'search',
+      search_method: 'to_author_fallback',
+      count: 1,
+      items: [
+        {
+          id: 'reply-1',
+          text: 'NICE, I like that car.',
+          in_reply_to_tweet_id: 'post-root',
+          author: { username: 'Jacob_Rhodes_' },
+        },
+      ],
+    });
+
+    const calls = (global.fetch as any).mock.calls.map(([url]: [string]) => decodeURIComponent(url));
+    expect(calls[0]).toContain('/tweets/post-root?');
+    expect(calls[1]).toContain('conversation_id:post-root');
+    expect(calls[2]).toContain('to:Ifesoll');
+    expect(calls[2]).toContain('is:reply');
+  });
+
+  it('uses conversation_id results when the primary search succeeds', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          id: 'post-root',
+          conversation_id: 'post-root',
+          author_id: '111',
+        },
+        includes: {
+          users: [{ id: '111', username: 'Ifesoll', name: 'Ifesoll' }],
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        data: [
+          {
+            id: 'reply-direct',
+            text: 'Direct reply',
+            author_id: '222',
+            conversation_id: 'post-root',
+            created_at: '2026-06-10T12:00:00.000Z',
+            public_metrics: { like_count: 0, reply_count: 0, retweet_count: 0, quote_count: 0 },
+            referenced_tweets: [{ type: 'replied_to', id: 'post-root' }],
+          },
+        ],
+        includes: {
+          users: [{ id: '222', username: 'friend', name: 'Friend' }],
+        },
+        meta: { result_count: 1 },
+      })) as any;
+
+    const result = await x_get_comments.execute?.({
+      post_id: 'post-root',
+      only_direct_replies: true,
+    }, {} as any);
+
+    expect(result).toMatchObject({
+      search_method: 'conversation_id',
+      count: 1,
+    });
+    expect((global.fetch as any).mock.calls).toHaveLength(2);
   });
 });
 

@@ -2,11 +2,13 @@ import type { IBotsPlatform } from '@stuardai/bots-ui/platform';
 import { getCloudAiHttp } from '../utils/cloud';
 import { supabase } from '../lib/supabaseClient';
 import { confirmDialog, alertDialog } from '../workflows/components/ConfirmDialog';
+import { META_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 
 type DesktopApi = typeof window.desktopAPI;
 
 export function createDesktopBotsPlatform(api: DesktopApi = window.desktopAPI): IBotsPlatform {
   return {
+    metaIntegrationEnabled: META_INTEGRATION_ENABLED,
     confirm: (opts) => confirmDialog(opts),
     notify: (opts) => alertDialog(opts),
     list: () => api.botsList(),

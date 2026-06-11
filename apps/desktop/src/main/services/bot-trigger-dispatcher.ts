@@ -11,8 +11,36 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import logger from '../utils/logger';
 import { getTimezone } from '../settings';
 import { botService } from './bot-service';
-import type { Bot, BotTrigger } from './bot-service';
+import type { Bot, BotTrigger, BotTriggerType } from './bot-service';
 import { executeWakeUpForBot } from './proactive-scheduler';
+import {
+  registerSocialNativeTrigger,
+  unregisterSocialNativeTrigger,
+  registerGoogleNativeTriggerForOwner,
+  unregisterGoogleNativeTriggerForOwner,
+  socialTriggerSourceKey,
+  type SocialNativeTriggerType,
+  type GoogleNativeTriggerType,
+} from './social-trigger-client';
+
+const CLOUD_SOCIAL_TRIGGER_TYPES = new Set<BotTriggerType>([
+  'x.new_mention',
+  'x.new_comment',
+  'x.new_dm',
+  'x.new_follower',
+  'x.user_post',
+  'instagram.new_comment',
+  'instagram.new_mention',
+  'instagram.new_message',
+]);
+
+const CLOUD_GOOGLE_TRIGGER_TYPES = new Set<BotTriggerType>([
+  'gmail.new_email',
+]);
+
+function isCloudTriggerType(type: BotTriggerType): boolean {
+  return CLOUD_SOCIAL_TRIGGER_TYPES.has(type) || CLOUD_GOOGLE_TRIGGER_TYPES.has(type);
+}
 
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { /* optional */ }
@@ -301,18 +329,114 @@ function unregisterAll(botId: string) {
   entry.commandWatchers.clear();
 }
 
+// ── Cloud trigger sync ───────────────────────────────────────────────────────
+// Cloud-registered triggers (social webhooks + Gmail watches) live in cloud-ai,
+// so syncing them is async. Two invariants:
+//  1. Syncs for the same bot are serialized via a per-bot promise chain —
+//     a blanket unregister must never race a follow-up register.
+//  2. We diff against the last-synced snapshot instead of unregistering
+//     everything first, so a trigger that stays enabled never has a window
+//     where events are dropped, and a deleted bot still gets its last
+//     registrations cleaned up (the bot record is gone by sync time).
+
+// botId -> triggerId -> type, as of the last completed sync.
+const lastCloudTriggers = new Map<string, Map<string, BotTriggerType>>();
+const cloudSyncQueues = new Map<string, Promise<void>>();
+
+async function unregisterCloudTrigger(botId: string, triggerId: string, type: BotTriggerType): Promise<void> {
+  const sourceKey = socialTriggerSourceKey('bot', botId, triggerId);
+  if (CLOUD_GOOGLE_TRIGGER_TYPES.has(type)) {
+    await unregisterGoogleNativeTriggerForOwner({
+      ownerId: botId, triggerId, type: type as GoogleNativeTriggerType, sourceKey,
+    });
+  } else {
+    await unregisterSocialNativeTrigger({ ownerId: botId, triggerId, sourceKey });
+  }
+}
+
+async function registerCloudTrigger(botId: string, trigger: BotTrigger): Promise<boolean> {
+  const sourceKey = socialTriggerSourceKey('bot', botId, trigger.id);
+  const result = CLOUD_GOOGLE_TRIGGER_TYPES.has(trigger.type)
+    ? await registerGoogleNativeTriggerForOwner({
+        ownerId: botId, triggerId: trigger.id,
+        type: trigger.type as GoogleNativeTriggerType,
+        args: trigger.args || {}, sourceKey,
+      })
+    : await registerSocialNativeTrigger({
+        ownerId: botId, triggerId: trigger.id,
+        type: trigger.type as SocialNativeTriggerType,
+        args: trigger.args || {}, sourceKey,
+      });
+  if (result.ok) {
+    logger.info(`[bot-triggers] Registered ${trigger.type} for ${botId}/${trigger.id}`);
+  }
+  return result.ok;
+}
+
+async function syncCloudTriggersForBot(botId: string): Promise<void> {
+  const bot = botService.get(botId);
+  const desired = new Map<string, BotTrigger>();
+  if (bot && bot.status === 'running') {
+    for (const trigger of bot.triggers) {
+      if (trigger.enabled === false) continue;
+      if (!isCloudTriggerType(trigger.type)) continue;
+      desired.set(trigger.id, trigger);
+    }
+  }
+
+  const previous = lastCloudTriggers.get(botId) || new Map<string, BotTriggerType>();
+
+  // Unregister triggers that are gone, disabled, or changed type.
+  for (const [triggerId, prevType] of previous) {
+    const want = desired.get(triggerId);
+    if (want && want.type === prevType) continue;
+    try {
+      await unregisterCloudTrigger(botId, triggerId, prevType);
+    } catch (e) {
+      logger.warn(`[bot-triggers] cloud unregister failed for ${botId}/${triggerId}:`, e);
+    }
+  }
+
+  // Register (or refresh args of) everything desired — idempotent upsert cloud-side.
+  for (const trigger of desired.values()) {
+    try {
+      await registerCloudTrigger(botId, trigger);
+    } catch (e) {
+      logger.warn(`[bot-triggers] cloud register failed for ${botId}/${trigger.id}:`, e);
+    }
+  }
+
+  if (desired.size === 0) {
+    lastCloudTriggers.delete(botId);
+  } else {
+    lastCloudTriggers.set(botId, new Map(Array.from(desired.values()).map(t => [t.id, t.type])));
+  }
+}
+
+function queueCloudTriggerSync(botId: string): void {
+  const prev = cloudSyncQueues.get(botId) || Promise.resolve();
+  const next = prev
+    .then(() => syncCloudTriggersForBot(botId))
+    .catch((e) => {
+      logger.warn(`[bot-triggers] cloud trigger sync failed for ${botId}:`, e);
+    });
+  cloudSyncQueues.set(botId, next);
+}
+
 /**
  * Sync all triggers for a single bot. Idempotent: call this whenever a bot's
  * status flips, triggers change, or the bot is created/deleted.
  */
 export function syncBotTriggers(botId: string): void {
   unregisterAll(botId);
+  queueCloudTriggerSync(botId);
 
   const bot = botService.get(botId);
   if (!bot) {
     active.delete(botId);
     return;
   }
+
   if (bot.status !== 'running') return;
 
   for (const trigger of bot.triggers) {
@@ -334,7 +458,15 @@ export function syncBotTriggers(botId: string): void {
       case 'manual':
         break;
       case 'gmail.new_email':
-        logger.info(`[bot-triggers] ${trigger.type} on ${bot.id}/${trigger.id} stored; cloud delivery pending`);
+      case 'x.new_mention':
+      case 'x.new_comment':
+      case 'x.new_dm':
+      case 'x.new_follower':
+      case 'x.user_post':
+      case 'instagram.new_comment':
+      case 'instagram.new_mention':
+      case 'instagram.new_message':
+        // Cloud-registered — handled by queueCloudTriggerSync above.
         break;
     }
   }
@@ -438,6 +570,59 @@ export function routeWebhookToBots(slug: string, payload: any): number {
   }
   if (fired > 0) {
     logger.info(`[bot-triggers] webhook slug "${slug}" fired ${fired} bot(s)`);
+  }
+  return fired;
+}
+
+/** Apply gmail.new_email trigger args ({ from?, subjectContains? }) to an incoming event. */
+function gmailEventMatchesTriggerArgs(trigger: BotTrigger, data: any): boolean {
+  if (trigger.type !== 'gmail.new_email') return true;
+  const message = data?.message || data?.data?.message || {};
+  const from = cleanString(trigger.args?.from).toLowerCase();
+  if (from && !String(message?.from || '').toLowerCase().includes(from)) return false;
+  const subjectContains = cleanString(trigger.args?.subjectContains).toLowerCase();
+  if (subjectContains && !String(message?.subject || '').toLowerCase().includes(subjectContains)) return false;
+  return true;
+}
+
+export function routeProviderWebhookToBot(
+  botId: string,
+  triggerId: string | undefined,
+  eventType: string | undefined,
+  data: any,
+  provider?: string,
+): number {
+  const bot = botService.get(botId);
+  if (!bot || bot.status !== 'running') return 0;
+
+  const normalizedEvent = String(eventType || data?.event || '').trim();
+  const matches = bot.triggers.filter((trigger) => {
+    if (trigger.enabled === false) return false;
+    if (!isCloudTriggerType(trigger.type)) return false;
+    if (triggerId && trigger.id !== triggerId) return false;
+    if (normalizedEvent && trigger.type !== normalizedEvent) return false;
+    if (!gmailEventMatchesTriggerArgs(trigger, data)) return false;
+    return true;
+  });
+
+  let fired = 0;
+  for (const trigger of matches) {
+    try {
+      fireBotTrigger(bot, trigger, {
+        source: 'provider_webhook',
+        provider: provider || undefined,
+        eventType: normalizedEvent || trigger.type,
+        data,
+        payload: data,
+        firedAt: new Date().toISOString(),
+      });
+      fired++;
+    } catch (e) {
+      logger.warn(`[bot-triggers] provider webhook fire failed for ${botId}/${trigger.id}:`, e);
+    }
+  }
+  if (fired > 0) {
+    logger.info(`[bot-triggers] provider webhook fired ${fired} bot trigger(s) on ${botId}`);
   }
   return fired;
 }

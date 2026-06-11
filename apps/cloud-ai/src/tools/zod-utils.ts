@@ -29,6 +29,31 @@ function getSchemaType(schema: any): string | undefined {
   return type;
 }
 
+function getSchemaWrappers(schema: any): { optional: boolean; nullable: boolean } {
+  let optional = false;
+  let nullable = false;
+  let current = schema;
+  while (current) {
+    const def = getSchemaDef(current);
+    const type = def?.type ?? def?.typeName;
+    if (type === 'optional') optional = true;
+    else if (type === 'nullable' || type === 'nullish') nullable = true;
+    else break;
+    current = def?.innerType;
+  }
+  return { optional, nullable };
+}
+
+function isRequiredNullableField(schema: any): boolean {
+  const { optional, nullable } = getSchemaWrappers(schema);
+  return nullable && !optional;
+}
+
+/** LLMs often emit "" instead of null for unused nullable tool parameters. */
+function emptyStringAsNull(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? null : value;
+}
+
 function getObjectShape(schema: any, def: any): Record<string, any> | undefined {
   const shape = schema?.shape ?? def?.shape;
   return typeof shape === 'function' ? shape() : shape;
@@ -84,9 +109,14 @@ export function normalizeToolInputForSchema(schema: any, value: any): any {
     case 'default':
     case 'catch':
     case 'readonly':
-    case 'nonoptional':
+    case 'nonoptional': {
       if (value == null) return value;
-      return normalizeToolInputForSchema(def.innerType, value);
+      const coerced = (type === 'nullable' || type === 'nullish')
+        ? emptyStringAsNull(value)
+        : value;
+      if (coerced == null) return null;
+      return normalizeToolInputForSchema(def.innerType, coerced);
+    }
 
     case 'pipe':
       return normalizeToolInputForSchema(def.in ?? def.innerType, value);
@@ -99,6 +129,9 @@ export function normalizeToolInputForSchema(schema: any, value: any): any {
       for (const [key, fieldSchema] of Object.entries(shape)) {
         if (Object.prototype.hasOwnProperty.call(next, key)) {
           next[key] = normalizeToolInputForSchema(fieldSchema, next[key]);
+        } else if (isRequiredNullableField(fieldSchema)) {
+          // Strict tool schemas require every nullable field; models often omit unused ones.
+          next[key] = null;
         }
       }
       return next;

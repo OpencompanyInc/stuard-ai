@@ -164,6 +164,34 @@ export function describeTrigger(t: BotTrigger): string {
       if (t.args?.subjectContains) filters.push(`subject "${t.args.subjectContains}"`);
       return filters.length ? `Gmail · ${filters.join(', ')}` : 'Any new Gmail email';
     }
+    case 'x.new_mention':
+      return 'X · new @mention';
+    case 'x.new_comment': {
+      const parts: string[] = [];
+      const postId = String(t.args?.post_id || '').trim();
+      if (postId) {
+        const match = postId.match(/(\d{8,})/);
+        parts.push(`post ${match?.[1] || postId}`);
+      } else {
+        parts.push('any of your posts');
+      }
+      if (t.args?.only_direct_post_replies) parts.push('direct replies only');
+      if (t.args?.from_username) parts.push(`from @${String(t.args.from_username).replace(/^@+/, '')}`);
+      if (t.args?.contains_text) parts.push(`contains "${t.args.contains_text}"`);
+      return `X · comment on ${parts.join(' · ')}`;
+    }
+    case 'x.new_dm':
+      return 'X · new direct message';
+    case 'x.new_follower':
+      return 'X · new follower';
+    case 'x.user_post':
+      return 'X · your new post';
+    case 'instagram.new_comment':
+      return 'Instagram · new comment';
+    case 'instagram.new_mention':
+      return 'Instagram · new @mention';
+    case 'instagram.new_message':
+      return 'Instagram · new DM';
     case 'manual':
       return 'Run only when triggered manually';
   }

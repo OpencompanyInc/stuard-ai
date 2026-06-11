@@ -21,6 +21,11 @@ import {
   ensureNativeWorkflowTriggerRegistration,
   removeNativeWorkflowTriggerRegistration,
 } from '../routes/integrations/google-native-triggers';
+import {
+  registerSocialTrigger,
+  unregisterSocialTrigger,
+  type SocialTriggerType,
+} from '../routes/integrations/social-triggers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -466,6 +471,10 @@ function isNativeGoogleBinding(binding: WorkflowTriggerBinding): binding is Work
   return binding.type === 'gmail.new_email' || binding.type === 'drive.new_file';
 }
 
+function isNativeSocialBinding(binding: WorkflowTriggerBinding): binding is WorkflowTriggerBinding & { type: SocialTriggerType } {
+  return binding.type.startsWith('x.') || binding.type.startsWith('instagram.');
+}
+
 function getVmTriggerConsumerId(deployId: string): string {
   return `vm:${deployId}`;
 }
@@ -561,6 +570,23 @@ async function ensureDeploymentTriggerBindings(userId: string, deployId: string,
           : {},
         consumerId
       );
+      continue;
+    }
+    if (isNativeSocialBinding(binding)) {
+      // Best-effort: a disconnected social account shouldn't block the VM deploy;
+      // the trigger registers on the next deploy/start once the account exists.
+      try {
+        await registerSocialTrigger(
+          userId,
+          req.workflowId,
+          binding.triggerId,
+          binding.type,
+          binding.args || {},
+          consumerId
+        );
+      } catch (e: any) {
+        console.warn(`[deploy-manager] social trigger ${binding.type} registration failed for ${req.workflowId}/${binding.triggerId}: ${e?.message || e}`);
+      }
     }
   }
 }
@@ -584,6 +610,14 @@ async function cleanupDeploymentTriggerBindings(userId: string, deploy: Deployme
         binding.type,
         consumerId
       );
+      continue;
+    }
+    if (isNativeSocialBinding(binding)) {
+      try {
+        await unregisterSocialTrigger(userId, deploy.source_workflow_id, binding.triggerId, consumerId);
+      } catch (e: any) {
+        console.warn(`[deploy-manager] social trigger unregister failed for ${deploy.source_workflow_id}/${binding.triggerId}: ${e?.message || e}`);
+      }
     }
   }
 }

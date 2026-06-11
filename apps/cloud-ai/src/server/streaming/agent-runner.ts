@@ -21,7 +21,6 @@ import { computeBudget, estimateTokens } from '../../memory/token-budget';
 import {
   compactHistory,
   emergencyTruncate,
-  generateMidTurnSummary,
   getRecentWithinBudget,
   pruneToolOutputs,
 } from '../../memory/context-compactor';
@@ -575,6 +574,11 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
       // Workflow agent needs more steps for tool discovery and testing
       const maxToolSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : 40;
       let cumulativeInputTokens = 0;
+      // Size of the live context = the *last* step's prompt tokens (every
+      // step's prompt re-includes the full history, so summing steps
+      // overestimates quadratically — that used to burn all compaction
+      // rounds within a few steps and abort runs that had plenty of room).
+      let currentContextTokens = 0;
       let currentTurnStartIndex = 0;
       let midTurnCompacted = false;
       // Halt-and-resume compaction: when onStepFinish detects tokens exceed
@@ -627,17 +631,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
             return injectedSteer ? { messages: stepMessages } : {};
           }
 
-          const safeCurrentTurnStart = Math.max(1, Math.min(currentTurnStartIndex, stepMessages.length));
-          const preTurnMessages = stepMessages.slice(0, safeCurrentTurnStart) as any[];
-          if (preTurnMessages.length < 4) {
-            return injectedSteer ? { messages: stepMessages } : {};
-          }
-
           try {
             console.log(`[compactor] Mid-turn compaction at step ${stepNumber}: ${estimate.totalTokens} tokens`);
-            const summary = await generateMidTurnSummary(preTurnMessages);
-            stepMessages.splice(0, safeCurrentTurnStart, { role: 'system', content: summary });
+            // compactHistory protects the leading system prompt + original
+            // task message and snaps tool-call/result boundaries, so this is
+            // safe mid-turn (the old splice-at-0 destroyed the workflow/skill
+            // system prompt).
+            stepMessages = await compactHistory([...stepMessages], chosenModelId || model);
             midTurnCompacted = true;
+            streamAccumulatedMessages = [...stepMessages];
             const postCompactEstimate = estimateTokens(stepMessages as any[]);
             console.log(`[compactor] Mid-turn compacted: ${postCompactEstimate.totalTokens} tokens remaining`);
             // Notify UI of reduced context after compaction
@@ -669,14 +671,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           });
           const normalized = normalizeUsage(stepUsage);
           cumulativeInputTokens += normalized.promptTokens;
+          currentContextTokens = normalized.promptTokens + (normalized.completionTokens || 0);
           // Emit live usage update so the UI can update token counts mid-stream
           send(ws, {
             type: 'progress',
             event: 'usage_update',
             data: {
-              promptTokens: cumulativeInputTokens,
+              promptTokens: normalized.promptTokens,
               completionTokens: normalized.completionTokens || 0,
-              totalTokens: cumulativeInputTokens + (normalized.completionTokens || 0),
+              totalTokens: currentContextTokens,
               contextWindow: budget.contextWindow,
               modelId: chosenModelId || model,
             },
@@ -701,10 +704,10 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
           if (
             !needsCompaction &&
             compactionRound < MAX_COMPACTION_ROUNDS &&
-            cumulativeInputTokens > budget.historyBudget * 0.85
+            currentContextTokens > budget.historyBudget * 0.85
           ) {
             needsCompaction = true;
-            console.log(`[compactor] Halt-and-resume triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
+            console.log(`[compactor] Halt-and-resume triggered: ${currentContextTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
             abortWithReason(compactionAbort, 'compaction');
           }
         },
@@ -903,16 +906,16 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                 phase: 'start',
                 round: compactionRound,
                 maxRounds: MAX_COMPACTION_ROUNDS,
-                tokensBefore: cumulativeInputTokens,
+                tokensBefore: currentContextTokens,
               },
             });
             send(ws, {
               type: 'progress',
               event: 'usage_update',
               data: {
-                promptTokens: cumulativeInputTokens,
+                promptTokens: currentContextTokens,
                 completionTokens: 0,
-                totalTokens: cumulativeInputTokens,
+                totalTokens: currentContextTokens,
                 contextWindow: budget.contextWindow,
                 modelId: chosenModelId || model,
                 compacting: true,
@@ -928,14 +931,15 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
 
               const compacted = await compactHistory(messagesToCompact, chosenModelId || model);
               const postEstimate = estimateTokens(compacted as any[]);
-              console.log(`[compactor] Compacted: ${cumulativeInputTokens} -> ${postEstimate.totalTokens} tokens`);
+              const tokensBeforeCompaction = currentContextTokens;
+              console.log(`[compactor] Compacted: ${tokensBeforeCompaction} -> ${postEstimate.totalTokens} tokens`);
 
               // Reset and rebuild input from compacted messages
               // Override the buildInput to use the compacted messages directly
               input = compacted;
               currentTurnStartIndex = compacted.length;
               midTurnCompacted = true;
-              cumulativeInputTokens = postEstimate.totalTokens;
+              currentContextTokens = postEstimate.totalTokens;
               needsCompaction = false;
               streamAccumulatedMessages = [];
 
@@ -946,7 +950,7 @@ export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: 
                   phase: 'done',
                   round: compactionRound,
                   maxRounds: MAX_COMPACTION_ROUNDS,
-                  tokensBefore: cumulativeInputTokens,
+                  tokensBefore: tokensBeforeCompaction,
                   tokensAfter: postEstimate.totalTokens,
                 },
               });

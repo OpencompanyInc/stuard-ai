@@ -1008,12 +1008,27 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
     // Halt-and-resume compaction state
     const resolvedBudgetModelId = modelId || (typeof model === 'string' ? model : 'balanced');
     const budget = computeBudget(resolvedBudgetModelId);
-    let cumulativeInputTokens = 0;
+    // Size of the live context = the *last* step's prompt tokens. Every step's
+    // prompt re-includes the full history, so summing per-step prompt tokens
+    // overestimates quadratically — that used to burn all compaction rounds
+    // within a few steps and kill long subagent runs with all work lost.
+    let currentContextTokens = 0;
     let needsCompaction = false;
     let compactionAbort: AbortController | null = null;
     const MAX_COMPACTION_ROUNDS = 3;
     let compactionRound = 0;
     let streamAccumulatedMessages: any[] = [];
+    // One-time soft signal before any hard compaction: a subagent's deliverable
+    // is a final report, so when context runs low the cheapest reliable move is
+    // to ask it to consolidate and return_control now (append-only → keeps the
+    // provider prompt cache warm, unlike compaction which rewrites the prefix).
+    let wrapUpInjected = false;
+    const WRAP_UP_NOTICE =
+      '[System notice — context budget low]\n' +
+      'Your context window is filling up. Do not start new exploration or open large resources. ' +
+      'Consolidate what you have learned and call return_control NOW with a complete, detailed summary ' +
+      'of your findings and results so far — include every key fact, path, identifier, and outcome the ' +
+      'orchestrator needs. If parts of the task are unfinished, list them explicitly as remaining work.';
 
     while (attempt <= MAX_RETRIES) {
       let messages: any[] = toolErrorHistory.length > 0
@@ -1042,30 +1057,77 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           maxSteps: pack.maxSteps,
           abortSignal: compactionAbort?.signal ?? localAbort.signal,
           prepareStep: async ({ messages: stepMessages }: any) => {
+            let base = Array.isArray(stepMessages) ? [...stepMessages] : [];
             if (Array.isArray(stepMessages)) {
               streamAccumulatedMessages = [...stepMessages];
+            }
+            let changed = false;
+
+            // Estimate is char-based and can undercount; the last step's real
+            // usage can lag one step. Gate on the larger of the two.
+            const estimate = base.length > 0 ? estimateTokens(base as any[]) : { totalTokens: 0 };
+            const contextTokens = Math.max(estimate.totalTokens, currentContextTokens);
+
+            // Mid-stream compaction at a step boundary: shrinks context without
+            // aborting the stream, so no in-flight work is lost. Halt-and-resume
+            // below stays as the backstop for overshoot within a single step.
+            if (base.length > 0 && contextTokens >= budget.historyBudget * 0.85) {
+              try {
+                emitToClient('compacting', {
+                  phase: 'start',
+                  round: compactionRound + 1,
+                  maxRounds: MAX_COMPACTION_ROUNDS,
+                  tokensBefore: contextTokens,
+                });
+                base = (await compactHistory([...base], resolvedBudgetModelId)) as any[];
+                const postEstimate = estimateTokens(base as any[]);
+                currentContextTokens = postEstimate.totalTokens;
+                streamAccumulatedMessages = [...base];
+                changed = true;
+                console.log(`[subagent:${subagentId}] Mid-stream compaction: ${contextTokens} -> ${postEstimate.totalTokens} tokens`);
+                emitToClient('compacting', {
+                  phase: 'done',
+                  round: compactionRound + 1,
+                  maxRounds: MAX_COMPACTION_ROUNDS,
+                  tokensBefore: contextTokens,
+                  tokensAfter: postEstimate.totalTokens,
+                });
+              } catch (err) {
+                console.warn(`[subagent:${subagentId}] Mid-stream compaction failed:`, err);
+              }
+            }
+
+            // One-time wrap-up notice when context runs low — ask the subagent
+            // to round off and return its findings before compaction is needed.
+            if (!wrapUpInjected && contextTokens >= budget.historyBudget * 0.70) {
+              wrapUpInjected = true;
+              base = [...base, createInterjectionUserMessage(WRAP_UP_NOTICE)];
+              changed = true;
+              writeLog('subagent_wrap_up_notice', { subagentId, contextTokens, historyBudget: budget.historyBudget });
+              console.log(`[subagent:${subagentId}] Wrap-up notice injected at ${contextTokens}/${budget.historyBudget} tokens`);
             }
 
             // Drain any user-queued steers and inject them as a user message
             // before the next LLM call. Applied between steps (tool boundaries),
             // never mid-tool-call. Matches the main-chat interjection pattern.
             const steers = drainSubagentSteers(subagentId);
-            if (steers.length === 0) return {};
+            if (steers.length > 0) {
+              const content =
+                '[User steering — applied mid-task]\n' +
+                steers
+                  .map((s, i) => `Steer ${i + 1}: ${s.text}`)
+                  .join('\n') +
+                '\n\nUse this guidance in the next step before continuing.';
 
-            const base = Array.isArray(stepMessages) ? stepMessages : [];
-            const content =
-              '[User steering — applied mid-task]\n' +
-              steers
-                .map((s, i) => `Steer ${i + 1}: ${s.text}`)
-                .join('\n') +
-              '\n\nUse this guidance in the next step before continuing.';
-
-            for (const s of steers) {
-              emitToClient('user_steer', { text: s.text, timestamp: s.timestamp });
+              for (const s of steers) {
+                emitToClient('user_steer', { text: s.text, timestamp: s.timestamp });
+              }
+              writeLog('subagent_steer_applied', { subagentId, count: steers.length });
+              base = [...base, createInterjectionUserMessage(content)];
+              changed = true;
             }
-            writeLog('subagent_steer_applied', { subagentId, count: steers.length });
 
-            return { messages: [...base, createInterjectionUserMessage(content)] };
+            return changed ? { messages: base } : {};
           },
           onStepFinish: async (stepData: any) => {
             finishedSteps.push({
@@ -1077,21 +1139,23 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               stepNumber: finishedSteps.length,
             });
 
-            // Track cumulative tokens for compaction
+            // Track the live context size (last step's prompt + its output)
             const stepUsage = stepData?.usage;
             if (stepUsage) {
               const normalized = normalizeUsage(stepUsage);
-              cumulativeInputTokens += normalized.promptTokens;
+              currentContextTokens = normalized.promptTokens + (normalized.completionTokens || 0);
             }
 
-            // Halt-and-resume: if tokens exceed budget, flag for compaction
+            // Halt-and-resume backstop: prepareStep compaction normally keeps
+            // the context under budget without aborting; this only fires when a
+            // single step overshoots hard (e.g. one giant tool result).
             if (
               !needsCompaction &&
               compactionRound < MAX_COMPACTION_ROUNDS &&
-              cumulativeInputTokens > budget.historyBudget * 0.85
+              currentContextTokens > budget.historyBudget * 0.92
             ) {
               needsCompaction = true;
-              console.log(`[subagent:${subagentId}] Halt-and-resume compaction triggered: ${cumulativeInputTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
+              console.log(`[subagent:${subagentId}] Halt-and-resume compaction triggered: ${currentContextTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.92)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
               if (compactionAbort) abortWithReason(compactionAbort, 'compaction');
             }
           },
@@ -1245,7 +1309,7 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
               phase: 'start',
               round: compactionRound,
               maxRounds: MAX_COMPACTION_ROUNDS,
-              tokensBefore: cumulativeInputTokens,
+              tokensBefore: currentContextTokens,
             });
 
             try {
@@ -1255,18 +1319,18 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
 
               const compacted = await compactHistory(messagesToCompact, resolvedBudgetModelId);
               const postEstimate = estimateTokens(compacted as any[]);
-              console.log(`[subagent:${subagentId}] Compacted: ${cumulativeInputTokens} -> ${postEstimate.totalTokens} tokens`);
+              console.log(`[subagent:${subagentId}] Compacted: ${currentContextTokens} -> ${postEstimate.totalTokens} tokens`);
               emitToClient('compacting', {
                 phase: 'done',
                 round: compactionRound,
                 maxRounds: MAX_COMPACTION_ROUNDS,
-                tokensBefore: cumulativeInputTokens,
+                tokensBefore: currentContextTokens,
                 tokensAfter: postEstimate.totalTokens,
               });
 
               // Update messages for re-stream
               messages = compacted as any[];
-              cumulativeInputTokens = postEstimate.totalTokens;
+              currentContextTokens = postEstimate.totalTokens;
               needsCompaction = false;
               streamAccumulatedMessages = [];
 
@@ -1379,7 +1443,17 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           }
 
           if (needsCompaction && !localAbort.signal.aborted && compactionRound >= MAX_COMPACTION_ROUNDS) {
-            throw new Error(`Subagent exceeded context budget after ${MAX_COMPACTION_ROUNDS} compaction rounds before producing a final result.`);
+            // Out of compaction rounds. Don't throw the whole run away —
+            // salvage whatever the subagent produced and hand it back to the
+            // orchestrator marked as partial so the data survives.
+            const salvaged = returnControlResult || fullText;
+            const toolSummary = allToolCalls.length > 0
+              ? ` It completed ${allToolCalls.length} tool call(s) before stopping.`
+              : '';
+            console.warn(`[subagent:${subagentId}] Context budget exhausted after ${MAX_COMPACTION_ROUNDS} compaction rounds — returning partial result (${salvaged.length} chars).`);
+            fullText =
+              `[Partial result — the subagent hit its context limit after ${MAX_COMPACTION_ROUNDS} compaction rounds and could not finish.${toolSummary} ` +
+              `Findings up to that point follow; treat unlisted work as not done.]\n\n${salvaged}`;
           }
 
           return { text: fullText, steps: Array.isArray(streamResult?.steps) ? streamResult.steps : [] };
@@ -1617,6 +1691,7 @@ function detectIntegrationGroup(text: string): string | null {
     ...(REDDIT_INTEGRATION_ENABLED ? [['reddit', ['reddit', 'subreddit']] as [string, string[]]] : []),
     ...(DISCORD_INTEGRATION_ENABLED ? [['discord', ['discord', 'discord bot']] as [string, string[]]] : []),
     ['x', ['twitter', 'tweet', 'tweets', 'x integration', 'integration group: x']],
+    ['notion', ['notion', 'notion page', 'notion database', 'notion workspace']],
   ];
 
   for (const [group, keywords] of groups) {

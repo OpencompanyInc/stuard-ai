@@ -360,7 +360,7 @@ export const x_search_tweets = createTool({
 
 export const x_get_comments = createTool({
   id: 'x_get_comments',
-  description: 'Get X/Twitter comments/replies with filters. For a post, pass post_id. For account mentions, pass username or user_id. Supports filters like from_username, to_username, mentioned_username, lang, since_id, date range, and minimum engagement. Open reply settings do not guarantee the X self-serve API can reply unless the post @mentions the authenticated account or quotes one of its posts.',
+  description: 'Get X/Twitter comments/replies with filters. For a post, pass post_id — the tool auto-falls back to to:author search when conversation_id indexing returns nothing (common on self-serve tiers). For account mentions, pass username or user_id. Supports from_username, to_username, mentioned_username, lang, since_id, date range, and minimum engagement.',
   inputSchema: z.object({
     post_id: z.string().optional().describe('Post/comment id whose reply thread should be searched. With only_direct_replies=true, returns direct replies to this id.'),
     conversation_id: z.string().optional().describe('Conversation/root post id. Use this when you already know the conversation id.'),
@@ -419,44 +419,99 @@ export const x_get_comments = createTool({
     const useSearch = !!(post_id || conversation_id || query || from_username || to_username || mentioned_username || lang);
     let body: any;
     let mode: 'search' | 'mentions' = 'search';
+    let searchMethod: 'conversation_id' | 'to_author_fallback' | undefined;
 
     if (useSearch) {
-      const searchParts: string[] = [];
       let threadId = conversation_id || post_id;
-      if (post_id && only_direct_replies && !conversation_id) {
-        const context = await xFetch(`/tweets/${encodeURIComponent(post_id)}?tweet.fields=conversation_id`, profile);
-        threadId = context.body?.data?.conversation_id || post_id;
-        await meterX(userId, 'get_comment_context', X_PRICE_USD_READ);
+      let postAuthorUsername: string | undefined;
+      // When we have a post_id, resolve its real conversation_id + author up
+      // front. The author lets us fall back to the reliable `to:<author>` reply
+      // search if X's conversation_id operator returns nothing — a common
+      // limitation of the self-serve recent-search tier, where conversation_id
+      // frequently misses replies that a `to:` search catches.
+      if (post_id && !conversation_id) {
+        try {
+          const context = await xFetch(
+            `/tweets/${encodeURIComponent(post_id)}?tweet.fields=conversation_id,author_id&expansions=author_id&user.fields=username`,
+            profile,
+          );
+          threadId = context.body?.data?.conversation_id || post_id;
+          postAuthorUsername = context.body?.includes?.users?.[0]?.username;
+          await meterX(userId, 'get_comment_context', X_PRICE_USD_READ);
+        } catch { /* fall through with threadId = post_id */ }
       }
-      if (threadId) searchParts.push(`conversation_id:${threadId}`);
-      if (query) searchParts.push(String(query));
+
       const from = cleanUsername(from_username);
       const to = cleanUsername(to_username);
       const mention = cleanUsername(mentioned_username);
-      if (from) searchParts.push(`from:${from}`);
-      if (to) searchParts.push(`to:${to}`);
-      if (mention) searchParts.push(`@${mention}`);
-      if (lang) searchParts.push(`lang:${lang}`);
-      if (threadId || only_direct_replies) searchParts.push('is:reply');
-      if (exclude_retweets !== false) searchParts.push('-is:retweet');
-      if (exclude_quotes) searchParts.push('-is:quote');
-      if (!searchParts.length) throw new Error('x_comments_filter_required');
 
-      const params = new URLSearchParams({
-        query: searchParts.join(' '),
-        max_results: String(Math.max(10, Number(max_results || 20))),
-        'tweet.fields': tweetFields,
-        'expansions': 'author_id',
-        'user.fields': userFields,
-      });
-      if (start_time) params.set('start_time', start_time);
-      if (end_time) params.set('end_time', end_time);
-      if (since_id) params.set('since_id', since_id);
-      if (until_id) params.set('until_id', until_id);
-      if (next_token) params.set('next_token', next_token);
-      const result = await xFetch(`/tweets/search/recent?${params}`, profile);
+      const buildParams = (parts: string[]) => {
+        const p = new URLSearchParams({
+          query: parts.join(' '),
+          max_results: String(Math.max(10, Number(max_results || 20))),
+          'tweet.fields': tweetFields,
+          'expansions': 'author_id',
+          'user.fields': userFields,
+        });
+        if (start_time) p.set('start_time', start_time);
+        if (end_time) p.set('end_time', end_time);
+        if (since_id) p.set('since_id', since_id);
+        if (until_id) p.set('until_id', until_id);
+        if (next_token) p.set('next_token', next_token);
+        return p;
+      };
+
+      // Filters shared by the primary and fallback queries.
+      const baseParts: string[] = [];
+      if (query) baseParts.push(String(query));
+      if (from) baseParts.push(`from:${from}`);
+      if (mention) baseParts.push(`@${mention}`);
+      if (lang) baseParts.push(`lang:${lang}`);
+      if (exclude_retweets !== false) baseParts.push('-is:retweet');
+      if (exclude_quotes) baseParts.push('-is:quote');
+
+      // Primary: precise conversation_id-scoped search (when X indexes it).
+      const primaryParts = [...baseParts];
+      if (threadId) primaryParts.push(`conversation_id:${threadId}`);
+      if (to) primaryParts.push(`to:${to}`);
+      if (threadId || only_direct_replies) primaryParts.push('is:reply');
+      if (!primaryParts.length) throw new Error('x_comments_filter_required');
+
+      const result = await xFetch(`/tweets/search/recent?${buildParams(primaryParts)}`, profile);
       body = result.body;
       await meterX(userId, 'get_comments_search', X_PRICE_USD_READ);
+
+      // Fallback: if the conversation_id query returned nothing but we know the
+      // post's author, retry with the reliable `to:<author>` reply search and
+      // scope to this thread locally. This is what makes "get the comments on my
+      // post" actually work — the conversation_id operator routinely returns 0.
+      const primaryEmpty = !(Array.isArray(body?.data) && body.data.length > 0);
+      if (!primaryEmpty) {
+        searchMethod = 'conversation_id';
+      }
+      let fallbackAuthor = postAuthorUsername || to;
+      if (primaryEmpty && threadId && !fallbackAuthor && post_id && !next_token) {
+        try {
+          const me = await getAuthenticatedXUser(profile);
+          fallbackAuthor = me.username;
+          await meterX(userId, 'lookup_authenticated_user', X_PRICE_USD_USER);
+        } catch { /* no authenticated username for fallback */ }
+      }
+      if (primaryEmpty && threadId && fallbackAuthor && !next_token) {
+        const fbParts = [...baseParts, `to:${cleanUsername(fallbackAuthor)}`, 'is:reply'];
+        const fb = await xFetch(`/tweets/search/recent?${buildParams(fbParts)}`, profile);
+        const fbItems = Array.isArray(fb.body?.data) ? fb.body.data : [];
+        const scoped = fbItems.filter((t: any) => String(t.conversation_id || '') === String(threadId));
+        if (scoped.length) {
+          body = {
+            ...fb.body,
+            data: scoped,
+            meta: { ...(fb.body?.meta || {}), result_count: scoped.length },
+          };
+          searchMethod = 'to_author_fallback';
+          await meterX(userId, 'get_comments_fallback', X_PRICE_USD_READ);
+        }
+      }
     } else {
       mode = 'mentions';
       let targetId = user_id as string | undefined;
@@ -511,6 +566,7 @@ export const x_get_comments = createTool({
 
     return {
       mode,
+      ...(searchMethod ? { search_method: searchMethod } : {}),
       items,
       count: items.length,
       next_token: body?.meta?.next_token || null,

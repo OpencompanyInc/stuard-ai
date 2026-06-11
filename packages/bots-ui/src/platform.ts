@@ -28,6 +28,12 @@ export interface IBotsPlatform {
   readOnly?: boolean;
 
   /**
+   * Host gate for Meta-family triggers (Instagram). When false/absent the
+   * trigger picker hides Instagram trigger types (mirrors META_INTEGRATION_ENABLED).
+   */
+  metaIntegrationEnabled?: boolean;
+
+  /**
    * Host-provided full model picker (the same UI used in chat). When absent,
    * agent settings fall back to the coarse fast/balanced/smart tier select.
    */

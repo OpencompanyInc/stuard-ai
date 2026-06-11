@@ -237,8 +237,8 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | cli_agent   | Drive installed coding-agent CLIs (Codex, Cursor Agent, Antigravity, Claude Code) for codebase Q&A and agentic coding tasks — runs interactively so it uses the user's own subscription |
 | workflow    | **Creating**, modifying, and testing StuardAI automation workflows (the Workflow Architect) |
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
-| ffmpeg      | Audio/video processing — convert formats, trim, extract audio, probe metadata, extract frames |
-| data_analysis | Analyze and visualize data — load CSV/XLSX/JSON, describe/correlate, render line/bar/scatter/hist/pie/heatmap/box charts via pandas/numpy/scipy/matplotlib/seaborn |
+| ffmpeg      | Media processing — convert formats, trim, extract audio, probe metadata, extract frames |
+| data_analysis | Charts & data — load CSV/XLSX/JSON, summarize, correlate, and render charts |
 | vm          | Always-on cloud VM operations: file transfers, headless browser work, commands, and backup/remote actions |
 | agent       | Proactive agent status/ask workflows, including agent ids/names and manual wake-ups |
 | bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
@@ -247,6 +247,7 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 ${OUTLOOK_INTEGRATION_ENABLED ? '| outlook     | Outlook mail & calendar |\n' : ''}| github      | Repos, issues, PRs, branches, actions |
 ${META_INTEGRATION_ENABLED ? '| meta        | Facebook, Instagram, Threads |\n' : ''}${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
 ${REDDIT_INTEGRATION_ENABLED ? '| reddit      | Subreddits, posts, comments |\n' : ''}${DISCORD_INTEGRATION_ENABLED ? '| discord     | Discord bot operations |\n' : ''}| x           | X/Twitter tweets, timelines, users, DMs |
+| notion      | Notion pages, databases, blocks, comments — search, read, create, update |
 
 Each subagent can call **ask_orchestrator** when it needs information or a decision. When that happens, **delegate** returns early with the question and a **questionId**.
 

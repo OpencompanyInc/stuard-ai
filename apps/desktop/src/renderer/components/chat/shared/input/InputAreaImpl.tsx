@@ -1246,6 +1246,18 @@ const InputArea = forwardRef(function InputArea(
     openCompactHub();
   }, [isAiWorking, expanded, overlayMode, showSearchOptions, showFileNav, openCompactHub]);
 
+  // External one-off responses (e.g. a finished workflow's return value) ask to
+  // pop the compact panel open — a static result doesn't trip the streaming
+  // auto-open above.
+  useEffect(() => {
+    const handler = () => {
+      if (expanded || overlayMode !== 'compact') return;
+      openCompactHub(true);
+    };
+    window.addEventListener('stuard:open-compact-response', handler);
+    return () => window.removeEventListener('stuard:open-compact-response', handler);
+  }, [expanded, overlayMode, openCompactHub]);
+
   // State for expanded web search options - must be defined before updateWindowSize
   const [showWebOptions, setShowWebOptions] = useState(false);
   const [defaultEngineId, setDefaultEngineId] = useState(() => {

@@ -2,7 +2,7 @@
 export const WHATSAPP_INTEGRATION_ENABLED = false;
 
 /** Set to true to re-enable Meta integrations (Facebook, Instagram, Threads) across desktop, cloud-ai, and website. */
-export const META_INTEGRATION_ENABLED = true;
+export const META_INTEGRATION_ENABLED = false;
 
 /** Set to true to re-enable Outlook integration across desktop, cloud-ai, and website. */
 export const OUTLOOK_INTEGRATION_ENABLED = false;

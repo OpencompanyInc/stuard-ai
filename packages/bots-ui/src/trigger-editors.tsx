@@ -453,6 +453,133 @@ export function WebhookEditor({ args }: { args: Record<string, any> }) {
   );
 }
 
+export const DEFAULT_X_COMMENT_TRIGGER_ARGS = {
+  profile: 'default',
+  post_id: '',
+  only_direct_post_replies: false,
+  from_username: '',
+  contains_text: '',
+};
+
+export function XSocialTriggerEditor({
+  triggerType,
+  args,
+  setArgs,
+}: {
+  triggerType: string;
+  args: Record<string, any>;
+  setArgs: (next: Record<string, any>) => void;
+}) {
+  const isComment = triggerType === 'x.new_comment';
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">X account</label>
+        <input
+          type="text"
+          value={String(args.profile || 'default')}
+          onChange={e => setArgs({ ...args, profile: e.target.value })}
+          placeholder="default"
+          className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+        />
+        <p className="mt-1.5 text-[11px] text-theme-muted">Which connected X profile to watch. Use <span className="font-mono">default</span> for your primary account.</p>
+      </div>
+
+      {isComment && (
+        <>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">Post ID or URL</label>
+            <input
+              type="text"
+              value={String(args.post_id || '')}
+              onChange={e => setArgs({ ...args, post_id: e.target.value })}
+              placeholder="2065123456789 or https://x.com/user/status/2065123456789"
+              className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5 font-mono text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+            />
+            <p className="mt-1.5 text-[11px] text-theme-muted">Leave empty to wake on comments across all of your posts. Set a post id to auto-reply on one thread only.</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(v => !v)}
+            className="text-[11.5px] font-medium text-theme-muted transition hover:text-theme-fg"
+          >
+            {showAdvanced ? '− Hide advanced filters' : '+ Advanced filters'}
+          </button>
+
+          {showAdvanced && (
+            <div className="space-y-3 border-t border-theme/15 pt-3">
+              <label className="flex items-center gap-2.5 rounded-xl border border-theme/30 bg-theme-card/40 px-3 py-2.5 text-[12.5px] text-theme-fg">
+                <input
+                  type="checkbox"
+                  checked={args.only_direct_post_replies === true}
+                  onChange={e => setArgs({ ...args, only_direct_post_replies: e.target.checked })}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                Direct replies only (ignore nested thread replies)
+              </label>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">From username</label>
+                <input
+                  type="text"
+                  value={String(args.from_username || '')}
+                  onChange={e => setArgs({ ...args, from_username: e.target.value })}
+                  placeholder="Jacob_Rhodes_"
+                  className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">Contains text</label>
+                <input
+                  type="text"
+                  value={String(args.contains_text || '')}
+                  onChange={e => setArgs({ ...args, contains_text: e.target.value })}
+                  placeholder="McLaren"
+                  className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+                />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2.5 text-[11px] text-sky-300">
+        <p className="opacity-90">Requires X connected in Settings → Integrations. The agent wakes when X pushes a matching comment webhook to your desktop while it is online.</p>
+      </div>
+    </div>
+  );
+}
+
+export function InstagramTriggerEditor({
+  args,
+  setArgs,
+}: {
+  args: Record<string, any>;
+  setArgs: (next: Record<string, any>) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-theme-muted">Instagram account</label>
+        <input
+          type="text"
+          value={String(args.profile || 'default')}
+          onChange={e => setArgs({ ...args, profile: e.target.value })}
+          placeholder="default"
+          className="w-full rounded-xl border border-[color:var(--dashboard-panel-border)] bg-theme-card/60 px-3 py-2.5 text-[13px] text-theme-fg outline-none transition focus:border-primary/60"
+        />
+        <p className="mt-1.5 text-[11px] text-theme-muted">Which connected Instagram profile to watch. Use <span className="font-mono">default</span> for your primary account.</p>
+      </div>
+
+      <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2.5 text-[11px] text-sky-300">
+        <p className="opacity-90">Requires Instagram connected in Settings → Integrations. The agent wakes when Meta pushes a matching webhook event to your desktop while it is online.</p>
+      </div>
+    </div>
+  );
+}
+
 export function GmailEditor({ args, setArgs }: { args: Record<string, any>; setArgs: (next: Record<string, any>) => void }) {
   return (
     <div className="space-y-3">
@@ -479,9 +606,9 @@ export function GmailEditor({ args, setArgs }: { args: Record<string, any>; setA
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-400">
         <div className="flex items-center gap-1.5 font-medium">
           <AlertCircle className="h-3 w-3" />
-          Cloud delivery pending
+          Gmail read access pending verification
         </div>
-        <p className="mt-0.5 opacity-90">Requires Google connected and Pub/Sub registration. The trigger is stored; wiring it up lands in the next release.</p>
+        <p className="mt-0.5 opacity-90">Requires a Google account connected with Gmail read permission. That permission is pending Google verification, so this trigger stays dormant until it's granted.</p>
       </div>
     </div>
   );

@@ -128,6 +128,26 @@ function fieldFromInputParam(p: any): SlashFieldSpec {
       paramType: type,
     };
   }
+  // Dropdown param — the publisher fixed the valid choices, so the runner picks
+  // one from the list instead of typing it. Falls back to free text if the
+  // options list is empty/malformed.
+  if (type === 'select' && Array.isArray(p?.options) && p.options.length > 0) {
+    const options = p.options.map((o: any) => String(o)).filter((o: string) => o.trim());
+    if (options.length > 0) {
+      const def = p?.defaultValue !== undefined && options.includes(String(p.defaultValue))
+        ? String(p.defaultValue)
+        : options[0];
+      return {
+        key: name,
+        hint: desc ? `${name} — ${desc}` : name,
+        kind: 'select',
+        options,
+        defaultValue: def,
+        required: !!p?.required,
+        paramType: type,
+      };
+    }
+  }
   return {
     key: name,
     hint: desc ? `${name} — ${desc}` : `${name}…`,

@@ -289,6 +289,12 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('workflows:execution', handler);
     return () => { try { ipcRenderer.off('workflows:execution', handler); } catch { } };
   },
+  // Workflow return value (engine __return) for a finished run
+  onWorkflowResult: (cb: (data: { flowId: string; name: string; returnValue: any; ts: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:result', handler);
+    return () => { try { ipcRenderer.off('workflows:result', handler); } catch { } };
+  },
   // Stream wire activity events (for animation control)
   onWorkflowsStream: (cb: (data: any) => void) => {
     const handler = (_e: any, data: any) => cb(data);

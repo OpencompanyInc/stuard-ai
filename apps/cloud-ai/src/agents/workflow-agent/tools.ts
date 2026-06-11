@@ -289,15 +289,17 @@ export const inspectWorkflow = createTool({
   }),
   execute: async (inputData, { writer }) => {
     const raw = inputData as any;
-    // Schema is nullable for OpenAI strict mode — coerce nulls back to
+    // Schema is nullable for OpenAI strict mode — coerce null/"" back to
     // undefined so downstream helpers (getWireBySelector, typeof checks) work
-    // unchanged.
+    // unchanged. normalizeToolInputForSchema handles this upstream too.
+    const nullish = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() ? v : undefined;
     const mode = raw?.mode;
-    const nodeId = raw?.nodeId ?? undefined;
-    const triggerId = raw?.triggerId ?? undefined;
-    const from = raw?.from ?? undefined;
-    const to = raw?.to ?? undefined;
-    const index = raw?.index ?? undefined;
+    const nodeId = nullish(raw?.nodeId);
+    const triggerId = nullish(raw?.triggerId);
+    const from = nullish(raw?.from);
+    const to = nullish(raw?.to);
+    const index = raw?.index == null || raw?.index === '' ? undefined : raw?.index;
     const stuardFile = typeof raw?.stuardFile === 'string' && raw.stuardFile.trim() ? raw.stuardFile.trim() : undefined;
     wfLog('inspect_workflow', { mode, nodeId, triggerId, from, to, index, stuardFile });
 

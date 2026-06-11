@@ -2,6 +2,9 @@ import React from 'react';
 import { Box, Globe, Mail, Phone, ScanFace, Table, Terminal, Webhook } from 'lucide-react';
 import { clsx } from 'clsx';
 
+import { IntegrationLogo } from './IntegrationLogo';
+import { faviconUrlFor } from '../utils/integrationLogoSources';
+
 import discordLogo from '../assets/integrations/Discord.svg';
 import elevenLabsLogo from '../assets/integrations/ElevenLabs.svg';
 import ffmpegLogo from '../assets/integrations/FFmpeg.svg';
@@ -95,16 +98,15 @@ export const IntegrationBrandIcon = React.memo(function IntegrationBrandIcon({
   className?: string;
 }) {
   const src = BRAND_LOGOS[slug];
-  if (!src) {
+  const hasRemote = faviconUrlFor(slug) != null;
+  if (!src && !hasRemote) {
     return <LucideFallback slug={slug} className={className} />;
   }
   return (
-    <img
-      src={src}
-      alt=""
-      className={clsx(className, 'object-contain select-none shrink-0')}
-      decoding="async"
-      draggable={false}
+    <IntegrationLogo
+      logoKey={slug}
+      fallbackSrc={src}
+      className={clsx(className, 'shrink-0')}
     />
   );
 });

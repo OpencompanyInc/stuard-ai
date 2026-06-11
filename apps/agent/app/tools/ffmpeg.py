@@ -44,6 +44,31 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _clean_args(seq: Any) -> list[str]:
+    """Coerce a sequence of FFmpeg args to strings, dropping empty/whitespace-only
+    entries. An empty arg is never valid for FFmpeg — it gets parsed as an empty
+    output filename ("Unable to choose an output format for ''") and aborts the run.
+    Smart-args (LLM-generated or an empty UI array row) frequently leaves a stray
+    "" behind, so we strip those defensively rather than crash."""
+    if not isinstance(seq, list):
+        return []
+    out: list[str] = []
+    for x in seq:
+        if isinstance(x, (str, int, float)):
+            s = str(x).strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _unresolved_template(value: str) -> bool:
+    """True if a path still contains an unrendered {{...}} template — the workflow
+    runtime should have substituted these before the tool runs, so a leftover token
+    means an upstream reference resolved to nothing. Surfacing a clear error beats
+    handing FFmpeg a literal '{{...}}' path and a cryptic failure."""
+    return "{{" in value and "}}" in value
+
+
 def _get_user_data_dir() -> str:
     try:
         from .workflows import _user_data_dir  # type: ignore
@@ -516,26 +541,30 @@ async def ffmpeg_run(
         overwrite = bool(args.get("overwrite", True))
 
         if isinstance(inputs, list) and isinstance(output, str) and output.strip():
-            in_list = [str(x) for x in inputs if isinstance(x, (str, int, float)) and str(x).strip()]
-            extra_args: list[str] = []
-            if isinstance(extra, list):
-                extra_args = [str(x) for x in extra if isinstance(x, (str, int, float))]
+            in_list = _clean_args(inputs)
+            extra_args = _clean_args(extra)
 
             argv = ["-hide_banner", "-y" if overwrite else "-n"]
             for p in in_list:
                 argv += ["-i", p]
-            argv += extra_args + [output]
-            output_file_path = output
-
-    if output_file_path is None and isinstance(argv, list) and len(argv) > 0:
-        last = argv[-1]
-        if isinstance(last, str) and last.strip() and not last.strip().startswith("-"):
-            output_file_path = last.strip()
+            argv += extra_args + [output.strip()]
+            output_file_path = output.strip()
 
     if not isinstance(argv, list) or not all(isinstance(x, (str, int, float)) for x in argv):
         return {"ok": False, "error": "missing_args"}
 
-    cmd = [ffmpeg_path] + [str(x) for x in argv]
+    # Drop empty/whitespace args before they reach FFmpeg (a stray "" is read as an
+    # empty output filename and aborts the run). Applies to args[] passed directly too.
+    argv = _clean_args(argv)
+    if not argv:
+        return {"ok": False, "error": "missing_args"}
+
+    if output_file_path is None and len(argv) > 0:
+        last = argv[-1]
+        if not last.startswith("-"):
+            output_file_path = last
+
+    cmd = [ffmpeg_path] + argv
 
     try:
         proc = await asyncio.to_thread(
@@ -575,14 +604,17 @@ async def ffmpeg_convert_media(
     input_path = str(args.get("inputPath") or "").strip()
     output_path = str(args.get("outputPath") or "").strip()
     overwrite = bool(args.get("overwrite", True))
-    extra = args.get("extraArgs")
 
     if not input_path or not output_path:
         return {"ok": False, "error": "missing_paths"}
+    if _unresolved_template(input_path) or _unresolved_template(output_path):
+        return {
+            "ok": False,
+            "error": "unresolved_path",
+            "message": "inputPath/outputPath still contains an unresolved {{...}} reference — the upstream step it points to produced no value.",
+        }
 
-    extra_args = []
-    if isinstance(extra, list):
-        extra_args = [str(x) for x in extra]
+    extra_args = _clean_args(args.get("extraArgs"))
 
     argv = ["-hide_banner", "-y" if overwrite else "-n", "-i", input_path] + extra_args + [output_path]
     return await ffmpeg_run({"args": argv, "timeoutMs": args.get("timeoutMs"), "cwd": args.get("cwd")}, emit)
@@ -598,6 +630,8 @@ async def ffmpeg_extract_audio(
 
     if not input_path or not output_path:
         return {"ok": False, "error": "missing_paths"}
+    if _unresolved_template(input_path) or _unresolved_template(output_path):
+        return {"ok": False, "error": "unresolved_path", "message": "inputPath/outputPath still contains an unresolved {{...}} reference."}
 
     argv = ["-hide_banner", "-y" if overwrite else "-n", "-i", input_path, "-vn", output_path]
     return await ffmpeg_run({"args": argv, "timeoutMs": args.get("timeoutMs"), "cwd": args.get("cwd")}, emit)
@@ -615,6 +649,8 @@ async def ffmpeg_trim_media(
 
     if not input_path or not output_path:
         return {"ok": False, "error": "missing_paths"}
+    if _unresolved_template(input_path) or _unresolved_template(output_path):
+        return {"ok": False, "error": "unresolved_path", "message": "inputPath/outputPath still contains an unresolved {{...}} reference."}
 
     argv = ["-hide_banner", "-y" if overwrite else "-n", "-ss", str(start_seconds), "-i", input_path]
     if duration_seconds is not None:
@@ -634,6 +670,8 @@ async def ffmpeg_probe_media(
 
     if not input_path:
         return {"ok": False, "error": "missing_input_path"}
+    if _unresolved_template(input_path):
+        return {"ok": False, "error": "unresolved_path", "message": "inputPath still contains an unresolved {{...}} reference."}
 
     setup = await ensure_ffmpeg(emit)
     if not setup.get("ok"):
@@ -702,6 +740,8 @@ async def ffmpeg_extract_frames(
 
     if not input_path or not output_pattern:
         return {"ok": False, "error": "missing_paths"}
+    if _unresolved_template(input_path) or _unresolved_template(output_pattern):
+        return {"ok": False, "error": "unresolved_path", "message": "inputPath/outputPattern still contains an unresolved {{...}} reference."}
 
     argv = ["-hide_banner", "-y" if overwrite else "-n"]
 

@@ -27,6 +27,33 @@ function tryRouteWebhookToBots(slug: string, payload: any): number {
   }
 }
 
+let _routeProviderWebhookToBot: ((
+  botId: string,
+  triggerId: string | undefined,
+  eventType: string | undefined,
+  data: any,
+  provider?: string,
+) => number) | null = null;
+function routeProviderWebhookToBot(
+  botId: string,
+  triggerId: string | undefined,
+  eventType: string | undefined,
+  data: any,
+  provider?: string,
+): number {
+  try {
+    if (!_routeProviderWebhookToBot) {
+      _routeProviderWebhookToBot = require('../services/bot-trigger-dispatcher').routeProviderWebhookToBot;
+    }
+    return _routeProviderWebhookToBot
+      ? _routeProviderWebhookToBot(botId, triggerId, eventType, data, provider)
+      : 0;
+  } catch (e) {
+    console.warn('[Workflows] routeProviderWebhookToBot failed:', e);
+    return 0;
+  }
+}
+
 let chokidar: any = null;
 try { chokidar = require('chokidar'); } catch { }
 let nodeCron: any = null;
@@ -664,6 +691,85 @@ async function unregisterGoogleNativeTrigger(
   }
 }
 
+export type SocialNativeTriggerType =
+  | 'instagram.new_comment' | 'instagram.new_mention' | 'instagram.new_message'
+  | 'x.new_mention' | 'x.new_comment' | 'x.new_dm' | 'x.new_follower' | 'x.user_post';
+
+async function registerSocialNativeTrigger(
+  flowId: string,
+  triggerId: string,
+  type: SocialNativeTriggerType,
+  args: any
+) {
+  // Same auth-retry pattern as Google native triggers (session may not be ready on autostart).
+  const MAX_RETRIES = 5;
+  const RETRY_DELAY_MS = 3000;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const token = await getRendererAccessToken(attempt > 0);
+      if (!token) {
+        if (attempt < MAX_RETRIES - 1) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          continue;
+        }
+        return { ok: false, error: 'missing_access_token' };
+      }
+      const base = getCloudAiHttpBase();
+      const resp = await net.fetch(`${base}/integrations/social/triggers/register`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId: flowId,
+          triggerId,
+          type,
+          args: args || {},
+          source: getDesktopTriggerSourceId(flowId, triggerId),
+        }),
+      });
+      const out: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || !out?.ok) {
+        const err = String(out?.error || `http_${resp.status}`);
+        const hint = out?.hint ? ` (${out.hint})` : '';
+        logFlow(flowId, `Social trigger '${type}' registration failed: ${err}${hint}`);
+        return { ok: false, error: err, hint: out?.hint };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
+      return { ok: false, error: String(e?.message || 'register_failed') };
+    }
+  }
+  return { ok: false, error: 'max_retries_exceeded' };
+}
+
+async function unregisterSocialNativeTrigger(
+  flowId: string,
+  triggerId: string,
+) {
+  try {
+    const token = await getRendererAccessToken();
+    if (!token) return { ok: false, error: 'missing_access_token' };
+    const base = getCloudAiHttpBase();
+    const resp = await net.fetch(`${base}/integrations/social/triggers/unregister`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workflowId: flowId,
+        triggerId,
+        source: getDesktopTriggerSourceId(flowId, triggerId),
+      }),
+    });
+    const out: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || !out?.ok) return { ok: false, error: String(out?.error || `http_${resp.status}`) };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'unregister_failed') };
+  }
+}
+
 export type FlowRuntime = {
   id: string;
   fsWatchers: any[];
@@ -672,6 +778,7 @@ export type FlowRuntime = {
   intervals: any[];
   procs: Array<ChildProcess | null>;
   googleNativeTriggers: Array<{ type: 'gmail.new_email' | 'drive.new_file'; triggerId: string }>;
+  socialNativeTriggers: Array<{ type: SocialNativeTriggerType; triggerId: string }>;
   webhookTriggers: Array<{ mode: 'cloud' | 'local'; triggerId?: string }>;
   cloudWebhookTriggerId?: string;
   lastOutlookCalendarStamp?: string;
@@ -809,6 +916,18 @@ export function emitFlowExecutionState(flowId: string, isRunning: boolean) {
   } catch (e) { console.error('[Workflows] emitFlowExecutionState error:', e); }
 }
 
+/** Broadcast a finished workflow's return value (the engine's __return) to all
+ *  windows so the renderer can surface it (e.g. the compact response panel).
+ *  Only emitted for runs that actually produced a return value. */
+export function emitFlowResult(flowId: string, name: string, returnValue: any) {
+  const payload = { flowId, name, returnValue, ts: new Date().toISOString() };
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send('workflows:result', payload); } catch (e) { console.error('[Workflows] Send error:', e); }
+    }
+  } catch (e) { console.error('[Workflows] emitFlowResult error:', e); }
+}
+
 async function runWorkflowFromTrigger(flowId: string, origin: string, payload?: any, triggerId?: string) {
   console.log('[Workflows] runWorkflowFromTrigger called:', flowId, origin, 'triggerId:', triggerId);
   const safe = safeFlowId(flowId);
@@ -892,6 +1011,16 @@ export function handleCloudWebhookEvent(msg: any) {
     const triggerId = typeof msg?.workflow?.triggerId === 'string' ? msg.workflow.triggerId : undefined;
 
     if (workflowId) {
+      const botsFired = routeProviderWebhookToBot(
+        workflowId,
+        triggerId,
+        typeof msg?.eventType === 'string' ? msg.eventType : String(data?.event || ''),
+        data,
+        typeof msg?.provider === 'string' ? msg.provider : undefined,
+      );
+      if (botsFired > 0) {
+        return { ok: true, delivered: botsFired };
+      }
       executeWorkflowFromTrigger(workflowId, t || 'webhook.cloud', data, triggerId);
       return { ok: true, delivered: 1 };
     }
@@ -1156,6 +1285,7 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
     intervals: [],
     procs: [],
     googleNativeTriggers: [],
+    socialNativeTriggers: [],
     webhookTriggers: [],
   };
 
@@ -1458,6 +1588,20 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
           logFlow(safe, `Google native trigger '${nativeType}' registered`);
         }
       });
+    } else if (type === 'instagram.new_comment' || type === 'instagram.new_mention' || type === 'instagram.new_message'
+      || type === 'x.new_mention' || type === 'x.new_comment' || type === 'x.new_dm' || type === 'x.new_follower' || type === 'x.user_post') {
+      const socialType: SocialNativeTriggerType = type;
+      const tId = triggerId;
+      rt.socialNativeTriggers.push({ type: socialType, triggerId: tId });
+      started++;
+      // Register native social webhook trigger in cloud-ai (push-based via api.stuard.ai, no polling).
+      void registerSocialNativeTrigger(safe, tId, socialType, args).then((result) => {
+        if (!result?.ok) {
+          logFlow(safe, `Social trigger '${socialType}' registration failed: ${result?.error || 'unknown_error'}`);
+        } else {
+          logFlow(safe, `Social trigger '${socialType}' registered`);
+        }
+      });
     } else if (type === 'outlook.calendar.poll') {
       const sec = Math.max(10, Number(args?.intervalSec || 60));
       const tId = triggerId; // Capture for closure
@@ -1516,6 +1660,10 @@ export function stopFlowRuntime(id: string) {
   } catch { }
   try { for (const t of rt.intervals) { try { clearInterval(t as any); } catch { } } } catch { }
   try {
+    for (const s of rt.socialNativeTriggers || []) {
+      if (!s?.triggerId) continue;
+      void unregisterSocialNativeTrigger(safe, s.triggerId);
+    }
     for (const g of rt.googleNativeTriggers || []) {
       if (!g?.triggerId) continue;
       void unregisterGoogleNativeTrigger(safe, g.triggerId, g.type);
@@ -2052,9 +2200,14 @@ export function workflows_run(id: string, triggerId?: string, options?: { access
     const payload = inputs ? { args: inputs, input: inputs } : undefined;
 
     // Actually execute the workflow via stuards engine (has custom_ui support)
-    runStuardEngine(safe, payload, engineCtx).then(() => {
+    runStuardEngine(safe, payload, engineCtx).then((res: any) => {
       console.log('[Workflows] Execution completed:', safe);
       logFlow(safe, 'Run completed');
+      // Surface the workflow's return value (if it set one) so the renderer can
+      // show it in the compact response panel.
+      if (res && typeof res === 'object' && res.returnValue !== undefined) {
+        emitFlowResult(safe, model.name || safe, res.returnValue);
+      }
       emitFlowExecutionState(safe, false);
     }).catch((e: any) => {
       console.error('[Workflows] Execution error:', e);

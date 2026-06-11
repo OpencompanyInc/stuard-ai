@@ -139,6 +139,8 @@ const CLOUD_TOOLS = new Set([
   'drive_list_files',
   'sheets_read_range',
   'docs_get_document', 'docs_create_document', 'docs_write_text',
+  // Google Maps
+  'maps_search_places', 'maps_place_details', 'maps_distance_matrix', 'maps_static_map',
   // Legacy aliases
   'send_email', 'read_email',
   'google_calendar_list', 'google_calendar_create', 'google_calendar_update', 'google_calendar_delete',

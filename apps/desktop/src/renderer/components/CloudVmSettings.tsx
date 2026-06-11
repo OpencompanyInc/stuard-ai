@@ -5,6 +5,7 @@ import {
   OUTLOOK_INTEGRATION_ENABLED,
   REDDIT_INTEGRATION_ENABLED,
 } from '../../../../../shared/integration-flags';
+import { applyIntegrationBranding } from '../../../../../shared/integration-branding';
 import { clsx } from 'clsx';
 import {
   AlertCircle,
@@ -143,9 +144,9 @@ const VM_SERVICES: VmServiceEntry[] = [
 ];
 
 const VM_OPTIONAL: { slug: string; name: string; description: string; icon: any }[] = [
-  { slug: 'mediapipe', name: 'MediaPipe',  description: 'Hand tracking, face detection, and body pose models. Auto-installed on first use.', icon: ScanFace },
-  { slug: 'ffmpeg',    name: 'FFmpeg',     description: 'Convert and edit audio & video files. Pre-installed on the VM image.',               icon: Film },
-  { slug: 'ollama',    name: 'Ollama',     description: 'Run local AI models on the VM. Available on Pro and Power tiers.',                   icon: BotIcon },
+  applyIntegrationBranding({ slug: 'mediapipe', name: 'MediaPipe',  description: 'Hand tracking, face detection, and body pose models. Auto-installed on first use.', icon: ScanFace }),
+  applyIntegrationBranding({ slug: 'ffmpeg',    name: 'FFmpeg',     description: 'Convert and edit audio & video files. Pre-installed on the VM image.',               icon: Film }),
+  applyIntegrationBranding({ slug: 'ollama',    name: 'Ollama',     description: 'Run local AI models on the VM. Available on Pro and Power tiers.',                   icon: BotIcon }),
 ];
 
 /* ─── API helpers ─────────────────────────────────────────────────────── */

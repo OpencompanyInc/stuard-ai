@@ -13,6 +13,8 @@ import {
   FileWatchEditor,
   CommandWatchEditor,
   GmailEditor,
+  XSocialTriggerEditor,
+  InstagramTriggerEditor,
 } from './trigger-editors';
 import { useBotsPlatform } from './BotsPlatformContext';
 import { platformNotify } from './dialogs';
@@ -185,8 +187,25 @@ function TriggerPickerModal({
   onClose: () => void;
   onPick: (type: BotTriggerType) => void;
 }) {
+  const platform = useBotsPlatform();
   // 'gmail.new_email' removed pending Google CASA verification (requires gmail.readonly restricted scope).
-  const types: BotTriggerType[] = ['schedule.interval', 'schedule.cron', 'webhook', 'fs.watch', 'command.watch', /* 'gmail.new_email', */ 'manual'];
+  const types: BotTriggerType[] = [
+    'schedule.interval',
+    'schedule.cron',
+    'webhook',
+    'fs.watch',
+    'command.watch',
+    'x.new_comment',
+    'x.new_mention',
+    'x.new_dm',
+    'x.new_follower',
+    'x.user_post',
+    ...(platform.metaIntegrationEnabled
+      ? (['instagram.new_comment', 'instagram.new_mention', 'instagram.new_message'] as BotTriggerType[])
+      : []),
+    /* 'gmail.new_email', */
+    'manual',
+  ];
   const hasInterval = existing.some(t => t.type === 'schedule.interval');
 
   return createPortal(
@@ -311,6 +330,18 @@ function TriggerEditModal({
           )}
           {trigger.type === 'gmail.new_email' && (
             <GmailEditor args={args} setArgs={setArgs} />
+          )}
+          {(trigger.type === 'x.new_comment'
+            || trigger.type === 'x.new_mention'
+            || trigger.type === 'x.new_dm'
+            || trigger.type === 'x.new_follower'
+            || trigger.type === 'x.user_post') && (
+            <XSocialTriggerEditor triggerType={trigger.type} args={args} setArgs={setArgs} />
+          )}
+          {(trigger.type === 'instagram.new_comment'
+            || trigger.type === 'instagram.new_mention'
+            || trigger.type === 'instagram.new_message') && (
+            <InstagramTriggerEditor args={args} setArgs={setArgs} />
           )}
         </div>
 

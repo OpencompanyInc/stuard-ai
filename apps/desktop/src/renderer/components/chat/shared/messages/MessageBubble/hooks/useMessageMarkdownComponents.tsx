@@ -5,6 +5,8 @@ import { AudioPlayer } from '../../../../../AudioPlayer';
 import { toMediaSrc } from '../helpers/media';
 import { InlineImage } from '../inline/InlineImage';
 import { InlineVideo } from '../inline/InlineVideo';
+import { isHighlightHref, MarkdownHighlight } from '../inline/MarkdownHighlight';
+import { isUnderlineHref, MarkdownUnderline } from '../inline/MarkdownUnderline';
 
 export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
   return useMemo(() => ({
@@ -29,11 +31,11 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
       return <InlineImage src={finalSrc} alt={alt} />;
     },
     a: ({ href, children, ...props }: any) => {
-      if (href === '#highlight' || href === '?highlight') {
-        return <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-md font-semibold border border-amber-500/30">{children}</span>;
+      if (isHighlightHref(href)) {
+        return <MarkdownHighlight>{children}</MarkdownHighlight>;
       }
-      if (href === '#underline' || href === '?underline') {
-        return <span className="underline decoration-2 decoration-sky-400/70 underline-offset-3 text-sky-300/90 font-medium">{children}</span>;
+      if (isUnderlineHref(href)) {
+        return <MarkdownUnderline>{children}</MarkdownUnderline>;
       }
       const linkClass = role === 'user'
         ? "text-white/95 underline underline-offset-3 decoration-white/50 hover:decoration-white/80 hover:text-white cursor-pointer transition-all font-medium"

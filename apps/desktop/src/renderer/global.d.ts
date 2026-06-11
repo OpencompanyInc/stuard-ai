@@ -190,6 +190,7 @@ declare global {
       onWorkflowsLog: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsStep: (cb: (data: any) => void) => void | (() => void);
       onWorkflowsExecution: (cb: (data: any) => void) => void | (() => void);
+      onWorkflowResult: (cb: (data: { flowId: string; name: string; returnValue: any; ts: string }) => void) => void | (() => void);
       // Stuards
       stuardsList: () => Promise<{ ok: boolean; items?: Array<{ id: string; name?: string; updatedAt?: string; hasRuntime?: boolean; triggers?: string[] }>; error?: string }>;
       stuardsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;

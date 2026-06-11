@@ -66,4 +66,62 @@ describe('tool input coercion', () => {
       search_domain_filter: ['weather.com'],
     });
   });
+
+  it('coerces empty strings to null for required nullable fields', () => {
+    const inspectSchema = z.object({
+      mode: z.enum(['overview', 'node_flow', 'trigger_flow', 'wire']),
+      nodeId: z.string().nullable(),
+      triggerId: z.string().nullable(),
+      from: z.string().nullable(),
+      to: z.string().nullable(),
+      index: z.number().int().min(0).nullable(),
+      stuardFile: z.string().nullable(),
+    });
+
+    const normalized = normalizeToolInputForSchema(inspectSchema, {
+      mode: 'overview',
+      nodeId: '',
+      triggerId: '',
+      from: '',
+      to: '',
+      index: '',
+      stuardFile: '',
+    });
+
+    expect(normalized).toEqual({
+      mode: 'overview',
+      nodeId: null,
+      triggerId: null,
+      from: null,
+      to: null,
+      index: null,
+      stuardFile: null,
+    });
+    expect(inspectSchema.safeParse(normalized).success).toBe(true);
+  });
+
+  it('fills omitted required nullable fields with null', () => {
+    const inspectSchema = z.object({
+      mode: z.enum(['overview', 'node_flow', 'trigger_flow', 'wire']),
+      nodeId: z.string().nullable(),
+      triggerId: z.string().nullable(),
+      from: z.string().nullable(),
+      to: z.string().nullable(),
+      index: z.number().int().min(0).nullable(),
+      stuardFile: z.string().nullable(),
+    });
+
+    const normalized = normalizeToolInputForSchema(inspectSchema, { mode: 'overview' });
+
+    expect(normalized).toEqual({
+      mode: 'overview',
+      nodeId: null,
+      triggerId: null,
+      from: null,
+      to: null,
+      index: null,
+      stuardFile: null,
+    });
+    expect(inspectSchema.safeParse(normalized).success).toBe(true);
+  });
 });

@@ -5,6 +5,12 @@ import { getExternalAccount } from '../../supabase';
 import { refreshGoogleTokenIfNeeded } from './google-shared';
 import { PUBLIC_BASE_URL } from '../../utils/config';
 import { dispatchProviderWebhook } from '../../webhooks/dispatch';
+import {
+  persistTriggerRegistration,
+  deleteTriggerRegistration,
+  loadTriggerRegistrations,
+} from '../../webhooks/trigger-registration-store';
+import { writeLog } from '../../utils/logger';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -52,6 +58,132 @@ const driveRegs = new Map<string, DriveNativeRegistration>();
 const driveRegKeyByChannelId = new Map<string, string>();
 const RENEW_CHECK_MS = 30 * 60 * 1000;
 const RENEW_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+// ── Persistence ──────────────────────────────────────────────────────────────
+// Registrations (including mutable cursors: Gmail lastHistoryId, Drive
+// pageToken/channel ids) are write-through persisted to Supabase so they
+// survive Cloud Run restarts. restoreGoogleNativeTriggerRegistrations()
+// rebuilds the maps on boot.
+
+function persistGmailReg(reg: GmailNativeRegistration): void {
+  void persistTriggerRegistration({
+    kind: 'gmail',
+    key: reg.key,
+    userId: reg.userId,
+    workflowId: reg.workflowId,
+    triggerId: reg.triggerId,
+    type: 'gmail.new_email',
+    data: {
+      sourceKeys: reg.sourceKeys,
+      profileLabel: reg.profileLabel,
+      accountEmail: reg.accountEmail,
+      labelIds: reg.labelIds,
+      lastHistoryId: reg.lastHistoryId,
+      expirationMs: reg.expirationMs ?? null,
+    },
+  });
+}
+
+function persistDriveReg(reg: DriveNativeRegistration): void {
+  void persistTriggerRegistration({
+    kind: 'drive',
+    key: reg.key,
+    userId: reg.userId,
+    workflowId: reg.workflowId,
+    triggerId: reg.triggerId,
+    type: 'drive.new_file',
+    data: {
+      sourceKeys: reg.sourceKeys,
+      profileLabel: reg.profileLabel,
+      accountEmail: reg.accountEmail,
+      channelId: reg.channelId,
+      channelToken: reg.channelToken,
+      resourceId: reg.resourceId,
+      pageToken: reg.pageToken,
+      includeFolders: reg.includeFolders,
+      onlyNew: reg.onlyNew,
+      registeredAtMs: reg.registeredAtMs,
+      expirationMs: reg.expirationMs ?? null,
+    },
+  });
+}
+
+// Idempotent singleton: kicked off at server boot and awaited by the
+// register/unregister/notify paths so events landing right after a restart
+// aren't dropped and re-registers merge instead of clobbering source keys.
+let googleRestorePromise: Promise<number> | null = null;
+export function restoreGoogleNativeTriggerRegistrations(): Promise<number> {
+  if (!googleRestorePromise) {
+    googleRestorePromise = doRestoreGoogleNativeTriggerRegistrations().catch((e) => {
+      googleRestorePromise = null;
+      throw e;
+    });
+  }
+  return googleRestorePromise;
+}
+
+async function doRestoreGoogleNativeTriggerRegistrations(): Promise<number> {
+  let restored = 0;
+
+  const gmailRows = await loadTriggerRegistrations('gmail');
+  for (const row of gmailRows) {
+    if (gmailRegs.has(row.key)) continue;
+    const accountEmail = String(row.data?.accountEmail || '').trim().toLowerCase();
+    if (!accountEmail) continue;
+    const reg: GmailNativeRegistration = {
+      key: row.key,
+      userId: row.userId,
+      workflowId: row.workflowId,
+      triggerId: row.triggerId,
+      sourceKeys: Array.isArray(row.data?.sourceKeys) && row.data.sourceKeys.length > 0
+        ? row.data.sourceKeys.map((v: any) => String(v || '').trim()).filter(Boolean)
+        : [defaultTriggerSourceKey(row.workflowId, row.triggerId)],
+      profileLabel: String(row.data?.profileLabel || 'default'),
+      accountEmail,
+      labelIds: Array.isArray(row.data?.labelIds) ? row.data.labelIds.map(String) : ['INBOX'],
+      lastHistoryId: String(row.data?.lastHistoryId || ''),
+      expirationMs: parseNumber(row.data?.expirationMs),
+    };
+    gmailRegs.set(reg.key, reg);
+    addGmailEmailIndex(accountEmail, reg.key);
+    restored++;
+  }
+
+  const driveRows = await loadTriggerRegistrations('drive');
+  for (const row of driveRows) {
+    if (driveRegs.has(row.key)) continue;
+    const channelId = String(row.data?.channelId || '').trim();
+    if (!channelId) continue;
+    const reg: DriveNativeRegistration = {
+      key: row.key,
+      userId: row.userId,
+      workflowId: row.workflowId,
+      triggerId: row.triggerId,
+      sourceKeys: Array.isArray(row.data?.sourceKeys) && row.data.sourceKeys.length > 0
+        ? row.data.sourceKeys.map((v: any) => String(v || '').trim()).filter(Boolean)
+        : [defaultTriggerSourceKey(row.workflowId, row.triggerId)],
+      profileLabel: String(row.data?.profileLabel || 'default'),
+      accountEmail: String(row.data?.accountEmail || '').trim().toLowerCase(),
+      channelId,
+      channelToken: String(row.data?.channelToken || ''),
+      resourceId: String(row.data?.resourceId || ''),
+      pageToken: String(row.data?.pageToken || ''),
+      includeFolders: Boolean(row.data?.includeFolders),
+      onlyNew: row.data?.onlyNew !== false,
+      registeredAtMs: Number(row.data?.registeredAtMs) || Date.now(),
+      expirationMs: parseNumber(row.data?.expirationMs),
+    };
+    driveRegs.set(reg.key, reg);
+    driveRegKeyByChannelId.set(channelId, reg.key);
+    restored++;
+  }
+
+  if (restored > 0) writeLog('google_native_trigger_registrations_restored', { count: restored });
+  // Renew anything that expired while we were down (Gmail watches last 7 days,
+  // Drive channels 6 — a long outage or paused revision can overshoot them).
+  void renewExpiringNativeRegistrations();
+  return restored;
+}
 
 function parseNumber(input: any): number | undefined {
   const n = Number(input);
@@ -167,6 +299,7 @@ async function registerGmailNativeTrigger(
   args: any,
   sourceKey?: string,
 ) {
+  await restoreGoogleNativeTriggerRegistrations().catch(() => {});
   const key = nativeKey(userId, workflowId, triggerId);
   const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
   const existing = gmailRegs.get(key);
@@ -174,6 +307,7 @@ async function registerGmailNativeTrigger(
     existing.sourceKeys = addSourceKey(existing.sourceKeys, normalizedSourceKey);
     gmailRegs.set(key, existing);
     addGmailEmailIndex(existing.accountEmail, key);
+    persistGmailReg(existing);
     return {
       ok: true,
       registration: {
@@ -227,6 +361,7 @@ async function registerGmailNativeTrigger(
 
   gmailRegs.set(key, reg);
   addGmailEmailIndex(accountEmail, key);
+  persistGmailReg(reg);
 
   return {
     ok: true,
@@ -243,6 +378,7 @@ async function registerGmailNativeTrigger(
 }
 
 async function unregisterGmailNativeTrigger(userId: string, workflowId: string, triggerId: string, sourceKey?: string) {
+  await restoreGoogleNativeTriggerRegistrations().catch(() => {});
   const key = nativeKey(userId, workflowId, triggerId);
   const existing = gmailRegs.get(key);
   if (!existing) return { ok: true, removed: false };
@@ -251,11 +387,13 @@ async function unregisterGmailNativeTrigger(userId: string, workflowId: string, 
   if (remainingSources.length > 0) {
     existing.sourceKeys = remainingSources;
     gmailRegs.set(key, existing);
+    persistGmailReg(existing);
     return { ok: true, removed: false, detached: true };
   }
 
   gmailRegs.delete(key);
   removeGmailEmailIndex(existing.accountEmail, key);
+  void deleteTriggerRegistration('gmail', key);
 
   // Gmail stop is account-wide. Only stop when no Gmail registrations remain
   // for this user/profile to avoid disabling other workflows.
@@ -281,6 +419,7 @@ async function registerDriveNativeTrigger(
   args: any,
   sourceKey?: string,
 ) {
+  await restoreGoogleNativeTriggerRegistrations().catch(() => {});
   const key = nativeKey(userId, workflowId, triggerId);
   const normalizedSourceKey = normalizeTriggerSourceKey(sourceKey, workflowId, triggerId);
   const existing = driveRegs.get(key);
@@ -288,6 +427,7 @@ async function registerDriveNativeTrigger(
     existing.sourceKeys = addSourceKey(existing.sourceKeys, normalizedSourceKey);
     driveRegs.set(key, existing);
     driveRegKeyByChannelId.set(existing.channelId, key);
+    persistDriveReg(existing);
     return {
       ok: true,
       registration: {
@@ -362,6 +502,7 @@ async function registerDriveNativeTrigger(
 
   driveRegs.set(key, reg);
   driveRegKeyByChannelId.set(reg.channelId, key);
+  persistDriveReg(reg);
 
   return {
     ok: true,
@@ -380,6 +521,7 @@ async function registerDriveNativeTrigger(
 }
 
 async function unregisterDriveNativeTrigger(userId: string, workflowId: string, triggerId: string, sourceKey?: string) {
+  await restoreGoogleNativeTriggerRegistrations().catch(() => {});
   const key = nativeKey(userId, workflowId, triggerId);
   const existing = driveRegs.get(key);
   if (!existing) return { ok: true, removed: false };
@@ -389,11 +531,13 @@ async function unregisterDriveNativeTrigger(userId: string, workflowId: string, 
     existing.sourceKeys = remainingSources;
     driveRegs.set(key, existing);
     driveRegKeyByChannelId.set(existing.channelId, key);
+    persistDriveReg(existing);
     return { ok: true, removed: false, detached: true };
   }
 
   driveRegs.delete(key);
   driveRegKeyByChannelId.delete(existing.channelId);
+  void deleteTriggerRegistration('drive', key);
   try {
     const { accessToken } = await getGoogleTokenForProfile(userId, existing.profileLabel);
     await googleFetchJson(accessToken, 'https://www.googleapis.com/drive/v3/channels/stop', {
@@ -505,6 +649,7 @@ async function renewGmailRegistration(reg: GmailNativeRegistration): Promise<voi
   reg.expirationMs = parseNumber(watch?.expiration);
   if (watch?.historyId) reg.lastHistoryId = maxHistoryId(reg.lastHistoryId, String(watch.historyId));
   gmailRegs.set(reg.key, reg);
+  persistGmailReg(reg);
 }
 
 async function renewDriveRegistration(reg: DriveNativeRegistration): Promise<void> {
@@ -549,6 +694,7 @@ async function renewDriveRegistration(reg: DriveNativeRegistration): Promise<voi
   reg.expirationMs = parseNumber(watchRes?.expiration) || nextExpirationMs;
   driveRegs.set(reg.key, reg);
   driveRegKeyByChannelId.set(reg.channelId, reg.key);
+  persistDriveReg(reg);
 }
 
 async function renewExpiringNativeRegistrations(): Promise<void> {
@@ -569,6 +715,7 @@ setInterval(() => {
 }, RENEW_CHECK_MS).unref();
 
 async function handleGmailPush(emailAddress: string, historyId: string) {
+  await restoreGoogleNativeTriggerRegistrations().catch(() => {});
   const emailKey = String(emailAddress || '').trim().toLowerCase();
   if (!emailKey || !historyId) return;
   const regKeys = Array.from(gmailKeysByEmail.get(emailKey) || []);
@@ -618,11 +765,13 @@ async function handleGmailPush(emailAddress: string, historyId: string) {
 
       reg.lastHistoryId = String(historyId);
       gmailRegs.set(key, reg);
+      persistGmailReg(reg);
     } catch (e: any) {
       // If history cursor is stale, reset to the latest cursor to recover.
       if (Number((e as any)?.status || 0) === 404) {
         reg.lastHistoryId = String(historyId);
         gmailRegs.set(key, reg);
+        persistGmailReg(reg);
       }
     }
   }
@@ -684,6 +833,7 @@ async function handleDrivePush(reg: DriveNativeRegistration) {
 
   reg.pageToken = latestPageToken;
   driveRegs.set(reg.key, reg);
+  persistDriveReg(reg);
 }
 
 export async function handleGoogleNativeTriggerRoutes(
@@ -824,6 +974,7 @@ export async function handleGoogleNativeTriggerRoutes(
       sendJson(res, 200, { ok: true, ignored: 'missing_channel_id' });
       return true;
     }
+    await restoreGoogleNativeTriggerRegistrations().catch(() => {});
     const regKey = driveRegKeyByChannelId.get(channelId);
     const reg = regKey ? driveRegs.get(regKey) : undefined;
     if (!reg) {

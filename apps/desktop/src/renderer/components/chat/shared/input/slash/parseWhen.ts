@@ -79,8 +79,7 @@ function applyTime(d: Date, time: [number, number] | null, fallback: [number, nu
   return out;
 }
 
-function formatLabel(date: Date, recurrence: RecurrenceRule | null): string {
-  const now = new Date();
+function formatLabel(date: Date, recurrence: RecurrenceRule | null, now: Date = new Date()): string {
   const sameDay = date.toDateString() === now.toDateString();
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
@@ -153,7 +152,7 @@ export function parseWhen(input: string, now: Date = new Date()): ParsedWhen {
     else if (unit.startsWith('h')) d.setHours(d.getHours() + n);
     else if (unit.startsWith('d')) d.setDate(d.getDate() + n);
     else d.setDate(d.getDate() + n * 7);
-    return { date: d, recurrence, label: formatLabel(d, recurrence) };
+    return { date: d, recurrence, label: formatLabel(d, recurrence, now) };
   }
 
   // --- Time of day ---------------------------------------------------------
@@ -216,5 +215,5 @@ export function parseWhen(input: string, now: Date = new Date()): ParsedWhen {
     while (!allowedJs.includes(date.getDay()) && guard++ < 8) date.setDate(date.getDate() + 1);
   }
 
-  return { date, recurrence, label: formatLabel(date, recurrence) };
+  return { date, recurrence, label: formatLabel(date, recurrence, now) };
 }

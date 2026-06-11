@@ -46,10 +46,13 @@ export interface DesignerNode {
 /** Input parameter definition for workflow-as-function */
 export interface WorkflowInputParam {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'json' | 'array';
+  type: 'string' | 'number' | 'boolean' | 'json' | 'array' | 'select';
   description?: string;
   required?: boolean;
   defaultValue?: any;
+  /** For type 'select': the fixed list of valid values the runner picks from
+   *  (rendered as a dropdown instead of a free-text input). Ignored otherwise. */
+  options?: string[];
 }
 
 /** Output field definition for workflow return value */

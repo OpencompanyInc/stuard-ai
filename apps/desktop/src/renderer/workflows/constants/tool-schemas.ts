@@ -178,7 +178,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'ffmpeg_status', category: 'vision', kind: 'local', description: 'Check if FFmpeg is available locally (downloaded or system-installed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any' } },
   { id: 'ffmpeg_setup', category: 'vision', kind: 'local', description: 'Ensure FFmpeg is available locally (auto-downloads if needed).', argsTemplate: {}, outputSchema: { ok: 'boolean', available: 'boolean', source: 'string', ffmpegPath: 'string', ffprobePath: 'string', meta: 'any', error: 'string', message: 'string' } },
   { id: 'ffmpeg_run', category: 'vision', kind: 'local', description: 'Run FFmpeg with custom arguments. Use for advanced conversions and edits.', argsTemplate: { inputs: ['C:/input_1.mp4', 'C:/input_2.mp4'], extraArgs: ['-filter_complex', '...'], output: 'C:/output.mp4', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string', outputFilePath: 'string' } },
-  { id: 'ffmpeg_convert_media', category: 'vision', kind: 'local', description: 'Convert media from one format to another using FFmpeg.', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.webm', overwrite: true, extraArgs: ['-c:v', 'libvpx-vp9', '-crf', 30, '-b:v', 0], timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
+  { id: 'ffmpeg_convert_media', category: 'vision', kind: 'local', description: 'Convert media from one format to another using FFmpeg. Output format is inferred from outputPath\'s extension; extraArgs is optional (one token per element) — omit it entirely for a plain format change, never pass [""].', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.mp3', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_extract_audio', category: 'vision', kind: 'local', description: 'Extract audio from a media file into an audio-only output (e.g. mp3, wav).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/output.mp3', overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_trim_media', category: 'vision', kind: 'local', description: 'Trim a media file to a time range (fast copy mode).', argsTemplate: { inputPath: 'C:/input.mp4', outputPath: 'C:/clip.mp4', startSeconds: 0, durationSeconds: 10, overwrite: true, timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', exitCode: 'number', stdout: 'string', stderr: 'string', ffmpegPath: 'string' } },
   { id: 'ffmpeg_probe_media', category: 'vision', kind: 'local', description: 'Inspect a media file using ffprobe and return JSON metadata.', argsTemplate: { inputPath: 'C:/input.mp4', timeoutMs: 300000, cwd: '' }, outputSchema: { ok: 'boolean', data: 'any', stdout: 'string', stderr: 'string', ffprobePath: 'string' } },
@@ -429,6 +429,14 @@ const TRIGGER_DEFINITIONS = [
   { type: 'webhook.cloud', description: 'Cloud webhook trigger (legacy)', argsTemplate: { mode: 'cloud' } },
   { type: 'gmail.new_email', description: 'Native Gmail push trigger for new emails (Google watch/PubSub)', argsTemplate: { profile: 'default', labelIds: ['INBOX'] } },
   { type: 'drive.new_file', description: 'Native Google Drive push trigger for newly uploaded files', argsTemplate: { profile: 'default', onlyNew: true, includeFolders: false } },
+  { type: 'x.new_mention', description: 'Native X (Twitter) webhook trigger — fires when someone @-mentions you', argsTemplate: { profile: 'default' } },
+  { type: 'x.new_comment', description: 'Native X (Twitter) webhook trigger — fires when someone replies to your post (no @-mention required)', argsTemplate: { profile: 'default', post_id: '', only_direct_post_replies: false, from_username: '', contains_text: '' } },
+  { type: 'x.new_dm', description: 'Native X (Twitter) webhook trigger — fires on a new direct message', argsTemplate: { profile: 'default' } },
+  { type: 'x.new_follower', description: 'Native X (Twitter) webhook trigger — fires when you gain a new follower', argsTemplate: { profile: 'default' } },
+  { type: 'x.user_post', description: 'Native X (Twitter) webhook trigger — fires when you publish a new post', argsTemplate: { profile: 'default' } },
+  { type: 'instagram.new_comment', description: 'Native Instagram webhook trigger — fires on a new comment on your media', argsTemplate: { profile: 'default' } },
+  { type: 'instagram.new_mention', description: 'Native Instagram webhook trigger — fires when your account is @-mentioned', argsTemplate: { profile: 'default' } },
+  { type: 'instagram.new_message', description: 'Native Instagram webhook trigger — fires on a new direct message (DM)', argsTemplate: { profile: 'default' } },
   { type: 'schedule.cron', description: 'Cron schedule trigger', argsTemplate: { cron: '* * * * *' } },
   { type: 'hotkey', description: 'Global hotkey trigger. Enable hold to fire on both press and release.', argsTemplate: { accelerator: 'Ctrl+Alt+K', passthrough: false, hold: false } },
   { type: 'hotkey.release', description: 'Fires only when the key is released. Pair with a hotkey trigger for hold-to-record patterns.', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
@@ -1338,6 +1346,82 @@ if (TOOL_SCHEMAS['drive.new_file']) {
       default: false,
     },
   };
+}
+
+// Social webhook triggers (X / Instagram) — account selector + output fields for {{trigger.data.X}}
+for (const socialTrigger of ['x.new_mention', 'x.new_dm', 'x.new_follower', 'x.user_post', 'instagram.new_comment', 'instagram.new_mention', 'instagram.new_message']) {
+  const schema = TOOL_SCHEMAS[socialTrigger];
+  if (!schema) continue;
+  const isX = socialTrigger.startsWith('x.');
+  schema.args = {
+    profile: {
+      type: 'string',
+      label: isX ? 'X Account' : 'Instagram Account',
+      description: `Which connected ${isX ? 'X (Twitter)' : 'Instagram'} account to watch`,
+      default: 'default',
+      placeholder: 'default',
+    },
+  };
+  schema.outputs = isX
+    ? ['event', 'xUserId', 'data']
+    : (socialTrigger === 'instagram.new_message'
+        ? ['event', 'igAccountId', 'messaging']
+        : ['event', 'igAccountId', 'field', 'value']);
+}
+
+if (TOOL_SCHEMAS['x.new_comment']) {
+  TOOL_SCHEMAS['x.new_comment'].args = {
+    profile: {
+      type: 'string',
+      label: 'X Account',
+      description: 'Which connected X (Twitter) account to watch',
+      default: 'default',
+      placeholder: 'default',
+    },
+    post_id: {
+      type: 'string',
+      label: 'Post ID or URL',
+      description: 'Only fire for comments on this post. Leave empty to watch replies on all of your posts. Paste a numeric post id or a full x.com status link.',
+      placeholder: '2065123456789 or https://x.com/user/status/2065123456789',
+      allowFreeform: true,
+    },
+    only_direct_post_replies: {
+      type: 'boolean',
+      label: 'Direct replies only',
+      description: 'When a post is set, only fire for top-level replies to that post — not nested replies to other comments in the thread.',
+      default: false,
+      advanced: true,
+    },
+    from_username: {
+      type: 'string',
+      label: 'From username',
+      description: 'Only fire when this account authored the comment. Leave empty for any commenter.',
+      placeholder: 'Jacob_Rhodes_',
+      advanced: true,
+    },
+    contains_text: {
+      type: 'string',
+      label: 'Contains text',
+      description: 'Only fire when the comment text includes this phrase (case-insensitive).',
+      placeholder: 'McLaren',
+      advanced: true,
+    },
+  };
+  TOOL_SCHEMAS['x.new_comment'].outputs = [
+    'event',
+    'xUserId',
+    'data',
+    'data.id_str',
+    'data.id',
+    'data.text',
+    'data.in_reply_to_status_id_str',
+    'data.in_reply_to_user_id_str',
+    'data.conversation_id',
+    'data.user.id_str',
+    'data.user.username',
+    'data.user.screen_name',
+    'data.user.name',
+  ];
 }
 
 // Gmail Send Message - Enhanced email composition

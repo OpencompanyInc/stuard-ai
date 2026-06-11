@@ -193,13 +193,50 @@ export function getToolStepLabel(tool: ToolCall): React.ReactNode {
     }
     case 'run_python_script':
     case 'run_node_script': {
-      const lang = tool.tool === 'run_python_script' ? 'Python' : 'Node';
+      const lang = tool.tool === 'run_python_script' ? 'script' : 'Node';
       const code = typeof args.code === 'string' ? args.code : (typeof args.script === 'string' ? args.script : null);
       const firstLine = code ? code.split('\n').find((l: string) => l.trim().length > 0) || '' : '';
       return firstLine
         ? <span>{v('Running', 'Ran')} {lang} <InlineCodeChip max={56}>{firstLine.trim()}</InlineCodeChip></span>
-        : `${v('Running', 'Ran')} ${lang} script`;
+        : `${v('Running', 'Ran')} ${lang}`;
     }
+    case 'ffmpeg_status':
+      return v('Checking media tools', 'Checked media tools');
+    case 'ffmpeg_setup':
+      return v('Setting up media tools', 'Set up media tools');
+    case 'ffmpeg_probe_media': {
+      const input = typeof args.inputPath === 'string' ? getFilenameFromPath(args.inputPath) : null;
+      return input
+        ? <span>{v('Reading media info for', 'Read media info for')} <InlineCodeChip title={args.inputPath}>{input}</InlineCodeChip></span>
+        : v('Reading media info', 'Read media info');
+    }
+    case 'ffmpeg_convert_media':
+    case 'ffmpeg_extract_audio':
+    case 'ffmpeg_trim_media':
+    case 'ffmpeg_extract_frames':
+    case 'ffmpeg_run': {
+      const input = typeof args.inputPath === 'string' ? getFilenameFromPath(args.inputPath) : null;
+      const verb = tool.tool === 'ffmpeg_extract_audio' ? v('Extracting audio from', 'Extracted audio from')
+        : tool.tool === 'ffmpeg_trim_media' ? v('Trimming', 'Trimmed')
+        : tool.tool === 'ffmpeg_extract_frames' ? v('Extracting frames from', 'Extracted frames from')
+        : tool.tool === 'ffmpeg_run' ? v('Processing', 'Processed')
+        : v('Converting', 'Converted');
+      return input
+        ? <span>{verb} <InlineCodeChip title={args.inputPath}>{input}</InlineCodeChip></span>
+        : verb;
+    }
+    case 'data_load':
+    case 'describe_data':
+    case 'correlate_data':
+    case 'plot_line':
+    case 'plot_bar':
+    case 'plot_scatter':
+    case 'plot_hist':
+    case 'plot_pie':
+    case 'plot_heatmap':
+    case 'plot_box':
+    case 'run_data_python':
+      return humanizeToolName(tool.tool);
     case 'capture_screen':
     case 'take_screenshot':
       return v('Capturing screen', 'Captured screen');

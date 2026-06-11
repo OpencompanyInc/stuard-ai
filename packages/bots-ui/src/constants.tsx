@@ -1,5 +1,6 @@
 import {
   Clock, Calendar, Link as LinkIcon, Mail, Hand, FolderOpen, Terminal,
+  MessageSquare, AtSign, UserPlus, Send, Hash,
 } from 'lucide-react';
 import type { BotTriggerType } from './types';
 
@@ -42,6 +43,14 @@ export const TRIGGER_META: Record<BotTriggerType, { label: string; icon: any; ta
   'fs.watch': { label: 'File or folder change', icon: FolderOpen, tagline: 'Wake when files are added, changed, or removed' },
   'command.watch': { label: 'Custom script watcher', icon: Terminal, tagline: 'Wake from a long-running script or command output' },
   'gmail.new_email': { label: 'New Gmail email', icon: Mail, tagline: 'Wake when a new email matches your filters' },
+  'x.new_mention': { label: 'X mention', icon: AtSign, tagline: 'Wake when someone @-mentions you on X' },
+  'x.new_comment': { label: 'X comment', icon: MessageSquare, tagline: 'Wake when someone replies to your post on X' },
+  'x.new_dm': { label: 'X direct message', icon: Send, tagline: 'Wake on a new X DM' },
+  'x.new_follower': { label: 'X new follower', icon: UserPlus, tagline: 'Wake when you gain a follower on X' },
+  'x.user_post': { label: 'X new post', icon: Hash, tagline: 'Wake when you publish a new post on X' },
+  'instagram.new_comment': { label: 'Instagram comment', icon: MessageSquare, tagline: 'Wake on a new comment on your media' },
+  'instagram.new_mention': { label: 'Instagram mention', icon: AtSign, tagline: 'Wake when your account is @-mentioned' },
+  'instagram.new_message': { label: 'Instagram DM', icon: Send, tagline: 'Wake on a new Instagram direct message' },
   'manual': { label: 'Manual only', icon: Hand, tagline: 'Wake only when you press Run Now' },
 };
 

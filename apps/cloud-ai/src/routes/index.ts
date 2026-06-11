@@ -13,6 +13,7 @@ import { handleNotionRoutes } from './integrations/notion';
 import { handleTelnyxRoutes } from './integrations/telnyx';
 import { handleMetaRoutes } from './integrations/meta';
 import { handleSocialTriggerRoutes } from './integrations/social-triggers';
+import { handleGoogleNativeTriggerRoutes } from './integrations/google-native-triggers';
 import { handleWhatsAppRoutes } from './integrations/whatsapp';
 import {
   DISCORD_INTEGRATION_ENABLED,
@@ -71,6 +72,9 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleOAuthClaimRoute(req, res, parsedUrl)) return true;
   // Social webhook receivers (Meta/Instagram + X) — must precede the provider OAuth routers so the webhook paths aren't intercepted.
   if (await handleSocialTriggerRoutes(req, res, parsedUrl)) return true;
+  // Must run before handleGoogleRoutes: owns /integrations/google/native-triggers/*
+  // (register/unregister + Gmail Pub/Sub and Drive watch notify receivers).
+  if (await handleGoogleNativeTriggerRoutes(req, res, parsedUrl)) return true;
   if (await handleGithubRoutes(req, res, parsedUrl)) return true;
   if (await handleGoogleRoutes(req, res, parsedUrl)) return true;
   if (OUTLOOK_INTEGRATION_ENABLED && await handleOutlookRoutes(req, res, parsedUrl)) return true;

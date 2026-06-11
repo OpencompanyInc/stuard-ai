@@ -506,7 +506,7 @@ Always call ffmpeg_status first. If FFmpeg is not available (available: false), 
 
 export const FFMPEG_PACK: CapabilityPack = {
   kind: 'ffmpeg',
-  label: 'FFmpeg Media Processing',
+  label: 'Media Processing',
   toolNames: [...FFMPEG_TOOLS],
   systemPrompt: FFMPEG_SYSTEM_PROMPT,
   maxSteps: 40,
@@ -547,7 +547,7 @@ You analyse data and produce visualisations on the user's machine using pandas, 
 ## Startup
 
 Always call \`data_analysis_status\` first.
-- If \`installed: false\`, this integration is not enabled. Call \`return_control\` with a clear note that the user should enable "Data Analysis" from Connected Apps in the dashboard. Do NOT call \`data_analysis_setup\` yourself unless the user explicitly asked to install it — install is a user-gated action surfaced through the dashboard.
+- If \`installed: false\`, this integration is not enabled. Call \`return_control\` with a clear note that the user should enable "Charts & Data" from Connected Apps in the dashboard. Do NOT call \`data_analysis_setup\` yourself unless the user explicitly asked to install it — install is a user-gated action surfaced through the dashboard.
 - If \`installed: true\`, proceed with the task.
 
 ## Tool Reference
@@ -603,7 +603,7 @@ All plot tools accept: \`title\`, \`xLabel\`, \`yLabel\`, \`width\` (inches, def
 
 export const DATA_ANALYSIS_PACK: CapabilityPack = {
   kind: 'data_analysis',
-  label: 'Data Analysis',
+  label: 'Charts & Data',
   toolNames: [...DATA_ANALYSIS_TOOLS],
   systemPrompt: DATA_ANALYSIS_SYSTEM_PROMPT,
   maxSteps: 40,
@@ -802,6 +802,7 @@ export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
   ...(REDDIT_INTEGRATION_ENABLED ? { reddit: ['reddit_'] } : {}),
   ...(DISCORD_INTEGRATION_ENABLED ? { discord: ['discord_'] } : {}),
   x: ['x_'],
+  notion: ['notion_'],
 };
 
 export interface IntegrationUserIdentity {
@@ -809,6 +810,18 @@ export interface IntegrationUserIdentity {
   email?: string;
   username?: string;
 }
+
+/** Platform-specific workflow hints appended to integration subagent prompts. */
+const INTEGRATION_PROMPT_EXTRAS: Partial<Record<string, string>> = {
+  x: `
+## X reply workflow
+
+- **Comments on a post**: call \`x_get_comments\` with \`post_id\`. Set \`only_direct_replies: true\` when you only need top-level replies. The tool retries automatically when X's conversation_id search returns nothing.
+- **Reply to a comment**: call \`x_reply_to_comment\` with the comment id and reply text. This works for replies on **the authenticated user's own posts** when the comment is visible to the API.
+- **API vs web UI**: X's self-serve API may reject replies that the web UI allows. If \`x_reply_to_comment\` fails with a restriction error, say clearly that API replies are limited to comments the authenticated account can access — typically replies on their own posts.
+- **Missing comments**: If X shows a reply count but \`x_get_comments\` returns 0, the reply was deleted or is from a private/restricted account and cannot be retrieved or replied to via the API.
+- Call X tools directly by name — never use search_tools, get_tool_schema, or execute_tool.`,
+};
 
 function buildIntegrationSystemPrompt(
   groupName: string,
@@ -830,12 +843,14 @@ function buildIntegrationSystemPrompt(
   return `You are the ${groupName} Integration Subagent for StuardAI.
 You handle API operations for the ${groupName} platform on behalf of the orchestrator.${identityBlock}
 
+All of the ${groupName} tools are already available to you directly — call them by name. Their parameter schemas are part of your tool definitions, so do NOT try to "discover" or "search" for tools; just call the one you need.
+
 RULES:
-1. Use get_tool_schema to discover exact parameters before calling any tool.
+1. Call the relevant ${groupName} tool directly. The full input schema for each tool is already visible to you.
 2. Handle pagination and error responses gracefully.
 3. Summarize results concisely — don't dump raw API responses.
 4. If you need user credentials, preferences, or decisions, call ask_orchestrator once. It blocks and returns the answer.
-5. When done, call return_control with a clear summary.`;
+5. When done, call return_control with a clear summary.${INTEGRATION_PROMPT_EXTRAS[groupName] ?? ''}`;
 }
 
 /**
@@ -851,8 +866,14 @@ export function buildIntegrationPack(
 ): CapabilityPack {
   return {
     kind: 'integration',
+    // The platform's tools are bound natively (see toolNames) — the subagent
+    // calls them directly. We deliberately do NOT include the discovery
+    // meta-tools (search_tools/get_tool_schema/execute_tool): the tool set is
+    // small, fully bound, and self-describing, so the discovery dance only
+    // added latency and confused the model into routing every call through
+    // execute_tool.
     label: `${groupName.charAt(0).toUpperCase() + groupName.slice(1)} Integration`,
-    toolNames: ['search_tools', 'get_tool_schema', 'execute_tool', ...toolNames],
+    toolNames: [...toolNames],
     systemPrompt: buildIntegrationSystemPrompt(groupName, identity),
     maxSteps: 30,
   };

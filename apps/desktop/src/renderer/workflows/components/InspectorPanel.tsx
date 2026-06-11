@@ -1424,13 +1424,21 @@ function InputParamsEditor({
                       />
                       <select
                         value={param.type}
-                        onChange={(e) => updateParam(i, { type: e.target.value as any })}
+                        onChange={(e) => {
+                          const nextType = e.target.value as WorkflowInputParam['type'];
+                          // Seed an empty options list when switching to dropdown so the
+                          // options editor appears; drop it when leaving 'select'.
+                          updateParam(i, nextType === 'select'
+                            ? { type: nextType, options: param.options || [] }
+                            : { type: nextType, options: undefined });
+                        }}
                         disabled={disabled}
                         className="px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                       >
                         <option value="string">String</option>
                         <option value="number">Number</option>
                         <option value="boolean">Boolean</option>
+                        <option value="select">Dropdown</option>
                         <option value="json">JSON Object</option>
                         <option value="array">Array</option>
                       </select>
@@ -1443,6 +1451,26 @@ function InputParamsEditor({
                       disabled={disabled}
                       className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
                     />
+                    {param.type === 'select' && (
+                      <input
+                        type="text"
+                        value={(param.options || []).join(', ')}
+                        onChange={(e) => {
+                          const opts = e.target.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          // Clear a default that's no longer one of the choices.
+                          const nextDefault = param.defaultValue && opts.includes(String(param.defaultValue))
+                            ? param.defaultValue
+                            : undefined;
+                          updateParam(i, { options: opts, defaultValue: nextDefault });
+                        }}
+                        placeholder="Options (comma-separated, e.g. low, medium, high)"
+                        disabled={disabled}
+                        className="w-full px-2 py-1.5 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
+                      />
+                    )}
                     <div className="flex items-center gap-3">
                       <label className="flex items-center gap-1.5 text-xs wf-fg-muted">
                         <input
@@ -1455,14 +1483,28 @@ function InputParamsEditor({
                         Required
                       </label>
                       {!param.required && (
-                        <input
-                          type="text"
-                          value={param.defaultValue ?? ''}
-                          onChange={(e) => updateParam(i, { defaultValue: e.target.value })}
-                          placeholder="Default value"
-                          disabled={disabled}
-                          className="flex-1 px-2 py-1 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
-                        />
+                        param.type === 'select' ? (
+                          <select
+                            value={param.defaultValue ?? ''}
+                            onChange={(e) => updateParam(i, { defaultValue: e.target.value || undefined })}
+                            disabled={disabled || (param.options || []).length === 0}
+                            className="flex-1 px-2 py-1 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
+                          >
+                            <option value="">No default</option>
+                            {(param.options || []).map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            value={param.defaultValue ?? ''}
+                            onChange={(e) => updateParam(i, { defaultValue: e.target.value })}
+                            placeholder="Default value"
+                            disabled={disabled}
+                            className="flex-1 px-2 py-1 text-xs border wf-border-subtle rounded-md focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/30 wf-input wf-fg outline-none disabled:opacity-50"
+                          />
+                        )
                       )}
                     </div>
                   </div>

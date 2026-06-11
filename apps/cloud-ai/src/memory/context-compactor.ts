@@ -67,7 +67,7 @@ export function messageToText(msg: HistoryMessage): string {
 }
 
 export function isSummaryMessage(msg: HistoryMessage): boolean {
-  if (msg.role !== 'system') return false;
+  if (msg.role !== 'system' && msg.role !== 'user') return false;
   const text = typeof msg.content === 'string' ? msg.content : '';
   return text.startsWith(SUMMARY_PREFIX);
 }
@@ -99,6 +99,36 @@ function getLeadingSystemCount(messages: HistoryMessage[]): number {
     count += 1;
   }
   return count;
+}
+
+/**
+ * Messages that must never be summarized away: the leading system prompt(s)
+ * and the first user message (the original task/objective). Leading summary
+ * messages from prior compactions are NOT protected so they get merged into
+ * the next summary instead of stacking up.
+ */
+function getProtectedPrefixCount(messages: HistoryMessage[]): number {
+  let count = 0;
+  for (const msg of messages) {
+    if (msg?.role !== 'system' || isSummaryMessage(msg)) break;
+    count += 1;
+  }
+  const next = messages[count];
+  if (next && next.role === 'user' && !isSummaryMessage(next)) {
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * A kept window must never start with a tool message — providers reject a
+ * tool result whose originating tool call was summarized away. Pull the
+ * boundary back so the assistant message holding the tool call stays kept.
+ */
+function snapToSafeBoundary(messages: HistoryMessage[], index: number, floor: number): number {
+  let snapped = index;
+  while (snapped > floor && messages[snapped]?.role === 'tool') snapped -= 1;
+  return snapped;
 }
 
 function stripSummaryPrefix(text: string): string {
@@ -271,6 +301,14 @@ export function getRecentWithinBudget(history: HistoryMessage[], budget: Context
     remainingBudget -= tokens;
   }
 
+  // The kept suffix must not start with a tool message whose tool call was
+  // dropped — providers reject orphaned tool results. Trim them off the front.
+  for (let idx = leadingSystemCount; idx < history.length; idx += 1) {
+    if (!keepIndices.has(idx)) continue;
+    if (history[idx]?.role !== 'tool') break;
+    keepIndices.delete(idx);
+  }
+
   const recentHistory = history.filter((_, idx) => keepIndices.has(idx));
   return recentHistory.length > 0 ? recentHistory : history.slice(-keepRecent);
 }
@@ -299,19 +337,23 @@ export function emergencyTruncate(history: HistoryMessage[], budget: ContextBudg
 
   pruneToolOutputs(history, budget);
 
-  const leadingSystemCount = getLeadingSystemCount(history);
+  const protectedCount = getProtectedPrefixCount(history);
   const keepRecent = keepRecentMin();
   let currentTokens = estimateTokens(history).totalTokens;
 
   if (currentTokens <= budget.historyBudget) return history;
 
-  for (let idx = leadingSystemCount; idx < history.length - keepRecent && currentTokens > budget.historyBudget;) {
+  for (let idx = protectedCount; idx < history.length - keepRecent && currentTokens > budget.historyBudget;) {
     const msg = history[idx];
     if (!msg || msg.role === 'system') {
       idx += 1;
       continue;
     }
-    history.splice(idx, 1);
+    // Drop trailing tool messages with their parent so no orphaned tool
+    // results remain (even when they sit past the keepRecent boundary).
+    let removeCount = 1;
+    while (history[idx + removeCount]?.role === 'tool') removeCount += 1;
+    history.splice(idx, removeCount);
     currentTokens = estimateTokens(history).totalTokens;
   }
 
@@ -343,6 +385,7 @@ export async function compactHistory(history: HistoryMessage[], modelId?: string
   const keepRecent = keepRecentMin();
   const estimate = estimateTokens(history);
   const keepRawTarget = Math.max(1, Math.round(compactionCheck.budget.compactionTargetTokens * 0.60));
+  const protectedCount = getProtectedPrefixCount(history);
 
   let keepStartIndex = history.length;
   let keptTokens = 0;
@@ -356,14 +399,18 @@ export async function compactHistory(history: HistoryMessage[], modelId?: string
     }
   }
 
-  keepStartIndex = Math.max(0, Math.min(keepStartIndex, history.length - keepRecent));
-  const toSummarize = history.slice(0, keepStartIndex);
+  keepStartIndex = Math.max(protectedCount, Math.min(keepStartIndex, history.length - keepRecent));
+  keepStartIndex = snapToSafeBoundary(history, keepStartIndex, protectedCount);
+  const toSummarize = history.slice(protectedCount, keepStartIndex);
   if (toSummarize.length === 0 || toSummarize.every(isSummaryMessage)) {
     return history;
   }
 
   const summaryText = await generateStructuredSummary(toSummarize);
-  history.splice(0, keepStartIndex, { role: 'system', content: summaryText });
+  // A summary spliced after a protected user message can't be role 'system'
+  // (several providers only accept system messages at the head).
+  const summaryRole = protectedCount === 0 || history[protectedCount - 1]?.role === 'system' ? 'system' : 'user';
+  history.splice(protectedCount, keepStartIndex - protectedCount, { role: summaryRole, content: summaryText });
 
   if (estimateTokens(history).totalTokens > budget.historyBudget) {
     emergencyTruncate(history, budget);

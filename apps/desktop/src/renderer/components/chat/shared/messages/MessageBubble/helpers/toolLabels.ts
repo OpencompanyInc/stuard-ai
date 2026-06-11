@@ -1,7 +1,21 @@
+import { humanizeIntegrationToolName, getSubagentDisplayName } from '../../../../../../../../../../shared/integration-branding';
 import { getFilenameFromPath } from './filePaths';
+
+const SUBAGENT_KINDS = new Set([
+  'browser', 'file_ops', 'files', 'cli_agent', 'workflow', 'reminders',
+  'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'custom',
+  'google', 'outlook', 'github', 'meta', 'whatsapp', 'telnyx',
+  'reddit', 'discord', 'research', 'code',
+]);
 
 // Humanize tool name - removes underscores, capitalizes words, makes it readable
 export function humanizeToolName(tool: string): string {
+  const friendly = humanizeIntegrationToolName(tool);
+  if (friendly) return friendly;
+
+  const key = String(tool || '').trim().toLowerCase().replace(/-/g, '_');
+  if (SUBAGENT_KINDS.has(key)) return getSubagentDisplayName(key);
+
   return tool
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase to spaces

@@ -114,6 +114,21 @@ function formatAttachmentSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** Turn a workflow's return value (any shape the engine set as __return) into
+ *  display text for the compact response panel. Strings/numbers pass through;
+ *  objects pretty-print as JSON. Returns '' for nullish so we don't pop an
+ *  empty panel. */
+function formatWorkflowReturnValue(value: any): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function getConversationRankTime(conversation: any): number {
   return new Date(conversation?.updated_at || conversation?.created_at || 0).getTime();
 }
@@ -1972,21 +1987,44 @@ export function useAppController() {
     return null;
   }, [messages]);
 
+  // Ephemeral return value from a user-initiated workflow run (e.g. via the
+  // compact dropdown / "/run"). Shown in the compact response panel until the
+  // next chat turn begins. Workflows are fire-and-forget, so this rides in on a
+  // main-process event rather than the chat stream.
+  const [workflowResult, setWorkflowResult] = useState<{ prompt: string; text: string } | null>(null);
+  useEffect(() => {
+    const off = window.desktopAPI?.onWorkflowResult?.((data) => {
+      const text = formatWorkflowReturnValue(data?.returnValue);
+      if (!text) return;
+      setWorkflowResult({ prompt: `Ran ${data?.name || 'workflow'}`, text });
+      // Ask the input host to pop the compact response panel open (it owns that
+      // state); a static result doesn't trigger the streaming auto-open.
+      try { window.dispatchEvent(new CustomEvent('stuard:open-compact-response')); } catch { /* noop */ }
+    });
+    return () => { try { (off as any)?.(); } catch { /* noop */ } };
+  }, []);
+  // A new chat turn supersedes the workflow result in the panel.
+  useEffect(() => {
+    if (isAiWorking || (currentResponse || '').trim()) setWorkflowResult(null);
+  }, [isAiWorking, currentResponse]);
+
   const miniOutputText = useMemo(() => {
     const streamingText = (currentResponse || '').trim();
     if (streamingText) return currentResponse || '';
     const lastMsg = messages[messages.length - 1];
     if (isAiWorking || lastMsg?.role === 'user') return '';
+    if (workflowResult) return workflowResult.text;
     return lastAssistantMessage?.text || '';
-  }, [currentResponse, lastAssistantMessage, messages, isAiWorking]);
+  }, [currentResponse, lastAssistantMessage, messages, isAiWorking, workflowResult]);
 
   const miniOutputHasContent = useMemo(() => {
     const streamingText = (currentResponse || '').trim();
     if (streamingText) return true;
     const lastMsg = messages[messages.length - 1];
     if (isAiWorking || lastMsg?.role === 'user') return false;
+    if (workflowResult) return true;
     return !!(lastAssistantMessage?.text || '').trim();
-  }, [currentResponse, lastAssistantMessage?.text, messages, isAiWorking]);
+  }, [currentResponse, lastAssistantMessage?.text, messages, isAiWorking, workflowResult]);
 
   const miniOutputStreaming = useMemo(
     () => !!(currentResponse || '').trim(),
@@ -2024,8 +2062,14 @@ export function useAppController() {
     };
   }, [messages, currentResponse, currentReasoning, isAiWorking]);
 
-  const miniOutputPrompt = miniOutputUserTurn.text;
-  const miniOutputUserAttachments = miniOutputUserTurn.attachments;
+  // When showing a workflow result (idle, no chat turn in flight), label it with
+  // the run instead of the last chat prompt.
+  const showingWorkflowResult = !!workflowResult
+    && !(currentResponse || '').trim()
+    && !isAiWorking
+    && messages[messages.length - 1]?.role !== 'user';
+  const miniOutputPrompt = showingWorkflowResult ? workflowResult.prompt : miniOutputUserTurn.text;
+  const miniOutputUserAttachments = showingWorkflowResult ? [] : miniOutputUserTurn.attachments;
 
   const lastAssistantIdRef = useRef<string | null>(null);
   useEffect(() => {

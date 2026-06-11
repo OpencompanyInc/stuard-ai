@@ -10,6 +10,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { uniqueBrands, toolToBrand, hasInFlightToolCalls, usingToolStatusText, type ToolBrand } from '../../../../utils/toolBrand';
+import { IntegrationLogo } from '../../../IntegrationLogo';
 import { extractContentSegments } from '../messages/MessageBubble/helpers/content';
 import type { ContentSegment } from '../messages/MessageBubble/types';
 import type { ChatAttachment } from '../../../../utils/attachments';
@@ -24,11 +25,15 @@ import {
 } from './compact/CompactMedia';
 import { CompactThinkingBlock } from './compact/CompactThinkingBlock';
 import { CompactUserAttachments } from './compact/CompactUserAttachments';
+import { isHighlightHref, MarkdownHighlight } from '../messages/MessageBubble/inline/MarkdownHighlight';
+import { isUnderlineHref, MarkdownUnderline } from '../messages/MessageBubble/inline/MarkdownUnderline';
 
 interface ToolCallLike {
   id: string;
   tool: string;
   status: 'called' | 'running' | 'completed' | 'error';
+  /** Raw tool args — used to unwrap wrapper tools (execute_tool, vm_execute_tool). */
+  args?: Record<string, any> | null;
 }
 
 interface CompactResponsePanelProps {
@@ -141,12 +146,12 @@ function activeBrandKey(
   for (let i = toolCalls.length - 1; i >= 0; i--) {
     const call = toolCalls[i];
     if (call.status === 'running' || call.status === 'called') {
-      const brand = toolToBrand(call.tool);
+      const brand = toolToBrand(call.tool, call.args);
       if (brand) return brand.key;
     }
   }
   const last = toolCalls[toolCalls.length - 1];
-  return toolToBrand(last.tool)?.key ?? null;
+  return toolToBrand(last.tool, last.args)?.key ?? null;
 }
 
 const BrandChip: React.FC<{ brand: ToolBrand; active: boolean }> = ({
@@ -166,12 +171,11 @@ const BrandChip: React.FC<{ brand: ToolBrand; active: boolean }> = ({
         boxSizing: 'border-box',
       }}
     >
-      {brand.logo ? (
-        <img
-          src={brand.logo}
+      {brand.logo || brand.useRemote ? (
+        <IntegrationLogo
+          logoKey={brand.key}
+          fallbackSrc={brand.logo}
           alt={brand.label}
-          draggable={false}
-          className="object-contain select-none"
           style={{ width: 8.8, height: 8.8 }}
         />
       ) : brand.icon ? (
@@ -302,28 +306,11 @@ const COMPACT_MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['compone
     );
   },
   a: ({ href, children, ...props }: any) => {
-    if (href === '#highlight' || href === '?highlight') {
-      return (
-        <span
-          style={{
-            background: 'rgb(245 158 11 / 0.18)',
-            color: TEXT_FG,
-            padding: '1px 5px',
-            borderRadius: 5,
-            fontWeight: 600,
-            border: '0.5px solid rgb(245 158 11 / 0.35)',
-          }}
-        >
-          {children}
-        </span>
-      );
+    if (isHighlightHref(href)) {
+      return <MarkdownHighlight>{children}</MarkdownHighlight>;
     }
-    if (href === '#underline' || href === '?underline') {
-      return (
-        <span style={{ textDecoration: 'underline', textUnderlineOffset: 2, fontWeight: 500 }}>
-          {children}
-        </span>
-      );
+    if (isUnderlineHref(href)) {
+      return <MarkdownUnderline>{children}</MarkdownUnderline>;
     }
     if (typeof href === 'string') {
       const media = renderCompactMediaFromUrl(href, typeof children === 'string' ? children : undefined);
@@ -667,7 +654,7 @@ export const CompactResponsePanel: React.FC<CompactResponsePanelProps> = ({
 
   const effectiveCalls =
     toolCalls && toolCalls.length > 0 ? toolCalls : cachedRef.current;
-  const brands = uniqueBrands(effectiveCalls.map((t) => t.tool));
+  const brands = uniqueBrands(effectiveCalls);
   const visibleBrands = brands.slice(-maxChips);
   const toolsInFlight = hasInFlightToolCalls(effectiveCalls);
   const turnInProgress = isStreaming || isAiWorking;

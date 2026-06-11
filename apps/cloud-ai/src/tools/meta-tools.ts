@@ -780,7 +780,10 @@ export const search_tools = createTool({
                 enabled_only: true,
             });
             if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
-            const tools = (data as any[]).map(compactToolSearchEntry);
+            const registry = getToolRegistry();
+            const tools = (data as any[])
+                .filter((row) => registry.has(String(row?.name || '')))
+                .map(compactToolSearchEntry);
             const localMatches = keywordFallback().tools;
             const seen = new Set(tools.map((tool) => tool.name));
             for (const tool of localMatches) {

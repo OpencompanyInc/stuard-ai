@@ -7,7 +7,7 @@ const PRIMARY_CAPABILITIES = [
   'Files & folders',
   'Gmail, Drive, GitHub, Slack',
   'Screen & windows',
-  'ffmpeg',
+  'Media processing',
 ] as const;
 
 const TRAILING_CAPABILITIES = [
@@ -16,7 +16,8 @@ const TRAILING_CAPABILITIES = [
   'Bluetooth',
   'Camera & mic',
   'Notifications',
-  'MediaPipe',
+  'Vision & motion',
+  'Charts & data',
   'Any installed app',
 ] as const;
 

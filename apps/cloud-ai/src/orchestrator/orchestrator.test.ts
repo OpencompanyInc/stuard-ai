@@ -202,10 +202,24 @@ describe('Capability Packs', () => {
     expect(pack.label).toBe('Google Integration');
     expect(pack.toolNames).toContain('gmail_send_message');
     expect(pack.toolNames).toContain('calendar_list_events');
-    expect(pack.toolNames).toContain('search_tools');
-    expect(pack.toolNames).toContain('get_tool_schema');
-    expect(pack.toolNames).toContain('execute_tool');
+    // Integration subagents bind their platform tools natively and must NOT
+    // carry the discovery meta-tools — those forced an execute_tool dance.
+    expect(pack.toolNames).not.toContain('search_tools');
+    expect(pack.toolNames).not.toContain('get_tool_schema');
+    expect(pack.toolNames).not.toContain('execute_tool');
     expect(pack.maxSteps).toBe(30);
+  });
+
+  it('buildIntegrationPack for x includes native-tool guidance and no meta-tools', async () => {
+    const { buildIntegrationPack } = await import('./capability-packs');
+    const pack = buildIntegrationPack('x', ['x_get_comments', 'x_reply_to_comment'], {
+      username: 'Ifesoll',
+    });
+    expect(pack.toolNames).toEqual(['x_get_comments', 'x_reply_to_comment']);
+    expect(pack.systemPrompt).toContain('call them by name');
+    expect(pack.systemPrompt).toContain('x_get_comments');
+    expect(pack.systemPrompt).toContain('x_reply_to_comment');
+    expect(pack.systemPrompt).toContain('never use search_tools');
   });
 
   it('exposes x as a known integration subagent', async () => {

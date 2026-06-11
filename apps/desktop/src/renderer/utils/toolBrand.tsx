@@ -33,6 +33,8 @@ import {
   Webhook,
   Workflow,
   Zap,
+  BarChart3,
+  ScanFace,
 } from 'lucide-react';
 
 import discordLogo from '../assets/integrations/Discord.svg';
@@ -56,12 +58,19 @@ import threadsLogo from '../assets/integrations/Threads.svg';
 import whatsappLogo from '../assets/integrations/WhatsApp.svg';
 import xLogo from '../assets/integrations/X.svg';
 import youtubeLogo from '../assets/integrations/YouTube.svg';
+import { getIntegrationBranding } from '../../../../../shared/integration-branding';
 
 export interface ToolBrand {
   key: string;
   label: string;
   /** Brand SVG/PNG URL (preferred — multi-color marks). */
   logo?: string;
+  /**
+   * Use the live favicon (via integrationLogoSources) as the mark — same source
+   * Connected Apps uses for brands we don't bundle a vector for (Notion, Maps…).
+   * `icon` stays as the offline/error fallback.
+   */
+  useRemote?: boolean;
   /** Lucide fallback for generic capability categories. */
   icon?: LucideIcon;
   /** Tint color applied to the lucide icon. */
@@ -84,17 +93,22 @@ const BRANDS: Record<string, ToolBrand> = {
   instagram: { key: 'instagram', label: 'Instagram', logo: instagramLogo },
   threads: { key: 'threads', label: 'Threads', logo: threadsLogo },
   outlook: { key: 'outlook', label: 'Outlook', logo: outlookLogo },
+  // No bundled vector — use the live notion.so favicon, exactly like Connected Apps.
+  notion: { key: 'notion', label: 'Notion', useRemote: true },
   youtube: { key: 'youtube', label: 'YouTube', logo: youtubeLogo },
   whatsapp: { key: 'whatsapp', label: 'WhatsApp', logo: whatsappLogo },
-  python: { key: 'python', label: 'Python', logo: pythonLogo },
-  ffmpeg: { key: 'ffmpeg', label: 'FFmpeg', logo: ffmpegLogo },
-  ollama: { key: 'ollama', label: 'Ollama', logo: ollamaLogo },
+  python: { key: 'python', label: getIntegrationBranding('python')?.shortLabel ?? 'Scripts', logo: pythonLogo },
+  ffmpeg: { key: 'ffmpeg', label: getIntegrationBranding('ffmpeg')?.shortLabel ?? 'Media', logo: ffmpegLogo },
+  mediapipe: { key: 'mediapipe', label: getIntegrationBranding('mediapipe')?.shortLabel ?? 'Vision', icon: ScanFace, color: '#F472B6' },
+  data_analysis: { key: 'data_analysis', label: getIntegrationBranding('data-analysis')?.shortLabel ?? 'Charts', icon: BarChart3, color: '#60A5FA' },
+  ollama: { key: 'ollama', label: getIntegrationBranding('ollama')?.shortLabel ?? 'Local AI', logo: ollamaLogo },
   supabase: { key: 'supabase', label: 'Supabase', logo: supabaseLogo },
-  elevenlabs: { key: 'elevenlabs', label: 'ElevenLabs', logo: elevenLabsLogo },
+  elevenlabs: { key: 'elevenlabs', label: 'Voice', logo: elevenLabsLogo },
 
   // ── System / capability categories (lucide icons) ──────────────────────────
   browser: { key: 'browser', label: 'Browser', icon: Globe, color: '#60A5FA' },
-  maps: { key: 'maps', label: 'Maps', icon: MapPin, color: '#EA4335' },
+  // Live Google Maps favicon (maps.google.com); MapPin is the offline fallback.
+  maps: { key: 'maps', label: 'Maps', useRemote: true, icon: MapPin, color: '#EA4335' },
   search: { key: 'search', label: 'Web search', icon: Search, color: '#E5E7EB' },
   scrape: { key: 'scrape', label: 'Web scrape', icon: LinkIcon, color: '#22D3EE' },
   http: { key: 'http', label: 'HTTP request', icon: Network, color: '#22D3EE' },
@@ -118,14 +132,38 @@ const BRANDS: Record<string, ToolBrand> = {
   zap: { key: 'zap', label: 'Action', icon: Zap, color: '#FBBF24' },
 };
 
+// Meta-tool wrappers carry the *real* tool name in their arguments. `execute_tool`
+// (orchestrator) puts it in `tool_name`; `vm_execute_tool` puts it in `tool`.
+// Without unwrapping, anything routed through these wrappers (e.g. the Maps
+// tools the orchestrator reaches via execute_tool) would brand as the generic
+// wrapper and show no logo.
+const WRAPPER_TOOLS = new Set(['execute_tool', 'vm_execute_tool']);
+
+function unwrapInnerToolName(args: Record<string, any> | null | undefined): string | null {
+  if (!args || typeof args !== 'object') return null;
+  const candidate = args.tool_name ?? args.tool ?? args.vmTool ?? args.toolName ?? args.name;
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+}
+
 /**
  * Map a raw tool-call name (e.g. `browser_use_navigate`, `gmail_send`) to its
  * integration brand. Returns null for tools we don't know how to categorise so
  * callers can render a generic spinner fallback.
+ *
+ * Pass the call's `args` so wrapper tools (`execute_tool`, `vm_execute_tool`)
+ * brand off the inner tool they actually run.
  */
-export function toolToBrand(toolName: string): ToolBrand | null {
-  const name = (toolName || '').toLowerCase();
+export function toolToBrand(toolName: string, args?: Record<string, any> | null): ToolBrand | null {
+  let name = (toolName || '').toLowerCase();
   if (!name) return null;
+
+  // Unwrap meta-tool wrappers so the pill reflects the inner tool (Maps,
+  // Notion, …). If the inner name can't be resolved, fall through with the
+  // wrapper name (no brand → generic spinner, same as before).
+  if (WRAPPER_TOOLS.has(name)) {
+    const inner = unwrapInnerToolName(args);
+    if (inner) name = inner.toLowerCase();
+  }
 
   // ── Brand integrations ─────────────────────────────────────────────────────
   if (name.startsWith('browser_use_') || name.startsWith('browser_')) return BRANDS.browser;
@@ -143,12 +181,16 @@ export function toolToBrand(toolName: string): ToolBrand | null {
   if (name.startsWith('instagram_') || name.startsWith('ig_')) return BRANDS.instagram;
   if (name.startsWith('threads_')) return BRANDS.threads;
   if (name.startsWith('outlook_')) return BRANDS.outlook;
+  if (name.startsWith('notion_')) return BRANDS.notion;
   if (name.startsWith('youtube_') || name.startsWith('yt_')) return BRANDS.youtube;
   if (name.startsWith('whatsapp_') || name.startsWith('wa_')) return BRANDS.whatsapp;
   if (name.startsWith('telnyx_')) return BRANDS.whatsapp; // SMS/voice share comms tile
   if (name.startsWith('maps_')) return BRANDS.maps;
   if (name.startsWith('python_') || name === 'run_python_script' || name === 'pip_install') return BRANDS.python;
   if (name.startsWith('ffmpeg_') || name === 'transcode' || name === 'extract_audio') return BRANDS.ffmpeg;
+  if (name.startsWith('mediapipe_')) return BRANDS.mediapipe;
+  if (name.startsWith('data_analysis_') || name.startsWith('plot_') || name === 'data_load'
+    || name === 'describe_data' || name === 'correlate_data' || name === 'run_data_python') return BRANDS.data_analysis;
   if (name.startsWith('ollama_')) return BRANDS.ollama;
   if (name.startsWith('supabase_')) return BRANDS.supabase;
   if (name.startsWith('elevenlabs_') || name.startsWith('tts_')) return BRANDS.elevenlabs;
@@ -202,11 +244,11 @@ export function toolToBrand(toolName: string): ToolBrand | null {
  * brand logos without duplicates when multiple calls of the same integration
  * fire in parallel.
  */
-export function uniqueBrands(toolNames: readonly string[]): ToolBrand[] {
+export function uniqueBrands(toolCalls: readonly ToolCallLike[]): ToolBrand[] {
   const seen = new Set<string>();
   const out: ToolBrand[] = [];
-  for (const n of toolNames) {
-    const b = toolToBrand(n);
+  for (const tc of toolCalls) {
+    const b = toolToBrand(tc.tool, tc.args);
     if (!b) continue;
     if (seen.has(b.key)) continue;
     seen.add(b.key);
@@ -219,6 +261,8 @@ export interface ToolCallLike {
   id: string;
   tool: string;
   status: 'called' | 'running' | 'completed' | 'error';
+  /** Raw tool args — used to unwrap wrapper tools (execute_tool, vm_execute_tool). */
+  args?: Record<string, any> | null;
 }
 
 function humanizeToolName(tool: string): string {
@@ -241,7 +285,7 @@ export function getActiveToolCall(
 export function getActiveBrandKey(toolCalls: readonly ToolCallLike[] | undefined): string | null {
   const active = getActiveToolCall(toolCalls);
   if (!active) return null;
-  return toolToBrand(active.tool)?.key ?? null;
+  return toolToBrand(active.tool, active.args)?.key ?? null;
 }
 
 /** Label for the in-flight tool, e.g. "Using Slack…" */
@@ -251,7 +295,7 @@ export function usingToolStatusText(toolCalls: readonly ToolCallLike[] | undefin
   if (!hasInFlight) return null;
   const active = getActiveToolCall(toolCalls);
   if (!active) return null;
-  const brand = toolToBrand(active.tool);
+  const brand = toolToBrand(active.tool, active.args);
   const label = brand?.label || humanizeToolName(active.tool);
   return `Using ${label}\u2026`;
 }

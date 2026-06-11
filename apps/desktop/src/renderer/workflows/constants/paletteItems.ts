@@ -1,4 +1,5 @@
 import type { PaletteItem } from "../types";
+import { META_INTEGRATION_ENABLED } from "../../../../../../shared/integration-flags";
 
 export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'manual', label: 'Manual (Click to Run)', args: {} },
@@ -8,6 +9,17 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'keystroke', label: 'Keystroke Sequence', args: { sequence: 'stuard' } },
   { k: 'trigger', t: 'function', label: 'Function (callable workflow)', args: {} },
   { k: 'trigger', t: 'webhook', label: 'Webhook', args: { mode: 'cloud' } },
+  // ── Social webhook triggers (cloud push via api.stuard.ai) ──
+  { k: 'trigger', t: 'x.new_mention', label: 'X: New Mention', args: { profile: 'default' } },
+  { k: 'trigger', t: 'x.new_comment', label: 'X: New Comment', args: { profile: 'default', post_id: '', only_direct_post_replies: false, from_username: '', contains_text: '' } },
+  { k: 'trigger', t: 'x.new_dm', label: 'X: New DM', args: { profile: 'default' } },
+  { k: 'trigger', t: 'x.new_follower', label: 'X: New Follower', args: { profile: 'default' } },
+  { k: 'trigger', t: 'x.user_post', label: 'X: New Post (by you)', args: { profile: 'default' } },
+  ...(META_INTEGRATION_ENABLED ? [
+    { k: 'trigger', t: 'instagram.new_comment', label: 'Instagram: New Comment', args: { profile: 'default' } },
+    { k: 'trigger', t: 'instagram.new_mention', label: 'Instagram: New Mention', args: { profile: 'default' } },
+    { k: 'trigger', t: 'instagram.new_message', label: 'Instagram: New DM', args: { profile: 'default' } },
+  ] as PaletteItem[] : []),
   // ── Disabled pending Google CASA verification (push triggers need gmail.readonly / drive.readonly) ──
   // { k: 'trigger', t: 'gmail.new_email', label: 'Gmail: New Email', args: { profile: 'default', labelIds: ['INBOX'] } },
   // { k: 'trigger', t: 'drive.new_file', label: 'Drive: New File', args: { profile: 'default', onlyNew: true, includeFolders: false } },

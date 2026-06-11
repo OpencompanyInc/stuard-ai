@@ -209,6 +209,38 @@ function buildTriggers(args: any): BotTrigger[] {
     }];
   }
 
+  if (kind === 'x.new_comment' || trigger.type === 'x.new_comment') {
+    return [{
+      id: genTriggerId(),
+      type: 'x.new_comment',
+      args: {
+        profile: cleanString(trigger.profile || schedule.profile || args?.profile) || 'default',
+        post_id: cleanString(trigger.post_id || schedule.post_id || args?.post_id),
+        only_direct_post_replies: trigger.only_direct_post_replies === true || schedule.only_direct_post_replies === true,
+        from_username: cleanString(trigger.from_username || schedule.from_username),
+        contains_text: cleanString(trigger.contains_text || schedule.contains_text),
+      },
+      enabled: true,
+      label: cleanString(trigger.label || schedule.label) || 'X comment',
+      requiresCloud: true,
+    }];
+  }
+
+  if (kind === 'x.new_mention' || trigger.type === 'x.new_mention'
+    || kind === 'x.new_dm' || trigger.type === 'x.new_dm'
+    || kind === 'x.new_follower' || trigger.type === 'x.new_follower'
+    || kind === 'x.user_post' || trigger.type === 'x.user_post') {
+    const socialType = (trigger.type || kind || 'x.new_mention') as BotTriggerType;
+    return [{
+      id: genTriggerId(),
+      type: socialType,
+      args: { profile: cleanString(trigger.profile || schedule.profile || args?.profile) || 'default' },
+      enabled: true,
+      label: cleanString(trigger.label || schedule.label) || 'X',
+      requiresCloud: true,
+    }];
+  }
+
   if (kind === 'interval' || every) {
     const normalizedEvery = VALID_INTERVALS.has(every) && every !== 'manual' ? every : '30m';
     return [{

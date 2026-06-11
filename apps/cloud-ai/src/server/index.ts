@@ -19,6 +19,8 @@ import { initVoiceProviders } from '../voice';
 import { telnyxBridgeWss } from '../routes/integrations/telnyx-bridge';
 import { verifyTelnyxConfig } from '../routes/integrations/telnyx';
 import { startReminderCron } from '../services/cloud-reminders';
+import { restoreSocialTriggerRegistrations } from '../routes/integrations/social-triggers';
+import { restoreGoogleNativeTriggerRegistrations } from '../routes/integrations/google-native-triggers';
 
 export function startCloudAiServer() {
   // Boot-time security guards. Fail fast on a forgeable OAuth state secret in a
@@ -100,6 +102,14 @@ export function startCloudAiServer() {
     void verifyTelnyxConfig().catch((error) => {
       console.warn('[cloud-ai] Telnyx config verification failed:', error);
     });
+    // Rehydrate native trigger registrations (social webhooks + Google watches)
+    // so deploys/restarts don't drop live triggers.
+    void restoreSocialTriggerRegistrations()
+      .then((n) => { if (n > 0) console.log(`[cloud-ai] Restored ${n} social trigger registration(s)`); })
+      .catch((error) => console.warn('[cloud-ai] Social trigger restore failed:', error));
+    void restoreGoogleNativeTriggerRegistrations()
+      .then((n) => { if (n > 0) console.log(`[cloud-ai] Restored ${n} Google native trigger registration(s)`); })
+      .catch((error) => console.warn('[cloud-ai] Google native trigger restore failed:', error));
   });
 
   return { server, wss };

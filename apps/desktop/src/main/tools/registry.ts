@@ -278,17 +278,17 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'reddit_create_post': { kind: 'cloud' },
   'reddit_comment': { kind: 'cloud' },
 
-  // Facebook / Instagram / Threads (Meta social tools)
-  'facebook_get_me': { kind: 'cloud' },
-  'facebook_list_pages': { kind: 'cloud' },
-  'facebook_list_page_posts': { kind: 'cloud' },
-  'facebook_create_page_post': { kind: 'cloud' },
-  'instagram_get_me': { kind: 'cloud' },
-  'instagram_list_media': { kind: 'cloud' },
-  'instagram_publish_media': { kind: 'cloud' },
-  'threads_get_me': { kind: 'cloud' },
-  'threads_list_posts': { kind: 'cloud' },
-  'threads_publish_post': { kind: 'cloud' },
+  // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)
+  // 'facebook_get_me': { kind: 'cloud' },
+  // 'facebook_list_pages': { kind: 'cloud' },
+  // 'facebook_list_page_posts': { kind: 'cloud' },
+  // 'facebook_create_page_post': { kind: 'cloud' },
+  // 'instagram_get_me': { kind: 'cloud' },
+  // 'instagram_list_media': { kind: 'cloud' },
+  // 'instagram_publish_media': { kind: 'cloud' },
+  // 'threads_get_me': { kind: 'cloud' },
+  // 'threads_list_posts': { kind: 'cloud' },
+  // 'threads_publish_post': { kind: 'cloud' },
 
   // X / Twitter
   'x_search_tweets': { kind: 'cloud' },

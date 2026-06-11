@@ -38,6 +38,14 @@ export type BotTriggerType =
   | 'fs.watch'
   | 'command.watch'
   | 'gmail.new_email'
+  | 'x.new_mention'
+  | 'x.new_comment'
+  | 'x.new_dm'
+  | 'x.new_follower'
+  | 'x.user_post'
+  | 'instagram.new_comment'
+  | 'instagram.new_mention'
+  | 'instagram.new_message'
   | 'manual';
 
 export interface BotTrigger {
@@ -283,8 +291,26 @@ function normalizeBot(raw: any): Bot {
 }
 
 const VALID_TRIGGER_TYPES: BotTriggerType[] = [
-  'schedule.interval', 'schedule.cron', 'webhook', 'fs.watch', 'command.watch', 'gmail.new_email', 'manual',
+  'schedule.interval', 'schedule.cron', 'webhook', 'fs.watch', 'command.watch', 'gmail.new_email',
+  'x.new_mention', 'x.new_comment', 'x.new_dm', 'x.new_follower', 'x.user_post',
+  'instagram.new_comment', 'instagram.new_mention', 'instagram.new_message', 'manual',
 ];
+
+const CLOUD_SOCIAL_TRIGGER_TYPES = new Set<BotTriggerType>([
+  'gmail.new_email',
+  'x.new_mention',
+  'x.new_comment',
+  'x.new_dm',
+  'x.new_follower',
+  'x.user_post',
+  'instagram.new_comment',
+  'instagram.new_mention',
+  'instagram.new_message',
+]);
+
+function isCloudSocialTrigger(type: BotTriggerType): boolean {
+  return CLOUD_SOCIAL_TRIGGER_TYPES.has(type);
+}
 
 function normalizeTriggers(rawTriggers: any, rawBot: any, config: BotConfig | undefined): BotTrigger[] {
   if (Array.isArray(rawTriggers) && rawTriggers.length > 0) {
@@ -319,7 +345,7 @@ function normalizeTrigger(raw: any): BotTrigger | null {
     label: typeof raw.label === 'string' ? raw.label : undefined,
     requiresCloud: type === 'webhook' ? false : typeof raw.requiresCloud === 'boolean'
       ? raw.requiresCloud
-      : type === 'gmail.new_email',
+      : isCloudSocialTrigger(type as BotTriggerType),
   };
 }
 
@@ -364,6 +390,16 @@ function seedTriggerDefaults(
       cwd: args.cwd || '',
       fireOn: Array.isArray(args.fireOn) && args.fireOn.length ? args.fireOn : ['stdout'],
     };
+  } else if (trigger.type === 'x.new_comment') {
+    trigger.args = {
+      profile: args.profile || 'default',
+      post_id: args.post_id || '',
+      only_direct_post_replies: args.only_direct_post_replies === true,
+      from_username: args.from_username || '',
+      contains_text: args.contains_text || '',
+    };
+  } else if (isCloudSocialTrigger(trigger.type) && !args.profile) {
+    trigger.args = { ...args, profile: 'default' };
   }
   return trigger;
 }
@@ -602,7 +638,7 @@ export const botService = {
       args: input.args || {},
       enabled: input.enabled !== false,
       label: input.label,
-      requiresCloud: input.type === 'gmail.new_email',
+      requiresCloud: input.type === 'gmail.new_email' || isCloudSocialTrigger(input.type),
     }, { botIdHint: botId, fallbackInterval: bot.config?.interval });
     const next = [...bot.triggers, trigger];
     this.update(botId, { triggers: next });

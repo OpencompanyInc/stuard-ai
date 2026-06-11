@@ -38,7 +38,7 @@ export const ffmpeg_run = makeLocalTool(
     extraArgs: z
       .array(z.union([z.string(), z.number()]))
       .optional()
-      .describe('Alternative to args: extra FFmpeg arguments appended after all inputs'),
+      .describe('Alternative to args: extra FFmpeg arguments appended after all inputs. Each element is one token (e.g. ["-c:v","libx264"]). Omit entirely if none — never pass [""] or empty strings.'),
     output: z.string().optional().describe('Alternative to args: output file path'),
     overwrite: z.boolean().optional().default(true).describe('Overwrite output file when using inputs/output form'),
     timeoutMs: z.number().int().min(100).max(1800000).optional().describe('Optional timeout for the FFmpeg process'),
@@ -73,7 +73,7 @@ export const ffmpeg_convert_media = makeLocalTool(
     inputPath: z.string(),
     outputPath: z.string(),
     overwrite: z.boolean().optional().default(true),
-    extraArgs: z.array(z.union([z.string(), z.number()])).optional().describe('Additional FFmpeg arguments between input and output'),
+    extraArgs: z.array(z.union([z.string(), z.number()])).optional().describe('Additional FFmpeg arguments between input and output, one token per element (e.g. ["-c:v","libx264"]). The output format is inferred from outputPath\'s extension. Omit entirely if none — never pass [""] or empty strings.'),
     timeoutMs: z.number().int().min(100).max(1800000).optional(),
     cwd: z.string().optional(),
   }),

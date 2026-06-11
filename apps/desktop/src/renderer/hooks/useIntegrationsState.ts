@@ -27,6 +27,7 @@ import {
   REDDIT_INTEGRATION_ENABLED,
   WHATSAPP_INTEGRATION_ENABLED,
 } from "../../../../../shared/integration-flags";
+import { applyIntegrationBranding } from "../../../../../shared/integration-branding";
 
 /** Google product slugs whose connection state is resolved from the local OAuth store. */
 const GOOGLE_INTEGRATION_SLUGS = [
@@ -371,13 +372,13 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   // Regular integrations (OAuth-based, not MCPs)
   const integrationLibraryRaw = useMemo(
     () => [
-      { slug: "python", name: "Python", description: "Required for local tools. Stuard sets it up automatically when needed.", category: "Local", homepage: "https://www.python.org/", available: true },
-      { slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true },
-      { slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true },
-      { slug: "data-analysis", name: "Data Analysis", description: "Analyze and visualize data with pandas, numpy, scipy, matplotlib, and seaborn. Installed on demand into an isolated environment.", category: "Local", homepage: "https://pandas.pydata.org/", available: true },
-      { slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true },
-      { slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true },
-      { slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true },
+      applyIntegrationBranding({ slug: "python", name: "Python", description: "Required for local tools. Stuard sets it up automatically when needed.", category: "Local", homepage: "https://www.python.org/", available: true }),
+      applyIntegrationBranding({ slug: "ffmpeg", name: "FFmpeg", description: "Convert and edit audio & video files. Installs automatically when needed.", category: "Local", homepage: "https://ffmpeg.org/", available: true }),
+      applyIntegrationBranding({ slug: "mediapipe", name: "MediaPipe", description: "See and understand images and video — hand tracking, face detection, body pose, and more.", category: "Local", homepage: "https://mediapipe.dev/", available: true }),
+      applyIntegrationBranding({ slug: "data-analysis", name: "Data Analysis", description: "Analyze and visualize data with pandas, numpy, scipy, matplotlib, and seaborn. Installed on demand into an isolated environment.", category: "Local", homepage: "https://pandas.pydata.org/", available: true }),
+      applyIntegrationBranding({ slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true }),
+      applyIntegrationBranding({ slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true }),
+      applyIntegrationBranding({ slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true }),
       // Disabled — Outlook/Discord/Reddit integrations temporarily hidden (see shared/integration-flags.ts)
       ...(OUTLOOK_INTEGRATION_ENABLED
         ? [{ slug: "outlook", name: "Outlook", description: "Connect Microsoft Outlook via PKCE to read mail (Mail.Read).", category: "Communication", homepage: "https://learn.microsoft.com/graph/", available: true }]

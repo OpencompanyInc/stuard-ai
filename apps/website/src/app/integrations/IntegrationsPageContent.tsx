@@ -12,6 +12,7 @@ import {
   REDDIT_INTEGRATION_ENABLED,
   WHATSAPP_INTEGRATION_ENABLED,
 } from '../../../../../shared/integration-flags';
+import { applyIntegrationBranding } from '../../../../../shared/integration-branding';
 
 type IntegrationCategory =
   | 'Communication'
@@ -26,6 +27,7 @@ type Integration = {
   slug: string;
   name: string;
   description: string;
+  technicalDetail?: string;
   category: IntegrationCategory;
   logo: string;
   comingSoon?: boolean;
@@ -164,41 +166,56 @@ const INTEGRATIONS: Integration[] = [
     category: 'Communication',
     logo: '/integrations/YouTube.svg',
   },
-  {
+  applyIntegrationBranding({
     slug: 'supabase',
     name: 'Supabase',
     description: 'Query and write rows in your Supabase project.',
     category: 'Data',
     logo: '/integrations/Supabase.svg',
-  },
+  }),
   {
     slug: 'elevenlabs',
     name: 'ElevenLabs',
     description: 'Generate natural voice for narration and notifications.',
+    technicalDetail: 'Text-to-speech and live voice agents',
     category: 'Automation',
     logo: '/integrations/ElevenLabs.svg',
   },
-  {
+  applyIntegrationBranding({
     slug: 'python',
     name: 'Python',
     description: 'Run Python locally. Stuard installs it for you when needed.',
     category: 'Local',
     logo: '/integrations/Python.svg',
-  },
-  {
+  }),
+  applyIntegrationBranding({
     slug: 'ffmpeg',
     name: 'FFmpeg',
     description: 'Convert and edit audio & video. Installs on demand.',
     category: 'Local',
     logo: '/integrations/FFmpeg.svg',
-  },
-  {
+  }),
+  applyIntegrationBranding({
+    slug: 'data-analysis',
+    name: 'Data Analysis',
+    description: 'Analyze spreadsheets and create charts from your data.',
+    category: 'Local',
+    logo: '/integrations/Python.svg',
+  }),
+  applyIntegrationBranding({
+    slug: 'mediapipe',
+    name: 'MediaPipe',
+    description: 'Detect faces, track hands, and understand body pose in photos and video.',
+    category: 'Local',
+    logo: '/integrations/Python.svg',
+  }),
+  applyIntegrationBranding({
     slug: 'ollama',
     name: 'Ollama',
     description: 'Run open-source models privately on your machine.',
     category: 'Local',
     logo: '/integrations/Ollama.svg',
-  },
+  }),
 ];
 
 const CATEGORIES = [
@@ -270,6 +287,7 @@ const IntegrationsPageContent = () => {
         !q ||
         integration.name.toLowerCase().includes(q) ||
         integration.description.toLowerCase().includes(q) ||
+        (integration.technicalDetail?.toLowerCase().includes(q) ?? false) ||
         integration.category.toLowerCase().includes(q);
       return matchesCategory && matchesQuery;
     });
@@ -476,6 +494,9 @@ function IntegrationCard({ integration }: { integration: Integration }) {
         </div>
       </div>
       <p className="text-[13px] leading-[20px] text-[#D4D4D4]">{integration.description}</p>
+      {integration.technicalDetail ? (
+        <p className="text-[11px] leading-[16px] text-[#737373]">{integration.technicalDetail}</p>
+      ) : null}
     </article>
   );
 }

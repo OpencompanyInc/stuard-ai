@@ -3,6 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
 import { ExternalLink } from 'lucide-react';
+import { processCustomMarkdown } from '../chat/shared/messages/MessageBubble/helpers/markdown';
+import { isHighlightHref, MarkdownHighlight } from '../chat/shared/messages/MessageBubble/inline/MarkdownHighlight';
+import { isUnderlineHref, MarkdownUnderline } from '../chat/shared/messages/MessageBubble/inline/MarkdownUnderline';
 
 export interface RichTextProps {
   content: string;
@@ -34,12 +37,20 @@ export const RichText: React.FC<RichTextProps> = ({
       <ReactMarkdown 
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ node, ...props }) => (
-            <a {...props} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5">
-              {props.children}
-              <ExternalLink className="w-3 h-3 opacity-50" />
-            </a>
-          ),
+          a: ({ href, children, ...props }) => {
+            if (isHighlightHref(href)) {
+              return <MarkdownHighlight>{children}</MarkdownHighlight>;
+            }
+            if (isUnderlineHref(href)) {
+              return <MarkdownUnderline>{children}</MarkdownUnderline>;
+            }
+            return (
+              <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5">
+                {children}
+                <ExternalLink className="w-3 h-3 opacity-50" />
+              </a>
+            );
+          },
           // Override table styles for better look
           table: ({ node, ...props }) => (
             <div className="overflow-x-auto my-2 border border-theme/20 rounded-lg">
@@ -57,7 +68,7 @@ export const RichText: React.FC<RichTextProps> = ({
           ),
         }}
       >
-        {content}
+        {processCustomMarkdown(content)}
       </ReactMarkdown>
     </div>
   );

@@ -56,11 +56,12 @@ describe('workflow palette categories', () => {
       expect.arrayContaining([
         expect.objectContaining({
           t: 'ollama_agent',
-          label: 'Local AI Agent',
+          label: 'Local AI Chat',
           args: expect.objectContaining({
             model: 'llama3.2',
             prompt: '',
             outputMode: 'text',
+            toolMode: 'curated',
           }),
         }),
       ])

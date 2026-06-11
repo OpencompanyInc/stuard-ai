@@ -40,14 +40,15 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const SUBAGENT_LABELS: Record<string, string> = {
-  browser: 'browser agent',
-  file_ops: 'file agent',
-  files: 'file agent',
-  workflow: 'workflow agent',
-  reminders: 'reminders agent',
-  ffmpeg: 'media agent',
-  media: 'media agent',
-  google: 'Google agent',
+  browser: 'web browsing specialist',
+  file_ops: 'files specialist',
+  files: 'files specialist',
+  workflow: 'workflow specialist',
+  reminders: 'reminders specialist',
+  ffmpeg: 'media processing specialist',
+  media: 'media processing specialist',
+  data_analysis: 'charts & data specialist',
+  google: 'Google apps specialist',
   outlook: 'Outlook agent',
   github: 'GitHub agent',
   meta: 'Meta agent',
