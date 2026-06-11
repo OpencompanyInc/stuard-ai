@@ -239,6 +239,8 @@ jobs:
           # X (Twitter) OAuth
           SECRETS="$SECRETS,X_CLIENT_ID=X_CLIENT_ID:latest"
           SECRETS="$SECRETS,X_CLIENT_SECRET=X_CLIENT_SECRET:latest"
+          # X v2 webhook CRC/signature secret = the app's Consumer Secret (API Key Secret), distinct from the OAuth2 client secret
+          SECRETS="$SECRETS,X_WEBHOOK_SECRET=X_WEBHOOK_SECRET:latest"
           # Notion OAuth
           SECRETS="$SECRETS,NOTION_CLIENT_ID=NOTION_CLIENT_ID:latest"
           SECRETS="$SECRETS,NOTION_CLIENT_SECRET=NOTION_CLIENT_SECRET:latest"
