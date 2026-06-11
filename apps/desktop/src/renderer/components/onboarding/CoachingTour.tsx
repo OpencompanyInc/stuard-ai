@@ -1,9 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { AudioLines, Plus, ArrowRight, X, Paperclip } from 'lucide-react';
+import { AudioLines, Plus, ArrowRight, X, Paperclip, Play } from 'lucide-react';
 import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_KBD } from '../chat/shared/input/styles';
 import { HighlightMatch } from '../chat/shared/input/HighlightMatch';
 import { filterCompactStuardNav } from '../../utils/compactStuardNav';
+import { SlashCommandMenu } from '../chat/shared/input/slash/SlashCommandMenu';
+import { SlashCommandComposer } from '../chat/shared/input/slash/SlashCommandComposer';
+import { BUILTIN_COMMANDS } from '../chat/shared/input/slash/commands';
+import { parseWhen } from '../chat/shared/input/slash/parseWhen';
+import type {
+  SlashCommandSpec,
+  SlashMenuItem,
+  SlashPhase,
+  SlashSession,
+} from '../chat/shared/input/slash/types';
 import googleLogo from '../../assets/icons/google.png';
 import bingLogo from '../../assets/icons/bing.png';
 import duckduckgoLogo from '../../assets/icons/duckduckgo.png';
@@ -28,7 +38,7 @@ type PillMode = 'compact' | 'sidebar' | 'window';
 type Target = 'pill' | 'attach' | 'corner';
 
 interface Step {
-  id: 'summon' | 'find' | 'move' | 'context' | 'expand' | 'dismiss';
+  id: 'summon' | 'find' | 'move' | 'context' | 'slash' | 'expand' | 'dismiss';
   eyebrow: string;
   title: string;
   body: string;
@@ -65,6 +75,12 @@ const STEPS: Step[] = [
     hint: 'Your turn — type @ in the pill, then pick a file.',
   },
   {
+    id: 'slash', eyebrow: 'Commands', title: 'Type / to run a command.',
+    body: 'Slash commands do things on the spot — set a reminder, add a task, or run a workflow — without sending a chat message. This is a practice run, so nothing is saved.',
+    keys: ['/'], target: 'pill',
+    hint: 'Your turn — type /, pick “Remind me”, fill it in and press Enter.',
+  },
+  {
     id: 'expand', eyebrow: 'Resize', title: 'I grow as big as you need.',
     body: 'See the red arc on my corner? Drag it to stretch me from a pill into a sidebar or a full window. Like this:',
     keys: [], target: 'corner',
@@ -77,7 +93,7 @@ const STEPS: Step[] = [
   },
 ];
 
-const INTERACTIVE_STEPS = new Set<Step['id']>(['find', 'move', 'context', 'dismiss']);
+const INTERACTIVE_STEPS = new Set<Step['id']>(['find', 'move', 'context', 'slash', 'dismiss']);
 
 const PLACEHOLDER = 'Ask Stuard…';
 const HOME = { left: '50%', top: '30%' };
@@ -100,6 +116,37 @@ const DEMO_FILES = [
   { name: 'team-photo.png', tile: '#3B82F6', label: 'PNG', path: 'Pictures\\team-photo.png' },
 ];
 
+// Stand-in workflows for the "/run" stage of the slash practice (the real
+// menu lists the workflows installed on this machine).
+const DEMO_WORKFLOWS = [
+  { id: 'morning-briefing', name: 'Morning briefing', description: 'Weather, calendar and tasks at a glance' },
+  { id: 'tidy-downloads', name: 'Tidy downloads', description: 'Sort new downloads into folders' },
+];
+
+// The real built-in command lineup (same titles, fields and success copy as
+// commands.ts) with the runs stubbed out — practicing during the tour never
+// writes to the task store.
+const DEMO_SLASH_COMMANDS: SlashCommandSpec[] = BUILTIN_COMMANDS.map((cmd) => ({
+  ...cmd,
+  run: async (values) => {
+    await new Promise((r) => setTimeout(r, 650)); // let the "working" beat read
+    if (cmd.id === 'remind') {
+      const what = String(values.what || '').trim();
+      const whenText = String(values.when || '').trim();
+      if (!what) return { ok: false, message: 'What should I remind you about?' };
+      const when = parseWhen(whenText);
+      if (!when.date) return { ok: false, message: `Couldn't understand "${whenText}" — try "tomorrow 9am"` };
+      return { ok: true, message: `Reminder set · ${when.label}` };
+    }
+    const title = String(values.title || '').trim();
+    if (!title) return { ok: false, message: 'Task needs a title' };
+    const whenText = String(values.when || '').trim();
+    const when = whenText ? parseWhen(whenText) : null;
+    if (whenText && !when?.date) return { ok: false, message: `Couldn't understand "${whenText}" — try "friday 5pm"` };
+    return { ok: true, message: when?.label ? `Task added · ${when.label}` : 'Task added' };
+  },
+}));
+
 export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: { onComplete: () => void; onSkip?: () => void; lastLabel?: string }) {
   const [idx, setIdx] = useState(0);
   const step = STEPS[idx];
@@ -116,6 +163,13 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const [stepDone, setStepDone] = useState(false);
   const [selIdx, setSelIdx] = useState(0);
   const [engineId, setEngineId] = useState('google');
+  // ── slash-step state: a local stand-in for useSlashCommands driving the
+  // real SlashCommandMenu + SlashCommandComposer with practice (no-IPC) runs.
+  const [slashSession, setSlashSession] = useState<SlashSession | null>(null);
+  const [slashValues, setSlashValues] = useState<Record<string, string>>({});
+  const [slashPhase, setSlashPhase] = useState<SlashPhase>('editing');
+  const [slashStatus, setSlashStatus] = useState('');
+  const slashRunSeqRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // The user's real global hotkey, shown on the summon step instead of a
   // hardcoded Ctrl+Shift+Space. Falls back to the default until it loads.
@@ -188,6 +242,11 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     setChipName(null);
     setSelIdx(0);
     setMoveOffset({ x: 0, y: 0 });
+    slashRunSeqRef.current += 1;
+    setSlashSession(null);
+    setSlashValues({});
+    setSlashPhase('editing');
+    setSlashStatus('');
     dropdownHeightRef.current = 0;
     clearAdvance();
     const t = setTimeout(() => {
@@ -362,7 +421,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
           const pr = pill.getBoundingClientRect();
           const dd = dropdownRef.current;
           if (dd) dropdownHeightRef.current = dd.getBoundingClientRect().height;
-          const inDropdownStep = stepIdRef.current === 'find' || stepIdRef.current === 'context';
+          const inDropdownStep = stepIdRef.current === 'find' || stepIdRef.current === 'context' || stepIdRef.current === 'slash';
           const dropdownReserve = inDropdownStep && dropdownHeightRef.current
             ? 8 + dropdownHeightRef.current : 0;
           const anchorBottom = pr.bottom + dropdownReserve;
@@ -399,6 +458,57 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     ? DEMO_FILES.filter(f => !atQuery || f.name.toLowerCase().includes(atQuery))
     : [];
 
+  // Slash-step "/" menu — same filtering rules as useSlashCommands: built-ins
+  // match by id/title, "/run <filter>" lists only workflows.
+  const slashToken = step.id === 'slash' && !slashSession && typed.startsWith('/')
+    ? typed.slice(1).toLowerCase()
+    : null;
+  const slashItems: SlashMenuItem[] = (() => {
+    if (slashToken === null) return [];
+    const wfRows = (filter: string, cap: number): SlashMenuItem[] => {
+      const f = filter.trim().toLowerCase();
+      return DEMO_WORKFLOWS
+        .filter((w) => !f || w.name.toLowerCase().includes(f))
+        .slice(0, cap)
+        .map((w) => ({
+          key: `wf-${w.id}`,
+          title: w.name,
+          subtitle: w.description,
+          icon: Play,
+          kind: 'workflow' as const,
+          onSelect: () => runDemoWorkflow(w),
+        }));
+    };
+    const runStage = slashToken.match(/^run\s+(.*)$/);
+    if (runStage) return wfRows(runStage[1], 8);
+    const items: SlashMenuItem[] = [];
+    for (const cmd of DEMO_SLASH_COMMANDS) {
+      if (slashToken && !cmd.id.startsWith(slashToken) && !cmd.title.toLowerCase().includes(slashToken)) continue;
+      items.push({
+        key: `cmd-${cmd.id}`,
+        title: cmd.title,
+        subtitle: cmd.subtitle,
+        icon: cmd.icon,
+        kind: 'command',
+        onSelect: () => beginSlashSession(cmd),
+      });
+    }
+    if (!slashToken || 'run'.startsWith(slashToken) || 'workflow'.includes(slashToken)) {
+      items.push({
+        key: 'cmd-run',
+        title: 'Run workflow',
+        subtitle: 'Pick a workflow, fill its inputs',
+        icon: Play,
+        kind: 'command',
+        onSelect: () => setTyped('/run '),
+      });
+    }
+    if (slashToken.length >= 2) items.push(...wfRows(slashToken, 5));
+    return items;
+  })();
+  const showSlashMenu = step.id === 'slash' && slashItems.length > 0 && !slashSession;
+  const slashComposerActive = step.id === 'slash' && !!slashSession;
+
   const handleInputChange = (value: string) => {
     if (value.trim()) setUserTried(true);
     setTyped(value);
@@ -418,6 +528,78 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     scheduleAdvance(1200);
   };
 
+  // ── slash-step plumbing: mirrors useSlashCommands' begin/submit/cancel
+  // lifecycle, but the runs are the practice stubs above.
+  const beginSlashSession = (cmd: SlashCommandSpec) => {
+    const defaults: Record<string, string> = {};
+    for (const f of cmd.fields) {
+      if (f.defaultValue !== undefined) defaults[f.key] = f.defaultValue;
+    }
+    setSlashSession({ commandId: cmd.id, title: cmd.title, icon: cmd.icon, fields: cmd.fields, run: cmd.run });
+    setSlashValues(defaults);
+    setSlashPhase('editing');
+    setSlashStatus('');
+    setTyped('');
+  };
+
+  const finishSlash = (result: { ok: boolean; message: string }) => {
+    if (result.ok) {
+      setSlashPhase('done');
+      setSlashStatus(result.message);
+      setStepDone(true);
+      scheduleAdvance(2600);
+    } else {
+      setSlashPhase('error');
+      setSlashStatus(result.message);
+    }
+  };
+
+  const runDemoWorkflow = (wf: { id: string; name: string }) => {
+    setUserTried(true);
+    setSlashSession({ commandId: `run:${wf.id}`, title: wf.name, icon: Play, fields: [], run: async () => ({ ok: true, message: '' }) });
+    setSlashValues({});
+    setSlashStatus('');
+    setSlashPhase('working');
+    setTyped('');
+    const seq = ++slashRunSeqRef.current;
+    setTimeout(() => {
+      if (slashRunSeqRef.current !== seq) return;
+      finishSlash({ ok: true, message: `Running ${wf.name}` });
+    }, 900);
+  };
+
+  const submitSlash = () => {
+    if (!slashSession || slashPhase === 'working' || slashPhase === 'done') return;
+    const missing = slashSession.fields.find((f) => f.required && !String(slashValues[f.key] || '').trim());
+    if (missing) {
+      setSlashPhase('error');
+      setSlashStatus(`Fill in "${missing.hint.replace(/…$/, '')}"`);
+      return;
+    }
+    setSlashPhase('working');
+    setSlashStatus('');
+    const seq = ++slashRunSeqRef.current;
+    void slashSession.run(slashValues).then((result) => {
+      if (slashRunSeqRef.current !== seq) return;
+      finishSlash(result);
+    });
+  };
+
+  const cancelSlash = () => {
+    slashRunSeqRef.current += 1;
+    setSlashSession(null);
+    setSlashValues({});
+    setSlashPhase('editing');
+    setSlashStatus('');
+  };
+
+  const setSlashValue = (key: string, value: string) => {
+    setUserTried(true);
+    setSlashValues((prev) => ({ ...prev, [key]: value }));
+    // Editing after an error clears the stale message, like the real hook.
+    setSlashPhase((p) => (p === 'error' ? 'editing' : p));
+  };
+
   // Mirror the real dropdown's arrow-key selection: Ask Stuard (0), Search (1),
   // then the matched Stuard rows. Enter "runs" the selection in the demo.
   const handleFindKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -430,6 +612,23 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     } else if (e.key === 'Enter') {
       e.preventDefault();
       completeFromDropdown();
+    }
+  };
+
+  // Slash-step keyboard: same keys the real menu owns (↑↓ navigate, Enter/Tab
+  // select, Esc dismiss).
+  const handleSlashKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSlashMenu) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setUserTried(true);
+      setSelIdx(prev => (prev + (e.key === 'ArrowDown' ? 1 : -1) + slashItems.length) % slashItems.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      slashItems[Math.min(selIdx, slashItems.length - 1)]?.onSelect();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setTyped('');
     }
   };
 
@@ -472,11 +671,15 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
             className={clsx('relative flex flex-col justify-center transition-all duration-500', isInteractive && 'pointer-events-auto')}
             style={{
               width: isCompact ? 380 : mode === 'sidebar' ? 320 : 540,
-              height: isCompact ? 56 : mode === 'sidebar' ? 360 : 320,
+              // The composer carries its own pill chrome (bg, shadow, radius),
+              // so while it's active the wrapper goes transparent and lets it
+              // grow if the token fields wrap to a second row.
+              height: slashComposerActive ? 'auto' : isCompact ? 56 : mode === 'sidebar' ? 360 : 320,
+              minHeight: 56,
               borderRadius: 26,
-              padding: 10,
-              background: 'rgb(var(--compact-pill-bg))',
-              boxShadow: 'var(--compact-pill-shadow)',
+              padding: slashComposerActive ? 0 : 10,
+              background: slashComposerActive ? 'transparent' : 'rgb(var(--compact-pill-bg))',
+              boxShadow: slashComposerActive ? 'none' : 'var(--compact-pill-shadow)',
               color: 'rgb(var(--compact-pill-fg))',
               opacity: gone ? 0 : 1,
               transform: gone ? 'scale(0.6)' : 'scale(1)',
@@ -495,6 +698,21 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
               </div>
             )}
 
+            {/* slash-step composer — the real SlashCommandComposer takes over
+                the pill footprint exactly like in compact mode */}
+            {slashComposerActive && slashSession ? (
+              <SlashCommandComposer
+                variant="compact"
+                session={slashSession}
+                values={slashValues}
+                phase={slashPhase}
+                statusMsg={slashStatus}
+                onChange={setSlashValue}
+                onSubmit={submitSlash}
+                onCancel={cancelSlash}
+              />
+            ) : (
+            <>
             {/* the input row — always present, like the real compact pill */}
             <div className="flex items-center w-full" style={{ gap: 8, height: 36 }}>
               <button
@@ -513,14 +731,14 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
               </button>
 
               <div className="flex-1 relative flex items-center min-h-[36px]" style={{ padding: 6 }}>
-                {isInteractive && (step.id === 'find' || step.id === 'context') ? (
+                {isInteractive && (step.id === 'find' || step.id === 'context' || step.id === 'slash') ? (
                   <input
                     ref={inputRef}
                     type="text"
                     value={typed}
                     onChange={(e) => handleInputChange(e.target.value)}
-                    onKeyDown={handleFindKeyDown}
-                    placeholder={step.id === 'context' ? 'Type @ to attach a file…' : PLACEHOLDER}
+                    onKeyDown={step.id === 'slash' ? handleSlashKeyDown : handleFindKeyDown}
+                    placeholder={step.id === 'context' ? 'Type @ to attach a file…' : step.id === 'slash' ? 'Type / for commands…' : PLACEHOLDER}
                     className="w-full bg-transparent border-none outline-none text-[12px] leading-4 font-normal text-center placeholder:text-[rgb(var(--compact-pill-fg)/0.45)]"
                     style={{ color: 'rgb(var(--compact-pill-fg) / 0.92)' }}
                     spellCheck={false}
@@ -540,6 +758,8 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                 <AudioLines className="w-[18px] h-[18px] relative z-[1]" strokeWidth={2.25} />
               </button>
             </div>
+            </>
+            )}
 
             {/* red drag-to-expand corner grip — the real CompactDragCorner arc */}
             <div
@@ -778,6 +998,24 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* slash-step: the real "/" command menu (SlashCommandMenu), hung
+              below the pill in the same frame the real compact overlay uses */}
+          {showSlashMenu && (
+            <div
+              ref={dropdownRef}
+              data-interactive="true"
+              className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
+              style={{ top: '100%', marginTop: 8, width: 380, zIndex: 7 }}
+            >
+              <SlashCommandMenu
+                variant="compact"
+                items={slashItems}
+                selectedIndex={selIdx}
+                onHoverIndex={setSelIdx}
+              />
             </div>
           )}
         </div>

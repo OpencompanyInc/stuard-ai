@@ -39,6 +39,8 @@ import {
 } from "lucide-react";
 import { clsx } from 'clsx';
 import 'katex/dist/katex.min.css';
+import { isUpdateActionable, useUpdateStatus } from './hooks/useUpdateStatus';
+import { UpdateChip } from './components/UpdateChip';
 import { agentFetchJson, resolveAgentEndpoints } from './utils/agentEndpoints';
 import { displayConversationTitle, isPlaceholderConversationTitle } from './utils/conversationTitle';
 import { computeBillingCredits, isNonBillableUsageEvent, type ComputeBillingEventRow } from './components/BillingSettings.utils';
@@ -210,7 +212,7 @@ function SidebarDivider() {
   return <div className="dashboard-sidebar-divider" role="separator" />;
 }
 
-function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; label: string; icon: any; current: string; onClick: (id: string) => void }) {
+function SidebarItem({ id, label, icon: Icon, current, onClick, showDot }: { id: string; label: string; icon: any; current: string; onClick: (id: string) => void; showDot?: boolean }) {
   const active = current === id;
   return (
     <button
@@ -228,23 +230,47 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
       <span className="flex-1 text-left truncate">
         {label}
       </span>
+      {showDot && (
+        <span
+          className="h-1.5 w-1.5 rounded-full shrink-0"
+          style={{ background: 'var(--primary)' }}
+          aria-label="Update available"
+        />
+      )}
     </button>
   );
 }
 
+// Dashboard tabs that deep links may target. A spec may carry a sub-view
+// after a slash (e.g. "settings/updates" → Settings with the Updates tab).
+const DASHBOARD_TABS = ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'feedback'];
+
+function parseTabSpec(spec: string | null | undefined): { tab: string; section?: string } | null {
+  if (!spec) return null;
+  const [tab, section] = String(spec).split('/');
+  if (!DASHBOARD_TABS.includes(tab)) return null;
+  return { tab, section: section || undefined };
+}
+
 function DashboardApp() {
-  // Read initial tab from URL query param
+  // Read initial tab from URL query param. Agents moved to Stuard Studio; the
+  // main process redirects 'bots'/'proactive' deep links there, so the
+  // dashboard only handles its own remaining tabs.
   const [tab, setTab] = useState(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const initialTab = params.get('tab');
-      // Agents moved to Stuard Studio; the main process redirects 'bots'/'proactive'
-      // deep links there, so the dashboard only handles its own remaining tabs.
-      if (initialTab && ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'feedback'].includes(initialTab)) {
-        return initialTab;
-      }
+      return parseTabSpec(new URLSearchParams(window.location.search).get('tab'))?.tab ?? 'overview';
     } catch { }
     return "overview";
+  });
+  // Sub-view focus for tabs that have their own internal navigation (today
+  // just Settings — "settings/updates" lands on the Updates tab). Object
+  // identity is the re-focus trigger, so repeat navigations always apply.
+  const [settingsFocus, setSettingsFocus] = useState<{ id: string } | null>(() => {
+    try {
+      const parsed = parseTabSpec(new URLSearchParams(window.location.search).get('tab'));
+      return parsed?.tab === 'settings' && parsed.section ? { id: parsed.section } : null;
+    } catch { }
+    return null;
   });
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -419,15 +445,20 @@ function DashboardApp() {
   // Listen for navigation events from main process (when dashboard is already open)
   useEffect(() => {
     const unsub = window.desktopAPI?.onDashboardNavigate?.((data) => {
-      const tab = data?.tab;
-      if (
-        tab &&
-        ['overview', 'history', 'planner', 'tasks', 'memories', 'integrations', 'settings', 'cloud', 'media', 'storage', 'feedback'].includes(tab)
-      ) {
-        setTab(tab);
-      }
+      const parsed = parseTabSpec(data?.tab);
+      if (!parsed) return;
+      setTab(parsed.tab);
+      setSettingsFocus(parsed.tab === 'settings' && parsed.section ? { id: parsed.section } : null);
     });
     return () => { unsub?.(); };
+  }, []);
+
+  // Update availability — drives the top-bar pill and the Settings nav dot.
+  const updateStatus = useUpdateStatus();
+  const updateActionable = isUpdateActionable(updateStatus.status);
+  const openUpdatesTab = useCallback(() => {
+    setSettingsFocus({ id: 'updates' });
+    setTab('settings');
   }, []);
 
   useEffect(() => {
@@ -1535,6 +1566,7 @@ function DashboardApp() {
                         icon={item.icon}
                         current={tab}
                         onClick={setTab}
+                        showDot={item.id === 'settings' && updateActionable}
                       />
                     ))}
                   </div>
@@ -1605,6 +1637,7 @@ function DashboardApp() {
 
             {/* Right: live status + every primary CTA (white pills) */}
             <div className="flex items-center gap-2 shrink-0">
+              <UpdateChip variant="topbar" onOpen={openUpdatesTab} />
               {userEmail && typeof creditsRemaining === 'number' && (
                 <span className="dashboard-badge hidden lg:inline-flex">
                   {creditsRemaining.toLocaleString()} credits
@@ -1761,6 +1794,7 @@ function DashboardApp() {
                               setOnboardingComplete={setOnboardingComplete}
                               chatModels={chatModels}
                               setChatModels={setChatModels}
+                              focusTab={settingsFocus}
                             />
                           )}
 

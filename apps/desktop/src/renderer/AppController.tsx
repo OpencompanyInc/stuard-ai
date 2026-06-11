@@ -65,8 +65,10 @@ import {
   CloudDownload,
   ExternalLink,
   Loader2,
-  Sparkles
+  Sparkles,
+  ArrowUpCircle
 } from "lucide-react";
+import { openUpdateSettings } from './hooks/useUpdateStatus';
 
 import { useWorkflows } from './workflows/hooks/useWorkflows';
 import { getMarketplaceApi } from './utils/cloud';
@@ -1832,19 +1834,37 @@ export function useAppController() {
   // visible until the response completes, so the user sees the full work
   // footprint). Empty array = legacy statusText/statusIcon fallback.
   const inputStatusItems = useMemo<StatusItem[]>(() => {
-    if (!isAiWorking) return [];
+    const items: StatusItem[] = [];
     const calls = currentToolCalls || [];
-    if (calls.length === 0) return [];
-    return [{
-      id: 'tool-brand-stack',
-      text: statusLabel,
-      icon: 'custom',
-      iconNode: <ToolBrandStack toolCalls={calls} />,
-      priority: 200,
-      pin: true,
-      ariaLabel: statusLabel,
-    }];
-  }, [isAiWorking, currentToolCalls, statusLabel]);
+    if (isAiWorking && calls.length > 0) {
+      items.push({
+        id: 'tool-brand-stack',
+        text: statusLabel,
+        icon: 'custom',
+        iconNode: <ToolBrandStack toolCalls={calls} />,
+        priority: 200,
+        pin: true,
+        ariaLabel: statusLabel,
+      });
+    }
+    // New-version notice: joins the idle status carousel (rotating with the
+    // planner next-up) while an update is waiting; click → Settings → Updates.
+    if (!isAiWorking && (updateState.status === 'available' || updateState.status === 'downloaded')) {
+      const latest = (updateState as any).latestVersion;
+      items.push({
+        id: 'app-update',
+        text: updateState.status === 'downloaded'
+          ? 'Update downloaded — restart to install'
+          : `Update ready${latest ? ` · v${latest}` : ''}`,
+        icon: 'custom',
+        iconNode: <ArrowUpCircle className="w-4 h-4" strokeWidth={1.75} style={{ color: '#FF5A5E' }} />,
+        priority: 90,
+        onClick: openUpdateSettings,
+        ariaLabel: 'Update available — open Settings → Updates',
+      });
+    }
+    return items;
+  }, [isAiWorking, currentToolCalls, statusLabel, updateState]);
 
   const connectionStatus = useMemo((): 'connected' | 'connecting' | 'disconnected' | 'error' => {
     if (state?.connecting) return 'connecting';

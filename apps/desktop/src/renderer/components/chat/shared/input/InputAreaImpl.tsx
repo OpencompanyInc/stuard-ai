@@ -1460,15 +1460,15 @@ const InputArea = forwardRef(function InputArea(
   const [statusPinned, setStatusPinned] = useState(false);
   const statusExpanded = statusHovered || statusPinned;
 
-  // Build the carousel feed: explicit `statusItems` prop wins; otherwise fall
-  // back to a 1-item list synthesised from the legacy single-pill props so
-  // existing call sites keep working until they register providers themselves.
+  // Build the carousel feed: explicit `statusItems` merge with a 1-item list
+  // synthesised from the legacy single-pill props, so provider items (tool
+  // brand stack, update notice) and the planner next-up can rotate together.
   const effectiveStatusItems = React.useMemo<StatusItem[]>(() => {
-    if (Array.isArray(statusItems) && statusItems.length > 0) return statusItems;
-    if (statusText && statusIcon) {
-      // Thinking is shown via the compact pill glow border, not the sparkle pill.
-      if (statusIcon === 'ai' && isAiWorking) return [];
-      return [{
+    const explicit = Array.isArray(statusItems) ? statusItems : [];
+    let legacy: StatusItem[] = [];
+    // Thinking is shown via the compact pill glow border, not the sparkle pill.
+    if (statusText && statusIcon && !(statusIcon === 'ai' && isAiWorking)) {
+      legacy = [{
         id: `legacy-${statusIcon}`,
         text: statusText,
         icon: statusIcon,
@@ -1476,7 +1476,7 @@ const InputArea = forwardRef(function InputArea(
         priority: 100,
       }];
     }
-    return [];
+    return [...explicit, ...legacy];
   }, [statusItems, statusText, statusIcon, statusUrgency, isAiWorking]);
 
   const { current: currentStatusItem, count: statusItemCount } = useStatusCarousel(

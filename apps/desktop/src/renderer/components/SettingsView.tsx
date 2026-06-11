@@ -12,6 +12,7 @@ import { GlobalHotkeySection } from "./settings/GlobalHotkeySection";
 import { CheckpointsSection } from "./settings/CheckpointsSection";
 import { FileIndexSettings } from "./FileIndexSettings";
 import { ModelProviderLogo } from "./ModelProviderLogo";
+import { isUpdateActionable, useUpdateStatus } from "../hooks/useUpdateStatus";
 
 type UpdateChannel = "stable" | "beta" | "staging";
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "error" | "up-to-date";
@@ -40,6 +41,9 @@ interface BetaAccess {
 }
 
 interface SettingsViewProps {
+  /** Deep-link focus from the dashboard (e.g. { id: 'updates' }); object
+   *  identity re-applies the focus on repeat navigations. */
+  focusTab?: { id: string } | null;
   themeMode: ThemeMode;
   setThemeMode: (v: ThemeMode) => void;
   themeDarkShade: string;
@@ -1496,6 +1500,18 @@ type SettingsTab = 'general' | 'assistant' | 'providers' | 'files' | 'checkpoint
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
+  // Deep-link focus (dashboard "settings/updates" navigation, update pill).
+  useEffect(() => {
+    const id = props.focusTab?.id;
+    if (id && ['general', 'assistant', 'providers', 'files', 'checkpoints', 'billing', 'updates'].includes(id)) {
+      setActiveTab(id as SettingsTab);
+    }
+  }, [props.focusTab]);
+
+  // Dot on the Updates nav row while a new version is waiting.
+  const updateStatus = useUpdateStatus();
+  const updateActionable = isUpdateActionable(updateStatus.status);
+
   type NavItem = { id: SettingsTab; label: string; hint: string; icon: React.ComponentType<{ className?: string }> };
   const navGroups: { heading: string; items: NavItem[] }[] = [
     {
@@ -1611,6 +1627,13 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
                           <ItemIcon className="h-3.5 w-3.5" />
                         </span>
                         <span className="truncate text-[12.5px] font-medium tracking-tight">{item.label}</span>
+                        {item.id === 'updates' && updateActionable && (
+                          <span
+                            className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full"
+                            style={{ background: 'var(--primary)' }}
+                            aria-label="Update available"
+                          />
+                        )}
                       </button>
                     );
                   })}

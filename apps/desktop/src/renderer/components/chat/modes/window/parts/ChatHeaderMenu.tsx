@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { ConversationHistoryItem } from '../../../shared/TabHistoryMenu';
 import { displayConversationTitle } from '../../../../../utils/conversationTitle';
+import { UpdateChip } from '../../../../UpdateChip';
 
 interface ChatHeaderMenuProps {
   chatMenuOpen: boolean;
@@ -41,6 +42,9 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
   onCollapse,
 }) => {
   return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      {/* New-version pill — only renders while an update is actionable */}
+      <UpdateChip variant="header" />
     <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button
@@ -127,5 +131,6 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+    </div>
   );
 };

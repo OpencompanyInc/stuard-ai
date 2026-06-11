@@ -8,6 +8,7 @@ import {
   Minimize2
 } from 'lucide-react';
 import { TabHistoryMenu, type ConversationHistoryItem } from '../../../shared/TabHistoryMenu';
+import { UpdateChip } from '../../../../UpdateChip';
 
 interface ChatHeaderActionsProps {
   onToggleSidebar?: () => void;
@@ -40,6 +41,9 @@ export const ChatHeaderActions: React.FC<ChatHeaderActionsProps> = ({
 }) => {
   return (
     <div className="flex items-center gap-1 flex-shrink-0">
+      {/* New-version pill — only renders while an update is actionable */}
+      <UpdateChip variant="header" className="mr-0.5" />
+
       {/* Internal Sidebar (Spaces, Terminal) - shown in window/sidebar modes */}
       {(overlayMode === 'window' || overlayMode === 'sidebar') && onToggleSidebar && (
         <button
