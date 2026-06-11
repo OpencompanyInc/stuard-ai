@@ -19,6 +19,10 @@ import { ToolRunningIndicator } from '../../../shared/input/ToolRunningIndicator
 import { AttachmentPreviewOverlay, attachmentOverlayInset } from '../../../../AttachmentPreview';
 import type { ChatAttachment } from '../../../../../utils/attachments';
 import { hasInFlightToolCalls, type ToolCallLike } from '../../../../../utils/toolBrand';
+import { useSlashCommands } from '../../../shared/input/slash/useSlashCommands';
+import { SlashCommandMenu } from '../../../shared/input/slash/SlashCommandMenu';
+import { SlashCommandComposer } from '../../../shared/input/slash/SlashCommandComposer';
+import { SlashCommandForm, slashSessionNeedsPanel } from '../../../shared/input/slash/SlashCommandForm';
 
 // Brand / agent tint helpers — opacity modifiers on the manual --primary class
 // are dead no-ops, so mix the channel explicitly.
@@ -225,6 +229,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
   const attachmentInset = attachmentOverlayInset(attachments.length);
+
+  // Slash commands — "/" opens the command menu; selecting one swaps the
+  // textarea for the composer (chip + parameter fields). Many-field sessions
+  // move their inputs into a vertical form panel above the bar.
+  const slash = useSlashCommands({ query, setQuery, enabled: !showFileNav });
+  const slashNeedsPanel = !!slash.session && slashSessionNeedsPanel(slash.session);
+  const slashFormOpen = slashNeedsPanel && (slash.phase === 'editing' || slash.phase === 'error');
 
   const canSteer = Boolean(isStreaming && onSteer);
   const targetingSubagent = steerTarget !== 'orchestrator'
@@ -840,6 +851,45 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 onRemove={onRemoveAttachment}
               />
             )}
+            {slash.menuOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-3 z-[10004]">
+                <SlashCommandMenu
+                  variant="panel"
+                  items={slash.menuItems}
+                  selectedIndex={slash.selectedIndex}
+                  onHoverIndex={slash.setSelectedIndex}
+                  maxHeight={320}
+                />
+              </div>
+            )}
+            {slashFormOpen && slash.session && (
+              <div className="absolute bottom-full left-0 right-0 mb-3 z-[10004]">
+                <SlashCommandForm
+                  variant="panel"
+                  session={slash.session}
+                  values={slash.values}
+                  phase={slash.phase}
+                  statusMsg={slash.statusMsg}
+                  onChange={slash.setValue}
+                  onSubmit={slash.submit}
+                  onCancel={slash.cancel}
+                  maxHeight={360}
+                />
+              </div>
+            )}
+            {slash.session ? (
+              <SlashCommandComposer
+                variant="panel"
+                session={slash.session}
+                values={slash.values}
+                phase={slash.phase}
+                statusMsg={slash.statusMsg}
+                onChange={slash.setValue}
+                onSubmit={slash.submit}
+                onCancel={slash.cancel}
+                summary={slashNeedsPanel}
+              />
+            ) : (
             <TextareaAutosize
               ref={textareaRef}
               data-onboarding="chat-input"
@@ -859,6 +909,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               onPaste={onPaste}
               onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
                 if ((e.nativeEvent as any)?.isComposing) return;
+
+                // Slash menu owns arrows/enter/esc while open.
+                if (slash.handleKeyDown(e)) return;
 
                 if (showFileNav && fileNavRef?.current) {
                   if (e.key === 'ArrowDown') {
@@ -901,6 +954,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               maxRows={3}
               autoFocus
             />
+            )}
           </div>
 
           <div className="flex items-center gap-2 w-full min-w-0">

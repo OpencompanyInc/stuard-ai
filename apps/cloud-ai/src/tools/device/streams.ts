@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { makeLocalTool } from './shared';
+import { makeLocalTool, anyJsonValue } from './shared';
 
 export const stream_create = makeLocalTool(
   'stream_create',
@@ -18,7 +18,7 @@ export const stream_write = makeLocalTool(
   'Push a chunk of data to a stream. The chunk passes through any attached transforms before reaching subscribers.',
   z.object({
     streamId: z.string().describe('Target stream ID'),
-    chunk: z.any().describe('The data chunk to push'),
+    chunk: anyJsonValue.describe('The data chunk to push'),
     chunkType: z.enum(['raw', 'base64', 'json']).optional().describe('How to interpret the chunk data'),
   }),
 );

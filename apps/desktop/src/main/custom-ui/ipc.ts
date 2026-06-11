@@ -825,7 +825,16 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
   ipcMain.on('stuard:resize', (event, { width, height }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
-      win.setSize(Math.max(100, width), Math.max(50, height));
+      const w = Math.max(100, width);
+      const h = Math.max(50, height);
+      win.setSize(w, h);
+      for (const [id, other] of customUiWindows) {
+        if (other === win) {
+          const wd = windowData.get(id);
+          if (wd) wd.winSize = { width: w, height: h };
+          break;
+        }
+      }
     }
   });
 
@@ -833,7 +842,28 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       const point = mousePointToElectronPoint(Number(x), Number(y));
-      win.setPosition(point.x, point.y);
+      // On displays with DPI scaling, setPosition() round-trips the size through
+      // DIP↔pixel rounding and grows the window a little on EVERY call — a UI that
+      // animates movement balloons into an invisible click-blocking overlay.
+      // Always pass the intended size so the bounds stay stable.
+      let width = 0;
+      let height = 0;
+      for (const [id, other] of customUiWindows) {
+        if (other === win) {
+          const size = windowData.get(id)?.winSize;
+          if (size) {
+            width = size.width;
+            height = size.height;
+          }
+          break;
+        }
+      }
+      if (!width || !height) {
+        const [w, h] = win.getSize();
+        width = w;
+        height = h;
+      }
+      win.setBounds({ x: point.x, y: point.y, width, height });
     }
   });
 
@@ -852,11 +882,30 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
   });
 
   ipcMain.handle('stuard:getScreenInfo', () => {
+    // Return PHYSICAL pixel coordinates — the same space moveTo, window.x/y and
+    // get_mouse_position use — so UI code can mix them without DPI math.
+    // (Electron's display.workArea is in DIP; on scaled displays feeding DIP
+    // coords back into moveTo double-converts and the window drifts.)
     const display = screen.getPrimaryDisplay();
+    const scale = display.scaleFactor || 1;
+    const wa = display.workArea;
+    let waOrigin = { x: Math.round(wa.x * scale), y: Math.round(wa.y * scale) };
+    const dipToScreenPoint = (screen as any).dipToScreenPoint;
+    if (typeof dipToScreenPoint === 'function') {
+      try {
+        waOrigin = dipToScreenPoint.call(screen, { x: wa.x, y: wa.y });
+      } catch { }
+    }
     return {
-      width: display.size.width,
-      height: display.size.height,
-      workArea: display.workArea,
+      width: Math.round(display.size.width * scale),
+      height: Math.round(display.size.height * scale),
+      scaleFactor: scale,
+      workArea: {
+        x: waOrigin.x,
+        y: waOrigin.y,
+        width: Math.round(wa.width * scale),
+        height: Math.round(wa.height * scale),
+      },
     };
   });
 

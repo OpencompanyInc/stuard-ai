@@ -639,6 +639,9 @@ importers:
 
   packages/bots-ui:
     dependencies:
+      '@stuardai/bots-core':
+        specifier: file:../bots-core
+        version: file:packages/bots-core
       clsx:
         specifier: ^2.0.0
         version: 2.1.1
@@ -15184,6 +15187,7 @@ packages:
       remark-gfm: ^4.0.0
       remark-math: ^6.0.0
     dependencies:
+      '@stuardai/bots-core': file:packages/bots-core
       clsx: 2.1.1
       lucide-react: 0.554.0(react@18.2.0)
       react: 18.2.0

@@ -1,5 +1,11 @@
 import type { RouterContext } from '../tools/types';
-import { PROACTIVE_CORE_TOOL_NAMES } from '@stuardai/bots-core';
+import {
+  PROACTIVE_CORE_TOOL_NAMES,
+  botToolNeedsApproval as sharedBotToolNeedsApproval,
+  isSensitiveBotTool,
+  normalizeBotPermissionMode,
+  type BotPermissionMode,
+} from '@stuardai/bots-core';
 
 const DEFAULT_PROACTIVE_NOTIFICATION_MESSAGE = 'I checked in and I’m ready to help. Open Chat if you want me to continue.';
 
@@ -361,23 +367,12 @@ export function extractAgentToolRequest(msg: any): AgentToolRequest | null {
   };
 }
 
-// Sensitive local tools a bot run must clear with its per-agent permission gate
-// before they execute. Mirrors DEFAULT_BOT_AUTO_APPROVE_TOOLS in bot-service.
-const BOT_FILE_MUTATING_TOOLS = new Set([
-  'write_file', 'write_file_base64', 'create_directory', 'copy_file', 'file_edit', 'move_file', 'delete_file',
-]);
-const BOT_COMMAND_TERMINAL_TOOLS = new Set([
-  'run_command', 'run_system_command',
-  'terminal_create', 'terminal_send_input', 'terminal_send_raw', 'terminal_send_keys', 'terminal_destroy',
-]);
-
-export function isSensitiveBotTool(tool: string): boolean {
-  const t = String(tool || '').trim().toLowerCase();
-  return BOT_FILE_MUTATING_TOOLS.has(t) || BOT_COMMAND_TERMINAL_TOOLS.has(t);
-}
+// Sensitive-tool policy is single-sourced in @stuardai/bots-core/permissions
+// (shared with the cloud wakeup runner and the bots-ui settings toggles).
+export { isSensitiveBotTool, normalizeBotPermissionMode };
 
 export interface BotPermissionGate {
-  mode: 'auto' | 'selective' | 'manual';
+  mode: BotPermissionMode;
   autoApprove: string[];
   /** Pops the blocking approval prompt; resolve true to proceed, false to deny. */
   requestApproval: (toolName: string, args: any) => Promise<boolean>;
@@ -386,14 +381,7 @@ export interface BotPermissionGate {
 /** Whether a tool must pop an approval prompt given the agent's permission gate. */
 export function botToolNeedsApproval(tool: string, gate?: BotPermissionGate | null): boolean {
   if (!gate) return false;
-  if (!isSensitiveBotTool(tool)) return false;
-  if (gate.mode === 'auto') return false;
-  if (gate.mode === 'selective') {
-    const t = String(tool || '').trim().toLowerCase();
-    const approved = (gate.autoApprove || []).map((x) => String(x || '').trim().toLowerCase());
-    if (approved.includes(t)) return false;
-  }
-  return true; // 'manual', or 'selective' without the tool listed
+  return sharedBotToolNeedsApproval(tool, gate.mode, gate.autoApprove);
 }
 
 export async function executeAgentToolRequest(
@@ -414,7 +402,12 @@ export async function executeAgentToolRequest(
     return {
       type: 'tool_result' as const,
       id: request.id,
-      result: { ok: false, error: 'access_denied', denied: true },
+      result: {
+        ok: false,
+        error: 'access_denied',
+        denied: true,
+        message: `The user did not approve '${toolName}'. Do not retry it this run. Instead, create a kanban task or notification describing exactly what you propose to do, so the user can confirm later.`,
+      },
     };
   };
 
@@ -586,6 +579,9 @@ export function buildLocalProactiveHiddenContext(payload: any): string {
     '- Draft things → show the draft',
     '- Complete tasks → report results',
     '- Spot opportunities → create a task and start working on it',
+    '',
+    '## PERMISSIONS',
+    'Sensitive tools (file writes, run_command, terminal) are governed by this agent\'s permission settings. Tools the user auto-allowed just run — use them without asking first. Others pop a blocking approval prompt on the user\'s screen; if a call comes back denied, do not retry it this run — capture the exact proposed action as a kanban card or notification so the user can approve it later.',
     '',
     '## ANTI-REPETITION',
     'Your notification digest shows what you recently told the user. Do NOT bring up the same topics unless they escalated.',

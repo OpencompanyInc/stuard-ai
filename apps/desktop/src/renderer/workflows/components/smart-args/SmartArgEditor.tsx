@@ -914,7 +914,7 @@ export function ToolArgsEditor({
                       value={timeoutMsValue}
                       onChange={e => setTimeoutMs(e.target.value)}
                       placeholder="0"
-                      className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl wf-input wf-fg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                      className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl wf-input wf-fg focus:outline-none"
                     />
                   </div>
 
@@ -1002,12 +1002,12 @@ export function ToolArgsEditor({
 
         {/* Add Custom Property */}
         {showAddArg ? (
-          <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border border-indigo-500/30 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] shadow-sm animate-in fade-in slide-in-from-bottom-2">
             <input
               value={newArgKey}
               onChange={e => setNewArgKey(e.target.value)}
               placeholder="custom_property_name"
-              className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono wf-input wf-fg"
+              className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none font-mono wf-input wf-fg"
               onKeyDown={e => e.key === 'Enter' && addCustomArg()}
               autoFocus
             />
@@ -1046,8 +1046,9 @@ export function ToolArgsEditor({
               html={builderHtml}
               css={args.css || ''}
               js={builderJs}
-              pages={args.pages}
-              startPage={args.startPage}
+              pages={args.pages || (extracted as any).pages}
+              startPage={args.startPage || (extracted as any).startPage}
+              mainJsx={(extracted as any).mainJsx}
               mode="create"
               outputMode="react"
               originalComponent={args.component || ''}
@@ -1497,18 +1498,18 @@ export function ToolArgsEditor({
       )}
 
       {showAddArg ? (
-        <div className="flex gap-2 items-center p-3 bg-slate-50 rounded-xl border border-indigo-200 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+        <div className="flex gap-2 items-center p-3 wf-bg-overlay rounded-xl border wf-border-subtle shadow-sm animate-in fade-in slide-in-from-bottom-2">
           <input
             value={newArgKey}
             onChange={e => setNewArgKey(e.target.value)}
             placeholder="custom_property_name"
-            className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 font-mono bg-white"
+            className="flex-1 px-3 py-2 text-sm border wf-border-subtle rounded-lg wf-input font-mono wf-bg-elevated wf-fg"
             onKeyDown={e => e.key === 'Enter' && addArg()}
             autoFocus
           />
           <button
             onClick={addArg}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 shadow-sm transition-colors"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 shadow-sm transition-colors"
           >
             Add
           </button>
@@ -1522,9 +1523,9 @@ export function ToolArgsEditor({
       ) : (
         <button
           onClick={() => setShowAddArg(true)}
-          className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] wf-accent-soft-bg/30 transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-6 h-6 rounded-full bg-slate-50 group-hover:bg-indigo-50 flex items-center justify-center transition-colors">
+          <div className="w-6 h-6 rounded-full bg-slate-50 group-wf-accent-soft-bg flex items-center justify-center transition-colors">
             <Plus className="w-3.5 h-3.5" />
           </div>
           Add Custom Property

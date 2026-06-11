@@ -15,7 +15,7 @@ import WebSocket from 'ws';
 import { proactiveService } from './proactive-service';
 import { botService, DEFAULT_BOT_ID, type Bot, type BotConfig } from './bot-service';
 import { botMemoryService } from './bot-memory-service';
-import { intervalDelayMs } from '@stuardai/bots-core';
+import { intervalDelayMs, normalizeBotPermissionMode } from '@stuardai/bots-core';
 import { buildLocalProactiveHiddenContext, buildLocalProactivePrompt, buildProactiveSessionSummary, buildUserFacingProactiveMessage, cleanProactiveResponseText, executeAgentToolRequest, extractAgentTextFromWsMessage, extractAgentToolRequest, isProactiveSkipResponse, splitProactiveStructuredContent, type BotPermissionGate } from './proactive-scheduler-utils';
 import { getNotificationWindow, openNotificationWindow } from '../windows/window';
 import logger from '../utils/logger';
@@ -171,10 +171,7 @@ function normalizeProactiveModelMode(value: any): ProactiveModelMode {
  * allow/deny notification the main chat uses (requestToolApproval).
  */
 function buildBotPermissionGate(config: any, botName: string): BotPermissionGate {
-  const mode: BotPermissionGate['mode'] =
-    config?.permissionMode === 'auto' || config?.permissionMode === 'manual' || config?.permissionMode === 'selective'
-      ? config.permissionMode
-      : 'selective';
+  const mode = normalizeBotPermissionMode(config?.permissionMode);
   const autoApprove = Array.isArray(config?.autoApproveTools)
     ? config.autoApproveTools.map((x: any) => String(x || '').trim().toLowerCase()).filter(Boolean)
     : [];
@@ -192,7 +189,9 @@ function buildBotPermissionGate(config: any, botName: string): BotPermissionGate
           toolOriginal: toolName,
           approvalArgs: args && typeof args === 'object' ? args : undefined,
           description: `${label} wants to use ${human}.`,
-          timeoutMs: 55_000,
+          // Unattended runs deserve a longer window than chat — the user may
+          // not be looking at the screen when the prompt appears.
+          timeoutMs: 120_000,
         });
       } catch {
         return false;
@@ -496,6 +495,8 @@ ${contextToUse}
         config: {
           instructions: 'The user is replying in an ongoing conversation from a proactive check-in. Be helpful, friendly, and concise. Return a normal plain markdown/text reply only. Do not use GenUI or interactive UI blocks.',
           allowedTools: config.allowedTools,
+          permissionMode: config.permissionMode,
+          autoApproveTools: config.autoApproveTools,
           modelMode: modelSelection.model,
           modelId: modelSelection.modelId || '',
           modelConfig: modelSelection.modelConfig,
@@ -1059,6 +1060,10 @@ async function executeCloud(logId: string, payload: any): Promise<CloudWakeUpRes
       kanbanContext: typeof payload.kanbanContext === 'string' ? payload.kanbanContext : undefined,
       prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,
       allowedTools: Array.isArray(payload.config?.allowedTools) ? payload.config.allowedTools : [],
+      // Per-agent tool autonomy — unattended cloud runs enforce this as policy
+      // (deny + propose-instead) since there is no blocking prompt to pop.
+      permissionMode: normalizeBotPermissionMode(payload.config?.permissionMode),
+      autoApproveTools: Array.isArray(payload.config?.autoApproveTools) ? payload.config.autoApproveTools : [],
       modelMode: normalizeProactiveModelMode(payload.config?.modelMode),
       modelId: String(payload.config?.modelId || '').trim() || undefined,
       modelConfig: payload.config?.modelConfig && typeof payload.config.modelConfig === 'object'
@@ -1358,7 +1363,8 @@ async function executeWakeUp(opts: {
         modelMode: normalizeProactiveModelMode((config as any).modelMode),
         modelId: String((config as any).modelId || '').trim(),
         modelConfig: modelSelection.modelConfig,
-        // Per-bot tool autonomy — read by executeLocal's approval gate.
+        // Per-bot tool autonomy — executeLocal pops a blocking approval
+        // prompt; executeCloud forwards it for policy enforcement server-side.
         permissionMode: config.permissionMode,
         autoApproveTools: config.autoApproveTools,
       },

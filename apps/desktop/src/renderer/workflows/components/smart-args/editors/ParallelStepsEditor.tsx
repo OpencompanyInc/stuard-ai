@@ -116,7 +116,7 @@ export function ParallelStepsEditor({
               <div
                 key={i}
                 className={`border rounded-xl transition-all ${isExpanded
-                  ? 'border-indigo-500/30 bg-indigo-500/100/10 shadow-sm'
+                  ? 'border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] bg-[var(--wf-accent)]/10 shadow-sm'
                   : 'wf-border-subtle wf-bg-overlay hover:wf-border-subtle'
                   }`}
               >
@@ -144,7 +144,7 @@ export function ParallelStepsEditor({
                   </div>
 
                   {/* Step Number */}
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-indigo-500/100 text-white' : 'bg-white/[0.06] wf-fg-muted'}`}>
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isExpanded ? 'bg-[var(--wf-accent)] text-white' : 'wf-bg-overlay wf-fg-muted'}`}>
                     {i + 1}
                   </div>
 
@@ -175,7 +175,7 @@ export function ParallelStepsEditor({
                   <div className="px-3 pb-3 pt-1 border-t wf-border-subtle space-y-4">
                     {/* Tool Selector */}
                     <div>
-                      <label className="text-xs font-semibold text-white/70 mb-1.5 block">Tool</label>
+                      <label className="text-xs font-semibold wf-fg-muted mb-1.5 block">Tool</label>
                       <select
                         value={toolId}
                         onChange={(e) => {
@@ -183,7 +183,7 @@ export function ParallelStepsEditor({
                           const newToolInfo = allTools.find(t => t.id === newTool);
                           updateStep(i, { tool: newTool, args: newToolInfo?.args || {} });
                         }}
-                        className="w-full px-3 py-2 text-sm border border-white/[0.08] rounded-lg wf-bg-overlay focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                        className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg wf-bg-overlay focus:outline-none"
                       >
                         <option value="">Select a tool...</option>
                         {Object.entries(groupedTools).map(([category, tools]) => (
@@ -199,7 +199,7 @@ export function ParallelStepsEditor({
                     {/* Tool Arguments */}
                     {toolId && schema && (
                       <div className="space-y-3">
-                        <label className="text-xs font-semibold text-white/70 flex items-center gap-1.5">
+                        <label className="text-xs font-semibold wf-fg-muted flex items-center gap-1.5">
                           <Settings2 className="w-3.5 h-3.5" />
                           Settings
                         </label>
@@ -228,7 +228,7 @@ export function ParallelStepsEditor({
                     {/* Raw Args for tools without schema */}
                     {toolId && !schema && (
                       <div>
-                        <label className="text-xs font-semibold text-white/70 mb-1.5 block">Arguments (JSON)</label>
+                        <label className="text-xs font-semibold wf-fg-muted mb-1.5 block">Arguments (JSON)</label>
                         <textarea
                           value={JSON.stringify(step.args || {}, null, 2)}
                           onChange={(e) => {
@@ -237,7 +237,7 @@ export function ParallelStepsEditor({
                               updateStep(i, { args: parsed });
                             } catch { /* Ignore */ }
                           }}
-                          className="w-full px-3 py-2 text-xs font-mono bg-white/[0.06] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
+                          className="w-full px-3 py-2 text-xs font-mono wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none resize-none"
                           rows={4}
                         />
                       </div>
@@ -252,14 +252,14 @@ export function ParallelStepsEditor({
 
       {/* Add Step Button / Tool Picker */}
       {showToolPicker ? (
-        <div className="border border-indigo-500/30 rounded-xl wf-bg-overlay shadow-lg overflow-hidden">
+        <div className="border border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] rounded-xl wf-bg-overlay shadow-lg overflow-hidden">
           <div className="p-2 border-b wf-border-subtle">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search tools..."
-              className="w-full px-3 py-2 text-sm bg-white/[0.06] border border-white/[0.08] rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+              className="w-full px-3 py-2 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none"
               autoFocus
             />
           </div>
@@ -268,16 +268,16 @@ export function ParallelStepsEditor({
             {Object.entries(groupedTools).length > 0 ? (
               Object.entries(groupedTools).map(([category, tools]) => (
                 <div key={category}>
-                  <div className="px-3 py-1.5 text-[10px] font-bold wf-fg-faint uppercase tracking-wider bg-white/[0.06] sticky top-0">
+                  <div className="px-3 py-1.5 text-[10px] font-bold wf-fg-faint uppercase tracking-wider wf-bg-overlay sticky top-0">
                     {category}
                   </div>
                   {tools.map(tool => (
                     <button
                       key={tool.id}
                       onClick={() => addStep(tool.id, tool.args)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-indigo-500/200/10 flex items-center gap-2 transition-colors"
+                      className="w-full px-3 py-2 text-left text-sm hover:wf-accent-soft-bg flex items-center gap-2 transition-colors"
                     >
-                      <Play className="w-3.5 h-3.5 text-indigo-400" />
+                      <Play className="w-3.5 h-3.5 wf-accent-fg" />
                       <span className="font-medium wf-fg">{tool.label}</span>
                       <span className="text-xs wf-fg-faint ml-auto">{tool.id}</span>
                     </button>
@@ -291,7 +291,7 @@ export function ParallelStepsEditor({
             )}
           </div>
 
-          <div className="p-2 border-t wf-border-subtle bg-white/[0.06]">
+          <div className="p-2 border-t wf-border-subtle wf-bg-overlay">
             <button
               onClick={() => { setShowToolPicker(false); setSearchQuery(''); }}
               className="w-full py-2 text-sm wf-fg-muted hover:wf-fg font-medium"
@@ -303,9 +303,9 @@ export function ParallelStepsEditor({
       ) : (
         <button
           onClick={() => setShowToolPicker(true)}
-          className="w-full py-3 border-2 border-dashed border-white/[0.08] rounded-xl text-sm font-medium wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border-2 border-dashed wf-border-subtle rounded-xl text-sm font-medium wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] hover:wf-accent-soft-bg transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-7 h-7 rounded-full bg-white/[0.06] group-hover:bg-indigo-500/200/20 flex items-center justify-center transition-colors">
+          <div className="w-7 h-7 rounded-full wf-bg-overlay group-hover:wf-accent-soft-bg flex items-center justify-center transition-colors">
             <Plus className="w-4 h-4" />
           </div>
           Add {isParallel ? 'Parallel' : 'Sequential'} Step
@@ -314,8 +314,8 @@ export function ParallelStepsEditor({
 
       {/* Info */}
       {steps.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-white/[0.06] rounded-lg text-xs wf-fg-muted">
-          <Zap className="w-3.5 h-3.5 text-indigo-400" />
+        <div className="flex items-center gap-2 px-3 py-2 wf-bg-overlay rounded-lg text-xs wf-fg-muted">
+          <Zap className="w-3.5 h-3.5 wf-accent-fg" />
           {isParallel
             ? `${steps.length} step${steps.length !== 1 ? 's' : ''} will run simultaneously`
             : `${steps.length} step${steps.length !== 1 ? 's' : ''} will run in order`

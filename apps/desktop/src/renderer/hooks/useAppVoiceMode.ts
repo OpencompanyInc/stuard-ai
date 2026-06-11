@@ -135,10 +135,14 @@ export function useAppVoiceMode({
   }, [voiceActive, startVoiceSession]);
 
   // During onboarding the overlay window runs its own wake-word practice; ignore
-  // detections here so the real pill doesn't pop up behind the wizard.
+  // detections here so the real pill doesn't pop up behind the wizard. Practice
+  // sessions also tag every detection with practice:true (set in the main
+  // process), so even if the onboarding-complete flags disagree across stores
+  // the real assistant never starts mid-onboarding.
   useEffect(() => {
     if (!onboardingComplete) return;
-    const cleanup = window.desktopAPI?.onWakewordDetected?.(() => {
+    const cleanup = window.desktopAPI?.onWakewordDetected?.((data: any) => {
+      if (data?.practice) return;
       void handleWakewordDetected();
     });
     return () => { cleanup?.(); };

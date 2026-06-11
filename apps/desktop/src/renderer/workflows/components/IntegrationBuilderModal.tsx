@@ -18,7 +18,7 @@ import {
   AlertCircle, Check, ChevronDown, ChevronRight, Code2, Copy, FileJson,
   Globe, Key, Loader2, Play, Plug, Plus, Save, Send, Boxes, Trash2,
   Wand2, X, Zap, Lock, Hash, ToggleLeft, AlignLeft, MessageSquare, Rocket,
-  Upload, Bot, ArrowUp, CheckCircle2, Search, ExternalLink, Link2, Brain,
+  Upload, Sparkles, ArrowUp, CheckCircle2, Search, ExternalLink, Link2, Brain,
 } from "lucide-react";
 import { useWorkflowTheme } from "../WorkflowThemeContext";
 import { supabase } from "../../lib/supabaseClient";
@@ -1045,7 +1045,7 @@ export function IntegrationBuilderModal({
             {/* RIGHT — Test runner or AI assistant */}
             <div className="flex flex-col min-h-0">
               <div className="flex items-center gap-1 px-3 pt-2 pb-0 border-b wf-border-subtle">
-                <RightTabButton active={rightTab === "ai"} onClick={() => setRightTab("ai")} icon={<Bot className="w-3.5 h-3.5" />} label="Build with AI" />
+                <RightTabButton active={rightTab === "ai"} onClick={() => setRightTab("ai")} icon={<Sparkles className="w-3.5 h-3.5" />} label="Build with AI" />
                 <RightTabButton active={rightTab === "test"} onClick={() => setRightTab("test")} icon={<Zap className="w-3.5 h-3.5" />} label="Test" />
               </div>
               {rightTab === "test" ? (
@@ -2281,11 +2281,7 @@ function AIPane({
             <button
               onClick={onSend}
               disabled={!input.trim()}
-              className="absolute right-2 bottom-2 p-1.5 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{
-                background: "color-mix(in srgb, var(--wf-fg, #fff) 88%, transparent)",
-                color: dark ? "#141414" : "#fff",
-              }}
+              className="absolute right-2 bottom-2 p-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
               title="Send (Enter)"
             >
               <ArrowUp className="w-3.5 h-3.5" />
@@ -2330,8 +2326,8 @@ function AssistantTurn({ msg, dark }: { msg: AiAssistantMsg; dark: boolean }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[10px] font-semibold wf-fg-muted flex items-center gap-1 uppercase tracking-wider">
-        <Bot className="w-3 h-3" /> Assistant
+      <div className="text-[10px] font-semibold wf-fg-muted uppercase tracking-wider">
+        Assistant
       </div>
 
       {hasTrace && (

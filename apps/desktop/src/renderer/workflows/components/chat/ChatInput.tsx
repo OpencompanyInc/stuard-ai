@@ -221,7 +221,7 @@ export const ChatInput = forwardRef<ChatInputRef, {
   return (
     <div
       className={`w-full wf-bg-sunken backdrop-blur-md border rounded-2xl shadow-xl ring-1 transition-all duration-200 ${isDragOver && dragKind
-          ? 'border-indigo-500/50 ring-indigo-500/30 bg-indigo-500/10'
+          ? 'wf-accent-soft-bg ring-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)]'
           : 'wf-border-subtle ring-[color:var(--wf-border-subtle)]'
         }`}
       onDragOver={handleDragOver}
@@ -230,7 +230,7 @@ export const ChatInput = forwardRef<ChatInputRef, {
       onDrop={handleDrop}
     >
       {isDragOver && dragKind && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium bg-indigo-500/20 text-indigo-400">
+        <div className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium wf-accent-chip">
           {dragKind === 'images' ? <ImagePlus className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
           {dragKind === 'images' ? 'Drop image here' : 'Drop link here'}
         </div>
@@ -325,7 +325,7 @@ export const ChatInput = forwardRef<ChatInputRef, {
                 type="button"
                 onClick={send}
                 disabled={busy}
-                className="px-3 py-1.5 rounded-xl text-[12px] font-semibold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-500/30 transition-colors"
+                className="px-3 py-1.5 rounded-xl text-[12px] font-semibold bg-primary text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
               >
                 Send
               </button>

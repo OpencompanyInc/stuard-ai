@@ -41,7 +41,7 @@ export function WorkflowTabs({
         <div className="h-7 flex items-center gap-1 px-3 wf-breadcrumb-bar">
           <button
             onClick={onNavigateBack}
-            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-full transition-colors"
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium wf-accent-fg hover:text-indigo-300 hover:wf-accent-soft-bg rounded-full transition-colors"
             title="Go back to parent workflow"
           >
             <ArrowLeft className="w-3 h-3" />
@@ -52,13 +52,13 @@ export function WorkflowTabs({
             {breadcrumbs!.map((crumb, i) => (
               <span key={i} className="flex items-center gap-0.5">
                 {i > 0 && <ChevronRight className="w-3 h-3 wf-breadcrumb-sep" />}
-                <span className={i === breadcrumbs!.length - 1 ? 'wf-breadcrumb-current' : 'text-indigo-500 hover:underline cursor-pointer'}>
+                <span className={i === breadcrumbs!.length - 1 ? 'wf-breadcrumb-current' : 'wf-accent-fg hover:underline cursor-pointer'}>
                   {crumb.label}
                 </span>
               </span>
             ))}
             <ChevronRight className="w-3 h-3 wf-breadcrumb-sep" />
-            <span className="flex items-center gap-1 font-medium text-indigo-500">
+            <span className="flex items-center gap-1 font-medium wf-accent-fg">
               <Workflow className="w-3 h-3" />
               {currentSubPath?.replace('.stuard', '').split('/').pop()}
             </span>
@@ -76,7 +76,7 @@ export function WorkflowTabs({
               : "wf-tab"
               }`}
           >
-            {inSubWorkflow ? <Workflow className="w-4 h-4 text-indigo-400" /> : <Workflow className="w-4 h-4 text-indigo-400" />}
+            {inSubWorkflow ? <Workflow className="w-4 h-4 wf-accent-fg" /> : <Workflow className="w-4 h-4 wf-accent-fg" />}
             {inSubWorkflow ? 'Sub-Workflow' : 'Canvas'}
           </button>
 

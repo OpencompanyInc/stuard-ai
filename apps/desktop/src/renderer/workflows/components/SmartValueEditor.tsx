@@ -81,12 +81,12 @@ function VariableSuggestions({
             onClick={() => onSelect(s.text)}
             className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${
               i === selectedIndex
-                ? 'bg-indigo-500/10 text-indigo-400 shadow-sm'
+                ? 'wf-accent-chip shadow-sm'
                 : 'wf-fg-muted wf-hover-bg'
             }`}
           >
             <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${
-              i === selectedIndex ? 'wf-bg-overlay border-indigo-500/30 text-indigo-500' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
+              i === selectedIndex ? 'wf-bg-overlay border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] wf-accent-fg' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
             }`}>
               {s.label}
             </code>
@@ -263,7 +263,7 @@ function TextInputWithSuggestions({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const baseInputClass = `w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint ${className}`;
+  const baseInputClass = `w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint ${className}`;
 
   return (
     <div ref={containerRef} className="relative group">
@@ -292,7 +292,7 @@ function TextInputWithSuggestions({
           {availableVariables && availableVariables.length > 0 && (
              <button 
                onClick={triggerSuggestions}
-               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:text-indigo-500 hover:bg-indigo-500/10 transition-colors"
+               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:wf-accent-fg hover:wf-accent-soft-bg transition-colors"
                title="Insert Variable"
              >
                <Plus className="w-4 h-4" />
@@ -355,7 +355,7 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
           const v = e.target.value;
           if (v !== '' && !isNaN(Number(v))) onChange(Number(v));
         }}
-        className="w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm"
+        className="w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none transition-all wf-input wf-fg shadow-sm"
       />
     );
   }
@@ -387,7 +387,7 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
         ))}
         <button
           onClick={() => onChange([...value, ''])}
-          className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:text-indigo-500 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
+          className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] hover:wf-accent-soft-bg transition-all flex items-center justify-center gap-2"
         >
           <Plus className="w-3.5 h-3.5" />
           Add Item

@@ -221,7 +221,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
               <p className="text-sm wf-fg-muted mb-3">No data yet</p>
               <button
                 onClick={addPair}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/200/20 transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium wf-accent-chip rounded-lg hover:wf-accent-soft-bg transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Add Field
@@ -237,7 +237,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                     value={pair.key}
                     onChange={e => updatePair(i, 'key', e.target.value)}
                     placeholder="name"
-                    className="w-28 px-3 py-2 text-sm wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-medium"
+                    className="w-28 px-3 py-2 text-sm wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none font-medium"
                   />
                   
                   {/* Type Selector */}
@@ -245,7 +245,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                     <select
                       value={pair.type}
                       onChange={e => updatePair(i, 'type', e.target.value)}
-                      className="appearance-none w-24 px-2 py-2 pr-7 text-xs wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 cursor-pointer"
+                      className="appearance-none w-24 px-2 py-2 pr-7 text-xs wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none cursor-pointer"
                     >
                       {typeOptions.map(opt => (
                         <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
@@ -284,7 +284,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                         type="number"
                         value={pair.value ?? ''}
                         onChange={e => updatePair(i, 'value', e.target.value)}
-                        className="w-full px-3 py-2 text-sm wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                        className="w-full px-3 py-2 text-sm wf-input wf-fg border wf-border-subtle rounded-lg focus:outline-none"
                       />
                     ) : (
                       <div className="relative group">
@@ -293,12 +293,12 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                           value={stringifyValue(pair.value, pair.type)}
                           onChange={e => updatePair(i, 'value', e.target.value)}
                           placeholder="value or {{variable}}"
-                          className="w-full px-3 py-2 pr-8 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                          className="w-full px-3 py-2 pr-8 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none"
                         />
                         {(upstreamNodes?.length || workflowVariables?.length) ? (
                           <button
                             onClick={() => setActiveVarPicker(activeVarPicker === i ? null : i)}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded wf-fg-faint hover:wf-accent-fg hover:wf-accent-soft-bg transition-colors"
                             title="Insert Variable"
                           >
                             <Variable className="w-3.5 h-3.5" />
@@ -320,7 +320,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
                                     updatePair(i, 'value', s.text);
                                     setActiveVarPicker(null);
                                   }}
-                                  className="w-full px-2 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-indigo-500/200/10 rounded-lg transition-colors"
+                                  className="w-full px-2 py-1.5 text-left text-xs flex items-center gap-2 hover:wf-accent-soft-bg rounded-lg transition-colors"
                                 >
                                   <code className="px-1.5 py-0.5 rounded wf-bg-overlay border wf-border-subtle wf-fg-muted font-mono text-[10px]">
                                     {s.label}
@@ -352,7 +352,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
 
               <button
                 onClick={addPair}
-                className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all flex items-center justify-center gap-2"
+                className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] hover:wf-accent-soft-bg transition-all flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add Field
@@ -368,7 +368,7 @@ export function JsonEditor({ value, onChange, label, upstreamNodes, workflowVari
             className={`w-full px-4 py-3 text-sm font-mono bg-slate-900 text-slate-100 border rounded-xl focus:outline-none focus:ring-2 resize-none min-h-[200px] ${
               codeError 
                 ? 'border-red-400 focus:ring-red-200' 
-                : 'border-slate-700 focus:ring-indigo-300 focus:border-indigo-400'
+                : 'border-slate-700 focus:outline-none'
             }`}
             spellCheck={false}
           />

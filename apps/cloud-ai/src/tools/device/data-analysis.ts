@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { makeLocalTool } from './shared';
+import { makeLocalTool, anyJsonObject } from './shared';
 
 // Common plot args shared by every chart-type tool
 const PLOT_COMMON = {
@@ -57,7 +57,7 @@ export const describe_data = makeLocalTool(
   'Pandas describe()-style summary stats (count/mean/std/min/quartiles/max) for numeric columns of a file or inline data.',
   z.object({
     path: z.string().optional().describe('Data file path. Provide this OR `data`.'),
-    data: z.array(z.any()).optional().describe('Inline array of row objects (alternative to path).'),
+    data: z.array(anyJsonObject).optional().describe('Inline array of row objects (alternative to path).'),
     columns: z.array(z.string()).optional().describe('Subset of columns to describe.'),
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
   }),
@@ -69,7 +69,7 @@ export const correlate_data = makeLocalTool(
   'Correlation matrix for numeric columns. Methods: pearson (default), spearman, kendall.',
   z.object({
     path: z.string().optional().describe('Data file path. Provide this OR `data`.'),
-    data: z.array(z.any()).optional().describe('Inline array of row objects (alternative to path).'),
+    data: z.array(anyJsonObject).optional().describe('Inline array of row objects (alternative to path).'),
     columns: z.array(z.string()).optional(),
     method: z.enum(['pearson', 'spearman', 'kendall']).optional(),
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
@@ -90,7 +90,7 @@ export const plot_line = makeLocalTool(
           name: z.string().optional(),
           data: z.union([
             z.array(z.number()),
-            z.array(z.object({ x: z.any(), y: z.number() })),
+            z.array(z.object({ x: z.union([z.number(), z.string()]), y: z.number() })),
           ]),
           marker: z.string().optional(),
         }),

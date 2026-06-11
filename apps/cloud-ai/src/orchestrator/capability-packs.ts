@@ -344,7 +344,8 @@ const WORKFLOW_TOOLS = [
   // it. Delegate-only — studio loads the workflow through the UI.
   'load_workflow',
   // ── identical to the studio agent's toolkit from here on ──
-  'search_workflow_docs',
+  // (no search_workflow_docs — the full doc corpus is inlined in
+  //  WORKFLOW_SYSTEM_PROMPT via docs-data.ts)
   'search_workflow_nodes',
   'search_tools',
   'get_tool_schema',
@@ -355,6 +356,8 @@ const WORKFLOW_TOOLS = [
   'stop_automation',
   'web_search',
   'write_file',
+  'read_file',
+  'list_directory',
   'create_directory',
   'file_edit',
   'deploy_workflow',

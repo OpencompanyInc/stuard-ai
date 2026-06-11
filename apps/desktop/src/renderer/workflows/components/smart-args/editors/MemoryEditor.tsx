@@ -113,30 +113,30 @@ function LensToggle({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-left transition-all ${
+      className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-left transition-all border ${
         checked
-          ? 'bg-indigo-500/10 border border-indigo-500/30'
-          : 'bg-white/[0.06] border border-slate-200/60 opacity-60 hover:opacity-80'
+          ? 'wf-accent-soft-bg border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)]'
+          : 'wf-bg-overlay wf-border-subtle opacity-80 hover:opacity-100'
       }`}
     >
       <div
         className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-          checked ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-200 text-white/40'
+          checked ? 'wf-accent-chip' : 'wf-icon-chip'
         }`}
       >
         <Icon className="w-4 h-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className={`text-sm font-medium ${checked ? 'text-white/90' : 'text-white/50'}`}>{meta.label}</div>
-        <div className="text-xs text-white/40 truncate">{meta.desc}</div>
+        <div className={`text-sm font-medium ${checked ? 'wf-fg' : 'wf-fg-muted'}`}>{meta.label}</div>
+        <div className="text-xs wf-fg-faint truncate">{meta.desc}</div>
       </div>
       <div
         className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${
-          checked ? 'bg-indigo-500/100' : 'bg-slate-300'
+          checked ? 'bg-[var(--wf-accent)]' : 'bg-[color:color-mix(in_srgb,var(--wf-fg)_18%,transparent)]'
         }`}
       >
         <div
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/[0.04] shadow transition-all ${
+          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
             checked ? 'left-[18px]' : 'left-0.5'
           }`}
         />
@@ -184,10 +184,9 @@ function ConversationHistoryEditor({
   return (
     <div className="space-y-2">
       {pairs.map((pair, pi) => (
-        <div key={pi} className="relative rounded-xl border border-white/[0.08] bg-white/[0.04] overflow-hidden">
-          {/* User message */}
-          <div className="flex items-start gap-2 p-2.5 bg-indigo-500/10 border-b border-white/[0.04]">
-            <div className="w-6 h-6 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+        <div key={pi} className="relative rounded-xl border wf-border-subtle wf-bg-overlay overflow-hidden">
+          <div className="flex items-start gap-2 p-2.5 wf-accent-soft-bg border-b wf-border-subtle">
+            <div className="w-6 h-6 rounded-md wf-accent-chip flex items-center justify-center shrink-0 mt-0.5">
               <User className="w-3.5 h-3.5" />
             </div>
             <div className="flex-1">
@@ -201,9 +200,8 @@ function ConversationHistoryEditor({
               />
             </div>
           </div>
-          {/* Assistant message */}
           <div className="flex items-start gap-2 p-2.5">
-            <div className="w-6 h-6 rounded-md bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+            <div className="w-6 h-6 rounded-md wf-icon-chip flex items-center justify-center shrink-0 mt-0.5">
               <Brain className="w-3.5 h-3.5" />
             </div>
             <div className="flex-1">
@@ -217,11 +215,10 @@ function ConversationHistoryEditor({
               />
             </div>
           </div>
-          {/* Delete pair */}
           <button
             type="button"
             onClick={() => removePair(pair.startIdx)}
-            className="absolute top-2 right-2 p-1 rounded-md text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            className="absolute top-2 right-2 p-1 rounded-md wf-fg-faint hover:text-red-500 hover:bg-red-500/10 transition-colors"
             title="Remove this exchange"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -232,7 +229,7 @@ function ConversationHistoryEditor({
       <button
         type="button"
         onClick={addPair}
-        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/200/10 transition-all text-sm font-medium"
+        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed wf-border-subtle wf-fg-muted hover:wf-accent-fg hover:wf-accent-soft-bg transition-all text-sm font-medium"
       >
         <Plus className="w-4 h-4" />
         Add conversation exchange
@@ -264,7 +261,7 @@ function CustomFactsEditor({
     <div className="space-y-2">
       {facts.map((fact, i) => (
         <div key={i} className="flex items-start gap-2">
-          <div className="w-6 h-6 rounded-md bg-amber-100 text-amber-600 flex items-center justify-center shrink-0 mt-1">
+          <div className="w-6 h-6 rounded-md wf-icon-chip flex items-center justify-center shrink-0 mt-1">
             <StickyNote className="w-3.5 h-3.5" />
           </div>
           <div className="flex-1">
@@ -279,7 +276,7 @@ function CustomFactsEditor({
           <button
             type="button"
             onClick={() => removeFact(i)}
-            className="p-1.5 rounded-md text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-colors mt-0.5"
+            className="p-1.5 rounded-md wf-fg-faint hover:text-red-500 hover:bg-red-500/10 transition-colors mt-0.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -288,7 +285,7 @@ function CustomFactsEditor({
       <button
         type="button"
         onClick={addFact}
-        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-white/[0.12] text-white/50 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-500/10 transition-all text-sm font-medium"
+        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed wf-border-subtle wf-fg-muted hover:text-amber-600 hover:border-amber-300 hover:bg-amber-500/10 transition-all text-sm font-medium"
       >
         <Plus className="w-4 h-4" />
         Add custom fact
@@ -307,7 +304,6 @@ interface MemoryEditorProps {
 }
 
 export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables }: MemoryEditorProps) {
-  // Detect if the whole value is a variable string — that means "variable / JSON mode"
   const isVarMode = typeof value === 'string';
   const [useVariableMode, setUseVariableMode] = useState(isVarMode);
 
@@ -324,7 +320,6 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
 
   const switchToVariableMode = useCallback(() => {
     setUseVariableMode(true);
-    // Convert current config to JSON string for editing, or empty for variable reference
     if (config.enabled) {
       onChange(JSON.stringify(config, null, 2));
     } else {
@@ -334,7 +329,6 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
 
   const switchToVisualMode = useCallback(() => {
     setUseVariableMode(false);
-    // Try to parse the string back into a config, fallback to default
     if (typeof value === 'string' && value.trim()) {
       try {
         const parsed = JSON.parse(value);
@@ -349,15 +343,14 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
 
   return (
     <div className="space-y-3">
-      {/* ── Mode toggle: Visual vs Variable/JSON ── */}
       <div className="flex items-center justify-end gap-1">
         <button
           type="button"
           onClick={useVariableMode ? switchToVisualMode : undefined}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-l-lg text-xs font-medium transition-all border ${
             !useVariableMode
-              ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
-              : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
+              ? 'wf-accent-chip'
+              : 'wf-bg-overlay wf-border-subtle wf-fg-muted wf-hover-bg'
           }`}
         >
           <LayoutList className="w-3 h-3" />
@@ -368,8 +361,8 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
           onClick={!useVariableMode ? switchToVariableMode : undefined}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-r-lg text-xs font-medium transition-all border ${
             useVariableMode
-              ? 'bg-violet-50 border-violet-200 text-violet-700'
-              : 'bg-white/[0.04] border-white/[0.08] text-white/50 hover:bg-white/[0.06]'
+              ? 'wf-accent-chip'
+              : 'wf-bg-overlay wf-border-subtle wf-fg-muted wf-hover-bg'
           }`}
         >
           <Variable className="w-3 h-3" />
@@ -377,11 +370,10 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
         </button>
       </div>
 
-      {/* ── Variable/JSON mode ── */}
       {useVariableMode && (
         <div className="space-y-2">
-          <p className="text-xs text-white/40">
-            Set the entire memory config from a variable (e.g. <code className="bg-white/[0.06] px-1 rounded">{'{{step.memory}}'}</code>) or paste raw JSON.
+          <p className="text-xs wf-fg-faint">
+            Set the entire memory config from a variable (e.g. <code className="wf-bg-overlay px-1 rounded wf-fg-muted">{'{{step.memory}}'}</code>) or paste raw JSON.
           </p>
           <TextInputWithVariables
             value={typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2)}
@@ -391,9 +383,9 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
             workflowVariables={workflowVariables}
             multiline
           />
-          <div className="text-xs text-white/40 bg-white/[0.06] rounded-lg p-2.5 border border-white/[0.04]">
-            <div className="font-medium text-white/50 mb-1">Expected JSON shape:</div>
-            <pre className="text-[10px] font-mono text-white/40 whitespace-pre-wrap">{`{
+          <div className="text-xs wf-fg-faint wf-bg-overlay rounded-lg p-2.5 border wf-border-subtle">
+            <div className="font-medium wf-fg-muted mb-1">Expected JSON shape:</div>
+            <pre className="text-[10px] font-mono whitespace-pre-wrap">{`{
   "enabled": true,
   "lenses": {
     "identity": true,
@@ -413,31 +405,29 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
         </div>
       )}
 
-      {/* ── Visual mode ── */}
       {!useVariableMode && (
         <>
-          {/* Master toggle */}
           <button
             type="button"
             onClick={() => update({ enabled: !config.enabled })}
-            className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl transition-all ${
+            className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl transition-all border ${
               config.enabled
-                ? 'bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-500/30 shadow-sm'
-                : 'bg-white/[0.06] border border-white/[0.08] hover:border-white/[0.12]'
+                ? 'wf-accent-soft-bg border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] shadow-sm'
+                : 'wf-bg-overlay wf-border-subtle hover:wf-hover-bg'
             }`}
           >
             <div
               className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                config.enabled ? 'bg-indigo-500/100 text-white shadow-md shadow-indigo-200' : 'bg-slate-200 text-white/40'
+                config.enabled ? 'bg-[var(--wf-accent)] text-white' : 'wf-icon-chip'
               }`}
             >
               <Brain className="w-5 h-5" />
             </div>
             <div className="flex-1 text-left">
-              <div className={`text-sm font-semibold ${config.enabled ? 'text-indigo-400' : 'text-white/70'}`}>
+              <div className={`text-sm font-semibold ${config.enabled ? 'wf-accent-fg' : 'wf-fg'}`}>
                 Memory {config.enabled ? 'Active' : 'Off'}
               </div>
-              <div className="text-xs text-white/40">
+              <div className="text-xs wf-fg-faint">
                 {config.enabled
                   ? `${activeLensCount} source${activeLensCount !== 1 ? 's' : ''} active`
                   : 'The AI won\u2019t use any stored memories'}
@@ -445,33 +435,31 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
             </div>
             <div
               className={`w-11 h-6 rounded-full transition-colors relative ${
-                config.enabled ? 'bg-indigo-500/100' : 'bg-slate-300'
+                config.enabled ? 'bg-[var(--wf-accent)]' : 'bg-[color:color-mix(in_srgb,var(--wf-fg)_18%,transparent)]'
               }`}
             >
               <div
-                className={`absolute top-0.5 w-5 h-5 rounded-full bg-white/[0.04] shadow transition-all ${
+                className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${
                   config.enabled ? 'left-[22px]' : 'left-0.5'
                 }`}
               />
             </div>
           </button>
 
-          {/* Expanded configuration (only when enabled) */}
           {config.enabled && (
             <div className="space-y-2 pl-1">
-              {/* Memory Sources (lenses) */}
               <button
                 type="button"
                 onClick={() => setShowLenses(!showLenses)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg hover:bg-white/[0.06] transition-colors text-left"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg wf-hover-bg transition-colors text-left"
               >
                 {showLenses ? (
-                  <ChevronDown className="w-4 h-4 text-white/40" />
+                  <ChevronDown className="w-4 h-4 wf-fg-faint" />
                 ) : (
-                  <ChevronRight className="w-4 h-4 text-white/40" />
+                  <ChevronRight className="w-4 h-4 wf-fg-faint" />
                 )}
-                <span className="text-sm font-medium text-white/80">Memory Sources</span>
-                <span className="text-xs text-white/40 ml-auto">{activeLensCount}/{LENS_META.length} active</span>
+                <span className="text-sm font-medium wf-fg">Memory Sources</span>
+                <span className="text-xs wf-fg-faint ml-auto">{activeLensCount}/{LENS_META.length} active</span>
               </button>
               {showLenses && (
                 <div className="space-y-1.5 pl-2">
@@ -483,46 +471,44 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
                       onChange={(v) => updateLens(meta.key, v)}
                     />
                   ))}
-                  {/* Max facts slider */}
                   <div className="px-3 py-2 flex items-center gap-3">
-                    <span className="text-xs text-white/50 shrink-0">Max related memories</span>
+                    <span className="text-xs wf-fg-muted shrink-0">Max related memories</span>
                     <input
                       type="range"
                       min={1}
                       max={20}
                       value={config.maxFacts}
                       onChange={(e) => update({ maxFacts: Number(e.target.value) })}
-                      className="flex-1 h-1.5 accent-indigo-500"
+                      className="flex-1 h-1.5 accent-[var(--wf-accent)]"
                     />
-                    <span className="text-xs font-mono text-white/70 w-5 text-right">{config.maxFacts}</span>
+                    <span className="text-xs font-mono wf-fg-muted w-5 text-right">{config.maxFacts}</span>
                   </div>
                 </div>
               )}
 
-              {/* Conversation History */}
               <button
                 type="button"
                 onClick={() => setShowConversation(!showConversation)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg hover:bg-white/[0.06] transition-colors text-left"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg wf-hover-bg transition-colors text-left"
               >
                 {showConversation ? (
-                  <ChevronDown className="w-4 h-4 text-white/40" />
+                  <ChevronDown className="w-4 h-4 wf-fg-faint" />
                 ) : (
-                  <ChevronRight className="w-4 h-4 text-white/40" />
+                  <ChevronRight className="w-4 h-4 wf-fg-faint" />
                 )}
-                <MessageSquare className="w-4 h-4 text-white/40" />
-                <span className="text-sm font-medium text-white/80">Conversation History</span>
+                <MessageSquare className="w-4 h-4 wf-fg-faint" />
+                <span className="text-sm font-medium wf-fg">Conversation History</span>
                 {config.conversationHistory.length > 0 && (
-                  <span className="text-xs bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full ml-auto">
+                  <span className="text-xs wf-accent-chip px-1.5 py-0.5 rounded-full ml-auto">
                     {Math.floor(config.conversationHistory.length / 2)} exchange{config.conversationHistory.length > 2 ? 's' : ''}
                   </span>
                 )}
               </button>
               {showConversation && (
                 <div className="pl-2">
-                  <p className="text-xs text-white/40 mb-2 px-1">
+                  <p className="text-xs wf-fg-faint mb-2 px-1">
                     Add example conversations so the AI understands context. Messages support variables like{' '}
-                    <code className="bg-white/[0.06] px-1 rounded">{'{{step.text}}'}</code>.
+                    <code className="wf-bg-overlay px-1 rounded wf-fg-muted">{'{{step.text}}'}</code>.
                   </p>
                   <ConversationHistoryEditor
                     messages={config.conversationHistory}
@@ -533,30 +519,29 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
                 </div>
               )}
 
-              {/* Custom Facts */}
               <button
                 type="button"
                 onClick={() => setShowCustomFacts(!showCustomFacts)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg hover:bg-white/[0.06] transition-colors text-left"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg wf-hover-bg transition-colors text-left"
               >
                 {showCustomFacts ? (
-                  <ChevronDown className="w-4 h-4 text-white/40" />
+                  <ChevronDown className="w-4 h-4 wf-fg-faint" />
                 ) : (
-                  <ChevronRight className="w-4 h-4 text-white/40" />
+                  <ChevronRight className="w-4 h-4 wf-fg-faint" />
                 )}
-                <StickyNote className="w-4 h-4 text-white/40" />
-                <span className="text-sm font-medium text-white/80">Custom Facts</span>
+                <StickyNote className="w-4 h-4 wf-fg-faint" />
+                <span className="text-sm font-medium wf-fg">Custom Facts</span>
                 {config.customFacts.length > 0 && (
-                  <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full ml-auto">
+                  <span className="text-xs bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full ml-auto">
                     {config.customFacts.length}
                   </span>
                 )}
               </button>
               {showCustomFacts && (
                 <div className="pl-2">
-                  <p className="text-xs text-white/40 mb-2 px-1">
+                  <p className="text-xs wf-fg-faint mb-2 px-1">
                     Extra context the AI should know. Supports variables like{' '}
-                    <code className="bg-white/[0.06] px-1 rounded">{'{{step.json}}'}</code>.
+                    <code className="wf-bg-overlay px-1 rounded wf-fg-muted">{'{{step.json}}'}</code>.
                   </p>
                   <CustomFactsEditor
                     facts={config.customFacts}
@@ -573,4 +558,3 @@ export function MemoryEditor({ value, onChange, upstreamNodes, workflowVariables
     </div>
   );
 }
-

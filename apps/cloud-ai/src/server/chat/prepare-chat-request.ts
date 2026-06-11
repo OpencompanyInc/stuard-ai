@@ -29,7 +29,7 @@ import { userHasUserFundedInference } from '../../byok/keys';
 import { verifyVMToken } from '../../services/vm-tokens';
 import { resolveVMSecret } from '../../services/vm-command';
 import { getSkillsFromContext } from '../../tools/skill-tools';
-import { clearSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
+import { clearSessionWorkflow, setSessionWorkflow, setWorkflowWorkspacePath } from '../../tools/workflow';
 import { contentToText, normalizeMessages } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { writeLog } from '../../utils/logger';
@@ -759,7 +759,9 @@ async function resolveProjectPromptOptions(args: {
   // the takeover too. Cheap in-memory lookup, no round-trips.
   const activeResearch = getResearchSessionView(conversationId);
   if (activeResearch) {
-    return { conversationId, activeResearch };
+    // Browser availability is per-request: a live bridge (desktop or VM) means
+    // the browser subagent can serve as the fallback for blocked sources.
+    return { conversationId, activeResearch, browserConnected: hasClientBridge() };
   }
 
   if (!hasClientBridge()) return base;
@@ -1005,6 +1007,13 @@ async function resolveWorkflowAgent(
     const workspacePath = incomingContext?.workspacePath;
     if (workspacePath) {
       console.log('[cloud-ai] Workflow workspace path:', workspacePath);
+      // Record it so modify_workflow/inspect_workflow can target sub-workflow
+      // .stuard files in this workspace (keyed by flow id to stay isolated
+      // across concurrent studio sessions).
+      const flowId = (directWorkflow && typeof directWorkflow === 'object' && directWorkflow.id)
+        ? String(directWorkflow.id)
+        : (typeof incomingContext?.workflowId === 'string' ? incomingContext.workflowId : '');
+      if (flowId) setWorkflowWorkspacePath(flowId, String(workspacePath));
     }
 
     if (!sessionLoaded) {

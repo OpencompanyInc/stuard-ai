@@ -83,16 +83,14 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
 
   const flowId = args?.flowId || (ctx as any)?.flowId || '';
 
-  // Pages system - multi-page SPA navigation
-  const pages = args?.pages || undefined; // Record<string, { html?, layout?, css?, script? }>
-  const startPage = args?.startPage || (pages ? Object.keys(pages)[0] : undefined);
+  // Multi-screen navigation now lives inside the React component (useState + page
+  // branches); there is no separate server-side pages map. `pages`/`startPage`
+  // remain reserved args (below) so legacy workflows don't leak them into data.
 
   const existing = customUiWindows.get(id);
   const forceNew = args?.forceNew === true;
   ctx.logFn(
-    `custom_ui: id="${id}", existing=${!!existing}, destroyed=${existing?.isDestroyed()}, blocking=${blocking}${
-      pages ? `, pages=[${Object.keys(pages).join(',')}], startPage=${startPage}` : ''
-    }`
+    `custom_ui: id="${id}", existing=${!!existing}, destroyed=${existing?.isDestroyed()}, blocking=${blocking}`
   );
 
   // Parse data if string
@@ -224,6 +222,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     if (existingData) {
       existingData.data = safeData;
       existingData.flowId = flowId;
+      existingData.winSize = { width, height };
       if (args?.__flowSteps) existingData.flowSpec = { steps: args.__flowSteps };
       if (args?.__stepId) existingData.stepId = args.__stepId;
       existingData.accessToken = ctx.accessToken || args?.__accessToken || existingData.accessToken;
@@ -310,7 +309,7 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
   const flowSpec = args?.__flowSteps ? { steps: args.__flowSteps } : undefined;
   const stepId = args?.__stepId || undefined;
   const accessToken = ctx.accessToken || args?.__accessToken || undefined;
-  windowData.set(id, { data: safeData, flowId, keepOpen, pages, currentPage: startPage, flowSpec, stepId, accessToken });
+  windowData.set(id, { data: safeData, flowId, keepOpen, flowSpec, stepId, accessToken, winSize: { width, height } });
   ctx.logFn(`custom_ui: Stored window "${id}" in map (total: ${customUiWindows.size})${flowSpec ? ` with ${flowSpec.steps?.length || 0} sibling nodes` : ''}`);
 
   // Push data keys as workflow variables so useVar hooks get fresh values
@@ -349,8 +348,6 @@ export async function execCustomUi(args: any, ctx: RouterContext): Promise<any> 
     transparentBg,
     initScript,
     component,
-    pages,
-    startPage,
     uiPackagesJs: uiPackagesBundle?.js,
     uiPackagesCss: uiPackagesBundle?.css,
     uiPackagesModules: uiPackagesBundle?.modules,
@@ -534,7 +531,6 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
   const script = typeof args?.script === 'string' ? args.script : undefined;
   const navigateTo = typeof args?.navigateTo === 'string' ? args.navigateTo : undefined;
   const pageData = args?.pageData || undefined;
-  const newPages = args?.pages || undefined; // Support updating page definitions
 
   if (!windowId) {
     return { ok: false, error: 'missing_window_id' };
@@ -551,15 +547,13 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
     if (updates && Object.keys(updates).length > 0) {
       winData.data = { ...winData.data, ...updates };
     }
-    if (newPages) {
-      winData.pages = { ...(winData.pages || {}), ...newPages };
-    }
   }
 
-  // Handle page navigation (pages system)
-  if (navigateTo && winData?.pages) {
-    winData.currentPage = navigateTo;
-    // Send navigation event to renderer
+  // Page navigation — fire a page-change the component handles via
+  // stuard.onPageChange → setPage. Screens live in the component now, so this is
+  // no longer gated on a server-side pages map.
+  if (navigateTo) {
+    if (winData) winData.currentPage = navigateTo;
     existing.webContents.send('stuard:page-change', { page: navigateTo, data: pageData });
     ctx.logFn(`update_custom_ui: Navigating to page "${navigateTo}" in "${windowId}"`);
     return { ok: true, navigatedTo: navigateTo };
@@ -606,33 +600,10 @@ export async function execUpdateCustomUi(args: any, ctx: RouterContext): Promise
     }
   `;
 
-  // Handle pages updates
-  if (newPages) {
-    updateScript += `
-      if (typeof __pages !== 'undefined') {
-        const newPages = ${JSON.stringify(newPages)};
-        Object.assign(__pages, newPages);
-        changed.push('pages');
-
-        // If current page was updated, re-render it
-        if (typeof __currentPage !== 'undefined' && newPages[__currentPage]) {
-          if (typeof navigateTo === 'function') {
-            navigateTo(__currentPage); // Re-render current page
-          }
-        }
-      }
-    `;
-  }
-
   if (html !== undefined) {
     updateScript += `
       const root = document.querySelector('.stuard-root') || document.querySelector('.root') || document.body;
       if (root) {
-        // If we are in pages mode, update the current page's HTML definition too
-        if (typeof __pages !== 'undefined' && typeof __currentPage !== 'undefined' && __pages[__currentPage]) {
-          __pages[__currentPage].html = ${JSON.stringify(html)};
-        }
-
         root.innerHTML = ${JSON.stringify(html)};
         changed.push('html');
         // Re-initialize bindings

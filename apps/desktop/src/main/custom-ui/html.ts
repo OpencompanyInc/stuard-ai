@@ -1,6 +1,7 @@
 import type { CustomUiHtmlOptions } from './types';
 import { getReactRuntime } from './assets/react-runtime';
 import { EXTRA_CSS } from './assets/utility-css';
+import { JIT_LITE_JS } from './assets/jit-lite';
 import { prepareComponentCode } from './jsx-transform';
 
 let tailwindPrebuiltCssCache: string | null = null;
@@ -349,6 +350,7 @@ export function generateEnhancedCustomUiHtml(options: CustomUiHtmlOptions): stri
 <body${(transparentBg || borderRadius > 0) ? ' style="background:transparent!important"' : ''}>
   ${bgOverlay}
   <div class="stuard-root${draggable ? ' drag' : ''}" id="stuard-root"></div>
+  <script>${JIT_LITE_JS}<\/script>
   <script>${runtimeScript}<\/script>
 </body>
 </html>`;

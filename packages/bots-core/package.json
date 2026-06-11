@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./bot-memory": "./src/bot-memory.ts",
     "./schedule": "./src/schedule.ts",
-    "./proactive-tools": "./src/proactive-tools.ts"
+    "./proactive-tools": "./src/proactive-tools.ts",
+    "./permissions": "./src/permissions.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

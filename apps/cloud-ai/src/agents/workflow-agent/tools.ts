@@ -19,7 +19,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge } from '../../tools/bridge';
 import { search_local_workflows } from '../../tools/device/workflows';
-import { getSessionWorkflow, setSessionWorkflow } from '../../tools/workflow';
+import { getSessionWorkflow, setSessionWorkflow, loadSubWorkflowFile } from '../../tools/workflow';
 import { workflowMap } from '../../tools/workflow-system';
 import { writeLog } from '../../utils/logger';
 import {
@@ -259,7 +259,7 @@ export const loadWorkflow = createTool({
 export const inspectWorkflow = createTool({
   id: 'inspect_workflow',
   description:
-    'Inspect workflow topology. Use mode="overview" for a summary; "node_flow" with nodeId for node details + surrounding topology; "trigger_flow" with triggerId for trigger details; "wire" with from/to (or index) for a single wire lookup. Pass null for unused fields.',
+    'Inspect workflow topology. Use mode="overview" for a summary; "node_flow" with nodeId for node details + surrounding topology; "trigger_flow" with triggerId for trigger details; "wire" with from/to (or index) for a single wire lookup. Pass stuardFile (e.g. "helpers/send-email.stuard") to inspect a sub-workflow file from the workspace instead of the main workflow. Pass null for unused fields.',
   // Schema is laid out for OpenAI strict mode (required by GPT-5 / Responses API
   // with strict tool schemas): every property is in `required`, optional fields
   // are `.nullable()` instead of `.optional()`. Without this, OpenAI rejects
@@ -272,6 +272,7 @@ export const inspectWorkflow = createTool({
     from: z.string().nullable(),
     to: z.string().nullable(),
     index: z.number().int().min(0).nullable(),
+    stuardFile: z.string().nullable(),
   }),
   // Output schema is internal-only — it validates the tool's return value
   // before it's serialized for the model. OpenAI strict mode does not apply to
@@ -286,7 +287,7 @@ export const inspectWorkflow = createTool({
     wire: z.any().optional(),
     error: z.string().optional(),
   }),
-  execute: async (inputData) => {
+  execute: async (inputData, { writer }) => {
     const raw = inputData as any;
     // Schema is nullable for OpenAI strict mode — coerce nulls back to
     // undefined so downstream helpers (getWireBySelector, typeof checks) work
@@ -297,9 +298,18 @@ export const inspectWorkflow = createTool({
     const from = raw?.from ?? undefined;
     const to = raw?.to ?? undefined;
     const index = raw?.index ?? undefined;
-    wfLog('inspect_workflow', { mode, nodeId, triggerId, from, to, index });
+    const stuardFile = typeof raw?.stuardFile === 'string' && raw.stuardFile.trim() ? raw.stuardFile.trim() : undefined;
+    wfLog('inspect_workflow', { mode, nodeId, triggerId, from, to, index, stuardFile });
 
-    const workflow = getSessionWorkflow() || (workflowMap.size === 1 ? Array.from(workflowMap.values())[0] : null);
+    let workflow: any;
+    if (stuardFile) {
+      const mainId = getSessionWorkflow()?.id;
+      const loaded = await loadSubWorkflowFile(stuardFile, mainId, writer);
+      if ('error' in loaded) return { ok: false, error: loaded.error };
+      workflow = loaded.workflow;
+    } else {
+      workflow = getSessionWorkflow() || (workflowMap.size === 1 ? Array.from(workflowMap.values())[0] : null);
+    }
     if (!workflow) {
       return {
         ok: false,

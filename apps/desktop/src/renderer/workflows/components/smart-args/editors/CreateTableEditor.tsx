@@ -111,7 +111,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
                   opt.value === value
-                    ? 'bg-indigo-500/10 text-indigo-400 font-medium'
+                    ? 'wf-accent-chip font-medium'
                     : 'wf-fg wf-hover-bg'
                 }`}
               >
@@ -119,7 +119,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
                   <div className="font-medium">{opt.label}</div>
                   <div className="text-[11px] wf-fg-faint font-normal">{opt.description}</div>
                 </div>
-                {opt.value === value && <Check className="w-4 h-4 text-indigo-400 shrink-0" />}
+                {opt.value === value && <Check className="w-4 h-4 wf-accent-fg shrink-0" />}
               </button>
             ))}
           </div>
@@ -175,14 +175,14 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
           value={tableName}
           onChange={e => setTableName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
           placeholder="my_table"
-          className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-bg-overlay wf-fg font-medium"
+          className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl focus:outline-none wf-bg-overlay wf-fg font-medium"
         />
       </div>
 
       {/* Columns */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-white/70">Columns</label>
+          <label className="text-xs font-medium wf-fg-muted">Columns</label>
           <span className="text-[10px] wf-fg-faint">{columns.length} column{columns.length !== 1 ? 's' : ''}</span>
         </div>
 
@@ -192,7 +192,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
               key={i}
               className="flex items-center gap-2 p-2.5 wf-bg-overlay rounded-xl border wf-border-subtle group wf-hover-bg transition-colors"
             >
-              <GripVertical className="w-3.5 h-3.5 text-white/40 shrink-0" />
+              <GripVertical className="w-3.5 h-3.5 wf-fg-faint shrink-0" />
 
               {/* Column Name */}
               <input
@@ -200,7 +200,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 value={col.name}
                 onChange={e => updateColumn(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                 placeholder="column_name"
-                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-bg-overlay wf-fg font-mono"
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none wf-bg-overlay wf-fg font-mono"
               />
 
               {/* Column Type - Custom dropdown */}
@@ -242,7 +242,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
                 type="button"
                 onClick={() => removeColumn(i)}
                 disabled={columns.length <= 1}
-                className="shrink-0 p-1 text-white/40 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="shrink-0 p-1 wf-fg-faint hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 title="Remove column"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -255,7 +255,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
         <button
           type="button"
           onClick={addColumn}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium wf-fg-muted hover:text-indigo-400 wf-bg-overlay hover:bg-indigo-500/200/10 border border-dashed wf-border-subtle hover:border-indigo-500/40 rounded-xl transition-all"
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium wf-fg-muted hover:wf-accent-fg wf-bg-overlay hover:wf-accent-soft-bg border border-dashed wf-border-subtle hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] rounded-xl transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
           Add Column
@@ -267,7 +267,7 @@ export function CreateTableEditor({ value, onChange }: CreateTableEditorProps) {
         <button
           type="button"
           onClick={() => setShowRaw(!showRaw)}
-          className="text-[11px] wf-fg-faint hover:text-indigo-500 transition-colors"
+          className="text-[11px] wf-fg-faint hover:wf-accent-fg transition-colors"
         >
           {showRaw ? 'Hide' : 'Show'} generated SQL
         </button>

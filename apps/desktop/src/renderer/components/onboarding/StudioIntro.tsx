@@ -27,22 +27,22 @@ const TILES: Tile[] = [
   {
     icon: Layers,
     title: 'Workflows',
-    body: 'Chain steps across your apps into one automation you run on a trigger.',
+    body: 'Connect steps across your apps into one automation that runs itself.',
   },
   {
     icon: Bot,
     title: 'Agents',
-    body: 'Stand up bots that handle tasks on their own — on your PC or in the cloud.',
+    body: 'Bots that work on tasks for you — on your PC or in the cloud.',
   },
   {
     icon: Wand2,
     title: 'Skills',
-    body: 'Teach me how to handle a kind of request, once, and reuse it forever.',
+    body: 'Teach me how to handle a task once. I do it that way every time after.',
   },
   {
     icon: Plug,
     title: 'Custom tools',
-    body: 'Wire up any API and hand it to your chats, agents, and workflows.',
+    body: 'Connect any service or API, then use it in chats, agents, and workflows.',
   },
 ];
 
@@ -104,8 +104,8 @@ export function StudioIntro({
           {firstName ? `Build your own tools, ${firstName}.` : 'Build your own tools.'}
         </motion.h2>
         <motion.p variants={item} className="mt-2 max-w-[46ch] text-[14px] font-light leading-relaxed text-white/75">
-          When you find yourself doing something more than once, turn it into something reusable.
-          That all lives in Studio.
+          One last thing. When you catch yourself doing the same task twice, bring it to Stuard
+          Studio — and turn it into something that runs itself.
         </motion.p>
 
         <motion.div variants={item} className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -134,8 +134,8 @@ export function StudioIntro({
         >
           <Search className="h-4 w-4 shrink-0 text-rose-200/70" strokeWidth={1.75} />
           <p className="text-[12.5px] font-light leading-snug text-white/65">
-            Need Studio, Settings, or anywhere else? Just start typing in Stuard&apos;s search bar — it
-            takes you straight there.
+            Remember: to get to Studio, Settings, or anywhere else, just type its name in the pill —
+            like you practiced.
           </p>
         </motion.div>
 
@@ -144,7 +144,7 @@ export function StudioIntro({
             onClick={onComplete}
             className="pointer-events-auto rounded-lg px-4 py-2.5 text-[13px] font-medium text-white/55 transition-colors hover:text-white/85"
           >
-            Dismiss
+            Maybe later
           </button>
           <button
             onClick={openStudio}

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Bot } from './types';
 
 export type BotsJsonResponse<T = Record<string, unknown>> = { ok: boolean; error?: string } & T;
@@ -16,8 +17,21 @@ export interface BotsConfirmOptions {
   tone?: 'danger' | 'default';
 }
 
+export interface BotsModelSelectorProps {
+  /** Explicit model id, or '' when the agent routes automatically. */
+  modelId: string;
+  /** Called with the chosen model id, or '' when the user picks Auto. */
+  onChange: (modelId: string) => void;
+}
+
 export interface IBotsPlatform {
   readOnly?: boolean;
+
+  /**
+   * Host-provided full model picker (the same UI used in chat). When absent,
+   * agent settings fall back to the coarse fast/balanced/smart tier select.
+   */
+  renderModelSelector?(props: BotsModelSelectorProps): ReactNode;
 
   /**
    * Modern confirm/alert UI. When provided, the host app renders its own

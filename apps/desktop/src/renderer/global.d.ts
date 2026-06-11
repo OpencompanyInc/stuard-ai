@@ -150,7 +150,7 @@ declare global {
       onDashboardNavigate: (cb: (data: { tab: string }) => void) => () => void;
       onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => void) => () => void;
       // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
-      customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; error?: string }>;
+      customUiGetPrebuiltAssets: () => Promise<{ ok: boolean; reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; jitJs?: string; error?: string }>;
       customUiTransformJsx: (code: string, availableModules?: string[]) => Promise<{ ok: boolean; code: string; syntax?: string; diagnostics?: Array<{ line: number; column?: number; severity: 'error' | 'warning'; message: string }>; error?: string }>;
       customUiGetUiPackagesBundle: (setId: string) => Promise<{ ok: boolean; js?: string; css?: string; modules?: string[]; hash?: string; error?: string }>;
       customUiEnsureUiPackages: (packages: string[]) => Promise<{ ok: boolean; js?: string; css?: string; modules?: string[]; hash?: string; error?: string }>;
@@ -163,7 +163,7 @@ declare global {
       workflowsRead: (id: string) => Promise<{ ok: boolean; id?: string; content?: string; error?: string }>;
       workflowsSave: (id: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsDelete: (id: string) => Promise<{ ok: boolean; error?: string }>;
-      workflowsRun: (id: string, triggerId?: string, options?: { accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
+      workflowsRun: (id: string, triggerId?: string, options?: { accessToken?: string; inputs?: Record<string, any> }) => Promise<{ ok: boolean; error?: string }>;
       workflowsStop: (id: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsExport: (id: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
       workflowsImport: (filePath: string) => Promise<{ ok: boolean; id?: string; error?: string }>;

@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { execLocalTool, getResolvedBridgeSecrets, hasClientBridge, makeLocalTool } from './shared';
+import { execLocalTool, getResolvedBridgeSecrets, hasClientBridge, makeLocalTool, anyJsonObject, anyJsonValue } from './shared';
 import { workflowMap } from '../workflow-system';
 import { embedMany } from 'ai';
 import { resolveEmbedder, cosineSimilarity } from '../../utils/embeddings';
@@ -242,8 +242,8 @@ export const import_workflow = makeLocalTool(
       version: z.string().default('1'),
       description: z.string().optional(),
       mode: z.enum(['auto', 'manual', 'hybrid']).optional(),
-      inputs: z.any().optional().describe('Input schema as a key-value object.'),
-      globals: z.any().optional(),
+      inputs: anyJsonObject.optional().describe('Input schema as a key-value object.'),
+      globals: anyJsonObject.optional(),
       policies: z
         .object({
           risk: z.enum(['low', 'medium', 'high']).optional(),
@@ -256,7 +256,7 @@ export const import_workflow = makeLocalTool(
           z.object({
             id: z.string().optional(),
             type: z.string(),
-            args: z.any().optional(),
+            args: anyJsonObject.optional(),
           }),
         )
         .optional(),
@@ -264,7 +264,7 @@ export const import_workflow = makeLocalTool(
         z.object({
           id: z.string(),
           uses: z.string(),
-          with: z.any().optional(),
+          with: anyJsonObject.optional(),
           if: z.string().optional(),
           timeoutMs: z.number().optional(),
           retry: z
@@ -274,10 +274,10 @@ export const import_workflow = makeLocalTool(
             })
             .optional(),
           on_error: z.enum(['skip', 'halt', 'continue']).optional(),
-          out: z.any().optional().describe('Output mappings as a key-value object.'),
+          out: anyJsonObject.optional().describe('Output mappings as a key-value object.'),
         }),
       ),
-      outputs: z.any().optional().describe('Final outputs as a key-value object.'),
+      outputs: anyJsonObject.optional().describe('Final outputs as a key-value object.'),
     }),
   }),
   z.object({
@@ -294,7 +294,7 @@ export const execute_workflow = createTool({
   description: 'Execute a workflow by ID with arguments and return its structured return value (from return_value). This is the recommended way to treat workflows as custom tools.',
   inputSchema: z.object({
     id: z.string().describe('The workflow ID to execute'),
-    args: z.any().optional().describe('Optional key-value arguments passed to the workflow as ctx.args'),
+    args: anyJsonObject.optional().describe('Optional key-value arguments passed to the workflow as ctx.args'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -357,7 +357,7 @@ export const run_automation = makeLocalTool(
   'Run a Stuard automation by its ID. The automation must exist in the local Stuards folder.',
   z.object({
     id: z.string().describe('The Stuard automation ID to run'),
-    input: z.any().optional().describe('Optional input payload passed as ctx.input inside the Stuard run'),
+    input: anyJsonValue.optional().describe('Optional input payload passed as ctx.input inside the Stuard run'),
   }),
   z.object({ ok: z.boolean().optional(), error: z.string().optional() }),
   undefined, // timeoutMs
@@ -379,8 +379,7 @@ export const invoke_workflow = createTool({
     'Invoke a workflow by ID with optional arguments. Use this to trigger workflows programmatically from the Stuard agent. Arguments are available inside the workflow as ctx.args.',
   inputSchema: z.object({
     id: z.string().describe('The workflow ID to invoke'),
-    args: z
-      .any()
+    args: anyJsonObject
       .optional()
       .describe('Optional key-value arguments passed to the workflow as ctx.args'),
     waitForCompletion: z

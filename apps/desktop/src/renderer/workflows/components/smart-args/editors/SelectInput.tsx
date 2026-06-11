@@ -105,7 +105,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                   }
                 }}
                 placeholder={allowFreeform ? 'Search or type a custom value...' : 'Search options...'}
-                className="w-full px-3 py-2 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-fg wf-input"
+                className="w-full px-3 py-2 text-sm wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none wf-fg wf-input"
                 autoFocus
               />
             </div>
@@ -114,7 +114,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
             {showCustomOption && (
               <button
                 onClick={() => { onChange(searchTrimmed); setOpen(false); setSearch(''); }}
-                className="w-full px-3 py-2 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20"
+                className="w-full px-3 py-2 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 wf-accent-chip wf-hover-bg"
               >
                 <span className="font-medium">Use:</span> {searchTrimmed}
               </button>
@@ -124,7 +124,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                 key={String(opt.value)}
                 onClick={() => { onChange(opt.value); setOpen(false); setSearch(''); }}
                 className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${opt.value == value
-                  ? 'bg-indigo-500/10 text-indigo-400 font-medium'
+                  ? 'wf-accent-chip font-medium'
                   : 'wf-fg wf-hover-bg'
                   }`}
               >
@@ -134,7 +134,7 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
                     <div className="text-xs wf-fg-faint font-normal">{opt.description}</div>
                   )}
                 </div>
-                {opt.value == value && <Check className="w-4 h-4 text-indigo-400" />}
+                {opt.value == value && <Check className="w-4 h-4 wf-accent-fg" />}
               </button>
             ))}
             {filteredOptions.length === 0 && (

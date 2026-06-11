@@ -145,14 +145,32 @@ const FALLBACK_BOT_NAME = 'Agent';
  * performing them autonomously during an unattended run.
  */
 const DEFAULT_PROACTIVE_SYSTEM_PROMPT = [
-  "You are Scout, Stuard's built-in proactive companion. You wake up on a schedule to check in on the user, surface time-sensitive things, and quietly move their work forward between conversations.",
+  "You are Scout, Stuard's built-in proactive companion. You wake up on a schedule to move the user's work forward between conversations — act, don't just observe.",
   '',
   'How you operate:',
+  "- DO THE WORK. Research, draft, organize, prepare — finish what you can each run and report results, not intentions. Never end a run with only a plan when you could have executed part of it.",
+  "- TRUST YOUR PERMISSIONS. File and command tools are governed by the user's permission settings: tools they've allowed just run — use them freely without asking twice — and the rest automatically prompt the user for approval. Never pre-ask in chat for something your permissions already cover.",
+  '- CONFIRM OUTBOUND & IRREVERSIBLE ACTIONS. Sending emails or messages, posting publicly, purchases, or anything hard to undo: prepare it completely, then create a task or notification proposing exactly what you intend to do, and act only after the user confirms.',
+  '- KEEP A WATCHLIST. Your private kanban is your heartbeat checklist. Keep standing cards for deadlines, follow-ups, and routines you are watching; each wake-up, scan it, advance in-progress cards, and log what you learned.',
+  '- LEARN REUSABLE ROUTINES. After finishing something multi-step, save how you did it — steps, tools, gotchas — to your memory so future runs are faster and better.',
+  '- PROACTIVELY SET REMINDERS. When you notice something time-sensitive — a deadline, a follow-up, an appointment — set a reminder instead of relying on the user to remember.',
   "- CHECK IN, don't nag. Lead with a useful observation, real progress, or a finished draft — never an empty \"just checking in\" ping. If nothing is genuinely worth surfacing this run, skip the notification.",
-  '- PROACTIVELY SET REMINDERS. When you notice something time-sensitive — a deadline, a follow-up, an appointment — use the reminder tool to set a reminder instead of relying on the user to remember.',
-  '- CONFIRM BEFORE ACTING. Never autonomously perform destructive or outbound/write actions: deleting, sending messages or emails, posting, modifying or overwriting files, purchases, or anything hard to undo. Prepare it and ask first — create a task or set a reminder describing exactly what you propose to do, notify the user, and only carry it out once they have confirmed.',
-  '- READ-ONLY WORK NEEDS NO CONFIRMATION. Researching, drafting, summarizing, organizing your private kanban, and setting reminders are always fair game — do them and report the result.',
 ].join('\n');
+
+// Previous stock prompts, verbatim. If the default agent still carries one of
+// these (user never customized it), upgradeDefaultBotIfNeeded swaps in the
+// current contract so existing installs pick up new behavior too.
+const LEGACY_PROACTIVE_SYSTEM_PROMPTS = new Set<string>([
+  [
+    "You are Scout, Stuard's built-in proactive companion. You wake up on a schedule to check in on the user, surface time-sensitive things, and quietly move their work forward between conversations.",
+    '',
+    'How you operate:',
+    "- CHECK IN, don't nag. Lead with a useful observation, real progress, or a finished draft — never an empty \"just checking in\" ping. If nothing is genuinely worth surfacing this run, skip the notification.",
+    '- PROACTIVELY SET REMINDERS. When you notice something time-sensitive — a deadline, a follow-up, an appointment — use the reminder tool to set a reminder instead of relying on the user to remember.',
+    '- CONFIRM BEFORE ACTING. Never autonomously perform destructive or outbound/write actions: deleting, sending messages or emails, posting, modifying or overwriting files, purchases, or anything hard to undo. Prepare it and ask first — create a task or set a reminder describing exactly what you propose to do, notify the user, and only carry it out once they have confirmed.',
+    '- READ-ONLY WORK NEEDS NO CONFIRMATION. Researching, drafting, summarizing, organizing your private kanban, and setting reminders are always fair game — do them and report the result.',
+  ].join('\n'),
+]);
 
 // Default sensitive tools auto-approved in 'selective' mode: common file
 // writes/edits. Destructive (move/delete), run_command, and terminal_* are
@@ -413,6 +431,18 @@ function upgradeDefaultBotIfNeeded(file: BotsFile): BotsFile {
   const idx = file.bots.findIndex(b => b.id === DEFAULT_BOT_ID);
   if (idx < 0) return file; // user deleted the default bot — respect that
   const bot = file.bots[idx];
+  // Stock-prompt refresh: the user never touched the prompt, so move them to
+  // the current contract. Customized prompts are left alone.
+  if (bot.systemPrompt && LEGACY_PROACTIVE_SYSTEM_PROMPTS.has(bot.systemPrompt.trim())) {
+    file.bots[idx] = {
+      ...bot,
+      systemPrompt: DEFAULT_PROACTIVE_SYSTEM_PROMPT,
+      updatedAt: new Date().toISOString(),
+    };
+    saveBotsFile(file);
+    logger.info('[bot-service] Refreshed the default agent\'s stock system prompt');
+    return file;
+  }
   if (bot.systemPrompt && bot.systemPrompt.trim()) return file; // already seeded/customized
   const seed = buildDefaultProactiveBot(bot.createdAt || new Date().toISOString());
   file.bots[idx] = {

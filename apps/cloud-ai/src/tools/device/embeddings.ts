@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { embed, embedMany } from 'ai';
 import { resolveEmbedder, cosineSimilarity } from '../../utils/embeddings';
+import { anyJsonObject } from './shared';
 
 export const embed_text = createTool({
   id: 'embed_text',
@@ -62,7 +63,7 @@ export const vector_similarity = createTool({
         z.object({
           id: z.string().describe('Unique identifier for this candidate'),
           vector: z.array(z.number()).describe('Embedding vector'),
-          metadata: z.any().optional().describe('Optional metadata to return with results'),
+          metadata: anyJsonObject.optional().describe('Optional metadata to return with results'),
         }),
       )
       .describe('List of candidate vectors to compare against'),

@@ -571,10 +571,16 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
               return { role: m.role, content: m.content };
             });
 
-            // Insert workflow context as a system message before the conversation
+            // Insert workflow context as a system message at the END of the
+            // history (just before the new user message), not the start: the
+            // schematic changes every turn, and placing it first invalidated
+            // the provider prompt cache for the entire conversation on every
+            // turn. With it last, [system prompt + stable history] stays a
+            // cacheable prefix. (Server-side lookup of this message uses
+            // .find(), so position doesn't matter functionally.)
             const messagesWithContext = [
-              { role: 'system', content: workflowContextText },
               ...conversationMessages.slice(0, -1), // All messages except the last user message
+              { role: 'system', content: workflowContextText },
               { role: 'user', content: userRequest } // The actual user request
             ];
 
@@ -854,8 +860,14 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
 
                   try {
                     const result = d.result;
+                    // Sub-workflow file edits (stuardFile) are saved to disk by
+                    // the tool itself — the canvas shows the MAIN workflow and
+                    // must NOT be overwritten with the sub-workflow document.
+                    if (result && result.stuardFile) {
+                      console.log('[useWorkflowChat] workflow_modify targeted sub-workflow, skipping canvas apply:', result.stuardFile);
+                    }
                     // Success - apply the workflow (tool returns 'workflow', not 'spec')
-                    if (result && result.ok === true && result.workflow) {
+                    else if (result && result.ok === true && result.workflow) {
                       let workflowValue: any = result.workflow;
                       if (typeof workflowValue === 'string') {
                         try { workflowValue = JSON.parse(workflowValue); } catch { }

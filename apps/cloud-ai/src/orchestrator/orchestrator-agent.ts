@@ -15,6 +15,7 @@ import {
   buildConversationBlock,
   buildProjectContextBlock,
   buildProjectModeSystemPrompt,
+  buildOrchestratorToolDatabaseSection,
   PROJECT_MODE_GUIDANCE,
   type ProjectContextPayload,
   type JournalEntryPayload,
@@ -149,6 +150,8 @@ export interface OrchestratorPromptOptions {
   retrievedContext?: ProjectRetrievedContextPayload | null;
   /** Active deep-research session — takes over the prompt like Project Mode. */
   activeResearch?: ResearchSessionView | null;
+  /** Live client bridge (desktop/VM) at request time — gates the browser-fallback guidance in Research Mode. */
+  browserConnected?: boolean;
   /** Compact Tab quick send: plain Q&A, no tools or delegation. */
   quickResponse?: boolean;
 }
@@ -181,6 +184,7 @@ function buildOrchestratorPrompt(
       conversationId: promptOptions.conversationId,
       enabledIntegrations,
       homeDir: DEFAULT_USER_HOME_DIR,
+      browserConnected: promptOptions.browserConnected,
     });
   }
 
@@ -215,6 +219,7 @@ function buildOrchestratorPrompt(
   const conversationBlock = buildConversationBlock(promptOptions.conversationId);
   const projectBlock = '';
   const projectModeIntroLine = '';
+  const toolDatabaseSection = buildOrchestratorToolDatabaseSection();
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
@@ -264,10 +269,12 @@ When you have multiple independent tasks (e.g. "check my email AND look up the w
 
 For quick, standalone operations that don't need a full subagent context:
 - Use \`run_sequential\` / \`run_parallel\` to batch multiple direct tool calls (see below)
-- Use search_tools + get_tool_schema + execute_tool to discover and run individual tools directly
-- Use web_search / scrape_url for quick research
-- Use ask_user when you need user input
-- Use search_past_conversations / get_conversation_context for memory
+- Use \`search_tools\` + \`get_tool_schema\` + \`execute_tool\` to discover and run tools from the database (pick category first — see below)
+- Use \`web_search\` / \`scrape_url\` for quick online research (facts/news/policies — not as a substitute for finding nearby places)
+- Use \`ask_user\` when you need user input
+- Use \`search_past_conversations\` / \`get_conversation_context\` for memory
+
+${toolDatabaseSection}
 
 ## Tool Batching — run_sequential / run_parallel
 
@@ -314,13 +321,14 @@ ${botSection}
 ## Rules
 
 1. **Act > Ask** — complete requests end-to-end, don't over-confirm
-2. **Delegate early** — if a task involves multiple file edits, browser steps, or API calls, delegate immediately
-3. **Parallelize** — pass multiple tasks in delegate when they don't depend on each other
-4. **Provide context** — pass conversation history and user preferences to subagents
-5. **Summarize results** — present subagent results clearly
-6. **Subagent questions** — ask_user when the user must decide; reply_to_subagent to unblock the subagent. Never finish a turn with a question still awaitingReply
-7. **Rich output** — chat_ui for structured data, <<path>> for media, ask_user for input. Visual over plain text.
-8. Warm, concise, actionable. Never expose internal IDs.
+2. **Database first** — specialized capabilities (Maps, device control, integrations, etc.) live in the tool database; pick the category and search before browser, web_search, or "I can't do that"
+3. **Delegate early** — if a task involves multiple file edits, browser steps, or API calls, delegate immediately
+4. **Parallelize** — pass multiple tasks in delegate when they don't depend on each other
+5. **Provide context** — pass conversation history and user preferences to subagents
+6. **Summarize results** — present subagent results clearly
+7. **Subagent questions** — ask_user when the user must decide; reply_to_subagent to unblock the subagent. Never finish a turn with a question still awaitingReply
+8. **Rich output** — chat_ui for structured data, <<path>> for media, ask_user for input. Visual over plain text.
+9. Warm, concise, actionable. Never expose internal IDs.
 
 **Formatting**: ==highlight== | **bold** | <<media path>> | $math$ or $$block math$$${skillLine}`;
 }

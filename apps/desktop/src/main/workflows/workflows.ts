@@ -1963,7 +1963,7 @@ export function workflows_getDeployStatus(id: string) {
   }
 }
 
-export function workflows_run(id: string, triggerId?: string, options?: { accessToken?: string }) {
+export function workflows_run(id: string, triggerId?: string, options?: { accessToken?: string; inputs?: Record<string, any> }) {
   console.log('[Workflows] workflows_run called with id:', id, 'triggerId:', triggerId || '(all)', 'hasToken:', !!options?.accessToken);
   try {
     const safe = safeFlowId(String(id || ''));
@@ -2044,8 +2044,15 @@ export function workflows_run(id: string, triggerId?: string, options?: { access
       sourceLabel: `Workflow: ${model.name || safe}`,
     };
 
+    // Trigger input params (e.g. from the slash-command composer) ride in as
+    // the engine payload so steps can reference {{input.x}} / {{args.x}}.
+    const inputs = options?.inputs && typeof options.inputs === 'object' && Object.keys(options.inputs).length > 0
+      ? options.inputs
+      : undefined;
+    const payload = inputs ? { args: inputs, input: inputs } : undefined;
+
     // Actually execute the workflow via stuards engine (has custom_ui support)
-    runStuardEngine(safe, undefined, engineCtx).then(() => {
+    runStuardEngine(safe, payload, engineCtx).then(() => {
       console.log('[Workflows] Execution completed:', safe);
       logFlow(safe, 'Run completed');
       emitFlowExecutionState(safe, false);

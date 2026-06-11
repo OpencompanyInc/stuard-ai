@@ -7,9 +7,15 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool } from '../bridge';
 
-const TensorSchema = z.union([
+// A scalar or an N-dimensional numeric tensor. Expressed as a few concrete
+// nesting levels (up to 4D) instead of `z.array(z.any())` so the schema stays
+// fully typed — strict providers like Gemini reject typeless array items.
+const TensorSchema: z.ZodTypeAny = z.union([
   z.number(),
-  z.array(z.any()),
+  z.array(z.number()),
+  z.array(z.array(z.number())),
+  z.array(z.array(z.array(z.number()))),
+  z.array(z.array(z.array(z.array(z.number())))),
 ]);
 
 const ResultSchema = z.object({
@@ -474,7 +480,11 @@ export const math_where = createTool({
   id: 'math_where',
   description: 'Conditional selection: returns x where condition is true, else y.',
   inputSchema: z.object({
-    condition: z.union([z.boolean(), z.array(z.any())]).describe('Condition(s)'),
+    condition: z.union([
+      z.boolean(),
+      z.array(z.boolean()),
+      z.array(z.array(z.boolean())),
+    ]).describe('Condition(s)'),
     x: TensorSchema.describe('Value(s) when true'),
     y: TensorSchema.describe('Value(s) when false'),
   }),
@@ -538,7 +548,7 @@ export const math_set_index = createTool({
   inputSchema: z.object({
     x: TensorSchema.describe('Input tensor'),
     index: z.number().int().describe('Index to set'),
-    value: z.any().describe('New value'),
+    value: TensorSchema.describe('New value (scalar or sub-tensor)'),
   }),
   outputSchema: ResultSchema,
   execute: async (inputData, context) => execLocalTool('math_set_index', inputData),

@@ -16,7 +16,22 @@ export interface UIBuilderCanvasRef {
   requestHtml: () => void;
   appendHtml: (html: string) => void;
   insertHtmlAtPoint: (html: string, point: { clientX: number; clientY: number }) => void;
+  /** Programmatically select an element by its path (e.g. from the breadcrumb). */
+  selectPath: (path: string | null) => void;
+  /** Select the parent of the currently-selected element. */
+  selectParent: () => void;
+  /** Duplicate the currently-selected element in place. */
+  duplicateSelected: () => void;
+  /** Move the currently-selected element up/down among its siblings. */
+  moveSelected: (direction: 'up' | 'down') => void;
   focus: () => void;
+}
+
+/** A single hop in the ancestor chain, used to render the selection breadcrumb. */
+export interface ElementAncestor {
+  path: string;
+  tagName: string;
+  label: string;
 }
 
 export interface SelectedElementInfo {
@@ -29,6 +44,12 @@ export interface SelectedElementInfo {
   rect: { x: number; y: number; width: number; height: number };
   styles: Record<string, string>;
   attributes: Record<string, string>;
+  /** Root → element ancestor chain (excludes the element itself), for breadcrumb navigation. */
+  ancestors?: ElementAncestor[];
+  /** True when this element can move earlier among its siblings. */
+  canMoveUp?: boolean;
+  /** True when this element can move later among its siblings. */
+  canMoveDown?: boolean;
 }
 
 interface UIBuilderCanvasProps {
@@ -51,6 +72,8 @@ interface UIBuilderCanvasProps {
   onSelectElement: (element: SelectedElementInfo | null) => void;
   onHoverElement: (path: string | null) => void;
   onHtmlChange?: (html: string) => void;
+  /** Called when the user ctrl/⌘+scrolls to zoom; lets the parent own zoom state. */
+  onZoomChange?: (zoom: number) => void;
 }
 
 export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasProps>(function UIBuilderCanvas({
@@ -73,6 +96,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   onSelectElement,
   onHoverElement,
   onHtmlChange,
+  onZoomChange,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -82,7 +106,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
 
   // Prebuilt assets (React UMD + Tailwind CSS) loaded from main process — no CDN
   const [prebuiltAssets, setPrebuiltAssets] = useState<{
-    reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string;
+    reactUmd?: string; reactDomUmd?: string; framerMotionUmd?: string; tailwindCss?: string; extraCss?: string; jitJs?: string;
   }>({});
   const assetsLoadedRef = useRef(false);
 
@@ -97,6 +121,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
           framerMotionUmd: res.framerMotionUmd,
           tailwindCss: res.tailwindCss,
           extraCss: res.extraCss,
+          jitJs: res.jitJs,
         });
       } else {
         console.warn('[UIBuilderCanvas] Failed to load prebuilt assets, iframe will use fallback');
@@ -110,8 +135,11 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   const safeCanvasWidth = Number.isFinite(canvasWidth) && canvasWidth > 0 ? canvasWidth : 1;
   const safeCanvasHeight = Number.isFinite(canvasHeight) && canvasHeight > 0 ? canvasHeight : 1;
 
-  const scaledCanvasWidth = safeCanvasWidth * zoom;
-  const scaledCanvasHeight = safeCanvasHeight * zoom;
+  // The window box renders at native size inside the stage; `zoom` magnifies the
+  // entire stage (so it's pannable via scroll) rather than just the iframe.
+  const scaledCanvasWidth = safeCanvasWidth;
+  const scaledCanvasHeight = safeCanvasHeight;
+  const stageScale = surfaceScale * zoom;
 
   const windowOffset = useMemo(() => {
     const m = typeof windowMargin === 'number' ? windowMargin : PREVIEW_WINDOW_MARGIN;
@@ -175,6 +203,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
   ${prebuiltAssets.framerMotionUmd ? `<script>${prebuiltAssets.framerMotionUmd}</script>` : ''}
   ${prebuiltAssets.tailwindCss ? `<style>${prebuiltAssets.tailwindCss}</style>` : '<script src="https://cdn.tailwindcss.com"></script>'}
   ${prebuiltAssets.extraCss ? `<style>${prebuiltAssets.extraCss}</style>` : ''}
+  ${prebuiltAssets.jitJs ? `<script>${prebuiltAssets.jitJs}</script>` : ''}
   <style>
     ::-webkit-scrollbar {
       width: 8px;
@@ -274,24 +303,75 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     [data-elements-path] {
       cursor: pointer !important;
     }
-    [data-elements-path]:hover {
-      outline: 2px dashed rgba(99, 102, 241, 0.6) !important;
+    [data-elements-path].ui-hovered {
+      outline: 2px dashed rgba(244, 63, 94, 0.55) !important;
       outline-offset: 1px;
     }
     [data-elements-path].ui-selected {
-      outline: 2px solid #6366f1 !important;
+      outline: 2px solid #f43f5e !important;
       outline-offset: 1px;
       cursor: move !important;
     }
-    [data-elements-path].ui-hovered {
-      outline: 2px dashed rgba(99, 102, 241, 0.6) !important;
-      outline-offset: 1px;
+    [data-elements-path].ui-editing {
+      outline: 2px solid #10b981 !important;
+      cursor: text !important;
     }
     [data-elements-path].ui-dragging {
-      opacity: 0.8;
+      opacity: 0.7;
       z-index: 9999 !important;
       position: relative;
     }
+    /* Floating tag label (devtools-style) */
+    .uib-label {
+      position: fixed;
+      z-index: 2147483646;
+      pointer-events: none;
+      font: 600 10px/1.4 'Segoe UI', system-ui, sans-serif;
+      padding: 1px 6px;
+      border-radius: 4px 4px 4px 0;
+      white-space: nowrap;
+      transform: translateY(-100%);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+    .uib-label-hover { background: rgba(244, 63, 94, 0.85); color: #fff; }
+    .uib-label-select { background: #f43f5e; color: #fff; }
+    /* Drop indicator line for inserts */
+    .uib-drop-line {
+      position: fixed;
+      z-index: 2147483645;
+      pointer-events: none;
+      background: #f43f5e;
+      box-shadow: 0 0 0 1px rgba(244,63,94,0.4);
+      border-radius: 2px;
+    }
+    /* Floating selection toolbar */
+    .uib-toolbar {
+      position: fixed;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      padding: 2px;
+      background: #1e1e2e;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+      transform: translateY(-100%);
+    }
+    .uib-toolbar button {
+      all: unset;
+      cursor: pointer;
+      width: 26px; height: 24px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 5px;
+      color: #cbd5e1;
+      font-size: 13px;
+      transition: background 0.12s, color 0.12s;
+    }
+    .uib-toolbar button:hover { background: rgba(255,255,255,0.12); color: #fff; }
+    .uib-toolbar button:disabled { opacity: 0.3; cursor: default; }
+    .uib-toolbar button.danger:hover { background: rgba(239,68,68,0.25); color: #fca5a5; }
+    .uib-toolbar .sep { width: 1px; height: 14px; background: rgba(255,255,255,0.12); margin: 0 2px; }
     ` : ''}
 
     ${showGrid ? `
@@ -357,7 +437,7 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       moveTo: (x, y) => {},
       center: () => {},
       minimize: () => {},
-      getScreenInfo: async () => ({ width: 1920, height: 1080, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
+      getScreenInfo: async () => ({ width: 1920, height: 1080, scaleFactor: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
     };
     window.$stuard = {
       tool: window.stuard.callTool,
@@ -441,8 +521,12 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       // Remove designer data attributes and classes
       node.querySelectorAll('[data-elements-path]').forEach(el => {
         el.removeAttribute('data-elements-path');
-        el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+        el.removeAttribute('contenteditable');
+        el.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging', 'ui-editing');
+        if (el.getAttribute && el.getAttribute('class') === '') el.removeAttribute('class');
       });
+      // Strip designer overlay chrome if it ever leaked into the tree
+      node.querySelectorAll('.uib-toolbar, .uib-label, .uib-drop-line').forEach(el => el.remove());
       // Unwrap nested .stuard-root divs (corruption artifact)
       node.querySelectorAll('.stuard-root').forEach(el => {
         while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
@@ -459,6 +543,33 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       const clone = root.cloneNode(true);
       sanitizeClone(clone);
       window.parent.postMessage({ type: 'html', html: clone.innerHTML }, '*');
+    }
+
+    // Human-friendly label for an element (used by breadcrumb + floating tags)
+    function getElementLabel(el) {
+      if (!el) return '';
+      let label = el.tagName.toLowerCase();
+      if (el.id) return label + '#' + el.id;
+      const cls = (typeof el.className === 'string' ? el.className : (el.getAttribute && el.getAttribute('class')) || '')
+        .split(/\\s+/).filter(Boolean)
+        .filter(c => !c.startsWith('ui-'))[0];
+      if (cls) label += '.' + cls;
+      const page = el.getAttribute && el.getAttribute('data-page');
+      if (page) label += ' · ' + page;
+      return label;
+    }
+
+    // Root → element ancestor chain (excludes element itself) for breadcrumb
+    function getAncestors(el) {
+      const root = getDesignerRoot();
+      const chain = [];
+      let cur = el && el.parentElement;
+      while (cur && cur !== root && cur !== document.body) {
+        const p = getElementPath(cur);
+        if (p) chain.unshift({ path: p, tagName: cur.tagName.toLowerCase(), label: getElementLabel(cur) });
+        cur = cur.parentElement;
+      }
+      return chain;
     }
 
     function getElementInfo(el) {
@@ -483,6 +594,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       } else if (el.getAttribute) {
         className = el.getAttribute('class') || '';
       }
+      // Sibling position (ignoring designer-only nodes) for move affordances
+      const siblings = el.parentElement ? Array.from(el.parentElement.children).filter(c => c.nodeType === 1) : [];
+      const idx = siblings.indexOf(el);
       return {
         path: getElementPath(el),
         tagName: el.tagName.toLowerCase(),
@@ -493,6 +607,9 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
         styles,
         attributes,
+        ancestors: getAncestors(el),
+        canMoveUp: idx > 0,
+        canMoveDown: idx >= 0 && idx < siblings.length - 1,
       };
     }
 
@@ -534,9 +651,166 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     let dragStartY = 0;
     let elementStartX = 0;
     let elementStartY = 0;
+    let editingElement = null;
+
+    // ─── Overlay chrome (labels + selection toolbar) ──────────────────────────
+    const hoverLabel = document.createElement('div');
+    hoverLabel.className = 'uib-label uib-label-hover';
+    hoverLabel.style.display = 'none';
+    const selectLabel = document.createElement('div');
+    selectLabel.className = 'uib-label uib-label-select';
+    selectLabel.style.display = 'none';
+    const toolbar = document.createElement('div');
+    toolbar.className = 'uib-toolbar';
+    toolbar.style.display = 'none';
+    const TB_BTNS = [
+      { act: 'parent', title: 'Select parent', svg: '⌃' },
+      { act: 'up', title: 'Move up', svg: '↑' },
+      { act: 'down', title: 'Move down', svg: '↓' },
+      { act: 'dup', title: 'Duplicate', svg: '⧉' },
+      { sep: true },
+      { act: 'delete', title: 'Delete', svg: '🗑', danger: true },
+    ];
+    TB_BTNS.forEach(b => {
+      if (b.sep) { const s = document.createElement('span'); s.className = 'sep'; toolbar.appendChild(s); return; }
+      const btn = document.createElement('button');
+      btn.textContent = b.svg;
+      btn.title = b.title;
+      btn.setAttribute('data-act', b.act);
+      if (b.danger) btn.className = 'danger';
+      btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+      btn.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const el = selectedPath ? findElementByPath(selectedPath) : null;
+        if (!el) return;
+        if (b.act === 'parent') selectParentEl(el);
+        else if (b.act === 'up') moveEl(el, 'up');
+        else if (b.act === 'down') moveEl(el, 'down');
+        else if (b.act === 'dup') duplicateEl(el);
+        else if (b.act === 'delete') deleteEl(el);
+      });
+      toolbar.appendChild(btn);
+    });
+    function ensureChrome() {
+      if (!hoverLabel.isConnected) document.body.appendChild(hoverLabel);
+      if (!selectLabel.isConnected) document.body.appendChild(selectLabel);
+      if (!toolbar.isConnected) document.body.appendChild(toolbar);
+    }
+    function positionLabel(label, el) {
+      if (!el) { label.style.display = 'none'; return; }
+      const r = el.getBoundingClientRect();
+      label.style.display = 'block';
+      label.style.left = Math.max(2, r.left) + 'px';
+      label.style.top = Math.max(12, r.top) + 'px';
+      label.textContent = getElementLabel(el);
+    }
+    function positionToolbar(el) {
+      if (!el) { toolbar.style.display = 'none'; return; }
+      const r = el.getBoundingClientRect();
+      ensureChrome();
+      // enable/disable move buttons by sibling position
+      const sibs = el.parentElement ? Array.from(el.parentElement.children).filter(c => c.nodeType === 1) : [];
+      const idx = sibs.indexOf(el);
+      toolbar.querySelector('[data-act="up"]').disabled = !(idx > 0);
+      toolbar.querySelector('[data-act="down"]').disabled = !(idx >= 0 && idx < sibs.length - 1);
+      toolbar.querySelector('[data-act="parent"]').disabled = !(el.parentElement && el.parentElement !== getDesignerRoot());
+      toolbar.style.display = 'flex';
+      const top = r.top > 30 ? r.top - 4 : r.bottom + 28;
+      toolbar.style.left = Math.max(2, r.right - toolbar.offsetWidth) + 'px';
+      toolbar.style.top = top + 'px';
+    }
+    function refreshOverlays() {
+      ensureChrome();
+      const sel = selectedPath ? findElementByPath(selectedPath) : null;
+      positionLabel(selectLabel, sel);
+      positionToolbar(sel);
+      const hov = (hoveredPath && hoveredPath !== selectedPath) ? findElementByPath(hoveredPath) : null;
+      positionLabel(hoverLabel, hov);
+    }
+
+    // Apply selection visuals only (no message to parent) — used when parent drives selection
+    function applySelection(el) {
+      document.querySelectorAll('.ui-selected').forEach(n => n.classList.remove('ui-selected'));
+      if (el) {
+        el.classList.add('ui-selected');
+        el.classList.remove('ui-hovered');
+        selectedPath = el.getAttribute('data-elements-path');
+      } else {
+        selectedPath = null;
+      }
+      refreshOverlays();
+    }
+    // Select + notify parent — used for in-iframe interactions
+    function emitSelect(el) {
+      applySelection(el);
+      window.parent.postMessage({ type: 'select', element: el ? getElementInfo(el) : null }, '*');
+    }
+
+    // ─── Element operations ───────────────────────────────────────────────────
+    function selectParentEl(el) {
+      const parent = el && el.parentElement;
+      if (parent && parent !== getDesignerRoot() && parent !== document.body) emitSelect(parent);
+    }
+    function moveEl(el, dir) {
+      const parent = el && el.parentElement;
+      if (!parent) return;
+      if (dir === 'up' && el.previousElementSibling) {
+        parent.insertBefore(el, el.previousElementSibling);
+      } else if (dir === 'down' && el.nextElementSibling) {
+        parent.insertBefore(el.nextElementSibling, el);
+      } else return;
+      initializeElements();
+      emitSelect(el);
+      emitHtmlUpdate();
+    }
+    function duplicateEl(el) {
+      if (!el || !el.parentElement) return;
+      const clone = el.cloneNode(true);
+      clone.classList.remove('ui-selected', 'ui-hovered', 'ui-dragging');
+      el.parentElement.insertBefore(clone, el.nextSibling);
+      initializeElements();
+      emitSelect(clone);
+      emitHtmlUpdate();
+    }
+    function deleteEl(el) {
+      if (!el || el === document.body) return;
+      el.remove();
+      emitSelect(null);
+      emitHtmlUpdate();
+    }
+    function startInlineEdit(el) {
+      if (!el) return;
+      // Only allow inline edit for leaf text-ish nodes
+      const hasOnlyText = el.childNodes.length === 0 || (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3);
+      if (!hasOnlyText) return;
+      editingElement = el;
+      el.classList.add('ui-editing');
+      el.setAttribute('contenteditable', 'true');
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selapi = window.getSelection();
+      selapi.removeAllRanges();
+      selapi.addRange(range);
+      toolbar.style.display = 'none';
+    }
+    function endInlineEdit() {
+      if (!editingElement) return;
+      const el = editingElement;
+      editingElement = null;
+      el.classList.remove('ui-editing');
+      el.removeAttribute('contenteditable');
+      emitHtmlUpdate();
+      window.parent.postMessage({ type: 'elementUpdated', element: getElementInfo(el) }, '*');
+      refreshOverlays();
+    }
+
+    window.addEventListener('scroll', refreshOverlays, true);
 
     document.body.addEventListener('mousedown', (e) => {
       window.focus();
+      if (e.target.closest('.uib-toolbar')) return;
+      if (editingElement) return;
       const target = e.target.closest('[data-elements-path]');
       if (target && target.classList.contains('ui-selected')) {
         isDragging = true;
@@ -568,14 +842,25 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         const snappedX = Math.round(newX / gridSize) * gridSize;
         const snappedY = Math.round(newY / gridSize) * gridSize;
         draggedElement.style.transform = 'translate(' + snappedX + 'px, ' + snappedY + 'px)';
+        refreshOverlays();
         return;
       }
+      if (e.target.closest('.uib-toolbar') || e.target.closest('.uib-label')) return;
       const target = e.target.closest('[data-elements-path]');
       const path = target ? target.getAttribute('data-elements-path') : null;
       if (path !== hoveredPath) {
         hoveredPath = path;
+        document.querySelectorAll('.ui-hovered').forEach(n => n.classList.remove('ui-hovered'));
+        if (target && path !== selectedPath) target.classList.add('ui-hovered');
         window.parent.postMessage({ type: 'hover', path }, '*');
+        positionLabel(hoverLabel, (path && path !== selectedPath) ? target : null);
       }
+    });
+
+    document.body.addEventListener('mouseleave', () => {
+      hoveredPath = null;
+      document.querySelectorAll('.ui-hovered').forEach(n => n.classList.remove('ui-hovered'));
+      hoverLabel.style.display = 'none';
     });
 
     document.body.addEventListener('mouseup', (e) => {
@@ -586,28 +871,38 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         window.parent.postMessage({ type: 'positionChanged' }, '*');
         isDragging = false;
         draggedElement = null;
+        refreshOverlays();
       }
     });
 
     document.addEventListener('keydown', (e) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPath) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
-          return;
-        }
-        const el = findElementByPath(selectedPath);
-        if (el && el !== document.body) {
-          e.preventDefault();
-          el.remove();
-          selectedPath = null;
-          document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-          window.parent.postMessage({ type: 'select', element: null }, '*');
-          emitHtmlUpdate();
-        }
+      // Inline edit: commit on Enter (without shift), cancel on Escape
+      if (editingElement) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); endInlineEdit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); endInlineEdit(); }
+        return;
+      }
+      const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+      if (typing) return;
+      const el = selectedPath ? findElementByPath(selectedPath) : null;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && el && el !== document.body) {
+        e.preventDefault();
+        deleteEl(el);
+      } else if (e.key === 'Escape') {
+        emitSelect(null);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && el) {
+        e.preventDefault();
+        duplicateEl(el);
+      } else if (e.key === 'Enter' && el) {
+        e.preventDefault();
+        startInlineEdit(el);
       }
     });
 
     document.body.addEventListener('click', (e) => {
       window.focus();
+      if (e.target.closest('.uib-toolbar')) return;
+      if (editingElement) return;
       if (isDragging) {
         isDragging = false;
         return;
@@ -615,40 +910,32 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
       e.preventDefault();
       e.stopPropagation();
       const target = e.target.closest('[data-elements-path]');
-      if (target) {
-        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-        target.classList.add('ui-selected');
-        selectedPath = target.getAttribute('data-elements-path');
-        const info = getElementInfo(target);
-        window.parent.postMessage({ type: 'select', element: info }, '*');
-      } else {
-        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-        selectedPath = null;
-        window.parent.postMessage({ type: 'select', element: null }, '*');
-      }
+      emitSelect(target || null);
+    }, true);
+
+    document.body.addEventListener('dblclick', (e) => {
+      if (editingElement) return;
+      const target = e.target.closest('[data-elements-path]');
+      if (target) { e.preventDefault(); e.stopPropagation(); startInlineEdit(target); }
     }, true);
 
     window.addEventListener('message', (e) => {
       if (e.data.type === 'setSelected') {
-        document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-        if (e.data.path) {
-          const el = findElementByPath(e.data.path);
-          if (el) {
-            el.classList.add('ui-selected');
-            selectedPath = e.data.path;
-          }
-        }
+        const el = e.data.path ? findElementByPath(e.data.path) : null;
+        if (e.data.emit) emitSelect(el || null);
+        else applySelection(el || null);
+      } else if (e.data.type === 'selectParent') {
+        const el = selectedPath ? findElementByPath(selectedPath) : null;
+        if (el) selectParentEl(el);
+      } else if (e.data.type === 'duplicateSelected') {
+        const el = selectedPath ? findElementByPath(selectedPath) : null;
+        if (el) duplicateEl(el);
+      } else if (e.data.type === 'moveSelected') {
+        const el = selectedPath ? findElementByPath(selectedPath) : null;
+        if (el) moveEl(el, e.data.direction === 'down' ? 'down' : 'up');
       } else if (e.data.type === 'deleteSelected') {
-        if (selectedPath) {
-          const el = findElementByPath(selectedPath);
-          if (el && el !== document.body) {
-            el.remove();
-            selectedPath = null;
-            document.querySelectorAll('.ui-selected').forEach(el => el.classList.remove('ui-selected'));
-            window.parent.postMessage({ type: 'select', element: null }, '*');
-            emitHtmlUpdate();
-          }
-        }
+        const el = selectedPath ? findElementByPath(selectedPath) : null;
+        if (el && el !== document.body) deleteEl(el);
       } else if (e.data.type === 'updateElement') {
         const el = findElementByPath(e.data.path);
         if (el) {
@@ -675,8 +962,10 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
             });
           }
           initializeElements();
+          selectedPath = el.getAttribute('data-elements-path');
           const info = getElementInfo(el);
           window.parent.postMessage({ type: 'elementUpdated', element: info }, '*');
+          refreshOverlays();
         }
       } else if (e.data.type === 'getHtml') {
         emitHtmlUpdate();
@@ -810,6 +1099,18 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
         iframeRef.current.contentWindow.postMessage({ type: 'insertHtmlAtPoint', html, point: { x, y } }, '*');
       }
     },
+    selectPath: (path: string | null) => {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'setSelected', path, emit: true }, '*');
+    },
+    selectParent: () => {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'selectParent' }, '*');
+    },
+    duplicateSelected: () => {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'duplicateSelected' }, '*');
+    },
+    moveSelected: (direction: 'up' | 'down') => {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'moveSelected', direction }, '*');
+    },
     focus: () => {
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.focus();
@@ -911,72 +1212,79 @@ export const UIBuilderCanvas = forwardRef<UIBuilderCanvasRef, UIBuilderCanvasPro
     return () => observer.disconnect();
   }, []);
 
+  // Ctrl/⌘ + wheel to zoom (parent owns the zoom value)
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (!onZoomChange) return;
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const next = zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+    onZoomChange(Math.max(0.25, Math.min(3, Math.round(next * 100) / 100)));
+  }, [zoom, onZoomChange]);
+
   return (
     <div
       ref={containerRef}
-      className="w-full h-full flex-1 min-w-0 min-h-0 overflow-hidden relative uib-surface-2"
+      className="w-full h-full flex-1 min-w-0 min-h-0 overflow-auto relative uib-surface-2 flex"
+      onWheel={handleWheel}
     >
-      <div className="w-full h-full flex items-center justify-center p-3">
+      {/* margin:auto centers when content fits and degrades gracefully (no clipping) when it overflows → pannable */}
+      <div
+        className="m-auto p-3"
+        style={{
+          width: PREVIEW_SURFACE_WIDTH * stageScale + 24,
+          height: PREVIEW_SURFACE_HEIGHT * stageScale + 24,
+        }}
+      >
         <div
-          className="relative flex-shrink-0"
+          className="relative uib-surface rounded-xl border uib-border shadow-inner overflow-hidden"
           style={{
-            width: PREVIEW_SURFACE_WIDTH * surfaceScale,
-            height: PREVIEW_SURFACE_HEIGHT * surfaceScale,
+            width: PREVIEW_SURFACE_WIDTH,
+            height: PREVIEW_SURFACE_HEIGHT,
+            transform: `scale(${stageScale})`,
+            transformOrigin: 'top left',
           }}
         >
           <div
-            className="relative uib-surface rounded-xl border uib-border shadow-inner overflow-hidden"
+            className="absolute inset-0 pointer-events-none"
             style={{
-              width: PREVIEW_SURFACE_WIDTH,
-              height: PREVIEW_SURFACE_HEIGHT,
-              transform: `scale(${surfaceScale})`,
-              transformOrigin: 'top left',
+              backgroundImage:
+                'linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)',
+              backgroundSize: '32px 32px',
+            }}
+          />
+
+          <div className="absolute top-3 right-3 px-2 py-1 rounded-md uib-surface text-[10px] font-mono uib-fg-muted border uib-border z-10">
+            screen {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
+          </div>
+
+          {/* The rendered custom UI window */}
+          <div
+            className="absolute rounded-lg shadow-2xl overflow-hidden border uib-border"
+            style={{
+              left: windowOffset.x,
+              top: windowOffset.y,
+              width: scaledCanvasWidth,
+              height: scaledCanvasHeight,
+              background: backgroundColor || '#fff',
+              borderRadius: borderRadiusProp > 0 ? borderRadiusProp : undefined,
             }}
           >
-            <div
-              className="absolute inset-0 pointer-events-none"
+            <iframe
+              ref={iframeRef}
+              className="border-0 block"
               style={{
-                backgroundImage:
-                  'linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)',
-                backgroundSize: '32px 32px',
+                width: safeCanvasWidth,
+                height: safeCanvasHeight,
               }}
+              sandbox="allow-scripts allow-same-origin"
+              title="UI Preview"
             />
 
-            <div className="absolute top-3 right-3 px-2 py-1 rounded-md uib-surface text-[10px] font-mono uib-fg-muted border uib-border z-10">
-              preview surface {PREVIEW_SURFACE_WIDTH}×{PREVIEW_SURFACE_HEIGHT}
-            </div>
-
-            {/* The rendered custom UI window */}
-            <div
-              className="absolute rounded-lg shadow-2xl overflow-hidden border uib-border"
-              style={{
-                left: windowOffset.x,
-                top: windowOffset.y,
-                width: scaledCanvasWidth,
-                height: scaledCanvasHeight,
-                background: backgroundColor || '#fff',
-                borderRadius: borderRadiusProp > 0 ? borderRadiusProp * zoom : undefined,
-              }}
-            >
-              <iframe
-                ref={iframeRef}
-                className="border-0 block"
-                style={{
-                  width: safeCanvasWidth,
-                  height: safeCanvasHeight,
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'top left',
-                }}
-                sandbox="allow-scripts allow-same-origin"
-                title="UI Preview"
-              />
-
-              {!iframeReady && (
-                <div className="absolute inset-0 uib-surface flex items-center justify-center">
-                  <div className="uib-fg-faint text-sm">Loading preview...</div>
-                </div>
-              )}
-            </div>
+            {!iframeReady && (
+              <div className="absolute inset-0 uib-surface flex items-center justify-center">
+                <div className="uib-fg-faint text-sm">Loading preview...</div>
+              </div>
+            )}
           </div>
         </div>
       </div>

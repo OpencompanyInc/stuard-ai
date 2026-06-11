@@ -40,8 +40,6 @@ export type CustomUiHtmlOptions = {
   transparentBg: boolean;
   initScript?: string;
   component?: string;
-  pages?: Record<string, any>;
-  startPage?: string;
   backgroundType?: string;
   backgroundColor?: string;
   gradient?: any;

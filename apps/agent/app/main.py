@@ -6,6 +6,21 @@ import warnings
 warnings.filterwarnings("ignore", message=r".*protected namespace.*", category=UserWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# Set Windows DPI awareness for the WHOLE process before anything touches
+# coordinate APIs. Otherwise pyautogui / GetCursorPos / GetWindowRect return
+# DPI-virtualized (logical) coords until some screenshot path calls
+# SetProcessDPIAware mid-session — silently shifting the coordinate space of
+# every position tool. Electron-side consumers (custom_ui moveTo/getScreenInfo,
+# mousePointToElectronPoint) assume physical pixels throughout.
+try:
+    from .tools.cursor_overlay import _set_process_dpi_aware
+except Exception:
+    try:
+        from app.tools.cursor_overlay import _set_process_dpi_aware
+    except Exception:
+        from tools.cursor_overlay import _set_process_dpi_aware
+_set_process_dpi_aware()
+
 import json
 import os
 import sys

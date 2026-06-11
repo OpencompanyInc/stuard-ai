@@ -216,7 +216,7 @@ function SidebarItem({ id, label, icon: Icon, current, onClick }: { id: string; 
     <button
       type="button"
       className={clsx(
-        "dashboard-sidebar-item w-full flex items-center gap-2 px-2.5 py-1.5 h-8 text-[13px] font-medium leading-5",
+        "dashboard-sidebar-item w-full flex items-center gap-2.5 px-3 py-2 min-h-[36px] text-[13px] font-medium leading-5",
         active && "is-active"
       )}
       onClick={() => onClick(id)}
@@ -1505,7 +1505,7 @@ function DashboardApp() {
         <div className="drag absolute top-0 left-0 right-0 h-10 z-50" />
         <div className="flex h-full gap-3 p-3 pt-5">
         {/* Sidebar */}
-        <aside className="dashboard-sidebar shrink-0 flex flex-col gap-3 relative z-20">
+        <aside className="dashboard-sidebar shrink-0 h-full min-h-0 flex flex-col gap-3 relative z-20">
           <div className="dashboard-sidebar-brand shrink-0 select-none">
             <div className="dashboard-sidebar-brand-glow" aria-hidden="true" />
             <div className="min-w-0 relative z-[1] flex flex-col gap-0.5">

@@ -103,6 +103,8 @@ function toVmBotPayload(bot: Bot, config: BotConfig): Record<string, any> {
       modelConfig: getChatModelsSettings(),
       instructions: composeInstructions(bot, config),
       allowedTools: Array.isArray(config.allowedTools) ? config.allowedTools : [],
+      permissionMode: config.permissionMode,
+      autoApproveTools: Array.isArray(config.autoApproveTools) ? config.autoApproveTools : [],
       notificationChannels: Array.isArray(config.notificationChannels) ? config.notificationChannels : ['app'],
       memoryEnabled: config.memoryEnabled !== false,
       skillIds: config.skillIds,

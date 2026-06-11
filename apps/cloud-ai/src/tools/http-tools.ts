@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge } from './bridge';
+import { anyJsonValue } from './schema-utils';
 
 export const http_request = createTool({
   id: 'http_request',
@@ -30,7 +31,7 @@ export const http_request = createTool({
 
     body: z.string().optional().describe('Raw request body string'),
     form: z.record(z.string(), z.string()).optional().describe('Form data (application/x-www-form-urlencoded)'),
-    json_body: z.any().optional().describe('JSON body (sent as application/json)'),
+    json_body: anyJsonValue.optional().describe('JSON body (sent as application/json)'),
 
     multipart: z.record(z.string(), z.any()).optional().describe('Multipart fields (text fields) for multipart/form-data'),
     files: z

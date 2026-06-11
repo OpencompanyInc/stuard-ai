@@ -10,6 +10,9 @@ type WakewordConfig = {
   triggerCount: number;
   weightsPath: string;
   wakewordDir: string;
+  /** Onboarding practice session — detections carry practice:true so the app
+   *  shows feedback but never starts a real voice session. */
+  practice: boolean;
 };
 
 let wakewordProcess: ChildProcessWithoutNullStreams | null = null;
@@ -56,6 +59,7 @@ function buildConfig(args: any): WakewordConfig {
     triggerCount: Math.round(clampNumber(args?.triggerCount ?? args?.trigger_count ?? args?.['trigger-count'], 8, 1, 25)),
     weightsPath,
     wakewordDir,
+    practice: Boolean(args?.practice),
   };
 }
 
@@ -66,6 +70,7 @@ function configKey(config: WakewordConfig): string {
     triggerCount: config.triggerCount,
     weightsPath: path.resolve(config.weightsPath),
     wakewordDir: path.resolve(config.wakewordDir),
+    practice: config.practice,
   });
 }
 
@@ -168,6 +173,7 @@ export async function execWakewordStart(args: any): Promise<any> {
           line: text,
           sensitivity: config.sensitivity,
           triggerCount: config.triggerCount,
+          practice: config.practice,
         });
       }
     }

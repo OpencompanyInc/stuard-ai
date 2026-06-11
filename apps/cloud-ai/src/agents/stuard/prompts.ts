@@ -320,6 +320,87 @@ function formatJournalTs(ts: string): string {
   return String(ts || '').slice(0, 10);
 }
 
+/** One-line hints for orchestrator category selection before search_tools. */
+const ORCHESTRATOR_CATEGORY_HINTS: Record<string, string> = {
+  Maps: 'nearest places, drive time/ETA, hours/phone/website — maps_search_places, maps_distance_matrix, maps_place_details, maps_static_map',
+  Search: 'web research — web_search, scrape_url',
+  System: 'brightness, volume, Bluetooth, battery, power, wallpaper',
+  Desktop: 'window focus, move, resize',
+  GUI: 'UI overlays, notifications, custom chat UI',
+  Media: 'convert/trim/probe audio & video, extract frames, TTS',
+  Google: 'Gmail, Calendar, Drive, Sheets, Docs, Tasks',
+  Outlook: 'Outlook mail & calendar',
+  GitHub: 'repos, issues, PRs, branches, actions',
+  X: 'tweets, timelines, users, DMs',
+  Discord: 'Discord bot operations',
+  Reddit: 'subreddits, posts, comments',
+  Telnyx: 'SMS, voice calls',
+  WhatsApp: 'WhatsApp messaging',
+  MetaSocial: 'Facebook, Instagram, Threads',
+  Productivity: 'tasks, reminders, to-dos',
+  FileSystem: 'read/write/list files, file edits',
+  FileSearch: 'semantic file search',
+  VM: 'cloud VM file transfers, commands, headless browser',
+  Workflow: 'workflow nodes and automation primitives',
+  AI: 'image generation, media analysis, inference',
+  Research: 'deep research mode tools',
+  Memory: 'long-term memory read/write',
+  Projects: 'project CRUD, journal, scoped memory',
+  Knowledge: 'knowledge base operations',
+  Integrations: 'HTTP requests, generic API calls',
+  YouTube: 'video metadata',
+  Notion: 'Notion pages and databases',
+};
+
+/**
+ * Tool-database guidance for the orchestrator. Maps live in the registry —
+ * not loaded natively — so the model picks the right category before searching.
+ */
+export function buildOrchestratorToolDatabaseSection(): string {
+  const categories = getToolCategories();
+  const sortedCats = Array.from(categories.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+  const categoryLines = sortedCats.map(([cat, tools]) => {
+    const hint = ORCHESTRATOR_CATEGORY_HINTS[cat];
+    const count = tools.length;
+    return hint ? `- **${cat}** (${count}) — ${hint}` : `- **${cat}** (${count})`;
+  }).join('\n');
+
+  return `## Tool database — discover on demand
+
+You have **search_tools**, **get_tool_schema**, and **execute_tool**. 180+ specialized tools live in the database — they are NOT loaded by default. When a request needs one, **pick the category first**, then search — never guess blindly or ask the user to do it manually.
+
+1. Match the request to a **category** from the capability map or category list below
+2. \`search_tools({ query: "<focused need>", category: "<Category>" })\` — always pass a specific query; add \`category\` to narrow results
+3. \`get_tool_schema({ tool_name })\` — required before execute_tool; never guess arguments
+4. \`execute_tool({ tool_name, args })\` — run the tool
+
+Chain with \`run_sequential\` when steps depend on each other (e.g. search → schema → execute).
+
+### Capability → category (search here first)
+
+| When the user asks about… | Category | Typical tools |
+|---|---|---|
+| Nearest/closest/near me, drive time, ETA, business hours | **Maps** | maps_search_places → maps_distance_matrix → maps_place_details |
+| Online facts, news, policies (not place-finding) | **Search** | web_search, scrape_url |
+| Screen brightness, volume, Bluetooth, battery | **System** / **Desktop** | (search within category) |
+| Gmail, Calendar, Drive | **Google** | gmail_*, calendar_*, drive_* |
+| GitHub repos, issues, PRs | **GitHub** | github_* |
+| SMS, voice calls | **Telnyx** | telnyx_* |
+| X/Twitter | **X** | x_* |
+| Reminders, to-dos | **Productivity** | task_* |
+| Audio/video convert or trim | **Media** | ffmpeg_* |
+
+**Maps flow** (user gives an address): search **Maps** for \`maps_search_places\` with their location in the query → \`maps_distance_matrix\` to rank by drive time → \`maps_place_details\` for hours/phone on top hits.
+
+✗ Don't open Google Maps in a browser for place-finding — search category **Maps**.
+✗ Don't say "I can't do that" without searching the database first.
+
+### Registered categories
+
+${categoryLines}`;
+}
+
 /**
  * Static guidance for entering/exiting Project Mode. Injected into the
  * orchestrator prompt when no project is currently active — so the AI knows
@@ -385,6 +466,8 @@ export function buildProjectModeSystemPrompt(
       }).join(', ')
     : '';
 
+  const toolDatabaseSection = buildOrchestratorToolDatabaseSection();
+
   return `You are Stuard in **Project Mode**, working inside the user's project "${project.name}". The project's timeline, notes, tasks, and attached files are all within reach — use them so every session picks up exactly where the last one ended.
 
 **Date/Time**: ${now}
@@ -445,7 +528,9 @@ For heavyweight execution, hand off via \`delegate\` (tasks array — multiple e
 | vm | Cloud VM operations |
 | google${OUTLOOK_INTEGRATION_ENABLED ? ' / outlook' : ''} / github${META_INTEGRATION_ENABLED ? ' / meta' : ''}${WHATSAPP_INTEGRATION_ENABLED ? ' / whatsapp' : ''} / telnyx${REDDIT_INTEGRATION_ENABLED ? ' / reddit' : ''}${DISCORD_INTEGRATION_ENABLED ? ' / discord' : ''} / x | Connected integrations |
 
-Default is **act yourself with the native tools above**. For one-off tools outside this toolbelt: \`search_tools\` → \`get_tool_schema\` → \`execute_tool\`.
+Default is **act yourself with the native tools above**. For specialized tools in the database, pick a category first — see below.
+
+${toolDatabaseSection}
 
 ## Visuals & UI
 

@@ -54,6 +54,8 @@ export interface VMBotConfig {
   modelConfig?: any;
   instructions: string;        // composed: identity + facts + focus, built on desktop
   allowedTools: string[];
+  permissionMode?: 'auto' | 'selective' | 'manual';
+  autoApproveTools?: string[];
   notificationChannels: string[];
   memoryEnabled: boolean;
   skillIds?: string[];         // undefined = inherit all globally-active
@@ -415,6 +417,8 @@ export class VMBotScheduler {
             config: {
               instructions: bot.config.instructions || '',
               allowedTools: bot.config.allowedTools || [],
+              permissionMode: bot.config.permissionMode || 'selective',
+              autoApproveTools: bot.config.autoApproveTools || [],
               modelMode: bot.config.modelMode || 'balanced',
               modelId: bot.config.modelId,
               modelConfig: bot.config.modelConfig,
@@ -529,6 +533,10 @@ function normalizeBot(raw: any): VMBot {
     modelConfig: cfgRaw.modelConfig && typeof cfgRaw.modelConfig === 'object' ? cfgRaw.modelConfig : undefined,
     instructions: typeof cfgRaw.instructions === 'string' ? cfgRaw.instructions : '',
     allowedTools: Array.isArray(cfgRaw.allowedTools) ? cfgRaw.allowedTools.map((x: any) => String(x)) : [],
+    permissionMode: (cfgRaw.permissionMode === 'auto' || cfgRaw.permissionMode === 'manual' || cfgRaw.permissionMode === 'selective')
+      ? cfgRaw.permissionMode
+      : 'selective',
+    autoApproveTools: Array.isArray(cfgRaw.autoApproveTools) ? cfgRaw.autoApproveTools.map((x: any) => String(x)) : [],
     notificationChannels: Array.isArray(cfgRaw.notificationChannels) && cfgRaw.notificationChannels.length
       ? cfgRaw.notificationChannels.map((x: any) => String(x))
       : ['app'],

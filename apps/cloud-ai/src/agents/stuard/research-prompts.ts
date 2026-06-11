@@ -113,6 +113,8 @@ export function buildResearchModeSystemPrompt(
     conversationId?: string | null;
     enabledIntegrations?: string[];
     homeDir?: string;
+    /** Live client bridge (desktop or VM) — the browser subagent only works when this is true. */
+    browserConnected?: boolean;
   } = {},
 ): string {
   const now = new Date().toLocaleString('en-US', {
@@ -126,6 +128,11 @@ export function buildResearchModeSystemPrompt(
     : '';
   const conversationBlock = buildConversationBlock(options.conversationId);
   const stateBlock = '\n' + buildResearchStateBlock(view);
+  const browserConnected = !!options.browserConnected;
+
+  const readFallbackLine = browserConnected
+    ? `   - \`research_read\` only sources that earn a full read (primary sources, data, methodology). The user's browser is connected — when \`research_read\` fails or comes back thin (paywall, JS-heavy, bot-walled, login), fall back to \`delegate\` → **browser** subagent with the exact URL and what to extract, then \`research_note\` the takeaways against the same source id (a failed read already registered it). The browser is the backup, not the default: always try \`research_read\` first.`
+    : `   - \`research_read\` only sources that earn a full read (primary sources, data, methodology). No browser is connected this session, so when extraction fails (paywall, JS-heavy, login) log a \`gap\` note and pivot to alternate sources — don't burn steps retrying.`;
 
   return `You are Stuard in **Research Mode** — a deep-research agent working one engagement to completion. Your job: gather widely, distill ruthlessly, and deliver a report the user can act on.
 
@@ -145,7 +152,7 @@ Research Mode is **active**. Treat messages as research-scoped unless the user c
 3. **Gather** (iterate per subtopic):
    - \`research_search\` with 1–3 differently-angled queries at once. Don't repeat queries — the state block lists what's been run.
    - Distill into \`research_note\` IMMEDIATELY: 1–3 sentences per insight, concrete specifics (numbers, dates, names), \`source_ids\`, and a \`topic\` matching your plan. Log holes as kind \`gap\`/\`question\`; close them later with \`resolves\`.
-   - \`research_read\` only sources that earn a full read (primary sources, data, methodology). For paywalled/JS-heavy/login pages, \`delegate\` to the **browser** subagent, then note the takeaways.
+${readFallbackLine}
    - **Breadth first**: touch every subtopic before drilling deep into any one. \`seen_source_ids\` in results = no new info → pivot the angle, don't re-read.
 4. **Deliver**: when every subtopic has findings and no critical question is open (check the state block or \`research_status\`), call \`research_compile\`, then write the full report and ship it via \`research_report({ title, markdown })\` — it opens in the user's report viewer. Write **from the compiled notes + excerpts, not memory**:
    - Tight executive summary first (the answer, not the journey)
@@ -156,9 +163,19 @@ Research Mode is **active**. Treat messages as research-scoped unless the user c
    - \`chat_ui\` for comparison tables/score matrices when structure helps
 5. After delivering, stay in mode for follow-ups (new searches extend the same registry; re-ship an updated report via \`research_report\` if findings change).
 
+## Parallel sub-researchers (speed)
+
+When the plan has 3+ independent subtopics, don't gather serially — fan out with ONE \`delegate\` call carrying one \`custom\` task per subtopic (3–5 parallel is the sweet spot). Each task:
+
+- \`subagent: "custom"\` with \`tools: ["research_search", "research_read", "research_note", "research_status"]\` — these write into THIS session, so their sources and notes land in your RESEARCH STATE automatically and dedup against the shared registry.
+- \`system_prompt\`: tune a focused researcher for that subtopic. Its discipline mirrors yours: 1–3 angled queries per \`research_search\`, \`research_note\` IMMEDIATELY with \`source_ids\` + the assigned \`topic\`, \`research_read\` only what earns a full read, never return raw page content, stay strictly on its subtopic.
+- \`instruction\`: must include the conversation_id verbatim (the research tools require it), the brief, the assigned subtopic, queries already run (so it pivots instead of repeating), a budget (~4–8 searches, ≤15 notes), and the finish condition: return a 3–6 line summary plus any blocked/paywalled URLs it couldn't read.
+
+After the batch returns, re-ground on RESEARCH STATE (or \`research_status\`) rather than the sub-researchers' summaries${browserConnected ? ', browser-fallback any blocked URLs they reported' : ''}, close remaining gaps yourself, then compile. Scoping, \`research_compile\`, and \`research_report\` always stay with you — never delegate those.
+
 ## Tools
 
-Native here: \`research_search\` (deduped Perplexity+Tavily), \`research_read\`, \`research_note\`, \`research_status\`, \`research_compile\`, \`research_report\` (ship the final doc), \`exit_research_mode\`, plus \`ask_user\`, \`agent_todo\`, \`chat_ui\`, \`delegate\` (browser et al.), and the discovery trio (\`search_tools\` → \`get_tool_schema\` → \`execute_tool\`) for anything else.
+Native here: \`research_search\` (deduped Perplexity+Tavily), \`research_read\`, \`research_note\`, \`research_status\`, \`research_compile\`, \`research_report\` (ship the final doc), \`exit_research_mode\`, plus \`ask_user\`, \`agent_todo\`, \`chat_ui\`, \`delegate\` (parallel \`custom\` sub-researchers${browserConnected ? ' + the **browser** subagent for blocked pages' : ''}), and the discovery trio (\`search_tools\` → \`get_tool_schema\` → \`execute_tool\`) for anything else.
 
 Do **not** use plain \`web_search\`/\`scrape_url\` in this mode — they bypass the source registry and lose dedup + attribution. \`research_search\`/\`research_read\` replace them.
 

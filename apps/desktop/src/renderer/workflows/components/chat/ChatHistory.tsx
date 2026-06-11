@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import clsx from "clsx";
-import { User, Bot, AlertCircle, CheckCircle2, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check, Shield, ArrowRight, Box } from "lucide-react";
+import { User, AlertCircle, CheckCircle2, Sparkles, X, Undo2, Plus, History, Clock, Trash2, ExternalLink, Folder, Copy, Check, Shield, ArrowRight, Box } from "lucide-react";
 import { ModelSelector } from "../../../components/ModelSelector";
 import { AudioPlayer } from "../../../components/AudioPlayer";
 import { Shimmer } from "../../../components/ai-elements/Shimmer";
@@ -390,7 +390,7 @@ const ModifyWorkflowView = ({
       <div className="wf-bg-overlay px-3 py-2 wf-fg-muted text-[10px] font-semibold uppercase tracking-wider border-b wf-border-subtle flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="p-1 wf-bg-overlay rounded-md border wf-border-subtle shadow-sm">
-            <Sparkles className="w-3 h-3 text-blue-400" />
+            <Sparkles className="w-3 h-3 wf-accent-fg" />
           </div>
           {showSuccess ? 'Updates Applied' : showPending ? 'Applying Updates...' : 'Update Status'}
         </div>
@@ -398,7 +398,7 @@ const ModifyWorkflowView = ({
           <button
             type="button"
             onClick={() => onUndo(workflowBefore)}
-            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium wf-fg-muted hover:text-blue-400 hover:bg-blue-500/20 rounded-md transition-colors"
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium wf-fg-muted hover:wf-accent-fg wf-accent-soft-bg rounded-md transition-colors"
             title="Undo this change"
           >
             <Undo2 className="w-3 h-3" />
@@ -442,7 +442,7 @@ const ModifyWorkflowView = ({
       {showPending && (
         <div className="bg-transparent p-3 whitespace-pre-wrap break-words">
           <div className="text-[11px] flex items-center gap-2 wf-fg-muted">
-            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full wf-accent-fg animate-pulse" style={{ backgroundColor: 'var(--wf-accent)' }} />
             Processing workflow changes...
           </div>
         </div>
@@ -1115,12 +1115,11 @@ export function ChatHistory({
       <div className="flex-1 min-h-0 overflow-auto scrollbar-minimal px-4 py-4 space-y-5">
         {messages.map((msg, i) => (
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border shadow-sm mt-0.5
-              ${msg.role === 'user'
-                ? 'wf-bg-overlay wf-border-subtle wf-fg-muted'
-                : 'bg-blue-500/20 border-blue-500/30 text-blue-400'}`}>
-              {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-            </div>
+            {msg.role === 'user' && (
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 border shadow-sm mt-0.5 wf-bg-overlay wf-border-subtle wf-fg-muted">
+                <User className="w-4 h-4" />
+              </div>
+            )}
 
             <div className={`flex flex-col gap-1.5 max-w-[90%] min-w-0 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
               {msg.images && msg.images.length > 0 && (
@@ -1167,7 +1166,7 @@ export function ChatHistory({
                     components={{
                       img: (props) => <ChatMedia {...props as any} />,
                       p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
-                      a: ({ node, ...props }) => <a {...props} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 decoration-blue-500/30 hover:decoration-blue-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
+                      a: ({ node, ...props }) => <a {...props} className="wf-accent-fg hover:opacity-80 underline underline-offset-2 decoration-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] hover:decoration-[color:color-mix(in_srgb,var(--wf-accent)_50%,transparent)] transition-all" target="_blank" rel="noopener noreferrer" />,
                       pre: ({ children, ...props }: any) => {
                         let childProps: any = {};
                         let codeContent = children;
@@ -1214,7 +1213,7 @@ export function ChatHistory({
                       ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                       li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                       blockquote: (props) => (
-                        <blockquote className="border-l-4 border-blue-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-blue-500/10 to-transparent rounded-r-lg" {...props}>
+                        <blockquote className="border-l-4 pl-4 my-3 py-2 wf-accent-soft-bg rounded-r-lg" style={{ borderLeftColor: 'color-mix(in srgb, var(--wf-accent) 40%, transparent)' }} {...props}>
                           <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                         </blockquote>
                       ),
@@ -1248,9 +1247,6 @@ export function ChatHistory({
 
         {(streamItems.length > 0 || busy || reasoningText) && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-blue-600 border border-blue-700 wf-fg flex items-center justify-center shrink-0 shadow-sm mt-0.5">
-              <Bot className="w-4 h-4" />
-            </div>
             <div className="flex flex-col gap-2 max-w-[90%] w-full">
               {pendingApprovals.length > 0 && onRespondToApproval && (
                 <PermissionBar
@@ -1291,7 +1287,7 @@ export function ChatHistory({
                       components={{
                         img: (props) => <ChatMedia {...props as any} />,
                         p: ({ children }) => <p className="mb-2 last:mb-0 leading-[1.7]">{children}</p>,
-                        a: ({ node, ...props }) => <a {...props} className="text-blue-400 hover:text-blue-300 underline underline-offset-2 decoration-blue-500/30 hover:decoration-blue-500/50 transition-all" target="_blank" rel="noopener noreferrer" />,
+                        a: ({ node, ...props }) => <a {...props} className="wf-accent-fg hover:opacity-80 underline underline-offset-2 decoration-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] hover:decoration-[color:color-mix(in_srgb,var(--wf-accent)_50%,transparent)] transition-all" target="_blank" rel="noopener noreferrer" />,
                         pre: ({ children, ...props }: any) => {
                           let childProps: any = {};
                           let codeContent = children;
@@ -1331,7 +1327,7 @@ export function ChatHistory({
                         ol: (props) => <ol className="list-decimal pl-6 mb-3 space-y-1.5 marker:wf-fg-faint marker:text-sm marker:font-medium" {...props} />,
                         li: (props) => <li className="leading-[1.7] pl-1" {...props} />,
                         blockquote: (props) => (
-                          <blockquote className="border-l-4 border-blue-500/40 pl-4 my-3 py-2 bg-gradient-to-r from-blue-500/10 to-transparent rounded-r-lg" {...props}>
+                          <blockquote className="border-l-4 pl-4 my-3 py-2 wf-accent-soft-bg rounded-r-lg" style={{ borderLeftColor: 'color-mix(in srgb, var(--wf-accent) 40%, transparent)' }} {...props}>
                             <span className="wf-fg-muted italic leading-[1.7]">{props.children}</span>
                           </blockquote>
                         ),

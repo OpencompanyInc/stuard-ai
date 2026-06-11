@@ -1,5 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { anyJsonObject } from './schema-utils';
 import { getHeadlessAgent } from '../agents/headless-agent';
 import { generateWithToolRecovery } from '../routes/proactive-utils';
 
@@ -9,8 +10,8 @@ export const executeAgenticTask = createTool({
   inputSchema: z.object({
     instruction: z.string().describe('The goal or instruction for the agent (e.g., "Find the weekly report and summarize it")'),
     timeoutMs: z.number().default(60000).describe('Maximum time in milliseconds to allow the agent to work'),
-    context: z.any().optional().describe('Any additional context data to pass to the agent'),
-    outputSchema: z.any().optional().describe('Optional JSON schema describing the desired structured output'),
+    context: anyJsonObject.optional().describe('Any additional context data to pass to the agent'),
+    outputSchema: anyJsonObject.optional().describe('Optional JSON schema describing the desired structured output'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { getDesktopWs } from '../../services/vm-bridge';
 
 export { execLocalTool, getBridgeSecrets, hasClientBridge };
+export { anyJsonObject, anyJsonValue, anyJsonArray } from '../schema-utils';
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 

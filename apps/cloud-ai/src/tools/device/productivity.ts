@@ -1,13 +1,13 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { calendar_list_events } from '../google-tools';
-import { execLocalTool, hasClientBridge, makeLocalTool, getBridgeSecrets } from './shared';
+import { execLocalTool, hasClientBridge, makeLocalTool, getBridgeSecrets, anyJsonObject } from './shared';
 import { syncReminderToCloud, getCloudReminders } from '../cloud-reminder-tools';
 
 export const calendar_crud = makeLocalTool(
   'calendar_crud',
   'Create, read, update, delete calendars stored locally by Stuard.',
-  z.object({ action: z.string(), data: z.any().optional() }),
+  z.object({ action: z.string(), data: anyJsonObject.optional() }),
 );
 
 const _task_crud_base = makeLocalTool(
@@ -15,7 +15,7 @@ const _task_crud_base = makeLocalTool(
   'Full task management with priorities, due dates, tags for Stuard local tasks.',
   z.object({
     action: z.string(),
-    data: z.any().optional(),
+    data: anyJsonObject.optional(),
     /**
      * When in Project Mode and creating a task, pass the conversation_id (from
      * <conversation> in your system prompt) so the wrapper can auto-tag the

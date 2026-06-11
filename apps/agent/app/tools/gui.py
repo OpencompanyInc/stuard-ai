@@ -6,7 +6,14 @@ import os
 import time
 from typing import Any, Dict
 
-from .cursor_overlay import save_mss_png_with_cursor
+from .cursor_overlay import save_mss_png_with_cursor, _set_process_dpi_aware
+
+# Make DPI awareness deterministic at import. Without this, pyautogui/GetCursorPos
+# report Windows-virtualized (logical) coordinates until the first region screenshot
+# happens to call SetProcessDPIAware — flipping every position tool in this process
+# to physical pixels mid-session. The Electron side (mousePointToElectronPoint,
+# custom_ui moveTo/getScreenInfo) assumes these tools always speak physical pixels.
+_set_process_dpi_aware()
 
 
 async def get_mouse_position(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -381,11 +388,8 @@ def _get_dpi_scale() -> float:
     """Get the Windows display DPI scale factor (e.g. 1.25 for 125% scaling)."""
     try:
         import ctypes
-        # SetProcessDPIAware so we get real physical coords
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
+        # DPI awareness is set once at module import (_set_process_dpi_aware);
+        # here we only read the scale factor for logical→physical conversion.
         # GetScaleFactorForDevice returns percentage (100, 125, 150, etc.)
         scale_pct = ctypes.windll.shcore.GetScaleFactorForDevice(0)
         return scale_pct / 100.0

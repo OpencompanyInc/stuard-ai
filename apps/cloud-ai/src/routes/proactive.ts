@@ -54,6 +54,7 @@ import { getDesktopWs } from '../services/vm-bridge';
 import { sendVMCommand } from '../services/vm-command';
 import { getToolRegistry } from '../tools/tool-registry';
 import { browser_use_configure } from '../tools/device-tools';
+import { botToolNeedsApproval, isSensitiveBotTool, normalizeBotPermissionMode } from '@stuardai/bots-core';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -535,6 +536,33 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
       || context?.isVM === true
       || String(context?.executionTarget || '').toLowerCase() === 'vm';
 
+    // Per-agent tool autonomy (same policy the desktop local gate enforces).
+    // Wakeup runs are unattended — there is no blocking approval prompt to
+    // pop — so sensitive tools the agent isn't trusted with are denied with
+    // propose-instead guidance rather than silently failing.
+    const permissionMode = normalizeBotPermissionMode((body as any)?.permissionMode);
+    const autoApproveTools: string[] = Array.isArray((body as any)?.autoApproveTools)
+      ? (body as any).autoApproveTools.map((x: any) => String(x || '')).filter(Boolean)
+      : [];
+    const permissionDenialMessage = (toolName: string): string | null => {
+      if (!botToolNeedsApproval(toolName, permissionMode, autoApproveTools)) return null;
+      return `'${toolName}' requires the user's approval and this run is unattended. Do not retry it. Instead, create a task or send a notification proposing exactly what you want to do, so the user can approve it.`;
+    };
+    const gateProactiveTool = (toolName: string, tool: any): any => {
+      if (!tool || typeof tool.execute !== 'function' || !isSensitiveBotTool(toolName)) return tool;
+      return createTool({
+        id: toolName,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+        execute: async (inputData: any, runCtx: any) => {
+          const denial = permissionDenialMessage(toolName);
+          if (denial) throw new Error(denial);
+          return await tool.execute(inputData, runCtx);
+        },
+      });
+    };
+
     // Build in-memory kanban
     const taskStates: TaskState[] = (incomingTasks as any[]).map((t: any) => ({
       id: String(t.id || ''),
@@ -585,7 +613,7 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
         if (result && toolName && !tools[toolName]) {
           const registeredTool = getToolRegistry().get(toolName);
           if (registeredTool && typeof (registeredTool as any).execute === 'function' && isProactiveToolAllowed(toolName, allowedTools)) {
-            tools[toolName] = wrapProactiveTool(toolName, registeredTool);
+            tools[toolName] = gateProactiveTool(toolName, wrapProactiveTool(toolName, registeredTool));
           }
         }
         return result;
@@ -606,11 +634,15 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
             error: `Tool '${toolName}' is not allowed for this agent.`,
           };
         }
+        const denial = permissionDenialMessage(toolName);
+        if (denial) {
+          return { success: false, tool: toolName, error: denial };
+        }
         // Also register the tool for future direct calls
         if (toolName && !tools[toolName]) {
           const registeredTool = getToolRegistry().get(toolName);
           if (registeredTool && typeof (registeredTool as any).execute === 'function' && isProactiveToolAllowed(toolName, allowedTools)) {
-            tools[toolName] = wrapProactiveTool(toolName, registeredTool);
+            tools[toolName] = gateProactiveTool(toolName, wrapProactiveTool(toolName, registeredTool));
           }
         }
         if (toolName === 'browser_use_configure') {
@@ -677,14 +709,14 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
               tool &&
               typeof (tool as any).execute === 'function'
             ) {
-              tools[toolName] = wrapProactiveTool(toolName, tool);
+              tools[toolName] = gateProactiveTool(toolName, wrapProactiveTool(toolName, tool));
             }
           }
           continue;
         }
         const tool = registry.get(name);
         if (!tools[name] && isProactiveToolAllowed(name, allowedTools) && tool && typeof (tool as any).execute === 'function') {
-          tools[name] = wrapProactiveTool(name, tool);
+          tools[name] = gateProactiveTool(name, wrapProactiveTool(name, tool));
         }
       }
     } catch (e: any) {
@@ -714,6 +746,13 @@ export async function handleProactiveRoutes(req: IncomingMessage, res: ServerRes
 Use agent_memory_* aggressively. The kanban is HOW you stay coherent across wake-ups — without it you start every run blind. Use profile slots for who you are and standing preferences; use kanban cards for active work. When you start a card, move it to in_progress; when you finish, mark it completed; when you fail, mark it failed with notes for your future self. The user can also see and edit these cards from the Agents → Kanban tab.`;
 
     systemPrompt += `\n\n${formatBotAllowedToolsSection(allowedTools)}`;
+
+    if (permissionMode !== 'auto') {
+      const restricted = (Array.isArray(allowedTools) ? allowedTools : [])
+        .map((t: any) => String(t || ''))
+        .filter((t) => permissionDenialMessage(t) !== null);
+      systemPrompt += `\n\n## PERMISSION POLICY\nThis run is unattended, so tools that need the user's approval are blocked${restricted.length ? ` (currently: ${restricted.join(', ')})` : ''}. Anything else you may use freely. When blocked work matters, prepare it as far as you can, then create a task or notification proposing the exact action for the user to approve.`;
+    }
 
     // Render the bot's actual kanban (cards + recent run log) as its own
     // section. This is the *content* — the section above is the *contract*.

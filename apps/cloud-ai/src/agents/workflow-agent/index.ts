@@ -2,10 +2,11 @@
  * Workflow Agent - Lean & Fast
  *
  * Specialized agent for designing, testing, and modifying Stuard workflows.
- * Uses search_workflow_docs for on-demand documentation lookup instead of
- * embedding ~1100 lines of docs in the system prompt.
- *
- * Token savings: ~8-12k tokens per request.
+ * The FULL (compressed) workflow doc corpus is inlined in the system prompt
+ * (see system-prompt.ts / docs-data.ts) — a static, prompt-cache-friendly
+ * prefix — so there is no search_workflow_docs tool and no doc-lookup
+ * round trips. Node/tool discovery stays on-demand via search_workflow_nodes,
+ * search_tools, and get_tool_schema.
  */
 
 import { Agent } from '@mastra/core/agent';
@@ -18,7 +19,7 @@ import { writeLog } from '../../utils/logger';
 import { search_tools, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
 import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
-import { stop_automation, write_file, create_directory } from '../../tools/device-tools';
+import { stop_automation, write_file, create_directory, read_file, list_directory } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { getBridgeSecrets, getBridgeWs, runWithSecrets, withClientBridge } from '../../tools/bridge';
@@ -30,7 +31,6 @@ import {
   withActiveBridgeContext,
 } from '../../tools/device/shared';
 import { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
-import { createSearchWorkflowDocsTool } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
 import { normalizeToolInputForSchema, coerceToolInputSchema } from '../../tools/zod-utils';
@@ -167,12 +167,7 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
   }
 
   Object.assign(baseTools, {
-    // 1. Search workflow documentation on demand. Fresh dedup set per agent
-    //    build → the same section isn't returned in full twice in one session.
-    search_workflow_docs: createLoggedTool(
-      createSearchWorkflowDocsTool({ seen: new Set<string>() }),
-      'search_workflow_docs',
-    ),
+    // (Docs are inlined in the system prompt — no search_workflow_docs tool.)
     // 2. Search workflow nodes — fresh dedup set per session (won't repeat same node)
     search_workflow_nodes: createLoggedTool(
       createSearchWorkflowNodesTool({ seen: new Set<string>() }),
@@ -198,6 +193,10 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
     web_search: createLoggedTool(web_search, 'web_search'),
     // 11. Create/write files in the workspace or on disk
     write_file: createLoggedTool(write_file, 'write_file'),
+    // 11b. Read files (workspace scripts/data/sub-workflows, or any path)
+    read_file: createLoggedTool(read_file, 'read_file'),
+    // 11c. List directory contents (e.g. the workflow workspace)
+    list_directory: createLoggedTool(list_directory, 'list_directory'),
     // 12. Create directories
     create_directory: createLoggedTool(create_directory, 'create_directory'),
     // 13. Edit non-stuard files (string-based find/replace)

@@ -149,8 +149,8 @@ export const subscribe_media_bus = makeLocalTool(
   'Subscribe to a shared media bus. First subscriber starts the capture, others tap into the same stream. Use for multi-workflow scenarios.',
   z.object({
     kind: z.enum(['audio', 'video', 'audiovideo']).describe('Type of media to capture'),
-    device: z.any().optional().describe('Device ID (string) or index (number) for video'),
-    audioDevice: z.any().optional().describe('Audio device ID or index for audiovideo mode'),
+    device: z.union([z.string(), z.number()]).optional().describe('Device ID (string) or index (number) for video'),
+    audioDevice: z.union([z.string(), z.number()]).optional().describe('Audio device ID or index for audiovideo mode'),
     subscriberId: z.string().optional().describe('Unique subscriber ID (auto-generated if not provided)'),
     startRecording: z.boolean().optional().default(false).describe('Start recording to file immediately'),
     filePath: z.string().optional().describe('Output file path for recording'),
@@ -180,7 +180,7 @@ export const unsubscribe_media_bus = makeLocalTool(
   'Unsubscribe from a media bus. Bus auto-stops when last subscriber leaves.',
   z.object({
     kind: z.enum(['audio', 'video', 'audiovideo']),
-    device: z.any().optional().describe('Device ID or index'),
+    device: z.union([z.string(), z.number()]).optional().describe('Device ID or index'),
     subscriberId: z.string().describe('ID of the subscriber to remove'),
     saveRecording: z.boolean().optional().default(true).describe('Save accumulated recording to file'),
   }),
@@ -199,7 +199,7 @@ export const get_bus_status = makeLocalTool(
   'Get status of a specific media bus or all buses.',
   z.object({
     kind: z.enum(['audio', 'video']).optional().describe('Filter by kind (omit for all buses)'),
-    device: z.any().optional().describe('Device ID or index'),
+    device: z.union([z.string(), z.number()]).optional().describe('Device ID or index'),
   }),
   z.object({
     ok: z.boolean(),
@@ -249,7 +249,7 @@ export const start_bus_recording = makeLocalTool(
   'Start recording for an existing bus subscriber.',
   z.object({
     kind: z.enum(['audio', 'video']),
-    device: z.any().optional().describe('Device ID or index'),
+    device: z.union([z.string(), z.number()]).optional().describe('Device ID or index'),
     subscriberId: z.string().describe('ID of the subscriber'),
     filePath: z.string().optional().describe('Output file path'),
   }),
@@ -267,7 +267,7 @@ export const stop_bus_recording = makeLocalTool(
   'Stop recording for a bus subscriber and save the file.',
   z.object({
     kind: z.enum(['audio', 'video']),
-    device: z.any().optional().describe('Device ID or index'),
+    device: z.union([z.string(), z.number()]).optional().describe('Device ID or index'),
     subscriberId: z.string().describe('ID of the subscriber'),
     saveRecording: z.boolean().optional().default(true),
   }),

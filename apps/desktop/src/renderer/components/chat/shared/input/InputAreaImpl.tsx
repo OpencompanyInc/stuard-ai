@@ -160,6 +160,11 @@ import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_ROW_WITH_ICON, FIGMA_KBD } fro
 import { AttachmentBar } from './AttachmentBar';
 import { IntegrationSuggestionView } from './suggestions/IntegrationSuggestionChip';
 import { useIntegrationSuggestion } from './suggestions/useIntegrationSuggestion';
+import { useSlashCommands } from './slash/useSlashCommands';
+import { SlashCommandMenu } from './slash/SlashCommandMenu';
+import { SlashCommandComposer } from './slash/SlashCommandComposer';
+import { SlashCommandForm, slashSessionNeedsPanel } from './slash/SlashCommandForm';
+import { CompactOverlayPortal } from './compact/CompactOverlayPortal';
 import { FolderPermissionsButton } from './FolderPermissionsButton';
 import { CompactSearchDropdown } from './compact/CompactSearchDropdown';
 import { qaError, qaLog, qaWarn } from './compact/compactQuickActionsDebug';
@@ -338,6 +343,7 @@ const InputArea = forwardRef(function InputArea(
   const selectableItemsRef = useRef<{ key: string; onSelect: () => void }[]>([]);
   const showSearchOptionsRef = useRef(false);
   const commitDropdownSelectionRef = useRef<(source?: string) => boolean>(() => false);
+  const slashKeyDownRef = useRef<(e: React.KeyboardEvent) => boolean>(() => false);
   const lastDropdownCommitAtRef = useRef(0);
   const setSelectedIndexSynced = useCallback((value: number | ((prev: number) => number)) => {
     if (typeof value === 'function') {
@@ -872,6 +878,11 @@ const InputArea = forwardRef(function InputArea(
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isEnter = e.key === 'Enter' || e.code === 'NumpadEnter';
 
+    // Slash-command menu owns navigation/selection keys while open. Ref-based
+    // because the slash controller is instantiated further down (same pattern
+    // as commitDropdownSelectionRef).
+    if (slashKeyDownRef.current(e)) return;
+
     // Arrow key navigation for dropdowns
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (showFileNavRef.current && fileNavRef.current) {
@@ -1047,12 +1058,24 @@ const InputArea = forwardRef(function InputArea(
   // Keep ref in sync for handleKeyDown
   useEffect(() => { showFileNavRef.current = showFileNav; }, [showFileNav]);
 
+  // Slash commands — "/" opens the command menu; selecting one swaps the input
+  // for the composer (chip + parameter fields). Workflow entries pull their
+  // fields from the workflow trigger's declared inputParams.
+  const slash = useSlashCommands({ query, setQuery, enabled: !showFileNav });
+  slashKeyDownRef.current = slash.handleKeyDown;
+  const slashMenuOpen = slash.menuOpen;
+  // Many-field sessions move their inputs into a vertical form panel (same
+  // overlay frame as the menu); the bar collapses to chip + progress.
+  const slashNeedsPanel = !!slash.session && slashSessionNeedsPanel(slash.session);
+  const slashFormOpen = slashNeedsPanel && (slash.phase === 'editing' || slash.phase === 'error');
+  const slashOverlayOpen = slashMenuOpen || slashFormOpen;
+
   // Inline integration suggestion — one controller drives both the expanded chip
   // and the compact search-dropdown row.
   const integrationSuggestion = useIntegrationSuggestion({
     query,
     accessToken,
-    enabled: !showFileNav,
+    enabled: !showFileNav && !slash.active,
   });
 
   const [fileNavOverlay, setFileNavOverlay] = useState<null | {
@@ -1199,8 +1222,9 @@ const InputArea = forwardRef(function InputArea(
     }
   }, [setContextPaths]);
 
-  // Show search options dropdown when user has typed something (not @ mentions)
-  const showSearchOptions = !expanded && query.trim().length >= 2 && !showFileNav;
+  // Show search options dropdown when user has typed something (not @ mentions,
+  // not while the slash-command menu/composer owns the input)
+  const showSearchOptions = !expanded && query.trim().length >= 2 && !showFileNav && !slash.active;
   showSearchOptionsRef.current = showSearchOptions;
   const typingActive = query.trim().length > 0;
 
@@ -1323,7 +1347,7 @@ const InputArea = forwardRef(function InputArea(
         return currentPlacement;
       }
 
-      const needsDropdownForPlacement = showSearchOptions || showFileNav;
+      const needsDropdownForPlacement = showSearchOptions || showFileNav || slashOverlayOpen;
       const overlayPanel = document.querySelector<HTMLElement>('[data-compact-overlay-panel="true"]');
       const overlayRect = overlayPanel?.getBoundingClientRect();
       const dropdownHeightForPlacement = needsDropdownForPlacement
@@ -1374,7 +1398,7 @@ const InputArea = forwardRef(function InputArea(
     } catch {
       return 'top';
     }
-  }, [attachments.length, contextPaths, showSearchOptions, showFileNav]);
+  }, [attachments.length, contextPaths, showSearchOptions, showFileNav, slashOverlayOpen]);
 
   // Max room the OS will actually let the dropdown occupy, given the current
   // window position and chosen growth direction. The dropdown is portaled to
@@ -1487,7 +1511,7 @@ const InputArea = forwardRef(function InputArea(
     });
 
     function runResize() {
-    const needsDropdown = showSearchOptions || showFileNav;
+    const needsDropdown = showSearchOptions || showFileNav || slashOverlayOpen;
     const needsOverlay = needsDropdown || compactHubOpen || showHubPeek;
 
     const height = currentTextareaHeightRef.current;
@@ -1655,6 +1679,7 @@ const InputArea = forwardRef(function InputArea(
     overlayMode,
     showSearchOptions,
     showFileNav,
+    slashOverlayOpen,
     calculatePlacement,
     computeMaxDropdownH,
     attachments.length,
@@ -1744,6 +1769,7 @@ const InputArea = forwardRef(function InputArea(
     updateWindowSize,
     showSearchOptions,
     showFileNav,
+    slashOverlayOpen,
     overlayMode,
     attachments.length,
     contextPaths?.length,
@@ -1798,6 +1824,7 @@ const InputArea = forwardRef(function InputArea(
     overlayMode,
     showSearchOptions,
     showFileNav,
+    slashOverlayOpen,
     compactHubOpen,
     showHubPeek,
     calculatePlacement,
@@ -1814,7 +1841,7 @@ const InputArea = forwardRef(function InputArea(
     // slide well past the screen edge before the flip catches up, so while a
     // flippable overlay is open we re-check placement on every frame (~16ms) and
     // it can't visibly overshoot. Idle (no overlay) falls back to a cheap poll.
-    const overlayOpen = showSearchOptions || showFileNav || compactHubOpen;
+    const overlayOpen = showSearchOptions || showFileNav || compactHubOpen || slashOverlayOpen;
     if (!overlayOpen) {
       const interval = setInterval(applyPlacementOnMove, 150);
       return () => clearInterval(interval);
@@ -1842,6 +1869,7 @@ const InputArea = forwardRef(function InputArea(
     overlayMode,
     showSearchOptions,
     showFileNav,
+    slashOverlayOpen,
     compactHubOpen,
     showHubPeek,
     applyPlacementOnMove,
@@ -2234,7 +2262,7 @@ const InputArea = forwardRef(function InputArea(
 
   // Compact Mode
   if (!expanded) {
-    const needsDropdown = showSearchOptions || showFileNav;
+    const needsDropdown = showSearchOptions || showFileNav || slashOverlayOpen;
     // Cap dropdown height to the room actually available between the input bar
     // and the OS-clamped window edge in the current placement direction. The
     // dropdown is portaled to document.body, so anything past the native window
@@ -2301,6 +2329,36 @@ const InputArea = forwardRef(function InputArea(
             marketplaceResults={marketplaceResults}
             isMarketplaceSearching={isMarketplaceSearching}
           />
+        )}
+
+        {/* Slash-command menu — same portal frame as the search dropdown */}
+        {slashMenuOpen && (
+          <CompactOverlayPortal placement={dropdownPlacement} inputBarHeight={inputBarHeight}>
+            <SlashCommandMenu
+              variant="compact"
+              items={slash.menuItems}
+              selectedIndex={slash.selectedIndex}
+              onHoverIndex={slash.setSelectedIndex}
+              maxHeight={compactSearchDropdownMaxHeight}
+            />
+          </CompactOverlayPortal>
+        )}
+
+        {/* Slash-command parameter form — many-field sessions fill out here */}
+        {slashFormOpen && slash.session && (
+          <CompactOverlayPortal placement={dropdownPlacement} inputBarHeight={inputBarHeight}>
+            <SlashCommandForm
+              variant="compact"
+              session={slash.session}
+              values={slash.values}
+              phase={slash.phase}
+              statusMsg={slash.statusMsg}
+              onChange={slash.setValue}
+              onSubmit={slash.submit}
+              onCancel={slash.cancel}
+              maxHeight={compactSearchDropdownMaxHeight}
+            />
+          </CompactOverlayPortal>
         )}
 
         {showFileNav && (
@@ -2398,6 +2456,20 @@ const InputArea = forwardRef(function InputArea(
             onSelectConversation={onSelectConversation}
             onNewChat={onNewChat}
           />
+          {slash.session ? (
+            <SlashCommandComposer
+              variant="compact"
+              session={slash.session}
+              values={slash.values}
+              phase={slash.phase}
+              statusMsg={slash.statusMsg}
+              onChange={slash.setValue}
+              onSubmit={slash.submit}
+              onCancel={slash.cancel}
+              onHeightChange={handleHeightChange}
+              summary={slashNeedsPanel}
+            />
+          ) : (
           <CompactInputPill
             showThinkingGlow={showThinkingGlow}
             signedIn={signedIn}
@@ -2436,6 +2508,7 @@ const InputArea = forwardRef(function InputArea(
             voiceActive={voiceActive}
             onToggleVoice={onToggleVoice}
           />
+          )}
         </div>
         </CompactHub>
 
@@ -2544,6 +2617,45 @@ const InputArea = forwardRef(function InputArea(
             <div id="stuard-input-area" className={clsx(
               "relative flex-1 min-w-0 rounded-3xl transition-all flex items-center"
             )}>
+              {slashMenuOpen && (
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-[10001]">
+                  <SlashCommandMenu
+                    variant="panel"
+                    items={slash.menuItems}
+                    selectedIndex={slash.selectedIndex}
+                    onHoverIndex={slash.setSelectedIndex}
+                    maxHeight={320}
+                  />
+                </div>
+              )}
+              {slashFormOpen && slash.session && (
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-[10001]">
+                  <SlashCommandForm
+                    variant="panel"
+                    session={slash.session}
+                    values={slash.values}
+                    phase={slash.phase}
+                    statusMsg={slash.statusMsg}
+                    onChange={slash.setValue}
+                    onSubmit={slash.submit}
+                    onCancel={slash.cancel}
+                    maxHeight={360}
+                  />
+                </div>
+              )}
+              {slash.session ? (
+                <SlashCommandComposer
+                  variant="panel"
+                  session={slash.session}
+                  values={slash.values}
+                  phase={slash.phase}
+                  statusMsg={slash.statusMsg}
+                  onChange={slash.setValue}
+                  onSubmit={slash.submit}
+                  onCancel={slash.cancel}
+                  summary={slashNeedsPanel}
+                />
+              ) : (
               <TextareaAutosize
                 ref={setTextareaRef}
                 data-onboarding="input-area"
@@ -2562,6 +2674,7 @@ const InputArea = forwardRef(function InputArea(
                 maxRows={query.length > 0 ? 6 : 1}
                 minRows={1}
               />
+              )}
             </div>
           )}
 

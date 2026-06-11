@@ -142,6 +142,8 @@ interface EnhancedUIBuilderModalProps {
   windowConfig: UIWindowConfig;
   /** Original component source — preserved on save when user makes no visual edits */
   originalComponent?: string;
+  /** Original JSX of the main/fallback screen — emitted verbatim while the main screen is unedited */
+  mainJsx?: string;
   onSave: (args: { html: string; css: string; js: string; window: any; pages?: Record<string, any>; startPage?: string }) => void;
   onSaveComponent?: (args: { component: string; css: string; window: any }) => void;
   onClose: () => void;
@@ -738,6 +740,7 @@ export function EnhancedUIBuilderModal({
   outputMode = 'html',
   windowConfig: initialWindowConfig,
   originalComponent,
+  mainJsx,
   onSave,
   onSaveComponent,
   onClose,
@@ -816,6 +819,91 @@ export function EnhancedUIBuilderModal({
   // Track whether the user actually made visual edits (drop, property edit, code edit)
   // When false and originalComponent is set, doSave preserves the original component code
   const userMadeVisualEditsRef = useRef(false);
+  // Tracks whether the main/fallback screen was edited; while false its original
+  // JSX (mainJsx) is emitted verbatim so advanced markup isn't flattened.
+  const mainEditedRef = useRef(false);
+
+  // ─── Undo / Redo history ────────────────────────────────────────────────────
+  type UISnapshot = { html: string; css: string; js: string; pages?: Record<string, any>; startPage?: string };
+  const historyRef = useRef<{ stack: UISnapshot[]; index: number }>({
+    stack: [{ html: initialHtml || '', css: initialCss || '', js: initialJs || '', pages: initialPages, startPage: initialStartPage }],
+    index: 0,
+  });
+  const isRestoringRef = useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  // Record snapshots into history (debounced) whenever the editable state changes
+  useEffect(() => {
+    if (isRestoringRef.current) { isRestoringRef.current = false; return; }
+    const t = setTimeout(() => {
+      const h = historyRef.current;
+      const snap: UISnapshot = { html, css, js, pages, startPage };
+      const cur = h.stack[h.index];
+      if (cur && cur.html === snap.html && cur.css === snap.css && cur.js === snap.js &&
+          JSON.stringify(cur.pages) === JSON.stringify(snap.pages) && cur.startPage === snap.startPage) {
+        return;
+      }
+      h.stack = h.stack.slice(0, h.index + 1);
+      h.stack.push(snap);
+      if (h.stack.length > 100) h.stack.shift();
+      h.index = h.stack.length - 1;
+      setCanUndo(h.index > 0);
+      setCanRedo(false);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [html, css, js, pages, startPage]);
+
+  const applySnapshot = useCallback((s: UISnapshot) => {
+    isRestoringRef.current = true;
+    setHtml(s.html);
+    setCss(s.css);
+    setJs(s.js);
+    setPages(s.pages);
+    setStartPage(s.startPage);
+    setSelectedElement(null);
+    setSelectedPath(null);
+    userMadeVisualEditsRef.current = true;
+    needsSyncRef.current = true;
+  }, []);
+
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    if (h.index > 0) {
+      h.index--;
+      applySnapshot(h.stack[h.index]);
+      setCanUndo(h.index > 0);
+      setCanRedo(true);
+    }
+  }, [applySnapshot]);
+
+  const redo = useCallback(() => {
+    const h = historyRef.current;
+    if (h.index < h.stack.length - 1) {
+      h.index++;
+      applySnapshot(h.stack[h.index]);
+      setCanRedo(h.index < h.stack.length - 1);
+      setCanUndo(true);
+    }
+  }, [applySnapshot]);
+
+  // Global undo/redo shortcuts (when focus is outside the design iframe)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (typing) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   // Filtered components by category
   const filteredComponents = useMemo(
@@ -931,12 +1019,13 @@ export function EnhancedUIBuilderModal({
   // Update content
   const updateCurrentHtml = useCallback((newHtml: string) => {
     if (currentPage && pages) {
-      setPages(prev => ({
-        ...prev,
-        [currentPage]: { ...prev?.[currentPage], html: newHtml }
-      }));
+      setPages(prev => {
+        const { __jsx, ...rest } = (prev?.[currentPage] || {}) as any;
+        return { ...prev, [currentPage]: { ...rest, html: newHtml } };
+      });
     } else {
       setHtml(newHtml);
+      mainEditedRef.current = true;
     }
     needsSyncRef.current = true;
   }, [currentPage, pages]);
@@ -1054,9 +1143,21 @@ export function EnhancedUIBuilderModal({
   // 2. User-initiated edits already set needsSyncRef via their own handlers before this fires
   const handleHtmlChange = useCallback((newHtml: string) => {
     if (currentPage && pages) {
-      setPages(prev => ({ ...prev, [currentPage]: { ...prev?.[currentPage], html: newHtml } }));
+      setPages(prev => {
+        const prevPage = prev?.[currentPage] as any;
+        if (prevPage && prevPage.html === newHtml) return prev; // initial echo, not an edit
+        userMadeVisualEditsRef.current = true;
+        // Drop preserved original JSX for this screen so it regenerates from edits
+        const { __jsx, ...rest } = prevPage || {};
+        return { ...prev, [currentPage]: { ...rest, html: newHtml } };
+      });
     } else {
-      setHtml(newHtml);
+      setHtml(prev => {
+        if (prev === newHtml) return prev;
+        userMadeVisualEditsRef.current = true;
+        mainEditedRef.current = true;
+        return newHtml;
+      });
     }
   }, [currentPage, pages]);
 
@@ -1152,13 +1253,18 @@ export function EnhancedUIBuilderModal({
       if (originalComponent && !userMadeVisualEditsRef.current) {
         onSaveComponent({ component: originalComponent, css, window: windowConfig });
       } else {
-        const component = generateReactComponent(html, css, js);
+        // Pass pages/startPage so multi-screen edits regenerate, and the unedited
+        // main screen's original JSX so its advanced markup is preserved verbatim.
+        const component = generateReactComponent(
+          html, css, js, pages, startPage,
+          mainEditedRef.current ? undefined : mainJsx,
+        );
         onSaveComponent({ component, css, window: windowConfig });
       }
     } else {
       onSave({ html, css, js, window: windowConfig, pages, startPage });
     }
-  }, [outputMode, html, css, js, windowConfig, pages, startPage, onSave, onSaveComponent, originalComponent]);
+  }, [outputMode, html, css, js, windowConfig, pages, startPage, onSave, onSaveComponent, originalComponent, mainJsx]);
 
   // Auto-save with debounce
   useEffect(() => {
@@ -1191,7 +1297,7 @@ export function EnhancedUIBuilderModal({
   }, [doSave, onClose]);
 
   // Zoom handlers
-  const handleZoomIn = () => setZoom(z => Math.min(z + 0.25, 2));
+  const handleZoomIn = () => setZoom(z => Math.min(z + 0.25, 3));
   const handleZoomOut = () => setZoom(z => Math.max(z - 0.25, 0.25));
   const handleResetZoom = () => setZoom(1);
 
@@ -1278,13 +1384,22 @@ export function EnhancedUIBuilderModal({
           {viewMode === 'design' && (
             <>
               <div className="flex items-center gap-0.5 uib-surface-2 rounded-md border uib-border p-0.5">
+                <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
+                  <Undo2 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
+                  <Redo2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-0.5 uib-surface-2 rounded-md border uib-border p-0.5">
                 <button onClick={handleZoomOut} disabled={zoom <= 0.25} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono uib-fg-muted uib-hover rounded">
                   {Math.round(zoom * 100)}%
                 </button>
-                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
+                <button onClick={handleZoomIn} disabled={zoom >= 3} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -1486,7 +1601,44 @@ export function EnhancedUIBuilderModal({
                   onSelectElement={handleSelectElement}
                   onHoverElement={() => {}}
                   onHtmlChange={handleHtmlChange}
+                  onZoomChange={setZoom}
                 />
+
+                {/* Selection breadcrumb — climb to any ancestor in one click */}
+                {selectedElement && (
+                  <div className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-3 py-1.5 uib-surface border-t uib-border overflow-x-auto scrollbar-minimal text-[11px] z-20">
+                    <button
+                      onClick={() => { canvasRef.current?.selectPath(null); handleSelectElement(null); }}
+                      className="px-1.5 py-0.5 rounded uib-fg-faint uib-hover uib-fg-hover whitespace-nowrap"
+                      title="Deselect"
+                    >
+                      root
+                    </button>
+                    {(selectedElement.ancestors || []).map((a) => (
+                      <React.Fragment key={a.path}>
+                        <ChevronRight className="w-3 h-3 uib-fg-faint shrink-0" />
+                        <button
+                          onClick={() => canvasRef.current?.selectPath(a.path)}
+                          className="px-1.5 py-0.5 rounded font-mono uib-fg-muted uib-hover uib-fg-hover whitespace-nowrap"
+                        >
+                          {a.label}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                    <ChevronRight className="w-3 h-3 uib-fg-faint shrink-0" />
+                    <span className="px-1.5 py-0.5 rounded font-mono bg-rose-500/15 text-rose-500 whitespace-nowrap">
+                      {selectedElement.id ? `${selectedElement.tagName}#${selectedElement.id}` : selectedElement.tagName}
+                    </span>
+                    <div className="flex-1" />
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button onClick={() => canvasRef.current?.selectParent()} disabled={!selectedElement.ancestors?.length} title="Select parent" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-30"><PanelLeft className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => canvasRef.current?.moveSelected('up')} disabled={!selectedElement.canMoveUp} title="Move up" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-30"><ChevronLeft className="w-3.5 h-3.5 rotate-90" /></button>
+                      <button onClick={() => canvasRef.current?.moveSelected('down')} disabled={!selectedElement.canMoveDown} title="Move down" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-30"><ChevronRight className="w-3.5 h-3.5 rotate-90" /></button>
+                      <button onClick={() => canvasRef.current?.duplicateSelected()} title="Duplicate (Ctrl+D)" className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded"><Copy className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => canvasRef.current?.deleteElement(selectedElement.path)} title="Delete (Del)" className="p-1 text-red-400 hover:text-red-300 uib-hover rounded"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1632,7 +1784,7 @@ export function EnhancedUIBuilderModal({
                 <button onClick={handleResetZoom} className="min-w-[44px] px-1.5 py-0.5 text-[10px] font-mono uib-fg-muted uib-hover rounded">
                   {Math.round(zoom * 100)}%
                 </button>
-                <button onClick={handleZoomIn} disabled={zoom >= 2} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
+                <button onClick={handleZoomIn} disabled={zoom >= 3} className="p-1 uib-fg-muted uib-fg-hover uib-hover rounded disabled:opacity-40">
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -1660,6 +1812,7 @@ export function EnhancedUIBuilderModal({
                 selectedPath={null}
                 onSelectElement={() => {}}
                 onHoverElement={() => {}}
+                onZoomChange={setZoom}
               />
             </div>
           </div>

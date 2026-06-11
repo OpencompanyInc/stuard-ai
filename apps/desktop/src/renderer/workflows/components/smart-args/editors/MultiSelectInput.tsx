@@ -135,13 +135,13 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
           {visibleChips.map(opt => (
             <span
               key={String(opt.value)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-indigo-500/10 text-indigo-400 rounded-lg border border-indigo-500/20 group/chip"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium wf-accent-chip rounded-lg border border-[color:color-mix(in_srgb,var(--wf-accent)_22%,transparent)] group/chip"
             >
               {opt.label}
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); toggle(opt.value); }}
-                className="p-0.5 rounded hover:bg-indigo-200/50 transition-colors opacity-60 group-hover/chip:opacity-100"
+                className="p-0.5 rounded hover:wf-accent-soft-bg transition-colors opacity-60 group-hover/chip:opacity-100"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -175,7 +175,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search tools..."
-                className="w-full pl-9 pr-3 py-2 text-sm wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50"
+                className="w-full pl-9 pr-3 py-2 text-sm wf-input border wf-border-subtle rounded-lg focus:outline-none"
               />
             </div>
             {!search && (
@@ -183,7 +183,7 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                 <button
                   type="button"
                   onClick={selectAll}
-                  className="px-3 py-1.5 text-xs font-medium text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium wf-accent-chip wf-hover-bg rounded-lg transition-colors"
                 >
                   Select All
                 </button>
@@ -212,13 +212,13 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                   <button
                     type="button"
                     onClick={() => selectGroup(groupName)}
-                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/10 flex items-center gap-2 transition-colors sticky top-0 wf-bg-elevated backdrop-blur-xl"
+                    className="w-full px-3 py-1.5 text-left text-[11px] font-bold uppercase tracking-wider wf-fg-faint hover:wf-accent-fg hover:wf-accent-soft-bg flex items-center gap-2 transition-colors sticky top-0 wf-bg-elevated backdrop-blur-xl"
                   >
                     <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
-                      allGroupSelected ? 'bg-indigo-600 border-indigo-600' : someGroupSelected ? 'bg-indigo-500/20 border-indigo-500/40' : 'wf-border-subtle'
+                      allGroupSelected ? 'bg-[var(--wf-accent)] border-[var(--wf-accent)]' : someGroupSelected ? 'wf-accent-soft-bg border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)]' : 'wf-border-subtle'
                     }`}>
                       {allGroupSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                      {someGroupSelected && !allGroupSelected && <div className="w-1.5 h-1.5 bg-indigo-500/100 rounded-sm" />}
+                      {someGroupSelected && !allGroupSelected && <div className="w-1.5 h-1.5 bg-[var(--wf-accent)] rounded-sm" />}
                     </div>
                     {groupName}
                     <span className="text-[10px] font-normal normal-case wf-fg-faint ml-auto">
@@ -234,11 +234,11 @@ export function MultiSelectInput({ value, onChange, options, placeholder, emptyL
                         type="button"
                         onClick={() => toggle(opt.value)}
                         className={`w-full px-3 py-1.5 pl-7 text-left text-sm rounded-lg flex items-center gap-2 transition-colors mb-0.5 ${
-                          isSelected ? 'bg-indigo-500/10 text-indigo-400' : 'wf-fg-muted wf-hover-bg'
+                          isSelected ? 'wf-accent-chip' : 'wf-fg-muted wf-hover-bg'
                         }`}
                       >
                         <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                          isSelected ? 'bg-indigo-600 border-indigo-600' : 'wf-border-subtle wf-bg-overlay'
+                          isSelected ? 'bg-[var(--wf-accent)] border-[var(--wf-accent)]' : 'wf-border-subtle wf-bg-overlay'
                         }`}>
                           {isSelected && <Check className="w-3 h-3 text-white" />}
                         </div>

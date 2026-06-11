@@ -118,7 +118,7 @@ export function ArrayEditor({
               if (Array.isArray(value)) onChange('');
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${mode === 'variable'
-              ? 'bg-indigo-500/20 text-indigo-400 shadow-sm'
+              ? 'wf-accent-soft-bg wf-accent-fg shadow-sm'
               : 'wf-fg-faint hover:wf-fg-muted'
               }`}
           >
@@ -153,7 +153,7 @@ export function ArrayEditor({
               <p className="text-sm wf-fg-muted mb-3">No {getItemLabel()}s added yet</p>
               <button
                 onClick={addItem}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-indigo-400 bg-indigo-500/10 rounded-lg hover:bg-indigo-500/20 transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium wf-accent-chip rounded-lg hover:wf-accent-soft-bg transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Add {getItemLabel()}
@@ -199,7 +199,7 @@ export function ArrayEditor({
                               }
                             } catch {}
                           }}
-                          className="px-3 py-2 wf-bg-overlay border wf-border-subtle rounded-lg wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 transition-colors shrink-0"
+                          className="px-3 py-2 wf-bg-overlay border wf-border-subtle rounded-lg wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] transition-colors shrink-0"
                           title="Browse files"
                         >
                           <FolderOpen className="w-4 h-4" />
@@ -211,7 +211,7 @@ export function ArrayEditor({
                         onChange={e => {
                           try { updateItem(i, JSON.parse(e.target.value)); } catch { /* ignore */ }
                         }}
-                        className="w-full px-3 py-2 text-xs font-mono wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none"
+                        className="w-full px-3 py-2 text-xs font-mono wf-bg-overlay border wf-border-subtle rounded-lg focus:outline-none resize-none"
                         rows={3}
                       />
                     ) : (
@@ -238,7 +238,7 @@ export function ArrayEditor({
 
               <button
                 onClick={addItem}
-                className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:text-indigo-400 hover:border-indigo-500/40 hover:bg-indigo-500/10 transition-all flex items-center justify-center gap-2"
+                className="w-full py-2.5 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] hover:wf-accent-soft-bg transition-all flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Add {getItemLabel()}

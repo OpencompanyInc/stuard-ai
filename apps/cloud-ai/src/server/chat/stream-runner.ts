@@ -60,6 +60,9 @@ export function attachWorkflowForClient(toolName: string, result: any): any {
   if (!WORKFLOW_MUTATION_TOOLS.has(toolName)) return result;
   // Only successful mutations carry a workflow; errors are forwarded untouched.
   if (result.ok !== true) return result;
+  // Sub-workflow file edits (stuardFile) don't touch the session/main workflow
+  // — attaching the main workflow here would hand the canvas a stale document.
+  if (result.stuardFile) return result;
   // Respect a workflow the tool already attached (e.g. headless/no-writer path).
   if (result.workflow) return result;
   // Resolve the FRESH workflow by id first. The workflow-agent runs each tool

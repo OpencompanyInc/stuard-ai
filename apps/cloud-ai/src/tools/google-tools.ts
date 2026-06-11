@@ -1468,7 +1468,7 @@ export const sheets_create_spreadsheet = createTool({
     title: z.string().describe('Spreadsheet title'),
     sheets: z.array(z.object({
       title: z.string().describe('Sheet/tab name'),
-      data: z.array(z.array(z.any())).optional().describe('Initial row data (array of rows, each row is array of cell values)'),
+      data: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))).optional().describe('Initial row data (array of rows, each row is array of cell values)'),
       columnWidths: z.array(z.object({
         startIndex: z.number(),
         endIndex: z.number(),
@@ -1555,7 +1555,7 @@ export const sheets_write_range = createTool({
   inputSchema: z.object({
     spreadsheetId: z.string(),
     range: z.string().describe('A1 notation range, e.g. "Sheet1!A1:D10" or "Sheet1!A1"'),
-    values: z.array(z.array(z.any())).describe('2D array of values (rows × columns)'),
+    values: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))).describe('2D array of values (rows × columns)'),
     valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED').describe('RAW = literal values, USER_ENTERED = parse like typing in the UI (formulas, dates, numbers)'),
     profile: profileField,
   }),
@@ -1579,7 +1579,7 @@ export const sheets_append_rows = createTool({
   inputSchema: z.object({
     spreadsheetId: z.string(),
     range: z.string().describe('Range to search for a table, e.g. "Sheet1!A:Z" or "Sheet1!A1"'),
-    values: z.array(z.array(z.any())).describe('Rows to append (array of rows)'),
+    values: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))).describe('Rows to append (array of rows)'),
     valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED'),
     insertDataOption: z.enum(['OVERWRITE', 'INSERT_ROWS']).default('INSERT_ROWS').describe('INSERT_ROWS adds new rows, OVERWRITE writes over existing blank rows'),
     profile: profileField,
@@ -1851,7 +1851,7 @@ export const sheets_batch_update_values = createTool({
     spreadsheetId: z.string(),
     data: z.array(z.object({
       range: z.string().describe('A1 notation range'),
-      values: z.array(z.array(z.any())),
+      values: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
     })).describe('Array of range-values pairs to write'),
     valueInputOption: z.enum(['RAW', 'USER_ENTERED']).default('USER_ENTERED'),
     profile: profileField,

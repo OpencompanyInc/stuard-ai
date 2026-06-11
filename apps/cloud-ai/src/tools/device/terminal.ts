@@ -55,7 +55,11 @@ export const terminal_create = makeLocalTool(
     cwd: z.string().optional(),
     cols: z.number().int().min(20).max(400).optional().default(120),
     rows: z.number().int().min(5).max(200).optional().default(30),
-    env: z.any().optional().describe('Environment variables.'),
+    // Typed record (not z.any) so the schema stays representable for strict
+    // providers like Gemini, whose function-declaration validator rejects
+    // typeless properties (it drops them, then errors on the dangling
+    // `required` entry). See terminal_send_keys below for the same reason.
+    env: z.record(z.string(), z.string()).optional().describe('Environment variables (name -> value).'),
   }),
   z.object({
     ok: z.boolean(),
@@ -142,7 +146,12 @@ export const terminal_send_keys = makeLocalTool(
   'Send special keys to a PTY.',
   withTerminalPermission({
     sessionId: z.string(),
-    keys: z.any().describe('A key or list of keys.'),
+    // Typed union (not z.any) — Gemini's strict schema validator rejects
+    // typeless properties, which broke every delegated file_ops call on
+    // Gemini models because this tool ships in the File Ops pack.
+    keys: z
+      .union([z.string(), z.array(z.string())])
+      .describe('A single key (e.g. "Enter") or a list of keys.'),
   }),
   z.object({ ok: z.boolean(), sessionId: z.string().optional(), error: z.string().optional() }),
 );

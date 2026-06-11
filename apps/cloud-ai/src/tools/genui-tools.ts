@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, hasClientBridge } from './bridge';
+import { anyJsonValue } from './schema-utils';
 
 /**
  * GenUI Tools - Interactive UI Components for Human-in-the-Loop AI
@@ -68,7 +69,11 @@ export const showFiles = createTool({
   description: 'Display a file/folder tree structure. Use when showing project structure or directory contents.',
   inputSchema: z.object({
     title: z.string().optional().describe('Tree title'),
-    nodes: z.array(z.any()).describe('File tree nodes: { name, type: "file"|"folder", children?: [...] }'),
+    nodes: z.array(z.object({
+      name: z.string(),
+      type: z.enum(['file', 'folder']),
+      children: z.array(anyJsonValue).optional(),
+    }).passthrough()).describe('File tree nodes: { name, type: "file"|"folder", children?: [...] }'),
   }),
   execute: async (args) => executeGenUI('show_files', args, false),
 });
@@ -95,7 +100,7 @@ export const showForm = createTool({
           sublabel: z.string().optional().describe('Secondary text'),
         })).optional().describe('Options for select/multiselect fields'),
         required: z.boolean().optional().describe('Whether the field must be filled before proceeding'),
-        defaultValue: z.any().optional().describe('Default value for the field'),
+        defaultValue: anyJsonValue.optional().describe('Default value for the field'),
         min: z.number().optional().describe('Minimum value for number/slider'),
         max: z.number().optional().describe('Maximum value for number/slider'),
         step: z.number().optional().describe('Step increment for number/slider'),

@@ -103,10 +103,6 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
   return out;
 }
 
-function stripVariantSuffix(modelId: string): string {
-  return String(modelId || '').replace(/:free$/i, '');
-}
-
 /** Compact context-window label: 2000000 → "2M", 1500000 → "1.5M", 128000 → "128k". */
 function formatContextWindow(n: number): string {
   if (n >= 1_000_000) {
@@ -168,9 +164,9 @@ function dedupeBrowseModels(models: ModelMeta[]): ModelMeta[] {
   const seen = new Set<string>();
   const out: ModelMeta[] = [];
   for (const model of models) {
-    const familyId = stripVariantSuffix(model.id);
-    if (seen.has(familyId)) continue;
-    seen.add(familyId);
+    const id = String(model.id || '').toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
     out.push(model);
   }
   return out;
@@ -195,10 +191,11 @@ function isStuardServed(model: ModelMeta | null | undefined): boolean {
 
 /**
  * Canonical identity that collapses a native entry and its Stuard-served twin
- * (e.g. `openai/gpt-5.1` ⇆ `openrouter/openai/gpt-5.1`, ignoring `:free`).
+ * (e.g. `openai/gpt-5.1` ⇆ `openrouter/openai/gpt-5.1`). OpenRouter `:free`
+ * variants are distinct routable models and must stay separate from paid ids.
  */
 function canonicalModelKey(id: string): string {
-  return String(id || '').replace(/^openrouter\//i, '').replace(/:free$/i, '').toLowerCase();
+  return String(id || '').replace(/^openrouter\//i, '').toLowerCase();
 }
 
 /**

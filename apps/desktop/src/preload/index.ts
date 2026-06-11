@@ -238,7 +238,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),
   workflowsSave: (id: string, content: string) => ipcRenderer.invoke('workflows:save', { id, content }),
   workflowsDelete: (id: string) => ipcRenderer.invoke('workflows:delete', id),
-  workflowsRun: (id: string, triggerId?: string, options?: { accessToken?: string }) => ipcRenderer.invoke('workflows:run', id, triggerId, options),
+  workflowsRun: (id: string, triggerId?: string, options?: { accessToken?: string; inputs?: Record<string, any> }) => ipcRenderer.invoke('workflows:run', id, triggerId, options),
   workflowsStop: (id: string) => ipcRenderer.invoke('workflows:stop', id),
   workflowsDeploy: (id: string) => ipcRenderer.invoke('workflows:deploy', id),
   workflowsUndeploy: (id: string) => ipcRenderer.invoke('workflows:undeploy', id),

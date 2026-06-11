@@ -232,6 +232,30 @@ function getReturnControlSummary(toolName: string, result: any): string {
   return typeof parsed?.summary === 'string' ? parsed.summary : '';
 }
 
+/**
+ * Resolve a stream result's final text to a plain string.
+ *
+ * In AI SDK v6 / Mastra, `streamResult.text` is a `Promise<string>`, not a
+ * string. Assigning it straight into `fullText` (as the no-text-delta fallback
+ * did) left a Promise where a string was expected, so downstream `text.slice` /
+ * `text.length` calls threw "text.slice is not a function" — which masked the
+ * real upstream error (e.g. a provider 400) as a confusing subagent crash.
+ */
+async function resolveFinalStreamText(streamResult: any): Promise<string> {
+  const raw = streamResult?.text;
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw;
+  if (typeof raw?.then === 'function') {
+    try {
+      const awaited = await raw;
+      return typeof awaited === 'string' ? awaited : '';
+    } catch {
+      return '';
+    }
+  }
+  return typeof raw === 'object' ? '' : String(raw);
+}
+
 // ─── Child-side tools ────────────────────────────────────────────────────────
 
 function makeAskOrchestratorTool(
@@ -1194,9 +1218,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           // Final text fallback — if the model returned text without streaming
           // text-delta chunks (common for short responses), the client never saw
           // any text. Emit it as a single delta so the UI renders it.
-          if (!fullText && streamResult?.text) {
-            fullText = streamResult.text;
-            emitToClient('delta', { text: streamResult.text });
+          // streamResult.text is a Promise in AI SDK v6, so resolve it to a real
+          // string before assigning — otherwise fullText becomes a Promise.
+          if (!fullText) {
+            const finalText = await resolveFinalStreamText(streamResult);
+            if (finalText) {
+              fullText = finalText;
+              emitToClient('delta', { text: finalText });
+            }
           }
           // Capture usage from streamResult if not already captured from finish event
           if (!streamUsage && streamResult?.usage) streamUsage = streamResult.usage;
@@ -1329,9 +1358,12 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
                     }
                   }
                 }
-                if (!fullText && compactedStreamResult?.text) {
-                  fullText = compactedStreamResult.text;
-                  emitToClient('delta', { text: compactedStreamResult.text });
+                if (!fullText) {
+                  const finalText = await resolveFinalStreamText(compactedStreamResult);
+                  if (finalText) {
+                    fullText = finalText;
+                    emitToClient('delta', { text: finalText });
+                  }
                 }
                 if (!streamUsage && compactedStreamResult?.usage) streamUsage = compactedStreamResult.usage;
               } finally {
@@ -1368,8 +1400,14 @@ export async function runSubagent(opts: RunSubagentOptions): Promise<DelegationR
           clearTimeout(timeoutTimer);
           timeoutTimer = undefined;
         }
-        // Success — break out of retry loop
-        const text = response?.text || fullText || '';
+        // Success — break out of retry loop.
+        // Coerce to a string defensively: a stream that errored or only made
+        // tool calls can surface a non-string (or Promise) here, and the
+        // logging below calls `.slice`/`.length` on it.
+        const rawText = response?.text || fullText || '';
+        const text = typeof rawText === 'string'
+          ? rawText
+          : (rawText == null ? '' : typeof rawText === 'object' ? '' : String(rawText));
         const steps = Array.isArray(response?.steps) ? response.steps : [];
         const durationMs = Date.now() - startTime;
         const toolCalls = allToolCalls.length > 0 ? allToolCalls : steps.flatMap((s: any) => s?.toolCalls || []);

@@ -1,15 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { AudioLines, Plus, ArrowRight, X, LayoutDashboard, Settings, type LucideIcon } from 'lucide-react';
+import { AudioLines, Plus, ArrowRight, X, Paperclip } from 'lucide-react';
 import { FIGMA_ROW_BASE, FIGMA_ROW_PRIMARY, FIGMA_KBD } from '../chat/shared/input/styles';
 import { HighlightMatch } from '../chat/shared/input/HighlightMatch';
+import { filterCompactStuardNav } from '../../utils/compactStuardNav';
+import googleLogo from '../../assets/icons/google.png';
+import bingLogo from '../../assets/icons/bing.png';
+import duckduckgoLogo from '../../assets/icons/duckduckgo.png';
+import youtubeLogo from '../../assets/icons/youtube.png';
+import githubLogo from '../../assets/icons/github.svg';
+import wikipediaLogo from '../../assets/icons/wikipedia.png';
+import merriamWebsterLogo from '../../assets/icons/merriam-webster.png';
 
 // Post-welcome coaching: the real compact pill performs each core gesture
 // (summon · find · move · context · expand · dismiss) on a transparent backdrop,
 // so it looks exactly like the real app on the user's desktop. A single coach
 // card — always anchored below the pill so it never covers the input — carries
-// the copy and the Back / Next controls. No atmospheric glow: this is the
-// normal UI.
+// the copy and the Back / Next controls.
+//
+// Interactive steps are hands-on: Next stays locked until the user performs the
+// gesture (a "skip this step" link is always there), and a successful try
+// auto-advances after a short beat. The search dropdown, Ctrl+arrow movement,
+// and @-file attach all mirror the real compact mode 1:1 — same nav catalog
+// (filterCompactStuardNav), same quick-action rows, same movement physics.
 
 type PillMode = 'compact' | 'sidebar' | 'window';
 type Target = 'pill' | 'attach' | 'corner';
@@ -21,98 +34,88 @@ interface Step {
   body: string;
   keys: string[];
   target: Target;
+  /** "Your turn" instruction shown on interactive steps until the user tries it. */
+  hint?: string;
 }
 
 const STEPS: Step[] = [
   {
-    id: 'summon', eyebrow: 'Meet Stuard', title: 'This is me.',
+    id: 'summon', eyebrow: 'Meet Stuard', title: 'I live in this little pill.',
     // keys here are a fallback only — the summon step renders the user's own
     // saved global hotkey (see hotkeyKeys), not this hardcoded default.
-    body: 'I sit on top of everything, one shortcut away. Call me up from anywhere — tap the hotkey, or just say “Hey Stuard.”',
+    body: 'I float above your other windows, so I’m always one tap away. Press the shortcut below — or say “Hey Stuard” — and I appear right where you’re working.',
     keys: ['Ctrl', 'Shift', 'Space'], target: 'pill',
   },
   {
-    id: 'find', eyebrow: 'Find anything', title: 'Jump straight there.',
-    body: 'Try it now — type in the pill below. Search for Dashboard, Settings, or Stuard Studio and watch the menu update live.',
-    keys: ['type to search'], target: 'pill',
+    id: 'find', eyebrow: 'Search', title: 'Type to find anything.',
+    body: 'I’m also a launcher. Type in the pill above — try “settings” — and I instantly match Stuard pages, apps, files, and workflows. Use the arrow keys to pick a result.',
+    keys: [], target: 'pill',
+    hint: 'Your turn — click the pill and type “settings”.',
   },
   {
-    id: 'move', eyebrow: 'Move me', title: 'Put me anywhere.',
-    body: 'Try it now — hold Ctrl and press the arrow keys to glide me around, so I never sit on top of what you’re working on.',
+    id: 'move', eyebrow: 'Move', title: 'Move me out of your way.',
+    body: 'Hold Ctrl and press the arrow keys — I glide across the screen. Add Shift to move faster. That way I never cover what you’re working on.',
     keys: ['Ctrl', '↑', '↓', '←', '→'], target: 'pill',
+    hint: 'Your turn — hold Ctrl and tap an arrow key.',
   },
   {
-    id: 'context', eyebrow: 'Give me context', title: 'Hand me anything.',
-    body: 'Try it now — type @ in the pill to attach a file, or click + to add one directly.',
+    id: 'context', eyebrow: 'Attach files', title: 'Hand me a file.',
+    body: 'Type @ in the pill to pick a file, or click the + button. I read whatever you attach before I answer.',
     keys: ['@', '+'], target: 'attach',
+    hint: 'Your turn — type @ in the pill, then pick a file.',
   },
   {
-    id: 'expand', eyebrow: 'Resize me', title: 'As big as you need.',
-    body: 'Grab the red corner and drag — I stretch from a compact pill out to a full window, any time.',
-    keys: ['drag'], target: 'corner',
+    id: 'expand', eyebrow: 'Resize', title: 'I grow as big as you need.',
+    body: 'See the red arc on my corner? Drag it to stretch me from a pill into a sidebar or a full window. Like this:',
+    keys: [], target: 'corner',
   },
   {
-    id: 'dismiss', eyebrow: 'Dismiss me', title: 'Tuck me away.',
-    body: 'Try it now — press Esc to tuck me away. Your hotkey brings me right back.',
+    id: 'dismiss', eyebrow: 'Hide', title: 'Tuck me away when you’re done.',
+    body: 'Press Esc and I disappear. Your shortcut — or “Hey Stuard” — brings me right back.',
     keys: ['Esc'], target: 'pill',
+    hint: 'Your turn — press Esc.',
   },
 ];
-
 
 const INTERACTIVE_STEPS = new Set<Step['id']>(['find', 'move', 'context', 'dismiss']);
 
 const PLACEHOLDER = 'Ask Stuard…';
 const HOME = { left: '50%', top: '30%' };
 
-// Nav entries mirror the real compact-mode dropdown (see utils/compactStuardNav.ts).
-interface NavDemoItem {
-  group: 'dashboard' | 'studio';
-  title: string;
-  subtitle: string;
-  icon: LucideIcon;
-  keywords: string[];
-}
-
-const NAV_ITEMS: NavDemoItem[] = [
-  { group: 'dashboard', title: 'Overview', subtitle: 'Dashboard · overview & activity', icon: LayoutDashboard, keywords: ['overview', 'home', 'dashboard', 'dash'] },
-  { group: 'dashboard', title: 'Settings', subtitle: 'Dashboard · themes & preferences', icon: Settings, keywords: ['settings', 'setting', 'preferences', 'theme'] },
-  { group: 'studio', title: 'Stuard Studio', subtitle: 'Open the studio home', icon: LayoutDashboard, keywords: ['stuard', 'studio', 'workflow', 'workflows'] },
+// Same engine lineup as the real compact dropdown (see InputAreaImpl).
+const ENGINES = [
+  { id: 'google', name: 'Google', logo: googleLogo },
+  { id: 'bing', name: 'Bing', logo: bingLogo },
+  { id: 'duckduckgo', name: 'DuckDuckGo', logo: duckduckgoLogo },
+  { id: 'youtube', name: 'YouTube', logo: youtubeLogo },
+  { id: 'github', name: 'GitHub', logo: githubLogo },
+  { id: 'merriam', name: 'Merriam-Webster', logo: merriamWebsterLogo },
+  { id: 'wikipedia', name: 'Wikipedia', logo: wikipediaLogo },
 ];
 
-function scoreNavMatch(item: NavDemoItem, q: string): number {
-  const title = item.title.toLowerCase();
-  const subtitle = item.subtitle.toLowerCase();
-  if (title === q) return 100;
-  if (title.startsWith(q)) return 90;
-  if (title.includes(q)) return 80;
-  if (subtitle.includes(q)) return 70;
-  if (item.keywords.some((k) => k === q || k.startsWith(q) || q.startsWith(k))) return 75;
-  if (item.keywords.some((k) => k.includes(q) || q.includes(k))) return 60;
-  return 0;
-}
-
-function filterNavItems(query: string): NavDemoItem[] {
-  const q = query.toLowerCase().trim();
-  if (q.length < 2) return [];
-  return NAV_ITEMS
-    .map((item) => ({ item, score: scoreNavMatch(item, q) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
-    .map(({ item }) => item);
-}
+// Stand-in files for the @-attach practice (the real pill searches your disk).
+const DEMO_FILES = [
+  { name: 'report.pdf', tile: '#EF4444', label: 'PDF', path: 'Documents\\report.pdf' },
+  { name: 'budget.xlsx', tile: '#10B981', label: 'XLS', path: 'Documents\\budget.xlsx' },
+  { name: 'team-photo.png', tile: '#3B82F6', label: 'PNG', path: 'Pictures\\team-photo.png' },
+];
 
 export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: { onComplete: () => void; onSkip?: () => void; lastLabel?: string }) {
   const [idx, setIdx] = useState(0);
   const step = STEPS[idx];
 
   const [pos, setPos] = useState(HOME);
+  const [moveOffset, setMoveOffset] = useState({ x: 0, y: 0 });
   const [mode, setMode] = useState<PillMode>('compact');
   const [gone, setGone] = useState(false);
   const [typed, setTyped] = useState('');
-  const [chip, setChip] = useState(false);
+  const [chipName, setChipName] = useState<string | null>(null);
   const [keyhint, setKeyhint] = useState(false);
   const [cornerActive, setCornerActive] = useState(false);
   const [userTried, setUserTried] = useState(false);
+  const [stepDone, setStepDone] = useState(false);
+  const [selIdx, setSelIdx] = useState(0);
+  const [engineId, setEngineId] = useState('google');
   const inputRef = useRef<HTMLInputElement>(null);
   // The user's real global hotkey, shown on the summon step instead of a
   // hardcoded Ctrl+Shift+Space. Falls back to the default until it loads.
@@ -125,14 +128,30 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
   const cardRef = useRef<HTMLDivElement>(null);
   const keyhintRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  // Last measured height of the find-step dropdown, so we can keep reserving its
-  // space while it's briefly hidden between demo queries (keeps the coach card
-  // and its Next button from jumping up and down).
+  // Last measured height of the below-pill dropdown, so we keep reserving its
+  // space while it's briefly hidden (keeps the coach card and its Next button
+  // from jumping up and down mid-step).
   const dropdownHeightRef = useRef(0);
   // The position rAF loop below only re-subscribes on step.target changes, so its
   // closure can hold a stale `step`. Read the current step id from a live ref.
   const stepIdRef = useRef(step.id);
   stepIdRef.current = step.id;
+
+  // ── auto-advance plumbing: a successful try moves to the next step after a
+  // short beat; cleared whenever the user navigates or the step changes.
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nextRef = useRef<() => void>(() => {});
+  const clearAdvance = () => {
+    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
+  };
+  const scheduleAdvance = (ms: number) => {
+    clearAdvance();
+    advanceTimerRef.current = setTimeout(() => { advanceTimerRef.current = null; nextRef.current(); }, ms);
+  };
+
+  const next = () => { clearAdvance(); if (idx < STEPS.length - 1) setIdx(i => i + 1); else onComplete(); };
+  const back = () => { clearAdvance(); if (idx > 0) setIdx(i => i - 1); };
+  nextRef.current = next;
 
   // Load the user's configured global hotkey (main-process settings are the
   // source of truth; fall back to the locally-cached value, then the default).
@@ -161,15 +180,20 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     return () => { cancelled = true; };
   }, []);
 
-  // Reset try-state and focus the pill input when the step changes.
+  // Reset all try-state and focus the pill input when the step changes.
   useEffect(() => {
     setUserTried(false);
+    setStepDone(false);
     setTyped('');
-    setChip(false);
+    setChipName(null);
+    setSelIdx(0);
+    setMoveOffset({ x: 0, y: 0 });
+    dropdownHeightRef.current = 0;
+    clearAdvance();
     const t = setTimeout(() => {
       if (INTERACTIVE_STEPS.has(step.id)) inputRef.current?.focus();
     }, 350);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); clearAdvance(); };
   }, [idx, step.id]);
 
   // ── per-step performance loop (visual-only steps; interactive steps wait for the user) ──
@@ -178,7 +202,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     const timers: ReturnType<typeof setTimeout>[] = [];
     const after = (fn: () => void, ms: number) => { const t = setTimeout(() => { if (!cancelled) fn(); }, ms); timers.push(t); return t; };
 
-    setPos(HOME); setMode('compact'); setGone(false); setTyped(''); setChip(false); setKeyhint(false); setCornerActive(false);
+    setPos(HOME); setMode('compact'); setGone(false); setKeyhint(false); setCornerActive(false);
 
     if (step.id === 'summon') {
       setGone(true);
@@ -203,32 +227,74 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     return () => { cancelled = true; timers.forEach(clearTimeout); };
   }, [idx, step.id]);
 
-  // Interactive: Ctrl+arrow moves the pill on the move step.
+  // Interactive: Ctrl+arrows glide the pill on the move step. Same physics as
+  // the real pill (AppController stepLoop): held keys drive a rAF loop at
+  // 900 px/s, 1500 px/s with Shift, diagonal normalized.
+  const movedRef = useRef(0);
   useEffect(() => {
     if (step.id !== 'move') return;
-    const nudge = (dx: number, dy: number) => {
-      setUserTried(true);
-      setPos((prev) => {
-        const left = parseFloat(String(prev.left)) + dx;
-        const top = parseFloat(String(prev.top)) + dy;
-        return {
-          left: `${Math.max(18, Math.min(82, left))}%`,
-          top: `${Math.max(12, Math.min(78, top))}%`,
-        };
-      });
+    movedRef.current = 0;
+    const pressed = new Set<string>();
+    let rafId: number | null = null;
+    let lastTs = 0;
+
+    const stepLoop = (ts: number) => {
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+
+      const ctrl = pressed.has('Control') || pressed.has('Meta');
+      const shift = pressed.has('Shift');
+      let vx = 0, vy = 0;
+      if (pressed.has('ArrowLeft')) vx -= 1;
+      if (pressed.has('ArrowRight')) vx += 1;
+      if (pressed.has('ArrowUp')) vy -= 1;
+      if (pressed.has('ArrowDown')) vy += 1;
+
+      if (ctrl && (vx !== 0 || vy !== 0)) {
+        const speed = shift ? 1500 : 900; // px/s — matches the real pill
+        const len = Math.hypot(vx, vy) || 1;
+        const dx = (vx / len) * speed * dt;
+        const dy = (vy / len) * speed * dt;
+        movedRef.current += Math.hypot(dx, dy);
+        if (movedRef.current > 20) setUserTried(true);
+        setMoveOffset(prev => {
+          const w = window.innerWidth, h = window.innerHeight;
+          const baseX = w * 0.5, baseY = h * 0.30;
+          return {
+            x: Math.max(-(baseX - 220), Math.min(w - baseX - 220, prev.x + dx)),
+            y: Math.max(-(baseY - 60), Math.min(h - baseY - 230, prev.y + dy)),
+          };
+        });
+        rafId = requestAnimationFrame(stepLoop);
+      } else {
+        rafId = null;
+        lastTs = 0;
+      }
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      if (e.key === 'ArrowUp') { e.preventDefault(); nudge(0, -4); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); nudge(0, 4); }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(-4, 0); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); nudge(4, 0); }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      pressed.add(e.key);
+      if (e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        if (rafId == null) rafId = requestAnimationFrame(stepLoop);
+      }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    const onKeyUp = (e: KeyboardEvent) => {
+      pressed.delete(e.key);
+      if (movedRef.current > 150) { setStepDone(true); scheduleAdvance(1500); }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
   }, [step.id]);
 
-  // Interactive: Esc dismisses the pill on the dismiss step.
+  // Interactive: Esc dismisses the pill on the dismiss step, then auto-advances
+  // once it pops back so the user sees the full hide-and-return loop.
   useEffect(() => {
     if (step.id !== 'dismiss') return;
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
@@ -236,9 +302,11 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
       if (e.key !== 'Escape') return;
       e.preventDefault();
       setUserTried(true);
+      setStepDone(true);
       setGone(true);
       if (restoreTimer) clearTimeout(restoreTimer);
       restoreTimer = setTimeout(() => setGone(false), 900);
+      scheduleAdvance(2200);
     };
     window.addEventListener('keydown', onKey, true);
     return () => {
@@ -246,6 +314,27 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
       if (restoreTimer) clearTimeout(restoreTimer);
     };
   }, [step.id]);
+
+  // Find step: once the user's query actually matches something, count the step
+  // as done and move on after a beat. Re-typing postpones the advance.
+  useEffect(() => {
+    if (step.id !== 'find') return;
+    const q = typed.trim();
+    if (q.length >= 2 && filterCompactStuardNav(q, 4).length > 0) {
+      setStepDone(true);
+      scheduleAdvance(3000);
+    } else {
+      setStepDone(false);
+      clearAdvance();
+    }
+  }, [typed, step.id]);
+
+  // Context step: attaching a file (via @ or +) completes the step.
+  useEffect(() => {
+    if (step.id !== 'context' || !chipName) return;
+    setStepDone(true);
+    scheduleAdvance(2000);
+  }, [chipName, step.id]);
 
   // ── glue ring (to the step target) + card (always below the pill) ──
   useEffect(() => {
@@ -265,17 +354,17 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         ring.style.borderRadius = `${step.target === 'pill' ? 26 : step.target === 'corner' ? 26 : 12}px`;
 
         // card always hangs below the pill, centered — never over the input.
-        // When the find-step dropdown is open it extends below the pill, so we
-        // anchor the card beneath where the dropdown sits. The dropdown blinks
-        // on and off as the demo retypes each query, so we reserve its space at
-        // all times on the find step — otherwise the card (and its Next button)
-        // would bounce up and down and be hard to click.
+        // When a dropdown is open (find search results, context file picker) it
+        // extends below the pill, so anchor the card beneath it and keep
+        // reserving that space for the rest of the step — otherwise the card
+        // (and its Next button) would bounce around while the user types.
         if (card) {
           const pr = pill.getBoundingClientRect();
           const dd = dropdownRef.current;
           if (dd) dropdownHeightRef.current = dd.getBoundingClientRect().height;
-          const dropdownReserve =
-            stepIdRef.current === 'find' ? 8 + (dropdownHeightRef.current || 150) : 0;
+          const inDropdownStep = stepIdRef.current === 'find' || stepIdRef.current === 'context';
+          const dropdownReserve = inDropdownStep && dropdownHeightRef.current
+            ? 8 + dropdownHeightRef.current : 0;
           const anchorBottom = pr.bottom + dropdownReserve;
           const cw = card.offsetWidth, gap = 26;
           let left = pr.left + pr.width / 2 - cw / 2;
@@ -294,21 +383,56 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
     return () => cancelAnimationFrame(raf);
   }, [step.target]);
 
-  const next = () => { if (idx < STEPS.length - 1) setIdx(i => i + 1); else onComplete(); };
-  const back = () => { if (idx > 0) setIdx(i => i - 1); };
-
   const isCompact = mode === 'compact';
   const isInteractive = INTERACTIVE_STEPS.has(step.id);
+
+  // Find-step search results — the real compact-mode catalog, display-only.
+  const navItems = step.id === 'find' ? filterCompactStuardNav(typed, 4) : [];
   const showNavDropdown = step.id === 'find' && typed.trim().length >= 2;
-  const navItems = filterNavItems(typed);
+  const activeEngine = ENGINES.find(e => e.id === engineId) || ENGINES[0];
+
+  // Context-step @-file picker.
+  const atIndex = step.id === 'context' ? typed.indexOf('@') : -1;
+  const atQuery = atIndex >= 0 ? typed.slice(atIndex + 1).trim().toLowerCase() : '';
+  const showFileDropdown = step.id === 'context' && atIndex >= 0 && !chipName;
+  const fileMatches = showFileDropdown
+    ? DEMO_FILES.filter(f => !atQuery || f.name.toLowerCase().includes(atQuery))
+    : [];
 
   const handleInputChange = (value: string) => {
-    setUserTried(true);
+    if (value.trim()) setUserTried(true);
     setTyped(value);
-    if (step.id === 'context') {
-      setChip(/@[^\s]+\.pdf$/i.test(value.trim()));
+    setSelIdx(0);
+  };
+
+  const attachDemoFile = (name: string) => {
+    setUserTried(true);
+    setChipName(name);
+    setTyped('');
+  };
+
+  // Selecting any dropdown row counts as a completed try.
+  const completeFromDropdown = () => {
+    setUserTried(true);
+    setStepDone(true);
+    scheduleAdvance(1200);
+  };
+
+  // Mirror the real dropdown's arrow-key selection: Ask Stuard (0), Search (1),
+  // then the matched Stuard rows. Enter "runs" the selection in the demo.
+  const handleFindKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (step.id !== 'find' || !showNavDropdown) return;
+    const total = 2 + navItems.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setUserTried(true);
+      setSelIdx(prev => (prev + (e.key === 'ArrowDown' ? 1 : -1) + total) % total);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      completeFromDropdown();
     }
   };
+
   // The summon step reflects the user's real hotkey; every other step keeps its
   // own literal keycaps.
   const displayKeys = step.id === 'summon' ? hotkeyKeys : step.keys;
@@ -335,9 +459,12 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
 
       {/* the real compact pill, performing */}
       <div
-        className="absolute -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-700"
-        style={{ left: pos.left, top: pos.top, transitionTimingFunction: 'cubic-bezier(.3,.8,.2,1)' }}
+        className="absolute -translate-x-1/2 -translate-y-1/2"
+        style={{ left: pos.left, top: pos.top }}
       >
+        {/* move-step offset lives on its own wrapper so the per-frame glide
+            never fights the centering transform or any CSS transitions */}
+        <div style={{ transform: `translate(${moveOffset.x}px, ${moveOffset.y}px)` }}>
         <div className={clsx('coach-float', isInteractive && 'pointer-events-auto')}>
           <div
             ref={pillRef}
@@ -379,9 +506,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                 title="Attach"
                 onClick={() => {
                   if (step.id !== 'context') return;
-                  setUserTried(true);
-                  setChip(true);
-                  setTyped('');
+                  attachDemoFile('report.pdf');
                 }}
               >
                 <Plus className="w-6 h-6" strokeWidth={1.5} />
@@ -394,7 +519,7 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                     type="text"
                     value={typed}
                     onChange={(e) => handleInputChange(e.target.value)}
-                    onFocus={() => setUserTried(true)}
+                    onKeyDown={handleFindKeyDown}
                     placeholder={step.id === 'context' ? 'Type @ to attach a file…' : PLACEHOLDER}
                     className="w-full bg-transparent border-none outline-none text-[12px] leading-4 font-normal text-center placeholder:text-[rgb(var(--compact-pill-fg)/0.45)]"
                     style={{ color: 'rgb(var(--compact-pill-fg) / 0.92)' }}
@@ -434,12 +559,14 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
             </div>
           </div>
 
-          {/* find-step: an accurate clone of the real compact-mode search
-              dropdown (Quick Actions + Stuard navigation), hung below the pill */}
+          {/* find-step: a 1:1 clone of the real compact-mode search dropdown
+              (Quick Actions · engine picker · Stuard navigation · Workflows),
+              fed by the real filterCompactStuardNav catalog */}
           {showNavDropdown && (
             <div
               ref={dropdownRef}
-              className="absolute left-1/2 -translate-x-1/2"
+              data-interactive="true"
+              className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
               style={{ top: '100%', marginTop: 8, width: 380, zIndex: 7 }}
             >
               <div
@@ -452,7 +579,13 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                     <div style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg))', fontWeight: 400 }}>
                       Quick Actions
                     </div>
-                    <div className="w-full flex items-center" style={{ ...FIGMA_ROW_BASE, gap: 10 }}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setSelIdx(0)}
+                      onClick={completeFromDropdown}
+                      className="w-full flex items-center"
+                      style={{ ...(selIdx === 0 ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
+                    >
                       <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
                         <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
                           &ldquo;{typed.trim()}&rdquo;
@@ -462,17 +595,65 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                         </div>
                       </div>
                       <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>Enter</span>
-                    </div>
-                    <div className="w-full flex items-center" style={{ ...FIGMA_ROW_BASE, gap: 10 }}>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--compact-pill-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      onClick={completeFromDropdown}
+                      className="w-full flex items-center"
+                      style={{ ...FIGMA_ROW_BASE, gap: 10 }}
+                    >
                       <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
                         <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
                           &ldquo;{typed.trim()}&rdquo;
                         </div>
                         <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
-                          Search the web
+                          Screenshot &amp; send
+                        </div>
+                      </div>
+                      <span className="shrink-0 whitespace-nowrap" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>Ctrl + Shift + Enter</span>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setSelIdx(1)}
+                      onClick={completeFromDropdown}
+                      className="w-full flex items-center"
+                      style={{ ...(selIdx === 1 ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), gap: 10 }}
+                    >
+                      <div className="flex-1 min-w-0 flex flex-col items-start text-left" style={{ gap: 6 }}>
+                        <div className="truncate w-full" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
+                          &ldquo;{typed.trim()}&rdquo;
+                        </div>
+                        <div className="truncate w-full" style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
+                          Search {activeEngine.name}
                         </div>
                       </div>
                       <span className="shrink-0" style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: '14px' }}>Ctrl + Enter</span>
+                    </button>
+
+                    {/* engine picker — same chips as the real dropdown */}
+                    <div className="flex items-center" style={{ gap: 6, paddingLeft: 8, paddingRight: 8 }}>
+                      {ENGINES.map((engine) => {
+                        const isActive = engine.id === engineId;
+                        return (
+                          <button
+                            key={`engine-${engine.id}`}
+                            type="button"
+                            title={`Use ${engine.name}`}
+                            onClick={(e) => { e.stopPropagation(); setEngineId(engine.id); setUserTried(true); }}
+                            className="flex items-center justify-center transition-all hover:scale-105"
+                            style={{
+                              width: 28, height: 28, padding: 4, borderRadius: 8,
+                              background: isActive ? 'rgb(var(--compact-pill-fg) / 0.10)' : 'transparent',
+                              border: isActive ? '1px solid rgb(var(--compact-pill-fg) / 0.20)' : '1px solid transparent',
+                              opacity: isActive ? 1 : 0.55,
+                            }}
+                          >
+                            <img src={engine.logo} className="w-5 h-5 object-contain" alt={engine.name} />
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -484,18 +665,27 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                       </div>
                       {navItems.map((c, i) => {
                         const Icon = c.icon;
-                        const isSel = i === 0;
+                        const rowIdx = 2 + i;
+                        const isSel = selIdx === rowIdx;
+                        const prevGroup = i > 0 ? navItems[i - 1]?.group : undefined;
+                        const showGroupLabel = c.group && c.group !== prevGroup;
                         return (
-                          <React.Fragment key={c.title}>
-                            <div
-                              style={{
-                                fontSize: 9, lineHeight: '12px', color: 'rgb(var(--compact-pill-fg-muted))',
-                                paddingLeft: 8, textTransform: 'uppercase', letterSpacing: '0.06em',
-                              }}
-                            >
-                              {c.group === 'dashboard' ? 'Dashboard' : 'Studio'}
-                            </div>
-                            <div
+                          <React.Fragment key={c.id}>
+                            {showGroupLabel && (
+                              <div
+                                style={{
+                                  fontSize: 9, lineHeight: '12px', color: 'rgb(var(--compact-pill-fg-muted))',
+                                  paddingLeft: 8, paddingTop: i === 0 ? 0 : 2,
+                                  textTransform: 'uppercase', letterSpacing: '0.06em',
+                                }}
+                              >
+                                {c.group === 'dashboard' ? 'Dashboard' : 'Studio'}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onMouseEnter={() => setSelIdx(rowIdx)}
+                              onClick={completeFromDropdown}
                               className="w-full flex items-center text-left"
                               style={{ ...(isSel ? FIGMA_ROW_PRIMARY : FIGMA_ROW_BASE), padding: '6px 8px 6px 6px', gap: 6 }}
                             >
@@ -513,16 +703,84 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
                                   {c.subtitle}
                                 </div>
                               </div>
-                            </div>
+                            </button>
                           </React.Fragment>
                         );
                       })}
                     </div>
                   )}
+
+                  {/* WORKFLOWS — header always present, like the real dropdown */}
+                  <div className="flex flex-col" style={{ gap: 8 }}>
+                    <div style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg))', fontWeight: 400 }}>
+                      No workflows
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           )}
+
+          {/* context-step: the @-file picker, hung below the pill like the real
+              one (real compact mode searches your actual files here) */}
+          {showFileDropdown && (
+            <div
+              ref={dropdownRef}
+              data-interactive="true"
+              className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
+              style={{ top: '100%', marginTop: 8, width: 380, zIndex: 7 }}
+            >
+              <div
+                className="overflow-hidden flex flex-col"
+                style={{ background: 'rgb(var(--compact-pill-bg))', borderRadius: 12, boxShadow: 'var(--compact-pill-shadow)', color: 'rgb(var(--compact-pill-fg))' }}
+              >
+                <div className="flex flex-col" style={{ padding: 16, gap: 8 }}>
+                  <div style={{ fontSize: 10, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg))', fontWeight: 400 }}>
+                    Files
+                  </div>
+                  {fileMatches.length === 0 && (
+                    <div style={{ fontSize: 11, lineHeight: '15px', color: 'rgb(var(--compact-pill-fg-muted))', paddingLeft: 8 }}>
+                      No matches — try clearing what you typed after @
+                    </div>
+                  )}
+                  {fileMatches.map((f) => (
+                    <button
+                      key={f.name}
+                      type="button"
+                      onClick={() => attachDemoFile(f.name)}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--compact-pill-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      className="w-full flex items-center text-left"
+                      style={{ ...FIGMA_ROW_BASE, padding: '6px 8px 6px 6px', gap: 6 }}
+                    >
+                      <div
+                        className="flex items-center justify-center shrink-0"
+                        style={{ width: 36, height: 36, borderRadius: 4, background: f.tile }}
+                      >
+                        <span style={{ fontSize: 10, lineHeight: '14px', color: '#fff', fontWeight: 600 }}>{f.label}</span>
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                        <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: 'rgb(var(--compact-pill-fg))' }}>
+                          <HighlightMatch text={f.name} query={atQuery} />
+                        </div>
+                        <div className="truncate" style={{ fontSize: 8, lineHeight: '14px', color: 'rgb(var(--compact-pill-fg-muted))' }}>
+                          {f.path}
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 flex items-center justify-center"
+                        style={{ padding: '3px 6px', color: 'rgb(var(--compact-pill-fg-muted))' }}
+                        title="Attach"
+                      >
+                        <Paperclip className="w-4 h-4" strokeWidth={1.75} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
         </div>
       </div>
 
@@ -531,13 +789,13 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         className="absolute z-[1] inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] pointer-events-none transition-all duration-300"
         style={{
           left: pos.left, top: `calc(${pos.top} - 70px)`,
-          transform: `translateX(-50%) ${chip ? 'translateY(0) scale(1)' : 'translateY(6px) scale(0.96)'}`,
-          opacity: chip ? 1 : 0,
+          transform: `translateX(-50%) ${chipName ? 'translateY(0) scale(1)' : 'translateY(6px) scale(0.96)'}`,
+          opacity: chipName ? 1 : 0,
           background: 'rgba(28,20,21,0.95)', borderColor: 'rgba(255,200,195,0.25)', color: 'rgba(255,235,232,0.92)',
           boxShadow: '0 8px 26px rgba(0,0,0,0.5)',
         }}
       >
-        report.pdf
+        {chipName || 'report.pdf'}
       </div>
 
       {/* Ctrl+arrows hint (move step) */}
@@ -550,13 +808,13 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         ))}
       </div>
 
-      {/* skip */}
+      {/* skip the whole tour */}
       <button
         onClick={() => (onSkip ? onSkip() : onComplete())}
         className="pointer-events-auto absolute top-7 right-8 inline-flex items-center gap-1.5 rounded-md border border-white/[0.10] bg-stone-950/55 px-3 py-1.5 text-[11px] tracking-[0.08em] uppercase font-medium text-white/55 backdrop-blur-md transition-colors hover:bg-stone-900/65 hover:border-white/[0.20] hover:text-white/80"
       >
         <X size={11} strokeWidth={2} />
-        Skip
+        Skip tour
       </button>
 
       {/* coach card — below the pill, carries copy AND navigation */}
@@ -573,23 +831,36 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
         <h3 className="text-[16px] font-medium text-white mb-1.5 tracking-[-0.01em]">{step.title}</h3>
         <p className="text-[13px] leading-relaxed font-light text-white/80">{step.body}</p>
         {isInteractive && (
-          <p className="mt-2 text-[11px] font-medium tracking-wide text-emerald-300/80">
-            {userTried
-              ? 'Nice — keep exploring, or hit Next when ready.'
-              : step.id === 'find' || step.id === 'context'
-                ? 'Your turn — try it in the pill above.'
-                : step.id === 'move'
-                  ? 'Your turn — hold Ctrl and tap the arrow keys.'
-                  : 'Your turn — press Esc to dismiss me.'}
+          <p className={clsx(
+            'mt-2 text-[11px] font-medium tracking-wide',
+            userTried ? 'text-emerald-300/80' : 'text-rose-200/75',
+          )}>
+            {stepDone
+              ? 'Perfect — that’s it. Moving on…'
+              : userTried
+                ? 'Nice — keep going.'
+                : (
+                  <>
+                    {step.hint}{' '}
+                    <button
+                      onClick={next}
+                      className="text-white/40 underline underline-offset-2 transition-colors hover:text-white/75"
+                    >
+                      skip this step
+                    </button>
+                  </>
+                )}
           </p>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {displayKeys.map((k, i) => (
-            <kbd key={i} className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-[3px] text-[11.5px] font-medium rounded-md bg-stone-900/80 border border-rose-200/20 text-rose-50/90 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
-              {k}
-            </kbd>
-          ))}
-        </div>
+        {displayKeys.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {displayKeys.map((k, i) => (
+              <kbd key={i} className="inline-flex items-center justify-center min-w-[22px] px-1.5 py-[3px] text-[11.5px] font-medium rounded-md bg-stone-900/80 border border-rose-200/20 text-rose-50/90 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
+                {k}
+              </kbd>
+            ))}
+          </div>
+        )}
 
         {/* divider + navigation */}
         <div className="mt-4 pt-3 border-t border-white/[0.07] flex items-center justify-between">
@@ -608,7 +879,9 @@ export function CoachingTour({ onComplete, onSkip, lastLabel = 'Open Stuard' }: 
           </div>
           <button
             onClick={next}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200/40 bg-rose-700/60 px-4 py-1.5 text-[12.5px] font-medium text-white shadow-[0_2px_16px_rgba(60,15,25,0.4)] transition-all hover:bg-rose-600/65 hover:border-rose-200/55 active:scale-95"
+            disabled={isInteractive && !userTried}
+            title={isInteractive && !userTried ? 'Try it first — or use "skip this step"' : undefined}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200/40 bg-rose-700/60 px-4 py-1.5 text-[12.5px] font-medium text-white shadow-[0_2px_16px_rgba(60,15,25,0.4)] transition-all hover:bg-rose-600/65 hover:border-rose-200/55 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-rose-700/60 disabled:hover:border-rose-200/40 disabled:active:scale-100"
           >
             {idx === STEPS.length - 1 ? lastLabel : 'Next'}
             <ArrowRight size={13} className="text-rose-100/85" />

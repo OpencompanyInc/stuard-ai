@@ -108,6 +108,22 @@ describe('attachWorkflowForClient', () => {
     expect(out.workflow).toBe(sessionWorkflow);
   });
 
+  it('does not attach any workflow for sub-workflow (stuardFile) results', async () => {
+    // Sub-file edits never touch the session/main workflow — attaching the
+    // main workflow would hand the canvas a stale, mismatched document.
+    const mainWorkflow = { id: 'wf_main', nodes: [{ id: 'n1' }], wires: [], triggers: [] };
+    getSessionWorkflowMock.mockReturnValue(mainWorkflow);
+    getWorkflowByIdMock.mockReturnValue(mainWorkflow);
+
+    const { attachWorkflowForClient } = await import('./stream-runner');
+
+    const result = { ok: true, workflowId: 'wf_main', stuardFile: 'helpers/send-email.stuard', message: 'Updated' };
+    const out = attachWorkflowForClient('modify_workflow', result);
+
+    expect(out).toBe(result);
+    expect(out.workflow).toBeUndefined();
+  });
+
   it('reattaches the active session workflow when modify_workflow returns a compact result', async () => {
     const sessionWorkflow = { id: 'wf_1', nodes: [{ id: 'n1' }], wires: [], triggers: [] };
     getSessionWorkflowMock.mockReturnValue(sessionWorkflow);

@@ -14,6 +14,7 @@ import { writeLog } from '../utils/logger';
 import {
   analyzeWorkflowTopology,
   getFlowContextById,
+  formatWorkflowSchematic,
   type WorkflowElementFlowContext,
 } from '@stuardai/workflow-core/topology';
 
@@ -377,6 +378,27 @@ function getPath(obj: any, path: string): any {
   return current;
 }
 
+// Find every dot-path under `obj` whose string value CONTAINS `needle`.
+// Used by edit_node_text to auto-locate the single string field to edit when
+// the caller doesn't pass an explicit path. Returns one entry per matching
+// FIELD (not per occurrence), e.g. ["args.component"] or ["args.message", "args.title"].
+function findStringPaths(obj: any, prefix: string, needle: string): string[] {
+  const out: string[] = [];
+  const walk = (val: any, path: string) => {
+    if (typeof val === 'string') {
+      if (val.includes(needle)) out.push(path);
+    } else if (Array.isArray(val)) {
+      val.forEach((v, i) => walk(v, `${path}[${i}]`));
+    } else if (val && typeof val === 'object') {
+      for (const [k, v] of Object.entries(val)) walk(v, `${path}.${k}`);
+    }
+  };
+  if (obj && typeof obj === 'object') {
+    for (const [k, v] of Object.entries(obj)) walk(v, `${prefix}.${k}`);
+  }
+  return out;
+}
+
 // Trigger root-level fields. Anything else passed via args/triggerArgs or
 // a bare path (e.g. path: "inputParams") gets routed under trigger.args by
 // default, so we explicitly hoist these to the trigger root to avoid them
@@ -581,6 +603,125 @@ export function getWorkflowById(id: string): Workflow | null {
 }
 
 // ============================================================================
+// Sub-workflow (.stuard) file targeting
+// ============================================================================
+//
+// To make `stuardFile` targeting real (instead of silently editing the main
+// canvas workflow), inspect_workflow/modify_workflow resolve a relative path
+// like "helpers/send-email.stuard" to a concrete file in the studio's on-disk
+// workspace. The server records the workspace root for the active flow from the
+// incoming chat context (prepare-chat-request.ts), keyed by flow id so
+// concurrent studio sessions stay isolated.
+
+const _workspacePathByFlow = new Map<string, string>();
+
+export function setWorkflowWorkspacePath(flowId: string, workspacePath: string): void {
+  if (typeof flowId === 'string' && flowId && typeof workspacePath === 'string' && workspacePath) {
+    _workspacePathByFlow.set(flowId, workspacePath);
+    log('workspace_path_set', { flowId, workspacePath });
+  }
+}
+
+export function getWorkflowWorkspacePath(flowId?: string | null): string | undefined {
+  // Exact match only — a session always registers its own flow id, and the
+  // error-path contract requires an unregistered flow to resolve to nothing.
+  if (flowId && _workspacePathByFlow.has(flowId)) return _workspacePathByFlow.get(flowId);
+  return undefined;
+}
+
+function joinWorkspacePath(root: string, rel: string): string {
+  const cleanRoot = root.replace(/[\\/]+$/, '');
+  const cleanRel = rel.replace(/^[\\/]+/, '');
+  // Preserve the workspace root's separator style (POSIX vs Windows).
+  const sep = cleanRoot.includes('\\') && !cleanRoot.includes('/') ? '\\' : '/';
+  return `${cleanRoot}${sep}${cleanRel}`;
+}
+
+/**
+ * Load a sub-workflow `.stuard` file from the active flow's workspace over the
+ * client bridge. A `.stuard` file's contents are the workflow model JSON
+ * directly. Returns the parsed workflow plus the resolved paths, or a
+ * model-facing error string. Reads via workspace_read_file (workspace-relative);
+ * the absolute path is returned for the matching write-back via write_file.
+ */
+export async function loadSubWorkflowFile(
+  stuardFile: string,
+  mainId: string | undefined | null,
+  writer: any,
+): Promise<{ workflow: Workflow; absPath: string; relPath: string } | { error: string }> {
+  const rel = typeof stuardFile === 'string' ? stuardFile.trim() : '';
+  if (!rel) return { error: 'stuardFile path is empty' };
+  if (!hasClientBridge()) {
+    return { error: 'No connection to the desktop app — cannot read sub-workflow files from the workspace.' };
+  }
+  const workspaceRoot = getWorkflowWorkspacePath(mainId);
+  if (!workspaceRoot) {
+    return {
+      error: `Workspace path unknown for this session — open the workflow in the studio so its workspace folder is known, then retry. (stuardFile: ${rel})`,
+    };
+  }
+  // stuardFile must be a relative path inside the workflow workspace — reject
+  // absolute paths and any ".." traversal that would escape it.
+  const segments = rel.split(/[/\\]/).filter(Boolean);
+  const isAbsolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(rel);
+  if (isAbsolute || segments.includes('..')) {
+    return { error: `stuardFile must be a relative path inside the workflow workspace (got "${rel}").` };
+  }
+  const normalizedRel = rel.endsWith('.stuard') ? rel : `${rel}.stuard`;
+  const absPath = joinWorkspacePath(workspaceRoot, normalizedRel);
+  try {
+    const res = await execLocalTool(
+      'workspace_read_file',
+      { path: normalizedRel },
+      writer as any,
+      10_000,
+      { silent: true, noFallback: true },
+    );
+    if (!res?.ok || typeof res.content !== 'string') {
+      return { error: `Could not read sub-workflow file "${normalizedRel}": ${res?.error || 'file not found'}` };
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(res.content);
+    } catch (e: any) {
+      return { error: `Sub-workflow file "${normalizedRel}" is not valid workflow JSON: ${e?.message || 'parse error'}` };
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { error: `Sub-workflow file "${normalizedRel}" is not valid workflow JSON: expected a workflow object.` };
+    }
+    const workflow = cloneWorkflow(parsed);
+    log('sub_workflow_loaded', { stuardFile: normalizedRel, id: workflow.id, nodes: workflow.nodes?.length });
+    return { workflow, absPath, relPath: normalizedRel };
+  } catch (e: any) {
+    return { error: `Could not read sub-workflow file "${normalizedRel}": ${e?.message || 'read failed'}` };
+  }
+}
+
+/**
+ * Write a modified sub-workflow back to its `.stuard` file over the bridge.
+ * Returns an error string on failure, or null on success.
+ */
+export async function saveSubWorkflowFile(absPath: string, wf: Workflow, writer: any): Promise<string | null> {
+  try {
+    const res = await execLocalTool(
+      'write_file',
+      {
+        path: absPath,
+        content: JSON.stringify(wf, null, 2),
+        description: 'Save sub-workflow (.stuard) file edited by the workflow agent',
+      },
+      writer as any,
+      10_000,
+      { silent: true, noFallback: true },
+    );
+    if (!res?.ok) return res?.error || 'write_file returned not-ok';
+    return null;
+  } catch (e: any) {
+    return e?.message || 'write_file threw';
+  }
+}
+
+// ============================================================================
 // applyOp — apply a SINGLE operation to a workflow in place.
 //
 // Shared by both the single-op and batch (`ops: [...]`) code paths. Mutates
@@ -749,6 +890,76 @@ function applyOp(
     }
 
     // ==================================================================
+    // EDIT_NODE_TEXT — surgical find/replace inside a string arg.
+    // The cheap way to edit LARGE text fields (custom_ui component, inline
+    // scripts, long prompts) without re-sending the whole string.
+    // ==================================================================
+    case 'edit_node_text': {
+      const nodeId = ctx.nodeId || ctx.stepId;
+      const oldString = ctx.old_string;
+      const newString = typeof ctx.new_string === 'string' ? ctx.new_string : '';
+      const replaceAll = ctx.replace_all === true;
+      if (!nodeId) throw new Error('nodeId is required for edit_node_text');
+      if (typeof oldString !== 'string' || oldString.length === 0) {
+        throw new Error('old_string is required for edit_node_text');
+      }
+      addTouchedId(touchedIds, nodeId);
+
+      const isNode = nodeIndex(wf, nodeId) >= 0;
+      const element: any = isNode
+        ? wf.nodes[nodeIndex(wf, nodeId)]
+        : (triggerIndex(wf, nodeId) >= 0 ? wf.triggers[triggerIndex(wf, nodeId)] : null);
+      if (!element) throw new Error(`Step not found: ${nodeId}`);
+
+      // Resolve which string field to edit.
+      let targetPath = typeof ctx.path === 'string' && ctx.path.trim() ? ctx.path.trim() : '';
+      if (targetPath) {
+        // Same normalization as update_node: bare paths live under args.
+        const head = targetPath.split('.')[0]?.split('[')[0] || '';
+        const rootFields = isNode ? new Set(['label', 'tool', 'id']) : TRIGGER_ROOT_FIELDS;
+        if (!targetPath.startsWith('args.') && !rootFields.has(head)) {
+          targetPath = `args.${targetPath}`;
+        }
+      } else {
+        // No path → auto-locate the unique string field containing old_string.
+        const matches = findStringPaths(element.args, 'args', oldString);
+        if (matches.length === 0) {
+          throw new Error(
+            `old_string not found in any string field of "${nodeId}". Check the exact text (whitespace/escapes must match) or pass path explicitly.`,
+          );
+        }
+        if (matches.length > 1) {
+          throw new Error(
+            `old_string found in multiple fields of "${nodeId}": ${matches.join(', ')}. Pass path to disambiguate.`,
+          );
+        }
+        targetPath = matches[0];
+      }
+
+      const current = getPath(element, targetPath);
+      if (typeof current !== 'string') {
+        throw new Error(
+          `${targetPath} of "${nodeId}" is not a string (got ${current === undefined ? 'undefined' : typeof current}).`,
+        );
+      }
+      const count = current.split(oldString).length - 1;
+      if (count === 0) {
+        throw new Error(`old_string not found in ${targetPath} of "${nodeId}". The text must match exactly.`);
+      }
+      if (count > 1 && !replaceAll) {
+        throw new Error(
+          `old_string appears ${count} times in ${targetPath} of "${nodeId}". Provide a longer unique string or set replace_all: true.`,
+        );
+      }
+      const updated = replaceAll
+        ? current.split(oldString).join(newString)
+        : current.replace(oldString, newString);
+      setPath(element, targetPath, updated);
+      const replacements = replaceAll ? count : 1;
+      return `Edited ${targetPath} of "${nodeId}" (${replacements} replacement${replacements === 1 ? '' : 's'}, ${current.length} → ${updated.length} chars)`;
+    }
+
+    // ==================================================================
     // REMOVE_NODE
     // ==================================================================
     case 'remove_node': {
@@ -884,7 +1095,7 @@ function applyOp(
 // Per-op field shape, reused for both the single-op (flat, top-level) form
 // and each entry of the batch `ops` array.
 const OP_ENUM = z.enum([
-  'add_node', 'update_node', 'remove_node',
+  'add_node', 'update_node', 'edit_node_text', 'remove_node',
   'add_wire', 'remove_wire',
   'set_path', 'add_variable', 'rename',
 ]);
@@ -914,8 +1125,13 @@ const opItemShape = {
   guard: z.any().optional().describe('Wire guard condition'),
 
   // Path operations
-  path: z.string().optional().describe('JSON path for set_path'),
+  path: z.string().optional().describe('JSON path for set_path; for edit_node_text, the string field inside the node (e.g. "args.component" — optional when old_string is unique across the node)'),
   value: z.any().optional().describe('Value for set_path'),
+
+  // edit_node_text operations (find/replace inside a string arg)
+  old_string: z.string().optional().describe('edit_node_text: exact text to find in the node\'s string field. Must match exactly (whitespace/escapes included).'),
+  new_string: z.string().optional().describe('edit_node_text: replacement text (empty string deletes old_string)'),
+  replace_all: z.boolean().optional().describe('edit_node_text: replace every occurrence (default false — fails if old_string is not unique)'),
 
   // Variable operations
   varName: z.string().optional().describe('Variable name'),
@@ -955,6 +1171,14 @@ UPDATE_NODE - Update existing node or trigger (MUST provide changes!)
   { op: "update_node", nodeId: "trig_0", triggerArgs: { sequence: "cats" } }
   NOTE: You MUST provide args, path/value, label, or tool - otherwise it will fail!
 
+EDIT_NODE_TEXT - Find/replace inside a string arg WITHOUT re-sending the whole string.
+  ALWAYS prefer this over update_node for small changes to LARGE text fields
+  (custom_ui component, inline scripts, long prompts).
+  { op: "edit_node_text", nodeId: "ui", old_string: "<h1>Old</h1>", new_string: "<h1>New</h1>" }
+  { op: "edit_node_text", nodeId: "ui", path: "args.component", old_string: "...", new_string: "...", replace_all: true }
+  - old_string must match EXACTLY (whitespace/escapes) and be unique unless replace_all: true.
+  - path is optional when old_string appears in only one string field of the node.
+
 REMOVE_NODE - Delete a node or trigger (and its wires)
   { op: "remove_node", nodeId: "step_abc" }
 
@@ -973,7 +1197,9 @@ ADD_VARIABLE - Add workflow variable
 RENAME - Change workflow name
   { op: "rename", name: "New Name" }
 
-Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); defaults to the main workflow.`,
+Optional stuardFile targets a sub-workflow FILE in the workflow's workspace
+(e.g. "helpers/send-email.stuard"): the file is loaded, ops applied, and the
+file saved back — the main canvas workflow is untouched. Studio only.`,
 
   inputSchema: z.object({
     ...opItemShape,
@@ -1010,6 +1236,23 @@ Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); d
     const ctx = inputData as any;
     const { op, workflowId, stuardFile } = ctx;
     let { workflow } = ctx;
+
+    // stuardFile → operate on a sub-workflow FILE from the workspace instead of
+    // the session workflow. (This used to be accepted but IGNORED — ops silently
+    // applied to the MAIN workflow and could corrupt it.) Load it now so the
+    // resolution below uses the sub-file as the working workflow.
+    let subFile: { absPath: string; relPath: string } | null = null;
+    if (typeof stuardFile === 'string' && stuardFile.trim()) {
+      const mainIdHint =
+        (workflow && typeof workflow === 'object' && !Array.isArray(workflow) && workflow.id) ? String(workflow.id)
+          : (typeof workflowId === 'string' && workflowId) ? workflowId
+            : getSessionWorkflow()?.id;
+      const loaded = await loadSubWorkflowFile(stuardFile.trim(), mainIdHint, writer);
+      if ('error' in loaded) return { ok: false, error: loaded.error };
+      workflow = loaded.workflow;
+      subFile = { absPath: loaded.absPath, relPath: loaded.relPath };
+      log('sub_workflow_target', { stuardFile: loaded.relPath, id: workflow?.id });
+    }
 
     // PRIORITY 1: If workflow object is provided directly, use it
     if (workflow && typeof workflow === 'object' && !Array.isArray(workflow)) {
@@ -1116,10 +1359,24 @@ Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); d
         message = opResults[0].message || 'Done';
       }
 
-      // Store in memory (per-request via ALS + global map)
-      workflowMap.set(wf.id, wf);
-      setBridgeState(_BRIDGE_KEY, wf);
-      _sessionWorkflowFallback = wf;
+      if (subFile) {
+        // Sub-workflow: write the file back on the desktop. The main session
+        // workflow / workflowMap stay untouched — the canvas shows the MAIN
+        // workflow and must not be clobbered by sub-file edits.
+        const saveError = await saveSubWorkflowFile(subFile.absPath, wf, writer);
+        if (saveError) {
+          return {
+            ok: false,
+            error: `Edits applied in memory but saving "${subFile.relPath}" failed: ${saveError}`,
+            results: isBatch ? opResults : undefined,
+          };
+        }
+      } else {
+        // Store in memory (per-request via ALS + global map)
+        workflowMap.set(wf.id, wf);
+        setBridgeState(_BRIDGE_KEY, wf);
+        _sessionWorkflowFallback = wf;
+      }
 
       // Auto-persist when running as a subagent — there's no UI "Save" button,
       // so modifications would otherwise vanish after the run. Studio mode
@@ -1154,7 +1411,20 @@ Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); d
       const nodeIssues = validateNodeTools(wf);
       const issuesSummary = formatNodeIssuesSummary(nodeIssues);
       const finalMessage = issuesSummary ? `${message}${issuesSummary}` : message;
+
+      // The padded ASCII box diagram goes to the UI channel only. The MODEL gets
+      // the compact schematic, and only when topology actually changed — arg-only
+      // edits (update_node / edit_node_text) are fully described by message +
+      // affectedFlow, and re-sending the whole structure on every edit was a major
+      // per-call token cost on large workflows.
       const diagram = generateWorkflowDiagram(wf);
+      const structuralChange = rawOps.some((o: any) => {
+        const opName = String(o?.op || '');
+        if (opName === 'add_node' || opName === 'remove_node' || opName === 'add_wire' || opName === 'remove_wire') return true;
+        if (opName === 'set_path') return /^(nodes|wires|triggers)\b/.test(String(o?.path || ''));
+        return false;
+      });
+      const modelDiagram = structuralChange ? formatWorkflowSchematic(wf) : undefined;
 
       // The UI live-update channel needs the FULL workflow to repaint the canvas.
       // The MODEL does not — echoing the whole workflow JSON into the model's
@@ -1188,7 +1458,7 @@ Optional stuardFile targets a sub-workflow (e.g. "helpers/send-email.stuard"); d
         // the model-facing result intentionally omits the full workflow JSON.
         workflowId: wf.id,
         message: finalMessage,
-        diagram,
+        ...(modelDiagram ? { diagram: modelDiagram } : {}),
         affectedFlow,
         results: isBatch ? opResults : undefined,
         nodeIssues: nodeIssues.length > 0 ? nodeIssues : undefined,

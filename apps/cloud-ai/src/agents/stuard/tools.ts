@@ -33,6 +33,7 @@ import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } from '../../tools/meta-tools';
+import { research_search, research_read, research_note, research_status } from '../../tools/research-mode';
 import { searchWorkflowDocs } from '../workflow-agent/docs';
 import { deployWorkflow } from '../workflow-agent/deploy';
 import { executeStep, inspectWorkflow, searchWorkflows, loadWorkflow } from '../workflow-agent/tools';
@@ -649,6 +650,15 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
     deploy_workflow: deployWorkflow,
     search_workflow_nodes,
     search_workflow_docs: searchWorkflowDocs,
+    // Research Mode gather loop — resolvable by name so parallel `custom`
+    // sub-researchers can work the shared session (state is the module-level
+    // map in research-mode.ts keyed by conversation_id, not bridge state).
+    // Deliberately excludes enter/exit/compile/report: those stay with the
+    // orchestrator.
+    research_search,
+    research_read,
+    research_note,
+    research_status,
     ...mcpTools,
   };
   if (!WHATSAPP_INTEGRATION_ENABLED) {

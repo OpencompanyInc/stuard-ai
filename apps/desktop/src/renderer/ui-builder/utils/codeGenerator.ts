@@ -1677,12 +1677,41 @@ function cleanJsxToHtml(jsx: string): string {
   return result;
 }
 
+/** Extract a parenthesized block; `open` is the index of the opening '('. */
+function extractParenBlock(src: string, open: number): { inner: string; end: number } {
+  let depth = 1;
+  let i = open + 1;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === "'" || ch === '"' || ch === '`') {
+      const q = ch;
+      i++;
+      while (i < src.length && src[i] !== q) {
+        if (src[i] === '\\') i++;
+        i++;
+      }
+    }
+    if (depth > 0) i++;
+  }
+  return { inner: src.substring(open + 1, i), end: i };
+}
+
 /**
- * Extract HTML and JS from a React JSX component string.
- * Used by the UI builder to parse an existing component back into
- * editable HTML and JS for the visual editor.
+ * Extract editable content from a React component string for the visual builder.
+ *
+ * Understands the idiomatic single-window multi-screen pattern the builder also
+ * generates — `const [page, setPage] = useState('x')` plus `if (page === 'y')
+ * return (…)` branches — and turns each branch into an editable page. Each page
+ * keeps its original JSX (`__jsx`) so untouched screens round-trip verbatim
+ * (animations / custom packages preserved). Anything it cannot confidently parse
+ * degrades to a single editable screen, and the original component is preserved
+ * on save when no visual edits are made — so the AI is never limited.
  */
-export function extractHtmlFromComponent(component: string): { html: string; js: string } {
+export function extractHtmlFromComponent(
+  component: string,
+): { html: string; js: string; pages?: Record<string, { html: string; __jsx?: string }>; startPage?: string; mainJsx?: string } {
   if (!component || !component.trim()) return { html: '', js: '' };
 
   // Normalize double-escaped strings from LLM output
@@ -1706,51 +1735,70 @@ export function extractHtmlFromComponent(component: string): { html: string; js:
     } catch { /* not a simple JSON string */ }
   }
 
-  // Extract JSX from return (...) using bracket counting
-  // Regex is unreliable for nested parens like onClick={() => submit({ ... })}
-  const returnIdx = src.search(/return\s*\(/);
-  let rawJsx = '';
-  if (returnIdx >= 0) {
-    // Find the opening '(' after 'return'
-    const openParen = src.indexOf('(', returnIdx);
-    if (openParen >= 0) {
-      let depth = 1;
-      let i = openParen + 1;
-      while (i < src.length && depth > 0) {
-        const ch = src[i];
-        if (ch === '(') depth++;
-        else if (ch === ')') depth--;
-        // Skip string literals to avoid counting parens inside strings
-        else if (ch === "'" || ch === '"' || ch === '`') {
-          const quote = ch;
-          i++;
-          while (i < src.length && src[i] !== quote) {
-            if (src[i] === '\\') i++; // skip escaped char
-            i++;
-          }
-        }
-        if (depth > 0) i++;
-      }
-      if (depth === 0) {
-        rawJsx = src.substring(openParen + 1, i - 1).trim();
-      }
+  // ─── Multi-screen detection: useState page var + `if (page === 'x') return (…)`
+  // Only the canonical `[page, setPage]` shape is treated as multi-screen, so the
+  // regenerated wrapper (which always uses `page`/`setPage`) matches preserved JSX.
+  // Any other pattern degrades to a single editable screen — never corrupted.
+  const pageStateMatch = src.match(/\[\s*page\s*,\s*setPage\s*\]\s*=\s*(?:React\.)?useState\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+  const pageVar = 'page';
+  const startPage = pageStateMatch ? pageStateMatch[1] : undefined;
+
+  const pages: Record<string, { html: string; __jsx?: string }> = {};
+  let firstScreenIdx = src.length;
+  if (pageStateMatch) {
+    const branchRe = new RegExp(
+      'if\\s*\\(\\s*' + pageVar + "\\s*===?\\s*['\"]([^'\"]+)['\"]\\s*\\)\\s*\\{?\\s*return\\s*\\(",
+      'g',
+    );
+    let bm: RegExpExecArray | null;
+    while ((bm = branchRe.exec(src)) !== null) {
+      if (bm.index < firstScreenIdx) firstScreenIdx = bm.index;
+      const openIdx = bm.index + bm[0].length - 1; // the '(' right after `return`
+      const { inner } = extractParenBlock(src, openIdx);
+      const jsx = inner.trim();
+      pages[bm[1]] = { html: cleanJsxToHtml(sanitizeExtractedHtml(jsx)), __jsx: jsx };
     }
+  }
+  const hasPages = Object.keys(pages).length > 0;
+
+  // ─── Main / fallback screen: the last `return (` that is NOT a page branch
+  let mainJsx = '';
+  const retRe = /return\s*\(/g;
+  let rm: RegExpExecArray | null;
+  const mainReturns: number[] = [];
+  while ((rm = retRe.exec(src)) !== null) {
+    const before = src.slice(Math.max(0, rm.index - 80), rm.index);
+    if (/if\s*\(\s*\w+\s*===?\s*['"][^'"]+['"]\s*\)\s*\{?\s*$/.test(before)) continue; // page branch
+    mainReturns.push(rm.index);
+  }
+  if (mainReturns.length) {
+    const idx = mainReturns[mainReturns.length - 1];
+    if (idx < firstScreenIdx) firstScreenIdx = idx;
+    const openParen = src.indexOf('(', idx);
+    if (openParen >= 0) mainJsx = extractParenBlock(src, openParen).inner.trim();
   } else {
-    // Fallback: return <...> without parens
+    // No paren-wrapped return; try `return <...>`
     const returnLt = src.match(/return\s+(<[\s\S]+)/);
-    if (returnLt) rawJsx = returnLt[1].trim().replace(/;?\s*\}?\s*$/, '');
+    if (returnLt) mainJsx = returnLt[1].trim().replace(/;?\s*\}?\s*$/, '');
   }
 
-  if (!rawJsx) return { html: '', js: '' };
+  const html = mainJsx ? cleanJsxToHtml(sanitizeExtractedHtml(mainJsx)) : '';
 
-  const sanitized = sanitizeExtractedHtml(rawJsx);
-  const html = cleanJsxToHtml(sanitized);
+  // ─── JS logic: component body before the first screen, minus the page state line
+  let jsLogic = '';
+  const declMatch = src.match(/(?:function\s+App\s*\([^)]*\)|App\s*=\s*\([^)]*\)\s*=>)\s*\{/);
+  if (declMatch && declMatch.index !== undefined) {
+    const bodyStart = declMatch.index + declMatch[0].length;
+    jsLogic = src.slice(bodyStart, Math.max(bodyStart, firstScreenIdx)).trim();
+    // Drop the page-state declaration (re-added by generateReactComponent); target
+    // `[page, setPage]` specifically so formData/other useState lines are untouched.
+    jsLogic = jsLogic.replace(/^\s*const\s*\[\s*page\s*,\s*setPage\s*\]\s*=\s*(?:React\.)?useState\s*\([^)]*\)\s*;?\s*$/m, '').trim();
+  }
 
-  // Extract JS logic before the return statement
-  const jsMatch = src.match(/function\s+App\s*\(\)\s*\{([\s\S]*?)(?=\n\s*return[\s(])/);
-  const jsLogic = jsMatch ? jsMatch[1].trim() : '';
-
-  return { html, js: jsLogic };
+  if (hasPages) {
+    return { html, js: jsLogic, pages, startPage, mainJsx };
+  }
+  return { html, js: jsLogic, mainJsx };
 }
 
 /**
@@ -1764,11 +1812,19 @@ export function generateReactComponent(
   html: string,
   css: string,
   js: string,
-  pages?: Record<string, { html?: string; css?: string; js?: string }>,
+  pages?: Record<string, { html?: string; css?: string; js?: string; __jsx?: string }>,
   startPage?: string,
+  /**
+   * Original JSX of the main/fallback screen. When provided (and the main screen
+   * was not edited) it is emitted verbatim so animations, custom components and
+   * packages survive instead of being flattened by the HTML round-trip.
+   */
+  mainJsx?: string,
 ): string {
   const cleanedHtml = sanitizeExtractedHtml(html);
-  const jsxContent = htmlToJsx(cleanedHtml);
+  // Prefer untouched original JSX so advanced markup (framer-motion, .map(),
+  // custom tags, style objects) is preserved exactly; fall back to HTML→JSX.
+  const jsxContent = (mainJsx && mainJsx.trim()) ? mainJsx : htmlToJsx(cleanedHtml);
   const indent = '  ';
 
   // Check if js already has component logic from round-trip
@@ -1804,6 +1860,11 @@ export function generateReactComponent(
     for (const line of js.split('\n')) {
       if (line.trim()) lines.push(`${indent}${line}`);
     }
+    // Re-declare page state if the carried-over JS doesn't already (it's stripped
+    // on extraction) so multi-screen `if (page === …)` branches resolve.
+    if (hasPages && !/\bconst\s*\[\s*page\s*,\s*setPage\s*\]/.test(js)) {
+      lines.push(`${indent}const [page, setPage] = useState('${startPage || pageEntries[0]?.[0] || 'main'}');`);
+    }
   } else {
     if (bindFields.size > 0) {
       const defaults = Array.from(bindFields).map(f => `${f}: initialData.${f} || ''`).join(', ');
@@ -1835,12 +1896,25 @@ export function generateReactComponent(
     }
   }
 
+  // Let a workflow node drive screen changes (update_custom_ui/navigate → page-change),
+  // so builder-made multi-screen UIs respond to navigation, not just in-UI buttons.
+  if (hasPages && !/onPageChange/.test(js)) {
+    lines.push('');
+    lines.push(`${indent}useEffect(() => {`);
+    lines.push(`${indent}${indent}if (typeof stuard === 'undefined' || !stuard.onPageChange) return;`);
+    lines.push(`${indent}${indent}return stuard.onPageChange(function(info) { if (info && info.page) setPage(info.page); });`);
+    lines.push(`${indent}}, []);`);
+  }
+
   // Multi-page rendering
   if (hasPages) {
     lines.push('');
     for (const [pageId, page] of pageEntries) {
-      const pageHtml = sanitizeExtractedHtml(page.html || '');
-      const pageJsx = htmlToJsx(pageHtml);
+      // Untouched screens keep their original JSX verbatim (preserves animations
+      // / custom packages); edited screens are regenerated from the visual HTML.
+      const pageJsx = (page.__jsx && page.__jsx.trim())
+        ? page.__jsx
+        : htmlToJsx(sanitizeExtractedHtml(page.html || ''));
       lines.push(`${indent}if (page === '${pageId}') return (`);
       for (const line of pageJsx.split('\n')) {
         lines.push(`${indent}${indent}${line}`);

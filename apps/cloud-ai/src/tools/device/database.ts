@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { makeLocalTool } from './shared';
+import { makeLocalTool, anyJsonValue } from './shared';
 
 export const db_query = makeLocalTool(
   'db_query',
   'Execute raw SQL against the local workflow SQLite database. Use for CREATE TABLE, INSERT, UPDATE, DELETE, SELECT queries. Parameters use ? placeholders.',
   z.object({
     query: z.string().describe('SQL query to execute (use ? for parameter placeholders)'),
-    params: z.array(z.any()).optional().describe('Parameter values for ? placeholders'),
+    params: z.array(anyJsonValue).optional().describe('Parameter values for ? placeholders'),
   }),
   z.object({
     ok: z.boolean(),

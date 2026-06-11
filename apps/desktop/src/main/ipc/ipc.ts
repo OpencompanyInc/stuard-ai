@@ -1157,7 +1157,7 @@ export function setupIpc() {
   ipcMain.handle('workflows:read', (_e, id: string) => workflows_read(id));
   ipcMain.handle('workflows:save', (_e, payload: { id: string; content: string }) => workflows_save(payload));
   ipcMain.handle('workflows:delete', (_e, id: string) => workflows_delete(id));
-  ipcMain.handle('workflows:run', (_e, id: string, triggerId?: string, options?: { accessToken?: string }) => workflows_run(id, triggerId, options));
+  ipcMain.handle('workflows:run', (_e, id: string, triggerId?: string, options?: { accessToken?: string; inputs?: Record<string, any> }) => workflows_run(id, triggerId, options));
   ipcMain.handle('workflows:stop', (_e, id: string) => workflows_stop(id));
   ipcMain.handle('workflows:deploy', (_e, id: string) => workflows_deploy(id));
   ipcMain.handle('workflows:undeploy', (_e, id: string) => workflows_undeploy(id));
@@ -1347,6 +1347,7 @@ export function setupIpc() {
       const { getReactUmd, getReactDomUmd, getFramerMotionUmd } = require('../custom-ui/assets/react-runtime');
       const { TAILWIND_PREBUILT_CSS } = require('../custom-ui/assets/tailwind-prebuilt');
       const { EXTRA_CSS } = require('../custom-ui/assets/utility-css');
+      const { JIT_LITE_JS } = require('../custom-ui/assets/jit-lite');
       return {
         ok: true,
         reactUmd: getReactUmd(),
@@ -1354,6 +1355,7 @@ export function setupIpc() {
         framerMotionUmd: getFramerMotionUmd(),
         tailwindCss: TAILWIND_PREBUILT_CSS,
         extraCss: EXTRA_CSS,
+        jitJs: JIT_LITE_JS,
       };
     } catch (e: any) {
       logger.error('[customUi:getPrebuiltAssets] Failed:', e);

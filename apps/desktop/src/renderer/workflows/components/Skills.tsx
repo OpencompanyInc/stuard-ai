@@ -9,7 +9,7 @@ import {
   Zap, FileText, Settings, ChevronDown, Lightbulb,
   Code, MousePointer, Image, Mail, Globe, Database, Mic, Video,
   FolderOpen, Play, Clock, ArrowRight, Cpu, Box, Layers, Send,
-  BarChart, HardDrive, Cloud, Webhook, Type, ListChecks, Bot,
+  BarChart, HardDrive, Cloud, Webhook, Type, ListChecks, Sparkles,
   CheckCheck, XCircle, Upload, Inbox, PowerOff, LayoutGrid
 } from "lucide-react";
 import { TOOL_SCHEMAS, getCategories } from "../constants/tool-schemas";
@@ -1014,7 +1014,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
               }`}
               title="AI Assistant"
             >
-              <Bot className="w-3.5 h-3.5" />
+              <Sparkles className="w-3.5 h-3.5" />
               AI
             </button>
           </div>
@@ -1133,7 +1133,7 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
                                         }}
                                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
                                           step.toolName === tool.id
-                                            ? d ? 'bg-indigo-500/15 wf-fg' : 'bg-indigo-50 text-slate-900'
+                                            ? d ? 'wf-accent-soft-bg wf-fg' : 'wf-accent-soft-bg wf-fg'
                                             : 'wf-fg-muted wf-hover-bg'
                                         }`}
                                       >
@@ -1207,9 +1207,6 @@ export function SkillEditor({ skill, onSave, onCancel, cloudAiHttp, onPublish }:
           {/* Header */}
           <div className="h-14 px-4 flex items-center justify-between shrink-0 border-b wf-border-subtle wf-bg-overlay">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-                <Bot className="w-3.5 h-3.5 text-indigo-400" />
-              </div>
               <div>
                 <h3 className="text-[13px] font-semibold wf-fg">Skill Architect</h3>
                 <p className="text-[10px] wf-fg-muted">Describe your skill or ask for changes</p>
@@ -1473,7 +1470,7 @@ export function PublishSkillModal({ skill, onClose, onConfirm }: PublishSkillMod
           <div className="px-6 py-4 border-t flex items-center justify-end gap-3" style={{ borderColor: 'var(--wf-border)' }}>
             <button
               onClick={onClose}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${d ? 'text-white/70 hover:bg-white/[0.06]' : 'text-slate-600 hover:bg-slate-100'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${d ? 'wf-fg-muted wf-hover-bg' : 'text-slate-600 hover:bg-slate-100'}`}
             >
               Cancel
             </button>

@@ -66,13 +66,13 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
       <div className="flex items-center gap-2 wf-bg-overlay p-1 rounded-lg w-fit">
         <button
           onClick={() => setMode('visual')}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'visual' ? 'wf-bg-overlay text-indigo-400 shadow-sm' : 'wf-fg-muted hover:wf-hover-fg'}`}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'visual' ? 'wf-bg-overlay wf-accent-fg shadow-sm' : 'wf-fg-muted hover:wf-hover-fg'}`}
         >
           Visual Builder
         </button>
         <button
           onClick={() => setMode('raw')}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'raw' ? 'wf-bg-overlay text-indigo-400 shadow-sm' : 'wf-fg-muted hover:wf-hover-fg'}`}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${mode === 'raw' ? 'wf-bg-overlay wf-accent-fg shadow-sm' : 'wf-fg-muted hover:wf-hover-fg'}`}
         >
           Raw Query
         </button>
@@ -88,7 +88,7 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
               value={nameContains}
               onChange={e => setNameContains(e.target.value)}
               placeholder="e.g. report, invoice"
-              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-bg-overlay"
+              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none wf-bg-overlay"
             />
           </div>
 
@@ -98,7 +98,7 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
             <select
               value={mimeType}
               onChange={e => setMimeType(e.target.value)}
-              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-bg-overlay"
+              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none wf-bg-overlay"
             >
               {mimeOptions.map(opt => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -114,7 +114,7 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
               value={parentFolder}
               onChange={e => setParentFolder(e.target.value)}
               placeholder="e.g. 1BxiM..."
-              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 wf-bg-overlay font-mono text-xs"
+              className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-lg focus:outline-none wf-bg-overlay font-mono text-xs"
             />
           </div>
 
@@ -127,7 +127,7 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
                   key={opt}
                   onClick={() => setTrashed(opt)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${trashed === opt
-                    ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
+                    ? 'wf-accent-soft-bg border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] wf-accent-fg'
                     : 'wf-bg-overlay wf-border-subtle wf-fg-muted wf-hover-bg'
                     }`}
                 >
@@ -154,10 +154,10 @@ export function DriveQueryEditor({ value, onChange }: DriveQueryEditorProps) {
             onChange={e => onChange(e.target.value)}
             placeholder="e.g. name contains 'report' and mimeType = 'application/pdf'"
             rows={3}
-            className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 font-mono resize-none"
+            className="w-full px-3 py-2 text-sm border wf-border-subtle rounded-xl focus:outline-none font-mono resize-none"
           />
           <div className="text-xs wf-fg-faint">
-            Use <a href="https://developers.google.com/drive/api/guides/search-files" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">Google Drive query syntax</a>
+            Use <a href="https://developers.google.com/drive/api/guides/search-files" target="_blank" rel="noopener noreferrer" className="wf-accent-fg hover:underline">Google Drive query syntax</a>
           </div>
         </div>
       )}

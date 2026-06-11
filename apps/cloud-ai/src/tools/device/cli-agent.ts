@@ -87,7 +87,9 @@ export const cli_agent_start = makeLocalTool(
     readyTimeoutMs: z.number().int().min(500).max(120000).optional().default(30000).describe('Max time (ms) to wait for the provider REPL to print its ready marker before typing the auto-prompt. The harness types the prompt as soon as the marker appears (typically 2–10 s) or after this timeout, whichever comes first.'),
     cols: z.number().int().min(20).max(400).optional().default(140),
     rows: z.number().int().min(5).max(200).optional().default(36),
-    env: z.any().optional().describe('Extra environment variables.'),
+    // Typed record (not z.any): Gemini's strict function-declaration validator
+    // rejects typeless properties, which would break this tool's pack on Gemini.
+    env: z.record(z.string(), z.string()).optional().describe('Extra environment variables (name -> value).'),
   }),
   z.object({
     ok: z.boolean(),

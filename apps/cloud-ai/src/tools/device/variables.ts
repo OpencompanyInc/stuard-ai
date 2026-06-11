@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { makeLocalTool } from './shared';
+import { makeLocalTool, anyJsonValue } from './shared';
 
 export const set_variable = makeLocalTool(
   'set_variable',
   'Set a workflow variable. For workflow-scoped variables (workflow.*), the variable must be defined in the workflow\'s variables array. Supports types: boolean, string, number, list. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
-    value: z.any().describe('Value to set'),
+    value: anyJsonValue.describe('Value to set'),
     type: z
       .enum(['boolean', 'string', 'number', 'list'])
       .optional()
@@ -28,7 +28,7 @@ export const get_variable = makeLocalTool(
   'Get a workflow variable value. For workflow-scoped variables (workflow.*), the variable must be defined in the workflow\'s variables array.',
   z.object({
     name: z.string().describe('Variable name'),
-    default: z.any().optional().describe('Default value if variable does not exist'),
+    default: anyJsonValue.optional().describe('Default value if variable does not exist'),
   }),
   z.object({
     ok: z.boolean(),
@@ -79,7 +79,7 @@ export const append_to_list = makeLocalTool(
   'Append an item to a list variable. Creates empty list if not exists. Any open custom_ui windows with data-var bindings referencing this variable will auto-update.',
   z.object({
     name: z.string().describe('Variable name'),
-    item: z.any().describe('Item to append'),
+    item: anyJsonValue.describe('Item to append'),
     flowId: z.string().optional(),
     notifyUi: z.boolean().optional().default(true).describe('If true (default), push live update to custom_ui windows with data-var bindings'),
   }),

@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { execLocalTool, safeToolWrite, hasClientBridge, getBridgeSecrets, getBridgeWs } from './bridge';
+import { anyJsonValue } from './schema-utils';
 import { waitTool } from './wait';
 import { analyzeMediaTool } from './analyze-media';
 import { aiInferenceTool } from './ai-inference';
@@ -190,7 +191,7 @@ const AssertionSchema = z.object({
   target: z.enum(['combined', 'last', 'step']).optional().describe('Where to read the value from'),
   stepIndex: z.number().int().min(0).optional().describe('If target is step, which step index'),
   path: z.string().optional().describe('Dot path into the target object (e.g. "stdout" or "data.value")'),
-  expected: z.any().optional().describe('Expected value (for equals/contains)'),
+  expected: anyJsonValue.optional().describe('Expected value (for equals/contains)'),
   pattern: z.string().optional().describe('Regex pattern (for matches)'),
 });
 

@@ -9,7 +9,9 @@ import {
   type NotificationChannel,
   type ProactiveModelMode,
 } from './proactive-types';
+import { SENSITIVE_BOT_TOOL_OPTIONS } from '@stuardai/bots-core/permissions';
 import type { Bot, BotConfig } from './types';
+import { useBotsPlatform } from './BotsPlatformContext';
 import { COMMON_EMOJIS } from './constants';
 import { ConfigRow, Select, Toggle } from './primitives';
 import { TriggersSection } from './TriggersSection';
@@ -58,6 +60,7 @@ export function SettingsTab({
   onTriggersChanged: () => Promise<void> | void;
 }) {
   const [active, setActive] = useState<SettingsSection>('about');
+  const platform = useBotsPlatform();
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-[color:var(--dashboard-panel-border)] bg-zinc-500/10">
@@ -126,18 +129,36 @@ export function SettingsTab({
                 <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-theme-fg">
                   <Brain className="h-4 w-4" /> Intelligence
                 </h3>
-                <ConfigRow
-                  label="Model"
-                  description="Pick a smarter model for harder tasks, a lighter one to keep it cheap."
-                  control={
-                    <Select<ProactiveModelMode>
-                      value={config.modelMode}
-                      options={(Object.entries(PROACTIVE_MODEL_MODE_LABELS) as [ProactiveModelMode, { label: string; description: string }][])
-                        .map(([value, meta]) => ({ value, label: meta.label }))}
-                      onChange={value => onUpdateConfig({ modelMode: value })}
-                    />
-                  }
-                />
+                {platform.renderModelSelector ? (
+                  <ConfigRow
+                    label="Model"
+                    description="The exact model this agent thinks with. Auto routes per task."
+                    control={
+                      <div className="min-w-[200px]">
+                        {platform.renderModelSelector({
+                          modelId: config.modelId || '',
+                          // Picking Auto clears the explicit model AND resets the
+                          // legacy tier so buildModelSelection truly auto-routes.
+                          onChange: (modelId) =>
+                            onUpdateConfig(modelId ? { modelId } : { modelId: '', modelMode: 'auto' }),
+                        })}
+                      </div>
+                    }
+                  />
+                ) : (
+                  <ConfigRow
+                    label="Model"
+                    description="Pick a smarter model for harder tasks, a lighter one to keep it cheap."
+                    control={
+                      <Select<ProactiveModelMode>
+                        value={config.modelMode}
+                        options={(Object.entries(PROACTIVE_MODEL_MODE_LABELS) as [ProactiveModelMode, { label: string; description: string }][])
+                          .map(([value, meta]) => ({ value, label: meta.label }))}
+                        onChange={value => onUpdateConfig({ modelMode: value })}
+                      />
+                    }
+                  />
+                )}
               </section>
             </div>
           )}
@@ -210,20 +231,9 @@ const PERMISSION_MODE_OPTIONS: Array<{ value: NonNullable<BotConfig['permissionM
   { value: 'manual', label: 'Manual — ask every time' },
 ];
 
-// Sensitive tools an agent can run during a local run. Mirrors the gate in
-// proactive-scheduler-utils (file-mutating + run_command + terminal).
-const SENSITIVE_TOOL_OPTIONS: Array<{ id: string; label: string; description: string }> = [
-  { id: 'write_file', label: 'Write file', description: 'Create or overwrite text files' },
-  { id: 'write_file_base64', label: 'Write binary file', description: 'Write binary/base64 content' },
-  { id: 'create_directory', label: 'Create folder', description: 'Make a new directory' },
-  { id: 'copy_file', label: 'Copy file', description: 'Duplicate a file' },
-  { id: 'file_edit', label: 'Edit file', description: 'Modify file contents in place' },
-  { id: 'move_file', label: 'Move / rename file', description: 'Move or rename (can overwrite)' },
-  { id: 'delete_file', label: 'Delete file', description: 'Remove files or folders' },
-  { id: 'run_command', label: 'Run command', description: 'Execute shell commands' },
-  { id: 'terminal_create', label: 'Open terminal', description: 'Start a terminal session' },
-  { id: 'terminal_send_input', label: 'Terminal input', description: 'Type into a terminal' },
-];
+// Sensitive tools the per-agent gate covers, single-sourced with the desktop
+// and cloud run enforcement in @stuardai/bots-core/permissions.
+const SENSITIVE_TOOL_OPTIONS = SENSITIVE_BOT_TOOL_OPTIONS;
 
 function PermissionsSection({
   config,

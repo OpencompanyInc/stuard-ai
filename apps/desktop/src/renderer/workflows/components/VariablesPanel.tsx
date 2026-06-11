@@ -75,7 +75,7 @@ function VariableRow({
             value={variable.defaultValue ?? ''}
             onChange={(e) => onUpdate({ defaultValue: e.target.value === '' ? 0 : Number(e.target.value) })}
             disabled={disabled}
-            className="w-full px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder="0"
           />
         );
@@ -94,7 +94,7 @@ function VariableRow({
                     onUpdate({ defaultValue: newList });
                   }}
                   disabled={disabled}
-                  className="flex-1 px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 disabled:opacity-50"
+                  className="flex-1 px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  disabled:opacity-50"
                   placeholder={`Item ${i + 1}`}
                 />
                 {!disabled && (
@@ -113,7 +113,7 @@ function VariableRow({
             {!disabled && (
               <button
                 onClick={() => onUpdate({ defaultValue: [...listValue, ''] })}
-                className="w-full py-1.5 border border-dashed wf-border-subtle rounded-lg text-xs wf-fg-muted hover:text-indigo-600 hover:border-indigo-300 transition-colors flex items-center justify-center gap-1"
+                className="w-full py-1.5 border border-dashed wf-border-subtle rounded-lg text-xs wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] transition-colors flex items-center justify-center gap-1"
               >
                 <Plus className="w-3 h-3" /> Add Item
               </button>
@@ -133,7 +133,7 @@ function VariableRow({
               }
             }}
             disabled={disabled}
-            className="w-full px-3 py-2 text-xs font-mono wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-3 py-2 text-xs font-mono wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  resize-none disabled:opacity-50 disabled:cursor-not-allowed"
             rows={3}
             placeholder="{}"
           />
@@ -145,7 +145,7 @@ function VariableRow({
             value={String(variable.defaultValue ?? '')}
             onChange={(e) => onUpdate({ defaultValue: e.target.value })}
             disabled={disabled}
-            className="w-full px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full px-3 py-1.5 text-sm border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder="Default value..."
           />
         );
@@ -153,7 +153,7 @@ function VariableRow({
   };
 
   return (
-    <div className={`border rounded-xl transition-all ${expanded ? 'border-indigo-200 bg-indigo-50/30' : 'wf-border-subtle wf-bg-overlay hover:wf-border-subtle'}`}>
+    <div className={`border rounded-xl transition-all ${expanded ? 'wf-accent-soft-bg/30' : 'wf-border-subtle wf-bg-overlay hover:wf-border-subtle'}`}>
       {/* Header row */}
       <div
         className="flex items-center gap-2 px-3 py-2.5 cursor-pointer"
@@ -163,7 +163,7 @@ function VariableRow({
           {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
 
-        <div className={`p-1.5 rounded-lg ${expanded ? 'bg-indigo-100 text-indigo-600' : 'wf-bg-overlay wf-fg-muted'}`}>
+        <div className={`p-1.5 rounded-lg ${expanded ? 'wf-accent-chip' : 'wf-bg-overlay wf-fg-muted'}`}>
           <TypeIcon className="w-3.5 h-3.5" />
         </div>
 
@@ -182,7 +182,7 @@ function VariableRow({
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => { e.stopPropagation(); copyReference(); }}
-            className="p-1.5 wf-fg-faint hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+            className="p-1.5 wf-fg-faint hover:wf-accent-fg hover:wf-accent-soft-bg rounded-lg transition-colors"
             title="Copy reference"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -210,7 +210,7 @@ function VariableRow({
               value={variable.name}
               onChange={(e) => onUpdate({ name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
               disabled={disabled}
-              className="w-full px-3 py-1.5 text-sm font-mono border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 disabled:opacity-50"
+              className="w-full px-3 py-1.5 text-sm font-mono border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  disabled:opacity-50"
               placeholder="myVariable"
             />
             <div className="text-[10px] wf-fg-faint">
@@ -230,7 +230,7 @@ function VariableRow({
                     onClick={() => !disabled && onUpdate({ scope: opt.value as 'workflow' | 'local' })}
                     disabled={disabled}
                     className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${scope === opt.value
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600'
+                      ? 'wf-accent-soft-bg wf-accent-fg'
                       : 'wf-border-subtle wf-bg-overlay wf-fg-muted hover:wf-border-subtle'
                       } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
@@ -257,7 +257,7 @@ function VariableRow({
                     onClick={() => !disabled && onUpdate({ type: opt.value, defaultValue: opt.value === 'boolean' ? false : opt.value === 'number' ? 0 : opt.value === 'json' ? {} : opt.value === 'list' ? [] : '' })}
                     disabled={disabled}
                     className={`flex flex-col items-center gap-1 p-2 rounded-lg border transition-colors text-center ${variable.type === opt.value
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600'
+                      ? 'wf-accent-soft-bg wf-accent-fg'
                       : 'wf-border-subtle wf-bg-overlay wf-fg-muted hover:wf-border-subtle'
                       } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
@@ -283,7 +283,7 @@ function VariableRow({
               value={variable.description || ''}
               onChange={(e) => onUpdate({ description: e.target.value })}
               disabled={disabled}
-              className="w-full px-3 py-1.5 text-sm wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 disabled:opacity-50"
+              className="w-full px-3 py-1.5 text-sm wf-input border wf-border-subtle rounded-lg focus:outline-none focus:ring-2  disabled:opacity-50"
               placeholder="What is this variable for?"
             />
           </div>
@@ -355,7 +355,7 @@ export function VariablesPanel({ variables, onChange, disabled }: VariablesPanel
         onClick={() => setCollapsed(!collapsed)}
         className="w-full flex items-center gap-2.5 px-4 py-3 wf-bg-overlay wf-hover-bg transition-colors text-left"
       >
-        <div className="p-1.5 rounded-lg bg-violet-100 text-violet-600">
+        <div className="p-1.5 rounded-lg wf-accent-chip">
           <Variable className="w-4 h-4" />
         </div>
         <div className="flex-1">
@@ -372,14 +372,14 @@ export function VariablesPanel({ variables, onChange, disabled }: VariablesPanel
         <div className="p-3 space-y-2">
           {/* Info banner */}
           {variables.length === 0 && (
-            <div className="flex items-start gap-2 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
-              <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-              <div className="text-xs text-indigo-700">
+            <div className="flex items-start gap-2 p-3 wf-accent-soft-bg rounded-lg border wf-border-subtle">
+              <Info className="w-4 h-4 wf-accent-fg shrink-0 mt-0.5" />
+              <div className="text-xs wf-fg">
                 <p className="font-medium">Define workflow-scoped variables</p>
-                <p className="text-indigo-600/70 mt-0.5">
+                <p className="wf-accent-fg/70 mt-0.5">
                   These variables are shared across all stuard files in this workflow. Reference with{' '}
-                  <code className="bg-indigo-100 px-1 py-0.5 rounded">{`{{workflow.varName}}`}</code>.
-                  For file-scoped variables, use <code className="bg-indigo-100 px-1 py-0.5 rounded">local.*</code> in set_variable.
+                  <code className="wf-accent-soft-bg px-1 py-0.5 rounded">{`{{workflow.varName}}`}</code>.
+                  For file-scoped variables, use <code className="wf-accent-soft-bg px-1 py-0.5 rounded">local.*</code> in set_variable.
                 </p>
               </div>
             </div>
@@ -401,9 +401,9 @@ export function VariablesPanel({ variables, onChange, disabled }: VariablesPanel
           {!disabled && (
             <button
               onClick={addVariable}
-              className="w-full py-2.5 border-2 border-dashed wf-border-subtle rounded-xl text-xs font-medium wf-fg-muted hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex items-center justify-center gap-2 group"
+              className="w-full py-2.5 border-2 border-dashed wf-border-subtle rounded-xl text-xs font-medium wf-fg-muted hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] hover:wf-accent-soft-bg/30 transition-all flex items-center justify-center gap-2 group"
             >
-              <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
+              <div className="w-6 h-6 rounded-full wf-bg-overlay group-hover:wf-accent-soft-bg flex items-center justify-center transition-colors">
                 <Plus className="w-3.5 h-3.5" />
               </div>
               Add Variable

@@ -245,7 +245,7 @@ export function TextInputWithVariables({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const baseClass = "w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint";
+  const baseClass = "w-full px-4 py-2.5 text-sm border wf-border-subtle rounded-xl focus:outline-none transition-all wf-input wf-fg shadow-sm placeholder:wf-fg-faint";
 
   return (
     <div ref={containerRef} className="relative group">
@@ -274,7 +274,7 @@ export function TextInputWithVariables({
           {((upstreamNodes && upstreamNodes.length > 0) || (workflowVariables && workflowVariables.length > 0)) && (
             <button
               onClick={triggerSuggestions}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:text-indigo-400 hover:bg-indigo-500/200/10 transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg wf-fg-faint hover:wf-accent-fg hover:wf-accent-soft-bg transition-colors"
               title="Insert Variable"
             >
               <Plus className="w-4 h-4" />
@@ -305,10 +305,10 @@ export function TextInputWithVariables({
               <button
                 key={s.text}
                 onClick={() => insertSuggestion(s.text)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'bg-indigo-500/20 text-indigo-500 shadow-sm' : 'wf-fg-muted wf-hover-bg wf-hover-fg'
+                className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-all rounded-lg mb-0.5 ${i === selectedIndex ? 'wf-accent-soft-bg wf-accent-fg shadow-sm' : 'wf-fg-muted wf-hover-bg wf-hover-fg'
                   }`}
               >
-                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
+                <code className={`px-1.5 py-0.5 rounded text-xs font-mono border ${i === selectedIndex ? 'wf-accent-soft-bg border-[color:color-mix(in_srgb,var(--wf-accent)_30%,transparent)] wf-accent-fg' : 'wf-bg-overlay wf-border-subtle wf-fg-muted'
                   }`}>
                   {s.label}
                 </code>

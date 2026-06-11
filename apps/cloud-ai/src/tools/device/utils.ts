@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { makeLocalTool } from './shared';
+import { makeLocalTool, anyJsonValue } from './shared';
 
 export const get_datetime = makeLocalTool(
   'get_datetime',
@@ -89,7 +89,7 @@ export const random_choice = makeLocalTool(
   'random_choice',
   'Pick random item(s) from a list',
   z.object({
-    items: z.array(z.any()).describe('Array of items to choose from'),
+    items: z.array(anyJsonValue).describe('Array of items to choose from'),
     count: z.number().int().min(1).default(1).describe('Number of items to pick'),
     allowDuplicates: z.boolean().default(false).describe('Allow picking the same item multiple times'),
   }),
@@ -106,7 +106,7 @@ export const get_env_var = makeLocalTool(
   'Get an environment variable value',
   z.object({
     name: z.string().describe('Environment variable name'),
-    default: z.any().optional().describe('Default value if not found'),
+    default: anyJsonValue.optional().describe('Default value if not found'),
   }),
   z.object({
     ok: z.boolean(),
@@ -196,7 +196,7 @@ export const json_stringify = makeLocalTool(
   'json_stringify',
   'Convert data to JSON string',
   z.object({
-    data: z.any().describe('Data to stringify'),
+    data: anyJsonValue.describe('Data to stringify'),
     pretty: z.boolean().default(false).describe('Pretty-print with indentation'),
   }),
   z.object({
