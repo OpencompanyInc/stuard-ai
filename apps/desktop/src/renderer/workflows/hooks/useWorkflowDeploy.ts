@@ -52,7 +52,7 @@ function detectClientTimezone(): string {
   }
 }
 
-function getCloudTriggerBindings(model: DesignerModel | null) {
+export function getCloudTriggerBindings(model: DesignerModel | null) {
   if (!model) return [];
   return (model.triggers || []).flatMap((trigger) => {
     const type = String(trigger?.type || '').trim();
@@ -91,6 +91,18 @@ function getCloudTriggerBindings(model: DesignerModel | null) {
         triggerId,
         type,
         mode,
+        args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
+      }];
+    }
+
+    // Social push triggers (X / Instagram) are cloud-native: cloud-ai's
+    // deploy-manager registers them + subscribes the user's account, and the
+    // webhook dispatch routes events to the VM deploy. Dropping them here
+    // silently disabled X triggers on every VM deploy.
+    if (type.startsWith('x.') || type.startsWith('instagram.')) {
+      return [{
+        triggerId,
+        type,
         args: trigger?.args && typeof trigger.args === 'object' ? trigger.args : {},
       }];
     }

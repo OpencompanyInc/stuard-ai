@@ -37,7 +37,7 @@ import { handleMCPRoutes } from './mcp';
 import { handleFileIndexRoutes } from './file-index';
 import { handlePreferencesRoutes } from './preferences';
 import { handleCloudEngineRoutes } from './cloud-engine';
-import { handleCloudStorageRoutes } from './cloud-storage';
+import { handleCloudStorageRoutes, handleShareLinkRoutes } from './cloud-storage';
 import { handleStorageRoutes } from './storage';
 import { handleCloudFilesRoutes } from './cloud-files';
 import { handleCloudPreviewRoutes, handleCloudPreviewFallback } from './cloud-preview';
@@ -103,6 +103,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleCustomOAuthRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudEngineRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudStorageRoutes(req, res, parsedUrl)) return true;
+  if (await handleShareLinkRoutes(req, res, parsedUrl)) return true;
   if (await handleStorageRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudFilesRoutes(req, res, parsedUrl)) return true;
   if (await handleCloudPreviewRoutes(req, res, parsedUrl)) return true;

@@ -371,6 +371,33 @@ declare global {
       requestAgentDataPush: () => void;
       // Subscribe to "agent data just landed locally" events (VM → desktop).
       onAgentDataSynced: (cb: (payload: { source?: string; files?: number }) => void) => () => void;
+      // Real desktop→VM sync state from the main process auto-sync loop.
+      getAgentSyncState: () => Promise<{
+        ok: boolean;
+        state?: {
+          syncing: boolean;
+          pendingChanges: boolean;
+          lastPushAt: number | null;
+          lastAttemptAt: number | null;
+          lastError: string | null;
+          autoSyncEnabled: boolean;
+        };
+        error?: string;
+      }>;
+      // Live updates whenever a sync job starts/finishes/fails.
+      onAgentSyncStatus: (cb: (payload: {
+        phase: 'start' | 'done' | 'error';
+        label: string;
+        error?: string;
+        state?: {
+          syncing: boolean;
+          pendingChanges: boolean;
+          lastPushAt: number | null;
+          lastAttemptAt: number | null;
+          lastError: string | null;
+          autoSyncEnabled: boolean;
+        };
+      }) => void) => () => void;
 
     };
   }

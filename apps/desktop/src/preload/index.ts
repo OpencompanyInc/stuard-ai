@@ -759,7 +759,14 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     folderPath?: string;
     contentType?: string;
     token?: string;
+    uploadId?: string;
   }) => ipcRenderer.invoke('cloudStorage:upload', payload),
+  // Live byte-level progress for cloudStorageUpload, keyed by uploadId.
+  onCloudStorageUploadProgress: (cb: (p: { uploadId: string; loaded: number; total: number }) => void) => {
+    const handler = (_e: any, p: any) => cb(p);
+    ipcRenderer.on('cloudStorage:uploadProgress', handler);
+    return () => { try { ipcRenderer.off('cloudStorage:uploadProgress', handler); } catch { } };
+  },
 
   // Cloud Engine — upload agent data (knowledge.db, memory.db, file_index.db, etc.) to GCS
   uploadAgentData: (_cloudAiUrl: string, _token: string) => ipcRenderer.invoke('cloud:uploadAgentData'),
@@ -773,6 +780,15 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, payload: any) => cb(payload);
     ipcRenderer.on('agent:data-synced', handler);
     return () => { try { ipcRenderer.removeListener('agent:data-synced', handler); } catch { /* noop */ } };
+  },
+
+  // Real desktop→VM sync state (pending changes / syncing / last push result).
+  getAgentSyncState: () => ipcRenderer.invoke('cloud:agentSyncState'),
+  // Live updates whenever a sync job starts/finishes/fails in the main process.
+  onAgentSyncStatus: (cb: (payload: { phase: 'start' | 'done' | 'error'; label: string; error?: string; state?: any }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload);
+    ipcRenderer.on('agent:sync-status', handler);
+    return () => { try { ipcRenderer.removeListener('agent:sync-status', handler); } catch { /* noop */ } };
   },
 
 });

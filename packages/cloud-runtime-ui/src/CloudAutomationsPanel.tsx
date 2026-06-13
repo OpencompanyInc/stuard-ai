@@ -31,7 +31,6 @@ import {
   RefreshCw,
   Repeat,
   Rocket,
-  Sparkles,
   Terminal,
   Trash2,
   Workflow,
@@ -512,7 +511,7 @@ export function CloudAutomationsPanel({
       <div className="flex flex-shrink-0 flex-wrap items-start justify-between gap-3 px-1 pb-5">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-[22px] font-bold tracking-tight text-theme-fg">
-            <Sparkles className="h-5 w-5 shrink-0 text-primary" />
+            <Zap className="h-5 w-5 shrink-0 text-primary" />
             {title}
           </h1>
           <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-theme-muted">{subtitle}</p>

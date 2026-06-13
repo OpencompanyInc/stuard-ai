@@ -331,8 +331,10 @@ function buildSmsHiddenContext(mode: SmsMode, proactiveMessage?: string | null):
     modeMarker,
     'The user sent this message from their mobile device via SMS or WhatsApp.',
     'IMPORTANT: Do NOT use markdown, LaTeX, bullet points, headers, bold/italic formatting, or code blocks.',
-    'Write in plain text only — short, clear sentences. No asterisks, underscores, hashes, backticks, or any other formatting syntax.',
-    'Be concise and direct. Your reply will be sent as a text message.',
+    'Write in plain text only. No asterisks, underscores, hashes, backticks, or any other formatting syntax.',
+    'TEXTING STYLE: Reply like you are texting a close friend. Keep it casual, warm, and short — a sentence or two, the way people actually text. Contractions, lowercase, and the occasional emoji are fine. Skip greetings, sign-offs, and corporate phrasing; just get to the point.',
+    'If you are working through something multi-step, it is good to fire off a quick heads-up first (e.g. "on it, checking now") before the answer — each thing you say is sent as its own separate text as you go.',
+    'Be concise and direct. Your reply is sent as a text message.',
     contextLine,
   ];
   if (mode === 'proactive' && proactiveMessage) {
@@ -349,6 +351,9 @@ async function submitSmsReply(input: {
   conversationId: string | null;
   resumeConversationId: string | null;
   provider?: string | null;
+  /** True when the reply was already streamed live via /sms-notify — finalize
+   *  state only, don't re-send or re-charge the carrier fee. */
+  alreadyDelivered?: boolean;
 }): Promise<void> {
   const session = getMainAuthSession();
   const token = session?.access_token;
@@ -375,6 +380,7 @@ async function submitSmsReply(input: {
       preferredModel: input.preferredModel,
       conversationId: input.conversationId,
       resumeConversationId: input.resumeConversationId,
+      alreadyDelivered: input.alreadyDelivered === true,
     }),
   });
   const data = await resp.json().catch(() => ({} as any));
@@ -555,7 +561,7 @@ async function runSmsTurn(input: {
   proactiveMessage?: string | null;
   provider?: string | null;
   attachments?: any[];
-}): Promise<{ replyText: string; fullReplyText: string; conversationId: string | null }> {
+}): Promise<{ replyText: string; fullReplyText: string; conversationId: string | null; alreadyDelivered: boolean; segmentsSent: number }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
   if (!token) throw new Error('desktop_auth_missing');
@@ -573,12 +579,32 @@ async function runSmsTurn(input: {
     accessToken: token,
   };
 
-  return await new Promise((resolve, reject) => {
+  return await new Promise<{ replyText: string; fullReplyText: string; conversationId: string | null; alreadyDelivered: boolean; segmentsSent: number }>((resolve, reject) => {
     let conversationId = input.conversationId || null;
     let done = false;
     let connectTimeout: NodeJS.Timeout | undefined;
     let runTimeout: NodeJS.Timeout | undefined;
     let ws: WebSocket;
+
+    // ── Live "buddy texting" broadcast ───────────────────────────────────────
+    // As the agent streams, accumulate assistant text into the current segment
+    // and flush it as its own SMS at each natural boundary (right before a tool
+    // call, and at the end). Thinking/reasoning tokens are never sent. Sends are
+    // serialized through sendChain so the bubbles arrive in order without
+    // blocking the WS message loop.
+    let currentSegment = '';
+    let segmentsSent = 0;
+    let sendChain: Promise<void> = Promise.resolve();
+
+    const flushSegment = () => {
+      const text = truncateForSms(stripMarkdownForSms(currentSegment), input.provider);
+      currentSegment = '';
+      if (!text.trim()) return;
+      segmentsSent++;
+      sendChain = sendChain
+        .catch(() => {})
+        .then(() => sendSmsNotify(input.replyToPhone, text, input.provider));
+    };
 
     const finish = (fn: () => void) => {
       if (done) return;
@@ -649,12 +675,29 @@ async function runSmsTurn(input: {
         return;
       }
 
+      // ── Streaming text → live per-thought SMS broadcast ───────────────────
+      if (type === 'progress') {
+        const event = String(msg?.event || '');
+        if (event === 'delta') {
+          currentSegment += String(msg?.data?.text || '');
+        } else if (event === 'tool_event' && String(msg?.data?.status || '') === 'called') {
+          // Model is about to act — text out whatever it just said as its own bubble.
+          flushSegment();
+        }
+        // reasoning / reasoning_start / reasoning_end (thinking tokens) and all
+        // other progress events are intentionally ignored — never texted.
+        return;
+      }
+
       // ── Tool request: act as the desktop tool bridge ──────────────────────
       if (type === 'tool_request') {
         const toolId = String(msg?.id || '');
         const toolName = String(msg?.tool || '');
         const args = msg?.args ?? {};
         if (!toolId || !toolName) return;
+
+        // Send any preamble ("on it, grabbing that now") before the tool runs.
+        flushSegment();
 
         if (SMS_PERMISSION_TOOLS.has(toolName)) {
           // Suspend run timeout while waiting for user response
@@ -703,7 +746,21 @@ async function runSmsTurn(input: {
         const nextConversationId = msg?.conversationId
           ? String(msg.conversationId)
           : conversationId;
-        finish(() => resolve({ replyText, fullReplyText, conversationId: nextConversationId || null }));
+        // Flush the closing thought (text after the last tool call). If the model
+        // never streamed any deltas (non-streaming fallback), segmentsSent stays 0
+        // and the caller sends `replyText` the normal way instead.
+        flushSegment();
+        const alreadyDelivered = segmentsSent > 0;
+        // Resolve synchronously (claims `done`, so the cloud closing the WS can't
+        // race in and reject). The queued bubbles keep sending in order on
+        // sendChain — they're independent HTTP calls, no need to await them here.
+        finish(() => resolve({
+          replyText,
+          fullReplyText,
+          conversationId: nextConversationId || null,
+          alreadyDelivered,
+          segmentsSent,
+        }));
         return;
       }
 
@@ -806,7 +863,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     provider: itemProvider,
     attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
   });
-  if (!turn.replyText) throw new Error('sms_empty_agent_reply');
+  if (!turn.replyText && !turn.alreadyDelivered) throw new Error('sms_empty_agent_reply');
 
   // Ingest into local SQLite so this conversation appears in desktop history + title search.
   // Done fire-and-forget — local storage failures must not block the SMS reply.
@@ -829,6 +886,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     conversationId: turn.conversationId,
     resumeConversationId: turn.conversationId || effectiveState.resume_conversation_id,
     provider: itemProvider,
+    alreadyDelivered: turn.alreadyDelivered,
   });
   await completeSmsItem(item.id);
 }

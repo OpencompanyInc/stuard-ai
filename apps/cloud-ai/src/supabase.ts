@@ -2309,3 +2309,65 @@ export async function getAggregateMetrics(): Promise<{ avg_cpu: number; avg_memo
     return { avg_cpu: 0, avg_memory: 0, total_disk_gb: 0 };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Share Links (short URLs for cloud-storage shares: /s/<slug>)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ShareLinkRow {
+  id: string;
+  slug: string;
+  user_id: string;
+  object_name: string;
+  mode: 'public' | 'ttl';
+  disposition: 'inline' | 'attachment';
+  expires_at: string | null;
+  revoked: boolean;
+  created_at: string;
+}
+
+/** Insert a share link row. Returns 'slug_taken' on unique-slug conflict. */
+export async function createShareLink(row: {
+  slug: string;
+  user_id: string;
+  object_name: string;
+  mode: 'public' | 'ttl';
+  disposition: 'inline' | 'attachment';
+  expires_at: string | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseService) return { ok: false, error: 'supabase_unavailable' };
+  const { error } = await supabaseService.from('share_links').insert(row);
+  if (error) {
+    if (error.code === '23505') return { ok: false, error: 'slug_taken' };
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+export async function getShareLink(slug: string): Promise<ShareLinkRow | null> {
+  if (!supabaseService) return null;
+  try {
+    const { data, error } = await supabaseService
+      .from('share_links')
+      .select('*')
+      .eq('slug', slug)
+      .single();
+    if (error || !data) return null;
+    return data as ShareLinkRow;
+  } catch {
+    return null;
+  }
+}
+
+/** Revoke every active share link pointing at a user's object. */
+export async function revokeShareLinks(userId: string, objectName: string): Promise<void> {
+  if (!supabaseService) return;
+  try {
+    await supabaseService
+      .from('share_links')
+      .update({ revoked: true })
+      .eq('user_id', userId)
+      .eq('object_name', objectName)
+      .eq('revoked', false);
+  } catch { /* best-effort */ }
+}

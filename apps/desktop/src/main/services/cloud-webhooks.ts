@@ -35,6 +35,8 @@ type SyncJob = () => Promise<void>;
 let _syncQueue: Promise<void> = Promise.resolve();
 let _syncRunning = false;
 let _lastPushSucceededAt = 0;
+let _lastPushAttemptAt = 0;
+let _lastPushError: string | null = null;
 const MIN_PUSH_INTERVAL_MS = 30_000;
 
 type AgentDataPushResult = {
@@ -90,8 +92,9 @@ function enqueueSync(label: string, job: SyncJob): Promise<void> {
 
 function broadcastSyncStatus(payload: { phase: 'start' | 'done' | 'error'; label: string; error?: string }): void {
     try {
+        const enriched = { ...payload, state: getAgentDataSyncState() };
         for (const win of BrowserWindow.getAllWindows()) {
-            try { win.webContents.send('agent:sync-status', payload); } catch { /* noop */ }
+            try { win.webContents.send('agent:sync-status', enriched); } catch { /* noop */ }
         }
     } catch { /* noop */ }
 }
@@ -757,13 +760,53 @@ async function performDesktopAgentDataPushToVM(
     }
 }
 
+/**
+ * Run one push attempt and record its outcome so the renderer's sync
+ * indicator reflects reality (pending changes / last success / last error)
+ * instead of guessing from cold-backup timestamps.
+ */
+async function runAgentDataPush(mode: AgentDataSyncMode, opts: AgentDataPushOptions = {}): Promise<AgentDataPushResult> {
+    _lastPushAttemptAt = Date.now();
+    const result = await performDesktopAgentDataPushToVM(mode, opts);
+    if (result.ok) {
+        _lastPushError = null;
+        if (!result.skipped) snapshotDesktopMtimes();
+    } else {
+        _lastPushError = result.error || 'push_failed';
+    }
+    return result;
+}
+
+export interface AgentDataSyncState {
+    /** A push or pull job is running right now. */
+    syncing: boolean;
+    /** Local agent DBs have changed since the last successful push. */
+    pendingChanges: boolean;
+    lastPushAt: number | null;
+    lastAttemptAt: number | null;
+    lastError: string | null;
+    /** The periodic auto-sync loop is active. */
+    autoSyncEnabled: boolean;
+}
+
+/** Snapshot of the desktop→VM agent-data sync state for the renderer UI. */
+export function getAgentDataSyncState(): AgentDataSyncState {
+    return {
+        syncing: _syncRunning,
+        pendingChanges: hasDesktopAgentDataChanged(),
+        lastPushAt: _lastPushSucceededAt || null,
+        lastAttemptAt: _lastPushAttemptAt || null,
+        lastError: _lastPushError,
+        autoSyncEnabled: _desktopSyncTimer != null,
+    };
+}
+
 export async function pushDesktopAgentDataToVM(opts: AgentDataPushOptions = {}): Promise<AgentDataPushResult> {
     let result: AgentDataPushResult = { ok: false, error: 'not_started' };
     await enqueueSync('desktop-agent-data-push', async () => {
         // 'manifest' = ship only DB files the VM doesn't already have identical
         // (falls back to a full ship if the VM can't be reached yet).
-        result = await performDesktopAgentDataPushToVM('manifest', opts);
-        if (result.ok && !result.skipped) snapshotDesktopMtimes();
+        result = await runAgentDataPush('manifest', opts);
     });
     return result;
 }
@@ -824,8 +867,7 @@ async function periodicDesktopAgentDataSync(): Promise<void> {
 
 async function syncDesktopAgentDataIfChanged(): Promise<void> {
     if (!hasDesktopAgentDataChanged()) return;
-    const result = await performDesktopAgentDataPushToVM('delta', { requireRunningVm: true });
-    if (result.ok && !result.skipped) snapshotDesktopMtimes();
+    await runAgentDataPush('delta', { requireRunningVm: true });
 }
 
 function startDesktopAgentDataSync(): void {

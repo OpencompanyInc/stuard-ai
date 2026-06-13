@@ -1463,7 +1463,7 @@ function DashboardApp() {
       key: 'system',
       label: 'System & Infrastructure',
       items: [
-        { id: 'cloud', label: 'Cloud Engine', icon: Cloud },
+        { id: 'cloud', label: 'Cloud Computer', icon: Cloud },
         { id: 'integrations', label: 'Connected Apps', icon: Link },
         { id: 'settings', label: 'Settings', icon: Settings },
       ],
@@ -1485,7 +1485,7 @@ function DashboardApp() {
     memories: { title: 'Memories', subtitle: 'Browse collections, context, and project knowledge.' },
     integrations: { title: 'Connected Apps', subtitle: 'Manage the tools and services connected to Stuard.' },
     settings: { title: 'Settings', subtitle: 'Tune themes, behavior, and personalization preferences.' },
-    cloud: { title: 'Cloud Engine', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
+    cloud: { title: 'Cloud Computer', subtitle: 'Monitor remote runtime, deployment, and compute status.' },
     media: { title: 'Media', subtitle: 'Browse imported files, generated media, and message attachments in one gallery.' },
     storage: { title: 'Storage', subtitle: 'Review files, uploads, and your local or cloud storage usage.' },
     feedback: { title: 'Feedback', subtitle: 'Report a bug or suggest an idea — and track where it stands.' },
@@ -1672,8 +1672,10 @@ function DashboardApp() {
             </div>
           </header>
 
-          {/* Content Wrapper */}
-          <div className="flex-1 flex flex-col min-h-0 relative">
+          {/* Content Wrapper — also hosts view-scoped overlays (file preview,
+              share dialog) so their backdrop covers the content area, not the
+              whole dashboard chrome. */}
+          <div id="dashboard-view-host" className="flex-1 flex flex-col min-h-0 relative">
             {tab === 'memories' ? (
               <div className="flex-1 overflow-hidden animate-in fade-in duration-500">
                 <MemoriesView />

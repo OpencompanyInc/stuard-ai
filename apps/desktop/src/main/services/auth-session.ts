@@ -53,6 +53,49 @@ export function getMainAccessToken(): string | null {
   return currentSession?.access_token || null;
 }
 
+function decodeJwtExpMs(token: string): number | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
+    return typeof payload?.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Access token guaranteed fresh for at least ~60s. Refreshes via the in-memory
+ * refresh token when the current JWT is expired or about to expire, so
+ * long-lived main-process callers (tool router, schedulers) don't 401 after
+ * the renderer-synced session goes stale.
+ */
+export async function getValidMainAccessToken(): Promise<string | null> {
+  const token = currentSession?.access_token;
+  if (!token) return null;
+
+  const expMs = decodeJwtExpMs(token);
+  const needsRefresh = expMs !== null && expMs - Date.now() < 60_000;
+  if (!needsRefresh || !currentSession?.refresh_token) return token;
+
+  try {
+    const client = getMainSupabaseClient()!;
+    const { data, error } = await client.auth.refreshSession({
+      refresh_token: currentSession.refresh_token,
+    });
+    if (!error && data.session?.access_token) {
+      currentSession = data.session;
+      currentSessionKey = getSessionKey(currentSession);
+      try { client.realtime.setAuth(currentSession.access_token); } catch { }
+      emitSessionChange();
+      logger.info('[auth-session] Access token refreshed in main process');
+      return currentSession.access_token;
+    }
+    logger.warn('[auth-session] Token refresh failed:', error?.message);
+  } catch (e: any) {
+    logger.warn('[auth-session] Token refresh threw:', e?.message);
+  }
+  return token;
+}
+
 export function getMainUserId(): string | null {
   return currentSession?.user?.id || null;
 }

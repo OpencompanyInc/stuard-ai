@@ -298,7 +298,7 @@ Use for: destructive actions, genuinely ambiguous requests, multi-step flows. Do
 
 ## <<path>> — Inline Media
 
-Show local files in chat: \`<<C:/Users/solar/photo.png>>\` — works for images, video, audio, PDFs. Use whenever you have a file path to display.
+Show local files in chat: \`<<C:/Users/solar/photo.png>>\` — works for images, video, audio, PDFs. Also works with https media URLs (e.g. cloud storage links from cloud_storage_upload / cloud_storage_get_url): \`<<https://…/video.mp4>>\`. Use whenever you have a file path or media URL to display.
 
 ## chat_ui — Rich Structured Output
 

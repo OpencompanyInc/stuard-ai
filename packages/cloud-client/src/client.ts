@@ -86,6 +86,10 @@ export interface CloudClient {
     envVars?: Record<string, string>;
     autoRestart?: boolean;
     schedule?: string;
+    /** Source workflow id (links the deploy back to the editor workflow). */
+    workflowId?: string;
+    /** Cloud-side trigger bindings (cron / webhooks / gmail), same shape the workflow editor sends. */
+    triggerBindings?: Array<{ triggerId: string; type: string; mode?: string | null; args?: Record<string, any> }>;
   }): Promise<CloudJsonResponse & { deployment?: CloudDeployment }>;
   getCloudDeployment(id: string): Promise<CloudJsonResponse & { deployment?: CloudDeployment }>;
   getCloudDeploymentLogs(id: string, lines?: number): Promise<CloudJsonResponse & { logs?: string }>;

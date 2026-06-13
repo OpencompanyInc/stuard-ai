@@ -126,7 +126,7 @@ export const NOTIFICATION_CHANNEL_LABELS: Record<NotificationChannel, { label: s
 
 export const EXECUTION_TARGET_LABELS: Record<ExecutionTarget, { label: string; description: string }> = {
   local: { label: 'Local Agent', description: 'Runs on your machine' },
-  cloud: { label: 'Cloud VM', description: 'Runs on your cloud engine' },
+  cloud: { label: 'Cloud VM', description: 'Runs on your cloud computer' },
 };
 
 export const PROACTIVE_MODEL_MODE_LABELS: Record<ProactiveModelMode, { label: string; description: string }> = {

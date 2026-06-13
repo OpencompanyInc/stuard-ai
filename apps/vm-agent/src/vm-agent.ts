@@ -670,6 +670,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
       { role: 'user' as const, content: message },
     ];
     let streamedFinal = false;
+    let titleSeen = false;
     const result = await sendToAgentStreaming(
       {
         type: 'chat',
@@ -737,6 +738,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
           if (event.title) {
             const aiTitle = String(event.title).trim();
             if (aiTitle) {
+              titleSeen = true;
               // 1. Update VM in-memory store (will hit the pre-seeded entry above).
               getVMMemoryStore().updateConversation(conversationId, { title: aiTitle });
               // 2. Persist to local SQLite via the Python agent so list/refresh
@@ -790,6 +792,35 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         message_count: 2,
         topics: extractSimpleTopics(message),
       });
+    }
+
+    // Title fallback: cloud-ai only emits `title` events for conversations it
+    // created this turn. If none arrived AND the conversation has no persisted
+    // title either (e.g. the title model call failed), fall back to the first
+    // user message so the chat never lists as "Untitled" forever. Resumed
+    // conversations keep their real SQLite title — we check it first.
+    if (!titleSeen) {
+      (async () => {
+        try {
+          const got: any = await sendToAgent({
+            type: 'tool_exec',
+            tool: 'conversation_get',
+            args: { conversation_id: conversationId },
+          }, 5_000).catch(() => null);
+          const conv = got?.conversation || got?.result?.conversation || got?.result || {};
+          const persistedTitle = String(conv?.title || '').trim();
+          if (persistedTitle && persistedTitle.toLowerCase() !== 'untitled') return;
+          const fallbackTitle = message.replace(/\s+/g, ' ').trim().slice(0, 60);
+          if (!fallbackTitle) return;
+          getVMMemoryStore().updateConversation(conversationId, { title: fallbackTitle });
+          await sendToAgent({
+            type: 'tool_exec',
+            tool: 'conversation_update',
+            args: { conversation_id: conversationId, title: fallbackTitle },
+          }, 5_000).catch(() => {});
+          emitChatSyncToDesktop('title_update', conversationId, { title: fallbackTitle });
+        } catch { /* best-effort */ }
+      })().catch(() => {});
     }
 
     // Write final event if Python didn't already stream one through onEvent.

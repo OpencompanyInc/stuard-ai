@@ -1298,11 +1298,11 @@ export function VmChat({
     return (
       <div className={clsx('flex flex-col items-center justify-center text-theme-muted/50 gap-3', className)}>
         {starting ? <Loader2 className="w-10 h-10 animate-spin" /> : <WifiOff className="w-10 h-10" />}
-        <p className="text-sm font-semibold">{starting ? 'Starting up your VM…' : 'Engine is not running'}</p>
+        <p className="text-sm font-semibold">{starting ? 'Starting up your VM…' : 'Cloud computer is not running'}</p>
         <p className="text-xs">
           {starting
             ? 'Syncing your chats & memory and booting the agent — this takes a moment.'
-            : 'Start your Cloud Engine to chat with the VM agent.'}
+            : 'Start your Cloud Computer to chat with your cloud agent.'}
         </p>
       </div>
     );

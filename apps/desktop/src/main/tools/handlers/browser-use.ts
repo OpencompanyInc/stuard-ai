@@ -1253,6 +1253,17 @@ export async function execBrowserUseTabs(args: any, _ctx: RouterContext): Promis
 }
 
 export async function execBrowserUseCookies(args: any, _ctx: RouterContext): Promise<any> {
+  // Cookie *exports* are called programmatically (cloud-ai syncs the browser
+  // profile to the VM right after it boots). That must never pop a visible
+  // Chrome window on the user's machine — if the browser isn't already
+  // running, skip quietly and let the next opportunistic sync pick it up.
+  // Pass launch:true to force the old launch-then-export behavior.
+  if (String(args?.action || '') === 'export' && args?.launch !== true) {
+    const sessionId = getBrowserUseRuntimeSessionId(args);
+    if (!(await isBrowserUseAlive(sessionId))) {
+      return { ok: false, error: 'browser_not_running', skipped: true };
+    }
+  }
   return withServer('Cookies', args, async (sessionId) => {
     const resp = await browserUseFetch('/cookies', {
       method: 'POST',

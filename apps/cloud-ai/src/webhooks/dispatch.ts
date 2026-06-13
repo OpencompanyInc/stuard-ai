@@ -8,6 +8,7 @@ import { writeLog } from '../utils/logger';
 import { queueWebhookDelivery, updateWebhookEvent, getWebhookBySlug, logWebhookEvent } from './core';
 import type { Webhook, WebhookEvent } from './core';
 import { dispatchTriggerToDeployment, findDeploymentsForWorkflowTrigger } from '../services/deployment-trigger-dispatch';
+import { sendVMCommand } from '../services/vm-command';
 
 // Active client connections by user ID
 const activeConnections = new Map<string, Set<WebSocket>>();
@@ -210,6 +211,44 @@ export async function dispatchWebhook(
 /**
  * Dispatch a provider webhook (Stripe, Twilio, etc.) to workflows
  */
+/**
+ * Wake VM-deployed bots whose trigger registrations own this event.
+ * Bot trigger registrations use sourceKeys like `bot:<botId>:<triggerId>` —
+ * bots on the VM are NOT workflow deployments, so deliverToVmDeployments can't
+ * reach them. Without this, a bot's X/Instagram trigger only worked while the
+ * desktop was online (events were queued, never run).
+ */
+async function wakeVmBotsForSourceKeys(
+  userId: string,
+  sourceKeys: string[] | undefined,
+  source: string
+): Promise<number> {
+  const botIds = new Set<string>();
+  for (const key of sourceKeys || []) {
+    const m = /^bot:([^:]+):/.exec(String(key || ''));
+    if (m && m[1]) botIds.add(m[1]);
+  }
+  if (botIds.size === 0) return 0;
+
+  let woken = 0;
+  await Promise.all(Array.from(botIds).map(async (botId) => {
+    try {
+      const result = await sendVMCommand(userId, 'bots_run', { id: botId }, 20_000);
+      if (result.ok) {
+        woken++;
+        writeLog('bot_vm_trigger_delivered', { userId, botId, source });
+      } else {
+        // Normal when the bot isn't deployed to the VM or no VM is running —
+        // the queued desktop delivery still covers the local copy.
+        writeLog('bot_vm_trigger_skipped', { userId, botId, source, error: result.error });
+      }
+    } catch (e: any) {
+      writeLog('bot_vm_trigger_failed', { userId, botId, source, error: e?.message });
+    }
+  }));
+  return woken;
+}
+
 export async function dispatchProviderWebhook(
   userId: string,
   provider: string,
@@ -217,7 +256,8 @@ export async function dispatchProviderWebhook(
   eventId: string,
   data: any,
   workflowId?: string,
-  triggerId?: string
+  triggerId?: string,
+  sourceKeys?: string[]
 ): Promise<{ delivered: boolean; queued: boolean }> {
   const payload = {
     type: 'provider_webhook',
@@ -259,7 +299,14 @@ export async function dispatchProviderWebhook(
     `provider:${provider}:${eventType}`
   );
 
-  return { delivered: desktopDelivered || vmDelivered > 0, queued };
+  // Bot-owned registrations: wake the VM copy of the bot when the desktop
+  // isn't connected to run it locally (avoids double-running when it is).
+  let vmBotsWoken = 0;
+  if (!desktopDelivered) {
+    vmBotsWoken = await wakeVmBotsForSourceKeys(userId, sourceKeys, `provider:${provider}:${eventType}`);
+  }
+
+  return { delivered: desktopDelivered || vmDelivered > 0 || vmBotsWoken > 0, queued };
 }
 
 function bodyPayloadForVm(data: any, payload: any): any {

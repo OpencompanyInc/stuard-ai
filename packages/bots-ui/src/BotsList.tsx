@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Cloud, Loader2, Plus } from 'lucide-react';
+import { Bot as BotIcon, Cloud, Loader2, Plus } from 'lucide-react';
 import type { Bot, BotsViewScope } from './types';
 import { StatCard } from './primitives';
-import { padCount } from './helpers';
+import { humanizeVmError, padCount } from './helpers';
 import { BotCard } from './BotCard';
 import { CreateBotModal } from './CreateBotModal';
 import { BotDetailView } from './BotDetailView';
@@ -45,6 +45,32 @@ function BotsViewInner({ scope = 'all' }: { scope?: BotsViewScope }) {
     () => (scope === 'vm' ? bots.filter(b => !!b.vmDeployedAt) : bots),
     [bots, scope],
   );
+
+  // VM scope: local agents that aren't on the VM yet, deployable in one click
+  // right from this tab (previously the empty state told users to "open any
+  // agent and choose Deploy to VM" while showing them no agents to open).
+  const deployableBots = useMemo(
+    () => (scope === 'vm' ? bots.filter(b => !b.vmDeployedAt) : []),
+    [bots, scope],
+  );
+  const [deployingId, setDeployingId] = useState<string | null>(null);
+  const handleQuickDeploy = useCallback(async (bot: Bot) => {
+    if (!platform.deploy || deployingId) return;
+    setDeployingId(bot.id);
+    try {
+      const res = await platform.deploy(bot.id);
+      if (!res?.ok) {
+        await platformNotify(platform, {
+          title: `Couldn’t deploy “${bot.name}”`,
+          message: humanizeVmError(res?.error),
+          tone: 'danger',
+        });
+      }
+      await refresh();
+    } finally {
+      setDeployingId(null);
+    }
+  }, [platform, deployingId, refresh]);
 
   const selectedBot = useMemo(() => bots.find(b => b.id === selectedBotId) || null, [bots, selectedBotId]);
 
@@ -186,6 +212,41 @@ function BotsViewInner({ scope = 'all' }: { scope?: BotsViewScope }) {
               </div>
             )}
           </section>
+
+          {isVmScope && !platform.readOnly && platform.deploy && deployableBots.length > 0 && (
+            <section>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-[15px] font-semibold text-theme-fg">Ready to deploy</h2>
+                <span className="text-[12px] text-theme-muted">{deployableBots.length} local</span>
+              </div>
+              <div className="space-y-2">
+                {deployableBots.map(bot => (
+                  <div
+                    key={bot.id}
+                    className="flex items-center gap-3 rounded-2xl border border-theme/20 bg-zinc-500/5 px-4 py-3"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-500/10 text-theme-muted">
+                      {bot.emoji ? <span className="text-base leading-none">{bot.emoji}</span> : <BotIcon className="h-4 w-4" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-semibold text-theme-fg">{bot.name}</div>
+                      <p className="mt-0.5 truncate text-[12px] text-theme-muted">
+                        Runs on this computer only — deploy it to keep working 24/7.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => void handleQuickDeploy(bot)}
+                      disabled={deployingId !== null}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-fg shadow-sm transition hover:opacity-90 disabled:opacity-60"
+                    >
+                      {deployingId === bot.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+                      {deployingId === bot.id ? 'Deploying…' : 'Deploy to VM'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       </div>
 

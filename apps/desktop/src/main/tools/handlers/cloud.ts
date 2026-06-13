@@ -14,6 +14,21 @@ function getCloudAiUrl(ctx: RouterContext): string {
 }
 
 /**
+ * Resolve the auth token for cloud-ai calls. Some RouterContext creators don't
+ * carry one (e.g. older call sites); fall back to the main-process session so
+ * cloud tools don't fail with 401 unauthorized.
+ */
+async function resolveAccessToken(ctx: RouterContext): Promise<string | undefined> {
+  if (ctx.accessToken) return ctx.accessToken;
+  try {
+    const { getValidMainAccessToken } = require('../../services/auth-session');
+    return (await getValidMainAccessToken()) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Execute a deployed custom-integration tool. Posts the compiled tool name +
  * args to /v1/integrations/run; cloud-ai resolves the stored encrypted secrets
  * and runs the declarative executor. Returns the executor result (which carries
@@ -106,8 +121,9 @@ export async function execCloudTool(tool: string, args: any, ctx: RouterContext)
 
     // Build headers with optional auth token
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (ctx.accessToken) {
-      headers['Authorization'] = `Bearer ${ctx.accessToken}`;
+    const accessToken = await resolveAccessToken(ctx);
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     const controller = new AbortController();
@@ -959,11 +975,18 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
   try {
     const filePath = String(args?.path || '').trim();
     const folder = String(args?.folder || '').trim();
-    const visibility = String(args?.visibility || 'private').trim();
+    const visRaw = String(args?.visibility || 'private').trim();
+    const visibility = visRaw === 'public' || visRaw === 'ttl' ? visRaw : 'private';
+    const ttlHours = Number(args?.ttl_hours || args?.ttlHours || 0);
     const filenameOverride = String(args?.filename || '').trim();
 
     if (!filePath) {
       return { ok: false, error: 'missing_path' };
+    }
+
+    const accessToken = await resolveAccessToken(ctx);
+    if (!accessToken) {
+      return { ok: false, error: 'not_signed_in', message: 'Cloud storage requires a signed-in account. Sign in and try again.' };
     }
 
     ctx.logFn(`Cloud Storage: uploading ${path.basename(filePath)} (visibility=${visibility})`);
@@ -994,10 +1017,8 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
     const uploadUrl = `${getCloudAiUrl(ctx)}/v1/cloud-storage/upload`;
     const uploadHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
     };
-    if (ctx.accessToken) {
-      uploadHeaders['Authorization'] = `Bearer ${ctx.accessToken}`;
-    }
 
     const uploadResp = await net.fetch(uploadUrl, {
       method: 'POST',
@@ -1007,6 +1028,7 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
         folder: folder || undefined,
         contentType,
         visibility,
+        ...(visibility === 'ttl' && ttlHours > 0 ? { ttlHours } : {}),
         data: fileBuffer.toString('base64'),
       }),
     });
@@ -1031,8 +1053,10 @@ async function execCloudStorageUpload(args: any, ctx: RouterContext): Promise<an
       objectName,
       url,
       visibility,
+      ...(uploadResult.expiresAt ? { expiresAt: uploadResult.expiresAt } : {}),
       bytesWritten: fileBuffer.length,
       contentType,
+      hint: url ? `To show this file inline in chat, include <<${url}>> in your reply.` : undefined,
     };
   } catch (e: any) {
     ctx.logFn(`Cloud Storage error: ${e?.message}`);

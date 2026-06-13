@@ -122,7 +122,7 @@ const DASHBOARD_NAV: Omit<CompactStuardNavItem, 'run'>[] = [
   {
     id: 'dash-cloud',
     group: 'dashboard',
-    title: 'Cloud Engine',
+    title: 'Cloud Computer',
     subtitle: 'Dashboard · remote runtime & deploys',
     icon: Cloud,
     tile: '#2563EB',

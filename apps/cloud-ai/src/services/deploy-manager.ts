@@ -560,16 +560,23 @@ async function ensureDeploymentTriggerBindings(userId: string, deployId: string,
       continue;
     }
     if (isNativeGoogleBinding(binding)) {
-      await ensureNativeWorkflowTriggerRegistration(
-        userId,
-        req.workflowId,
-        binding.triggerId,
-        binding.type,
-        binding.type === 'gmail.new_email' || binding.type === 'drive.new_file'
-          ? (binding.args || {})
-          : {},
-        consumerId
-      );
+      // Best-effort like the social bindings below. Gmail/Drive push triggers
+      // need CASA-restricted read scopes the app doesn't request yet, so this
+      // registration currently always throws (missing_gmail_scope /
+      // missing_drive_scope) — that must NOT fail a deploy whose process is
+      // already running on the VM. The schedule/webhook triggers still work.
+      try {
+        await ensureNativeWorkflowTriggerRegistration(
+          userId,
+          req.workflowId,
+          binding.triggerId,
+          binding.type,
+          binding.args || {},
+          consumerId
+        );
+      } catch (e: any) {
+        console.warn(`[deploy-manager] google trigger ${binding.type} registration failed for ${req.workflowId}/${binding.triggerId}: ${e?.message || e}`);
+      }
       continue;
     }
     if (isNativeSocialBinding(binding)) {
@@ -603,13 +610,17 @@ async function cleanupDeploymentTriggerBindings(userId: string, deploy: Deployme
       continue;
     }
     if (isNativeGoogleBinding(binding)) {
-      await removeNativeWorkflowTriggerRegistration(
-        userId,
-        deploy.source_workflow_id,
-        binding.triggerId,
-        binding.type,
-        consumerId
-      );
+      try {
+        await removeNativeWorkflowTriggerRegistration(
+          userId,
+          deploy.source_workflow_id,
+          binding.triggerId,
+          binding.type,
+          consumerId
+        );
+      } catch (e: any) {
+        console.warn(`[deploy-manager] google trigger unregister failed for ${deploy.source_workflow_id}/${binding.triggerId}: ${e?.message || e}`);
+      }
       continue;
     }
     if (isNativeSocialBinding(binding)) {

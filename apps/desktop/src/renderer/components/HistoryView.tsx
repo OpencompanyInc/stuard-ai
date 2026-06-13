@@ -165,7 +165,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                               ? "bg-sky-500/10 text-sky-500 dark:text-sky-300"
                               : "bg-theme-hover text-theme-muted",
                           )}
-                          title={isVm ? 'Conversation from your Cloud Engine' : 'Conversation from this desktop'}
+                          title={isVm ? 'Conversation from your Cloud Computer' : 'Conversation from this desktop'}
                         >
                           {isVm ? <Cloud className="w-2.5 h-2.5" /> : <Monitor className="w-2.5 h-2.5" />}
                           {isVm ? 'VM' : 'Desktop'}

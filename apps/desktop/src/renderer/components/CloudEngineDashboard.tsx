@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Cloud, Server, Activity, Power, Trash2,
@@ -6,9 +6,12 @@ import {
   Download, Upload, Zap, Shield,
   CreditCard, Plus, Rocket,
   CheckCircle2, Circle,
-  Workflow,
+  Workflow, Search, ChevronLeft, ChevronRight, X,
+  CalendarClock, Braces,
 } from 'lucide-react';
-import { useCloudEngine, type CloudDeployment } from '../hooks/useCloudEngine';
+import { withWorkspaceBundle } from '../workflows/utils/workspaceBundle';
+import { getCloudTriggerBindings } from '../workflows/hooks/useWorkflowDeploy';
+import { cloudClient, useCloudEngine, type CloudDeployment } from '../hooks/useCloudEngine';
 import { CloudTerminalPanel } from './CloudTerminalPanel';
 import { CloudFileBrowser } from './CloudFileBrowser';
 import { CloudResourceMonitor } from './CloudResourceMonitor';
@@ -72,6 +75,10 @@ const PLANS = [
     features: ['8 CPU cores', '32 GB memory', '100 GB storage', 'Heavy workloads'],
   },
 ];
+
+// Remembered across mounts so reopening the cloud tab on an already-ready VM
+// doesn't flash the startup screen while the readiness probe round-trips.
+let _vmChatReadyEngineId: string | null = null;
 
 type ConfigSliderProps = {
   icon: any;
@@ -160,6 +167,49 @@ export function CloudEngineDashboard() {
   const [provisioning, setProvisioning] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Ready-latch: once this engine has been fully operational (agent healthy or
+  // metrics flowing), a transient failed health poll must NOT bounce the user
+  // back to the startup screen — that's the "blinking" between boot screens
+  // and the workspace. The latch only resets for a different engine id.
+  const readyEngineIdRef = useRef<string | null>(null);
+
+  // Chat-agent readiness: engine.health_status === 'healthy' only means the
+  // VM agent's HTTP server answers — the Python agent (the LLM brain) can
+  // still take a while to connect, leaving the workspace open but the chat
+  // composer locked on "Starting up…". Probe /v1/vm/status (agentReady) so
+  // the startup screen covers until a message can actually be sent. Fail-open
+  // after 90s so a broken status endpoint never locks the dashboard.
+  const [chatReady, setChatReady] = useState(() => !!engine && _vmChatReadyEngineId === engine.id);
+  useEffect(() => {
+    if (!engine || engine.status !== 'running') {
+      setChatReady(false);
+      return;
+    }
+    if (_vmChatReadyEngineId === engine.id) {
+      setChatReady(true);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+    const probe = async () => {
+      if (cancelled) return;
+      let ok = false;
+      try {
+        const res = await cloudClient.getVMStatus() as { ok?: boolean; reachable?: boolean; agentReady?: boolean };
+        ok = !!(res?.ok && (res.agentReady ?? res.reachable));
+      } catch { ok = false; }
+      if (cancelled) return;
+      if (ok || Date.now() - startedAt > 90_000) {
+        _vmChatReadyEngineId = engine.id;
+        setChatReady(true);
+        return;
+      }
+      timer = setTimeout(probe, 2_500);
+    };
+    probe();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [engine?.id, engine?.status]);
 
   // ─── Provision Flow ────────────────────────────────────────────────
   if (!engine && !loading) {
@@ -206,7 +256,7 @@ export function CloudEngineDashboard() {
               <Cloud className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight text-theme-fg">Cloud Engine</h1>
+              <h1 className="text-2xl font-black tracking-tight text-theme-fg">Cloud Computer</h1>
               <p className="text-xs text-theme-muted sm:text-sm">Your personal AI computer in the cloud — always on, always ready.</p>
             </div>
           </div>
@@ -379,10 +429,10 @@ export function CloudEngineDashboard() {
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-black text-primary-fg transition hover:opacity-90 disabled:opacity-50 shadow-xl shadow-primary/20"
               >
                 {provisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-                {provisioning ? 'Setting up your cloud engine...' : 'Deploy Cloud Engine'}
+                {provisioning ? 'Setting up your cloud computer...' : 'Deploy Cloud Computer'}
               </button>
               <p className="mt-3 text-center text-[10px] text-theme-muted">
-                You can stop or delete your engine at any time. Credits are only used while running.
+                You can stop or delete your cloud computer at any time. Credits are only used while running.
               </p>
             </div>
           </aside>
@@ -398,7 +448,7 @@ export function CloudEngineDashboard() {
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <span className="text-sm text-theme-muted font-medium">Loading your cloud engine...</span>
+          <span className="text-sm text-theme-muted font-medium">Loading your cloud computer...</span>
         </div>
       </div>
     );
@@ -435,7 +485,7 @@ export function CloudEngineDashboard() {
               <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
                 <Loader2 className="w-8 h-8 animate-spin text-primary" />
               </div>
-              <h1 className="text-2xl font-black text-theme-fg tracking-tight">Setting up your Cloud Engine</h1>
+              <h1 className="text-2xl font-black text-theme-fg tracking-tight">Setting up your Cloud Computer</h1>
               <p className="text-theme-muted text-sm mt-1">This usually takes 1–3 minutes. You can wait here or come back shortly.</p>
             </div>
 
@@ -500,7 +550,7 @@ export function CloudEngineDashboard() {
             {/* Info footer */}
             <div className="mt-8 p-3 rounded-xl bg-theme-hover/30 text-center">
               <p className="text-[10px] text-theme-muted">
-                Your engine runs 24/7 once set up. Credits are only used while the engine is active.
+                Your cloud computer runs 24/7 once set up. Credits are only used while it is active.
               </p>
             </div>
           </div>
@@ -510,20 +560,20 @@ export function CloudEngineDashboard() {
     );
   }
 
-  // Transitional states (starting / stopping)
-  if (engine.status === 'starting' || engine.status === 'stopping') {
-    const isStarting = engine.status === 'starting';
+  // Transitional state (stopping). Starting renders the unified startup
+  // screen below so the whole boot path is one continuous layout.
+  if (engine.status === 'stopping') {
     return (
       <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       {confirmDialog}
       <div className="animate-in fade-in duration-500">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Engine</h1>
+            <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Computer</h1>
             <div className="flex items-center gap-3 mt-1">
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                <span className="text-sm font-bold text-blue-400">{isStarting ? 'Starting...' : 'Stopping...'}</span>
+                <span className="text-sm font-bold text-blue-400">Pausing...</span>
               </div>
               <span className="text-theme-muted text-xs">•</span>
               <span className="text-theme-muted text-xs font-medium capitalize">{engine.tier} tier</span>
@@ -539,12 +589,10 @@ export function CloudEngineDashboard() {
             <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
           </div>
           <h2 className="text-2xl font-black text-theme-fg tracking-tight">
-            {isStarting ? 'Starting your engine' : 'Pausing your engine'}
+            Pausing your cloud computer
           </h2>
           <p className="text-theme-muted text-sm mt-2 text-center max-w-md">
-            {isStarting
-              ? 'Booting VM, restoring your data, and syncing memories. This usually takes 1\u20132 minutes.'
-              : 'Syncing your data to cloud storage and shutting down the VM. This takes about 30 seconds.'}
+            Syncing your data to cloud storage and shutting down the machine. This takes about 30 seconds.
           </p>
         </div>
 
@@ -556,61 +604,128 @@ export function CloudEngineDashboard() {
     );
   }
 
-  // Show a "still booting" view if engine is running but agent is unreachable
-  const isBooting = engine.status === 'running' && (engine.health_status === 'unreachable' || engine.health_status === 'unknown') && !metrics;
-  if (isBooting) {
+  // ─── Unified Startup Screen ─────────────────────────────────────────
+  // `starting` and the post-boot "running but agent not reachable yet" phase
+  // render as ONE continuous layout (same component, advancing steps) so the
+  // dashboard never blinks between different boot screens. The workspace only
+  // appears once the machine is genuinely operational, and the ready-latch
+  // below keeps it mounted afterwards: a single failed health poll can no
+  // longer bounce the user back to a boot screen.
+  const agentHealthy = engine.health_status === 'healthy';
+  if (engine.status === 'running' && (agentHealthy || metrics) && chatReady) {
+    readyEngineIdRef.current = engine.id;
+  } else if (readyEngineIdRef.current && readyEngineIdRef.current !== engine.id) {
+    readyEngineIdRef.current = null;
+  }
+  const hasBeenReady = readyEngineIdRef.current === engine.id;
+
+  const agentBootPending = engine.status === 'running'
+    && (engine.health_status === 'unreachable' || engine.health_status === 'unknown' || !engine.health_status);
+  const isStartingUp = engine.status === 'starting'
+    || (engine.status === 'running' && (agentBootPending || !chatReady) && !hasBeenReady);
+  if (isStartingUp) {
+    const START_STEPS = [
+      { key: 'vm_boot',  label: 'Powering on your machine', detail: 'Booting your dedicated cloud computer' },
+      { key: 'network',  label: 'Connecting network',       detail: 'Assigning your machine its address' },
+      { key: 'agent',    label: 'Starting the AI agent',    detail: 'Restoring your memory, chats, and files' },
+      { key: 'finalize', label: 'Final checks',             detail: 'Connecting the chat agent and making sure everything works' },
+    ] as const;
+    const currentIdx = engine.status === 'starting'
+      ? (engine.external_ip ? 1 : 0)
+      : (agentBootPending ? 2 : 3);
+    const progress = Math.max(8, Math.min(96, ((currentIdx + 1) / START_STEPS.length) * 100));
+
     return (
-      <div className="h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
+      <div className="cloud-engine-dashboard h-full overflow-y-auto custom-scrollbar px-5 pb-5 pt-6 md:px-6 md:pb-6 md:pt-7">
       {confirmDialog}
-      <div className="animate-in fade-in duration-500">
-        <div className="flex flex-col items-center justify-center min-h-[60vh]">
-          <div className="w-full max-w-md text-center">
-            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-              <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="w-full max-w-lg">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
-            <h1 className="text-2xl font-black text-theme-fg tracking-tight">Your VM is still booting</h1>
-            <p className="text-theme-muted text-sm mt-2">
-              The machine is running but the AI agent is still installing packages and starting up.
-              This can take a few minutes on smaller plans.
+            <h1 className="text-2xl font-black text-theme-fg tracking-tight">Starting your Cloud Computer</h1>
+            <p className="text-theme-muted text-sm mt-1">
+              Booting the machine, restoring your data, and syncing memories. This usually takes a minute or two.
             </p>
-            <div className="mt-6 p-4 rounded-2xl bg-theme-card/30 border border-[color:var(--dashboard-panel-border)] space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-theme-muted">Status</span>
-                <span className="font-bold text-amber-500">Agent starting...</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-theme-muted">VM</span>
-                <span className="font-bold text-green-500">Running</span>
-              </div>
-              {engine.external_ip && (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-theme-muted">IP Address</span>
-                  <span className="font-mono text-theme-fg">{engine.external_ip}</span>
+          </div>
+
+          <div className="mb-8">
+            <div className="flex items-center justify-between text-[10px] text-theme-muted font-bold mb-2">
+              <span>Progress</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-theme-hover/50 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-700 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {START_STEPS.map((step, idx) => {
+              const isActive = idx === currentIdx;
+              const isDone = idx < currentIdx;
+              return (
+                <div
+                  key={step.key}
+                  className={clsx(
+                    'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300',
+                    isActive && 'bg-primary/10 border border-primary/20',
+                    isDone && 'opacity-60',
+                    idx > currentIdx && 'opacity-30',
+                  )}
+                >
+                  <div className="shrink-0">
+                    {isDone ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                    ) : isActive ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-theme-muted/40" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className={clsx('text-xs font-bold', isActive ? 'text-primary' : isDone ? 'text-theme-fg' : 'text-theme-muted')}>
+                      {step.label}
+                    </div>
+                    {isActive && (
+                      <div className="text-[10px] text-theme-muted mt-0.5">{step.detail}</div>
+                    )}
+                  </div>
                 </div>
-              )}
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-theme-muted">Plan</span>
-                <span className="font-bold text-theme-fg capitalize">{engine.tier}</span>
-              </div>
-            </div>
-            <p className="text-[10px] text-theme-muted mt-4">
-              This page will refresh automatically once the agent comes online.
+              );
+            })}
+          </div>
+
+          <div className="mt-6 p-3 rounded-xl bg-theme-hover/30 text-center">
+            <p className="text-[10px] text-theme-muted">
+              The dashboard opens automatically once everything is up and running.
+              {engine.external_ip ? ` Machine address: ${engine.external_ip}` : ''}
             </p>
+          </div>
+
+          {error && (
+            <div className="mt-4 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm font-medium text-center">{error}</div>
+          )}
+
+          {agentBootPending && (
             <button
               onClick={async () => {
                 const ok = await confirm({
-                  title: 'Delete cloud engine?',
-                  message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
-                  confirmLabel: 'Delete engine',
+                  title: 'Delete cloud computer?',
+                  message: 'This will permanently delete your cloud computer and all of its data. This action cannot be undone.',
+                  confirmLabel: 'Delete',
                   destructive: true,
                 });
                 if (ok) destroy();
               }}
               className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600/10 text-red-500 text-xs font-black hover:bg-red-600/20 transition-all mx-auto"
             >
-              <Trash2 className="w-3.5 h-3.5" /> Delete Engine
+              <Trash2 className="w-3.5 h-3.5" /> Delete
             </button>
-          </div>
+          )}
         </div>
       </div>
       </div>
@@ -625,9 +740,9 @@ export function CloudEngineDashboard() {
 
   const handleDelete = async () => {
     const ok = await confirm({
-      title: 'Delete cloud engine?',
-      message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
-      confirmLabel: 'Delete engine',
+      title: 'Delete cloud computer?',
+      message: 'This will permanently delete your cloud computer and all of its data. This action cannot be undone.',
+      confirmLabel: 'Delete',
       destructive: true,
     });
     if (ok) {
@@ -875,7 +990,7 @@ export function CloudEngineDashboard() {
     <div className="animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Engine</h1>
+          <h1 className="text-3xl font-black text-theme-fg tracking-tight">Cloud Computer</h1>
           <div className="flex items-center gap-3 mt-1">
             <div className="flex items-center gap-1.5">
               <div className={clsx('w-2 h-2 rounded-full', statusBgColor)} />
@@ -900,9 +1015,9 @@ export function CloudEngineDashboard() {
           <button
             onClick={async () => {
               const ok = await confirm({
-                title: 'Delete cloud engine?',
-                message: 'This will permanently delete your cloud engine and all of its data. This action cannot be undone.',
-                confirmLabel: 'Delete engine',
+                title: 'Delete cloud computer?',
+                message: 'This will permanently delete your cloud computer and all of its data. This action cannot be undone.',
+                confirmLabel: 'Delete',
                 destructive: true,
               });
               if (ok) destroy();
@@ -934,11 +1049,11 @@ export function CloudEngineDashboard() {
         <div className="rounded-2xl bg-theme-card/30 border border-[color:var(--dashboard-panel-border)] p-6">
           <h3 className="text-xs font-black text-theme-muted uppercase tracking-wider mb-4">Status</h3>
           <div className="flex flex-col gap-4">
-            <StatusPill label="AI Agent" connected={false} detail="Engine paused" />
+            <StatusPill label="AI Agent" connected={false} detail="Cloud computer paused" />
             <StatusPill label="Network" connected={false} detail={engine.external_ip || 'No IP assigned'} />
           </div>
           <div className="mt-6 p-4 rounded-xl bg-theme-hover/30 text-center">
-            <p className="text-xs text-theme-muted">Resume your engine to access chat, terminal, files, and more.</p>
+            <p className="text-xs text-theme-muted">Resume your cloud computer to access chat, terminal, files, and more.</p>
           </div>
         </div>
       </div>
@@ -1135,6 +1250,15 @@ interface DeployEntry {
   created_at: string;
 }
 
+/** A deployable workflow from the user's local library (Stuard Studio). */
+interface WorkflowPickItem {
+  id: string;
+  name: string;
+  description?: string;
+  updatedAt?: string;
+  triggers?: string[];
+}
+
 function DeploysTab({
   deployments,
   engineRunning,
@@ -1157,8 +1281,21 @@ function DeploysTab({
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  // ── Create form state ──
+  // ── Deploy wizard state ──
+  // Step 1: pick one of your saved workflows (no JSON pasting). Step 2: name,
+  // schedule, options, deploy. "Advanced" keeps a raw-JSON escape hatch for
+  // app/project payloads and power users.
+  const [advancedMode, setAdvancedMode] = useState(false);
+  const [wfItems, setWfItems] = useState<WorkflowPickItem[] | null>(null);
+  const [wfSearch, setWfSearch] = useState('');
+  const [selectedWf, setSelectedWf] = useState<WorkflowPickItem | null>(null);
+  const [selectedModel, setSelectedModel] = useState<any | null>(null);
+  const [loadingWfId, setLoadingWfId] = useState<string | null>(null);
+  const [showEnv, setShowEnv] = useState(false);
+
+  // ── Shared option fields (both modes) ──
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<DeployKind>('workflow');
   const [newDesc, setNewDesc] = useState('');
@@ -1167,9 +1304,132 @@ function DeploysTab({
   const [newAutoRestart, setNewAutoRestart] = useState(true);
   const [newSchedule, setNewSchedule] = useState('');
 
-  const handleCreate = async () => {
-    if (!newName.trim() || !newPayload.trim()) return;
+  const resetCreate = useCallback(() => {
+    setShowCreate(false);
+    setAdvancedMode(false);
+    setWfSearch('');
+    setSelectedWf(null);
+    setSelectedModel(null);
+    setCreateError(null);
+    setShowEnv(false);
+    setNewName('');
+    setNewDesc('');
+    setNewPayload('');
+    setNewEnvVars('');
+    setNewSchedule('');
+    setNewAutoRestart(true);
+  }, []);
+
+  // Load the user's saved workflows when the wizard opens (functions excluded —
+  // they're building blocks, not deployable automations).
+  useEffect(() => {
+    if (!showCreate || wfItems !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res: any = await (window as any).desktopAPI?.workflowsList?.();
+        const items: WorkflowPickItem[] = (Array.isArray(res?.items) ? res.items : [])
+          .filter((i: any) => i && i.kind !== 'function')
+          .map((i: any) => ({
+            id: String(i.id),
+            name: String(i.name || i.id),
+            description: typeof i.description === 'string' ? i.description : '',
+            updatedAt: typeof i.updatedAt === 'string' ? i.updatedAt : '',
+            triggers: Array.isArray(i.triggers) ? i.triggers.map(String) : [],
+          }));
+        if (!cancelled) setWfItems(items);
+      } catch {
+        if (!cancelled) setWfItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showCreate, wfItems]);
+
+  const filteredWorkflows = useMemo(() => {
+    const list = wfItems || [];
+    const q = wfSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((i) =>
+      i.name.toLowerCase().includes(q) || (i.description || '').toLowerCase().includes(q));
+  }, [wfItems, wfSearch]);
+
+  // Step 1 → 2: read the full workflow so we can prefill name/description and
+  // the schedule from its cron trigger — same data the Studio deploy uses.
+  const pickWorkflow = useCallback(async (item: WorkflowPickItem) => {
+    setLoadingWfId(item.id);
+    setCreateError(null);
+    try {
+      const res: any = await (window as any).desktopAPI?.workflowsRead?.(item.id);
+      if (!res?.ok || typeof res.content !== 'string') {
+        throw new Error(res?.error || 'Could not read this workflow.');
+      }
+      const model = JSON.parse(res.content || '{}');
+      setSelectedWf(item);
+      setSelectedModel(model);
+      setNewName(String(model?.name || item.name || ''));
+      setNewDesc(String(model?.description || item.description || ''));
+      const cron = (Array.isArray(model?.triggers) ? model.triggers : [])
+        .find((t: any) => t?.type === 'schedule.cron')?.args?.cron;
+      setNewSchedule(cron ? String(cron) : '');
+    } catch (e: any) {
+      setCreateError(e?.message || 'Could not read this workflow.');
+    } finally {
+      setLoadingWfId(null);
+    }
+  }, []);
+
+  const parseEnvVars = useCallback((raw: string): Record<string, string> => {
+    const envVars: Record<string, string> = {};
+    for (const line of raw.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq > 0) envVars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    }
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    if (!envVars.TZ) envVars.TZ = timezone;
+    if (!envVars.STUARD_USER_TIMEZONE) envVars.STUARD_USER_TIMEZONE = timezone;
+    return envVars;
+  }, []);
+
+  // Deploy the picked workflow with the exact pipeline the Studio editor uses:
+  // workspace bundle (sub-workflows, functions, assets) + cloud trigger
+  // bindings + timezone, so the result behaves identically on the VM.
+  const handleDeployWorkflow = async () => {
+    if (!selectedWf || !selectedModel || creating) return;
     setCreating(true);
+    setCreateError(null);
+    try {
+      const payload = await withWorkspaceBundle(selectedWf.id, selectedModel);
+      const res = await createDeployment({
+        name: newName.trim() || selectedWf.name,
+        kind: 'workflow',
+        description: newDesc.trim() || undefined,
+        payload,
+        envVars: parseEnvVars(newEnvVars),
+        autoRestart: newAutoRestart,
+        schedule: newSchedule.trim() || undefined,
+        workflowId: selectedWf.id,
+        triggerBindings: getCloudTriggerBindings(selectedModel),
+      });
+      if (res?.ok && res.deployment?.status === 'failed') {
+        throw new Error(res.deployment?.error_message || 'The deployment was created but failed to start.');
+      }
+      if (!res?.ok) {
+        throw new Error(res?.message || res?.error || 'Deploy failed. Please try again.');
+      }
+      resetCreate();
+      await refreshDeployments();
+    } catch (e: any) {
+      setCreateError(e?.message || 'Deploy failed. Please try again.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Advanced mode: raw payload (app manifests / exported workflow JSON).
+  const handleCreate = async () => {
+    if (!newName.trim() || !newPayload.trim() || creating) return;
+    setCreating(true);
+    setCreateError(null);
     try {
       let payload: any;
       try {
@@ -1177,34 +1437,22 @@ function DeploysTab({
       } catch {
         payload = newPayload;
       }
-
-      const envVars: Record<string, string> = {};
-      if (newEnvVars.trim()) {
-        for (const line of newEnvVars.split('\n')) {
-          const eq = line.indexOf('=');
-          if (eq > 0) envVars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-        }
-      }
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      if (!envVars.TZ) envVars.TZ = timezone;
-      if (!envVars.STUARD_USER_TIMEZONE) envVars.STUARD_USER_TIMEZONE = timezone;
-
-      await createDeployment({
+      const res = await createDeployment({
         name: newName.trim(),
         kind: newKind,
         description: newDesc.trim() || undefined,
         payload,
-        envVars: Object.keys(envVars).length > 0 ? envVars : undefined,
+        envVars: parseEnvVars(newEnvVars),
         autoRestart: newAutoRestart,
         schedule: newSchedule.trim() || undefined,
       });
-      setShowCreate(false);
-      setNewName('');
-      setNewPayload('');
-      setNewDesc('');
-      setNewEnvVars('');
-      setNewSchedule('');
+      if (!res?.ok) {
+        throw new Error(res?.message || res?.error || 'Deploy failed. Please try again.');
+      }
+      resetCreate();
       await refreshDeployments();
+    } catch (e: any) {
+      setCreateError(e?.message || 'Deploy failed. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -1227,25 +1475,249 @@ function DeploysTab({
     { id: 'project', label: 'App', Icon: Rocket },
   ];
 
-  const createForm = (
-    <div className="dashboard-card mb-5 space-y-4 !border-primary/20 bg-theme-card/50 p-6 animate-in slide-in-from-top-2 duration-200">
-      <h4 className="flex items-center gap-2 text-sm font-black text-theme-fg">
-        <Rocket className="h-4 w-4 text-primary" /> New automation
-      </h4>
+  const inputClass = 'w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none';
+  const labelClass = 'mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted';
+
+  const errorBanner = createError ? (
+    <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs font-medium text-red-500">
+      {createError}
+    </div>
+  ) : null;
+
+  // ── Step 1: pick a workflow from your library ──
+  const pickerStep = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="flex items-center gap-2 text-sm font-black text-theme-fg">
+            <Rocket className="h-4 w-4 text-primary" /> Deploy a workflow
+          </h4>
+          <p className="mt-1 text-xs text-theme-muted">
+            Pick one of your saved workflows — it runs in the cloud 24/7, even when this computer is off.
+          </p>
+        </div>
+        <button
+          onClick={resetCreate}
+          className="rounded-lg p-1.5 text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+          title="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {(wfItems?.length || 0) > 5 && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
+          <input
+            type="text"
+            value={wfSearch}
+            onChange={e => setWfSearch(e.target.value)}
+            placeholder="Search your workflows..."
+            className={clsx(inputClass, '!pl-9')}
+          />
+        </div>
+      )}
+
+      {errorBanner}
+
+      <div className="custom-scrollbar max-h-72 space-y-1 overflow-y-auto">
+        {wfItems === null ? (
+          <div className="flex items-center gap-2 px-3 py-6 text-xs text-theme-muted">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading your workflows…
+          </div>
+        ) : filteredWorkflows.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-theme/30 px-4 py-8 text-center">
+            <p className="text-xs font-semibold text-theme-fg">
+              {wfSearch.trim() ? 'No workflows match your search' : 'No workflows yet'}
+            </p>
+            <p className="mt-1 text-[11px] text-theme-muted">
+              {wfSearch.trim()
+                ? 'Try a different name.'
+                : 'Build one in Stuard Studio first — it will show up here, ready to deploy.'}
+            </p>
+          </div>
+        ) : (
+          filteredWorkflows.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => void pickWorkflow(item)}
+              disabled={loadingWfId !== null}
+              className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-theme-hover/60 disabled:opacity-60"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-theme-hover/70 text-theme-muted group-hover:text-primary">
+                <Workflow className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-2">
+                  <span className="truncate text-[13px] font-bold text-theme-fg">{item.name}</span>
+                  {(item.triggers || []).some((t) => t === 'schedule.cron') && (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-theme-hover px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-theme-muted">
+                      <CalendarClock className="h-2.5 w-2.5" /> Scheduled
+                    </span>
+                  )}
+                </span>
+                {item.description ? (
+                  <span className="mt-0.5 block truncate text-[11px] text-theme-muted">{item.description}</span>
+                ) : null}
+              </span>
+              {loadingWfId === item.id ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-theme-muted/50 transition-transform group-hover:translate-x-0.5 group-hover:text-theme-muted" />
+              )}
+            </button>
+          ))
+        )}
+      </div>
+
+      <div className="border-t border-theme/10 pt-3">
+        <button
+          onClick={() => { setAdvancedMode(true); setCreateError(null); }}
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-theme-muted transition-colors hover:text-theme-fg"
+        >
+          <Braces className="h-3 w-3" /> Advanced: deploy an app or paste JSON
+        </button>
+      </div>
+    </>
+  );
+
+  // ── Step 2: options for the picked workflow ──
+  const cloudBindings = selectedModel ? getCloudTriggerBindings(selectedModel) : [];
+  const totalTriggers = Array.isArray(selectedModel?.triggers) ? selectedModel.triggers.length : 0;
+  const localOnlyTriggers = Math.max(0, totalTriggers - cloudBindings.length);
+
+  const optionsStep = selectedWf ? (
+    <>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => { setSelectedWf(null); setSelectedModel(null); setCreateError(null); }}
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" /> Back
+        </button>
+        <h4 className="flex min-w-0 items-center gap-2 text-sm font-black text-theme-fg">
+          <Workflow className="h-4 w-4 shrink-0 text-primary" />
+          <span className="truncate">{selectedWf.name}</span>
+        </h4>
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Name</label>
+          <label className={labelClass}>Name</label>
+          <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder={selectedWf.name} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass}>Schedule (cron, optional)</label>
+          <input
+            type="text"
+            value={newSchedule}
+            onChange={e => setNewSchedule(e.target.value)}
+            placeholder="0 */6 * * *"
+            className={clsx(inputClass, 'font-mono !text-xs')}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className={labelClass}>What it does (optional)</label>
+        <input
+          type="text"
+          value={newDesc}
+          onChange={e => setNewDesc(e.target.value)}
+          placeholder="A short description so you remember what this is"
+          className={inputClass}
+        />
+      </div>
+
+      {(cloudBindings.length > 0 || localOnlyTriggers > 0) && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-theme-muted">
+          {cloudBindings.map((b, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-full bg-theme-hover px-2 py-0.5 font-semibold">
+              <Zap className="h-2.5 w-2.5 text-primary" />
+              {b.type === 'schedule.cron' ? 'Runs on schedule' : b.type.startsWith('webhook') ? 'Webhook trigger' : b.type}
+            </span>
+          ))}
+          {localOnlyTriggers > 0 && (
+            <span>
+              {localOnlyTriggers} trigger{localOnlyTriggers !== 1 ? 's' : ''} (hotkeys, file watchers…) only
+              work on this computer and won&apos;t fire in the cloud.
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" checked={newAutoRestart} onChange={e => setNewAutoRestart(e.target.checked)} className="rounded border-theme/20 text-primary" />
+          <span className="text-xs font-bold text-theme-muted">Restart automatically if it stops</span>
+        </label>
+        <button
+          onClick={() => setShowEnv(v => !v)}
+          className="text-[11px] font-semibold text-theme-muted transition-colors hover:text-theme-fg"
+        >
+          {showEnv ? 'Hide environment variables' : 'Environment variables…'}
+        </button>
+      </div>
+
+      {showEnv && (
+        <textarea
+          value={newEnvVars}
+          onChange={e => setNewEnvVars(e.target.value)}
+          placeholder="KEY=value&#10;ANOTHER_KEY=value"
+          rows={3}
+          className={clsx(inputClass, 'resize-y font-mono !text-xs')}
+        />
+      )}
+
+      {errorBanner}
+
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button
+          onClick={resetCreate}
+          className="rounded-lg px-4 py-2 text-xs font-bold text-theme-muted transition-all hover:text-theme-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleDeployWorkflow}
+          disabled={creating}
+          className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-fg transition-all hover:opacity-90 disabled:opacity-50"
+        >
+          {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+          {creating ? 'Deploying…' : 'Deploy to cloud'}
+        </button>
+      </div>
+    </>
+  ) : null;
+
+  // ── Advanced mode: raw payload (apps / exported JSON) ──
+  const advancedForm = (
+    <>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => { setAdvancedMode(false); setCreateError(null); }}
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" /> Back
+        </button>
+        <h4 className="flex items-center gap-2 text-sm font-black text-theme-fg">
+          <Braces className="h-4 w-4 text-primary" /> Advanced deployment
+        </h4>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className={labelClass}>Name</label>
           <input
             type="text"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="Daily inbox summary"
-            className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+            className={inputClass}
           />
         </div>
         <div>
-          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Type</label>
+          <label className={labelClass}>Type</label>
           <div className="flex gap-2">
             {KIND_OPTIONS.map(({ id, label, Icon }) => (
               <button
@@ -1265,18 +1737,18 @@ function DeploysTab({
       </div>
 
       <div>
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">What it does (optional)</label>
+        <label className={labelClass}>What it does (optional)</label>
         <input
           type="text"
           value={newDesc}
           onChange={e => setNewDesc(e.target.value)}
           placeholder="A short description so you remember what this is"
-          className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 text-sm text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+          className={inputClass}
         />
       </div>
 
       <div>
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">
+        <label className={labelClass}>
           {newKind === 'workflow' ? 'Workflow JSON' : 'Project manifest (JSON)'}
         </label>
         <textarea
@@ -1284,30 +1756,30 @@ function DeploysTab({
           onChange={e => setNewPayload(e.target.value)}
           placeholder={newKind === 'workflow' ? '{\n  "name": "My Workflow",\n  "version": "1",\n  "steps": [...]\n}' : '{\n  "files": {},\n  "packageJson": {},\n  "startCommand": "npm start"\n}'}
           rows={8}
-          className="w-full resize-y rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+          className={clsx(inputClass, 'resize-y font-mono !text-xs')}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Environment variables (optional)</label>
+          <label className={labelClass}>Environment variables (optional)</label>
           <textarea
             value={newEnvVars}
             onChange={e => setNewEnvVars(e.target.value)}
             placeholder="KEY=value&#10;ANOTHER_KEY=value"
             rows={3}
-            className="w-full resize-y rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+            className={clsx(inputClass, 'resize-y font-mono !text-xs')}
           />
         </div>
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-theme-muted">Schedule (cron, optional)</label>
+            <label className={labelClass}>Schedule (cron, optional)</label>
             <input
               type="text"
               value={newSchedule}
               onChange={e => setNewSchedule(e.target.value)}
               placeholder="0 */6 * * *"
-              className="w-full rounded-lg border border-[color:var(--dashboard-panel-border)] bg-theme-hover px-3 py-2 font-mono text-xs text-theme-fg placeholder:text-theme-muted/50 focus:border-primary/40 focus:outline-none"
+              className={clsx(inputClass, 'font-mono !text-xs')}
             />
           </div>
           <label className="flex cursor-pointer items-center gap-2">
@@ -1317,9 +1789,11 @@ function DeploysTab({
         </div>
       </div>
 
+      {errorBanner}
+
       <div className="flex items-center justify-end gap-2 pt-2">
         <button
-          onClick={() => setShowCreate(false)}
+          onClick={resetCreate}
           className="rounded-lg px-4 py-2 text-xs font-bold text-theme-muted transition-all hover:text-theme-fg"
         >
           Cancel
@@ -1327,12 +1801,18 @@ function DeploysTab({
         <button
           onClick={handleCreate}
           disabled={creating || !newName.trim() || !newPayload.trim()}
-          className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-white transition-all hover:bg-primary/90 disabled:opacity-50"
+          className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-fg transition-all hover:opacity-90 disabled:opacity-50"
         >
           {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-          Set it live
+          {creating ? 'Deploying…' : 'Set it live'}
         </button>
       </div>
+    </>
+  );
+
+  const createForm = (
+    <div className="dashboard-card mb-5 space-y-4 !border-primary/20 bg-theme-card/50 p-5 animate-in slide-in-from-top-2 duration-200">
+      {advancedMode ? advancedForm : selectedWf ? optionsStep : pickerStep}
     </div>
   );
 
@@ -1345,7 +1825,7 @@ function DeploysTab({
         title="Automations"
         subtitle="Tasks that run in the cloud around the clock — even when your computer is off."
         emptyTitle={showCreate ? 'Set up your first automation' : 'No automations yet'}
-        emptyHint="Use “New automation” to deploy a workflow or project. It runs in the cloud 24/7, and you’ll see exactly when it runs and how it’s doing right here."
+        emptyHint="Use “New automation” to pick one of your saved workflows and put it in the cloud. It runs 24/7 — even when this computer is off — and you’ll see exactly when it runs and how it’s doing right here."
         onRefresh={() => void refreshDeployments()}
         onStart={async (id) => { await restartDeployment(id); await refreshDeployments(); }}
         onStop={async (id) => { await stopDeployment(id); await refreshDeployments(); }}
@@ -1353,7 +1833,7 @@ function DeploysTab({
         getLogs={(id, lines) => getDeployLogs(id, lines)}
         headerActions={engineRunning ? (
           <button
-            onClick={() => setShowCreate(v => !v)}
+            onClick={() => (showCreate ? resetCreate() : setShowCreate(true))}
             className="flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-[12px] font-bold text-primary transition-all hover:bg-primary/20"
           >
             <Plus className="h-3.5 w-3.5" /> New automation

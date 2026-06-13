@@ -10,7 +10,9 @@ export const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'opus', '
 const FILE_PATH_RE = /^([a-zA-Z]:[/\\]|\/(?:tmp|var|home|Users)\/).+\.\w{1,5}$/;
 
 export function getFileExt(p: string): string {
-  return (p.match(/\.([a-zA-Z0-9]+)$/)?.[1] || '').toLowerCase();
+  // Tolerate URL query/hash suffixes (e.g. GCS signed URLs: file.mp4?X-Goog-…)
+  // — must stay in sync with desktop content.ts getAttachmentType.
+  return (p.match(/\.([a-zA-Z0-9]+)(?:[?#].*)?$/)?.[1] || '').toLowerCase();
 }
 
 export function isFilePath(v: unknown): v is string {

@@ -1,13 +1,16 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import {
   FolderOpen, Folder, File, FileText, Image, Film, Music, Archive, Code, Database,
   Upload, Download, Trash2, RefreshCw, Loader2, CheckCircle2, AlertCircle,
   ChevronRight, ChevronDown, Search, MoreVertical, Plus, X, Grid3X3, List,
   FolderPlus, Edit3, Copy, Move, Eye, ArrowUp, Home, SortAsc, SortDesc,
-  HardDrive, Cloud, Clock, FolderInput, LayoutGrid, AlignJustify,
+  HardDrive, Cloud, Clock, FolderInput, LayoutGrid, AlignJustify, Share2,
 } from 'lucide-react';
-import type { CloudFileEntry, UploadProgress, StorageInfo } from '../hooks/useStorage';
+import type { CloudFileEntry, UploadProgress, StorageInfo, ShareMode, ShareOptions, ShareResult } from '../hooks/useStorage';
+import { FilePreviewModal, isPreviewable, type PreviewFile } from './FilePreviewModal';
+import { ShareDialog } from './ShareDialog';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -38,6 +41,8 @@ export interface FileExplorerProps {
   onDelete: (objectName: string) => void;
   onCreateFolder: (path: string) => Promise<any>;
   onRename: (oldName: string, newName: string) => Promise<any>;
+  getFileUrl: (objectName: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  shareFile: (objectName: string, mode: ShareMode, ttlHours?: number, opts?: ShareOptions) => Promise<ShareResult>;
   info: StorageInfo | null;
 }
 
@@ -103,27 +108,29 @@ function extensionLabel(name: string): string {
 }
 
 /**
- * Build a folder-only tree from a flat list of object names.
- * Children are sorted alphabetically. File entries are not included.
+ * Build a tree of folders AND files from a flat list of object names.
+ * Folders sort before files; both alphabetical within their group.
  */
 interface FolderTreeNode {
   name: string;
   fullPath: string;
+  isFolder: boolean;
   children: FolderTreeNode[];
 }
 
 function buildFolderTree(files: CloudFileEntry[]): FolderTreeNode[] {
-  const root: FolderTreeNode = { name: '', fullPath: '', children: [] };
+  const root: FolderTreeNode = { name: '', fullPath: '', isFolder: true, children: [] };
 
   const ensurePath = (segments: string[]): FolderTreeNode => {
     let node = root;
     for (let i = 0; i < segments.length; i++) {
       const part = segments[i];
-      let next = node.children.find(c => c.name === part);
+      let next = node.children.find(c => c.name === part && c.isFolder);
       if (!next) {
         next = {
           name: part,
           fullPath: segments.slice(0, i + 1).join('/'),
+          isFolder: true,
           children: [],
         };
         node.children.push(next);
@@ -140,14 +147,27 @@ function buildFolderTree(files: CloudFileEntry[]): FolderTreeNode[] {
     const isFolderPlaceholder = f.name.endsWith('/') && f.size === 0;
     // Folders are: every parent path of a file, plus folder placeholders themselves.
     const folderDepth = isFolderPlaceholder ? parts.length : parts.length - 1;
-    if (folderDepth > 0) ensurePath(parts.slice(0, folderDepth));
+    const parent = folderDepth > 0 ? ensurePath(parts.slice(0, folderDepth)) : root;
+
+    if (!isFolderPlaceholder) {
+      const leafName = parts[parts.length - 1];
+      if (!parent.children.some(c => c.name === leafName && !c.isFolder)) {
+        parent.children.push({
+          name: leafName,
+          fullPath: parts.join('/'),
+          isFolder: false,
+          children: [],
+        });
+      }
+    }
   }
 
-  // Recursive sort
+  // Recursive sort: folders first, then alphabetical
   const sortRec = (nodes: FolderTreeNode[]) => {
-    nodes.sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    nodes.sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
     for (const n of nodes) sortRec(n.children);
   };
   sortRec(root.children);
@@ -337,7 +357,10 @@ function ContextMenu({
   const adjustedX = Math.min(x, window.innerWidth - 200);
   const adjustedY = Math.min(y, window.innerHeight - items.length * 36 - 16);
 
-  return (
+  // Portal to <body>: clientX/Y are viewport coords, but `fixed` resolves
+  // against any transformed ancestor, which offsets the menu inside the
+  // dashboard layout.
+  return createPortal(
     <div
       ref={ref}
       className="fixed z-50 min-w-[180px] animate-in fade-in zoom-in-95 rounded-xl border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] py-1.5 shadow-2xl duration-100"
@@ -360,7 +383,8 @@ function ContextMenu({
           </button>
         </React.Fragment>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -672,7 +696,7 @@ function ListItem({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function FolderTreeRow({
-  node, depth, currentPath, expanded, onToggle, onNavigate,
+  node, depth, currentPath, expanded, onToggle, onNavigate, onOpenFile,
 }: {
   node: FolderTreeNode;
   depth: number;
@@ -680,10 +704,27 @@ function FolderTreeRow({
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onNavigate: (path: string) => void;
+  onOpenFile: (fullPath: string) => void;
 }) {
   const isOpen = expanded.has(node.fullPath);
   const isActive = currentPath === node.fullPath;
   const hasChildren = node.children.length > 0;
+
+  if (!node.isFolder) {
+    const FileIcon = getFileIcon(node.name);
+    return (
+      <div
+        onClick={() => onOpenFile(node.fullPath)}
+        className="group flex cursor-pointer items-center gap-1 rounded-lg py-1.5 pr-2 text-[13px] text-theme-fg transition-colors hover:bg-[color:var(--dashboard-hover)]"
+        style={{ paddingLeft: `${depth * 12 + 4}px` }}
+        title={node.name}
+      >
+        <span className="w-3.5 shrink-0" />
+        <FileIcon className={clsx('w-3.5 h-3.5 shrink-0', getFileColor(node.name))} />
+        <span className="truncate">{node.name}</span>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -722,13 +763,14 @@ function FolderTreeRow({
       </div>
       {isOpen && hasChildren && node.children.map(child => (
         <FolderTreeRow
-          key={child.fullPath}
+          key={`${child.isFolder ? 'd' : 'f'}:${child.fullPath}`}
           node={child}
           depth={depth + 1}
           currentPath={currentPath}
           expanded={expanded}
           onToggle={onToggle}
           onNavigate={onNavigate}
+          onOpenFile={onOpenFile}
         />
       ))}
     </>
@@ -736,11 +778,12 @@ function FolderTreeRow({
 }
 
 function FolderTreeSidebar({
-  files, currentPath, onNavigate, totalSize, totalFiles,
+  files, currentPath, onNavigate, onOpenFile, totalSize, totalFiles,
 }: {
   files: CloudFileEntry[];
   currentPath: string;
   onNavigate: (path: string) => void;
+  onOpenFile: (fullPath: string) => void;
   totalSize: number;
   totalFiles: number;
 }) {
@@ -773,7 +816,7 @@ function FolderTreeSidebar({
     <div className="dashboard-card flex h-full min-h-0 flex-col overflow-hidden rounded-2xl">
       <div className="flex items-center gap-2 border-b border-[color:var(--dashboard-panel-border)] px-3 py-2.5">
         <Cloud className="h-4 w-4 text-primary" />
-        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-fg">Folders</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-fg">My files</span>
       </div>
       <div className="flex-1 overflow-y-auto custom-scrollbar p-1.5 space-y-0.5">
         <div
@@ -790,18 +833,19 @@ function FolderTreeSidebar({
         </div>
         {tree.length === 0 ? (
           <div className="px-2 py-3 text-[12px] italic text-theme-muted">
-            No folders yet
+            No files yet
           </div>
         ) : (
           tree.map(node => (
             <FolderTreeRow
-              key={node.fullPath}
+              key={`${node.isFolder ? 'd' : 'f'}:${node.fullPath}`}
               node={node}
               depth={0}
               currentPath={currentPath}
               expanded={expanded}
               onToggle={toggle}
               onNavigate={onNavigate}
+              onOpenFile={onOpenFile}
             />
           ))
         )}
@@ -822,7 +866,7 @@ function FolderTreeSidebar({
 
 export function FileExplorer({
   files, loading, fetchFiles, uploading, uploadQueue, onUpload,
-  onDownload, onDelete, onCreateFolder, onRename, info,
+  onDownload, onDelete, onCreateFolder, onRename, getFileUrl, shareFile, info,
 }: FileExplorerProps) {
   const [currentPath, setCurrentPath] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -835,6 +879,8 @@ export function FileExplorer({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingItem, setRenamingItem] = useState<string | null>(null);
   const [confirmDeleteItems, setConfirmDeleteItems] = useState<string[] | null>(null);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+  const [shareTarget, setShareTarget] = useState<{ objectName: string; name: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -928,14 +974,36 @@ export function FileExplorer({
     }
   }, [allItems, selectedItems]);
 
-  // Open folder or preview file
+  // Open folder, preview file inline, or fall back to download
   const handleOpen = useCallback((node: FileNode) => {
     if (node.isFolder) {
       navigateTo(node.fullPath);
+    } else if (isPreviewable(node.name, node.contentType)) {
+      setPreviewFile({
+        name: node.name,
+        fullPath: node.fullPath,
+        size: node.size,
+        updated: node.updated,
+        contentType: node.contentType,
+      });
     } else {
       onDownload(node.fullPath);
     }
   }, [navigateTo, onDownload]);
+
+  // Open a file picked from the sidebar tree (which only knows the full path)
+  const openFileByPath = useCallback((fullPath: string) => {
+    const entry = files.find(f => f.name === fullPath);
+    if (!entry) return;
+    handleOpen({
+      name: fullPath.split('/').pop() || fullPath,
+      fullPath,
+      isFolder: false,
+      size: entry.size,
+      updated: entry.updated,
+      contentType: entry.contentType,
+    });
+  }, [files, handleOpen]);
 
   // Context menu for items
   const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
@@ -1009,6 +1077,7 @@ export function FileExplorer({
   // Deselect on escape / click background
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      if (previewFile || shareTarget) return; // modal owns the keyboard while open
       if (e.key === 'Escape') {
         setSelectedItems(new Set());
         setContextMenu(null);
@@ -1035,7 +1104,7 @@ export function FileExplorer({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [selectedItems, currentPath, allItems, navigateTo]);
+  }, [selectedItems, currentPath, allItems, navigateTo, previewFile, shareTarget]);
 
   // Context menu items for file/folder
   const getContextMenuItems = useCallback((node: FileNode): ContextMenuItem[] => {
@@ -1044,20 +1113,14 @@ export function FileExplorer({
     if (node.isFolder) {
       items.push({ label: 'Open Folder', icon: FolderOpen, onClick: () => navigateTo(node.fullPath) });
     } else {
+      if (isPreviewable(node.name, node.contentType)) {
+        items.push({ label: 'Preview', icon: Eye, onClick: () => handleOpen(node) });
+      }
+      items.push({ label: 'Share', icon: Share2, onClick: () => setShareTarget({ objectName: node.fullPath, name: node.name }) });
       items.push({ label: 'Download', icon: Download, onClick: () => onDownload(node.fullPath) });
     }
 
     items.push({ label: 'Rename', icon: Edit3, onClick: () => setRenamingItem(node.fullPath), divider: !node.isFolder });
-
-    if (!node.isFolder) {
-      items.push({
-        label: 'Details',
-        icon: Eye,
-        onClick: () => {
-          /* Could open a details panel */
-        },
-      });
-    }
 
     items.push({
       label: 'Delete',
@@ -1068,7 +1131,7 @@ export function FileExplorer({
     });
 
     return items;
-  }, [navigateTo, onDownload]);
+  }, [navigateTo, onDownload, handleOpen]);
 
   // Background context menu items
   const bgMenuItems: ContextMenuItem[] = useMemo(() => [
@@ -1186,33 +1249,45 @@ export function FileExplorer({
 
       {/* ── Bulk Actions Bar ──────────────────────────────────────────────── */}
       {selectedItems.size > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 bg-primary/5 border border-primary/15 rounded-xl animate-in slide-in-from-top-1 duration-150">
-          <span className="text-[11px] font-bold text-primary">
-            {selectedItems.size} selected
+        <div className="dashboard-card flex items-center gap-3 rounded-xl px-3.5 py-2 animate-in slide-in-from-top-1 duration-150">
+          <span className="text-[12.5px] font-medium text-theme-fg">
+            <span className="font-semibold text-primary tabular-nums">{selectedItems.size}</span> selected
           </span>
-          <div className="flex items-center gap-1 ml-auto">
+          <div className="ml-auto flex items-center gap-1.5">
             {selectedItems.size === 1 && !Array.from(selectedItems).some(p => folders.some(f => f.fullPath === p)) && (
-              <button
-                onClick={() => {
-                  const path = Array.from(selectedItems)[0];
-                  onDownload(path);
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold text-theme-fg bg-theme-hover hover:bg-theme-active transition-colors"
-              >
-                <Download className="w-3 h-3" /> Download
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    const path = Array.from(selectedItems)[0];
+                    setShareTarget({ objectName: path, name: path.split('/').pop() || path });
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-3 py-1.5 text-[12px] font-medium text-theme-fg transition-colors hover:bg-[color:var(--dashboard-hover)]"
+                >
+                  <Share2 className="h-3.5 w-3.5" /> Share
+                </button>
+                <button
+                  onClick={() => {
+                    const path = Array.from(selectedItems)[0];
+                    onDownload(path);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-3 py-1.5 text-[12px] font-medium text-theme-fg transition-colors hover:bg-[color:var(--dashboard-hover)]"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download
+                </button>
+              </>
             )}
             <button
               onClick={() => setConfirmDeleteItems(Array.from(selectedItems))}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold text-red-400 bg-red-500/10 hover:bg-red-500/15 transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 text-[12px] font-medium text-red-400 transition-colors hover:border-red-500/25 hover:bg-red-500/10"
             >
-              <Trash2 className="w-3 h-3" /> Delete
+              <Trash2 className="h-3.5 w-3.5" /> Delete
             </button>
             <button
               onClick={() => setSelectedItems(new Set())}
-              className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-colors ml-1"
+              className="ml-0.5 rounded-lg p-1.5 text-theme-muted transition-colors hover:bg-[color:var(--dashboard-hover)] hover:text-theme-fg"
+              title="Clear selection (Esc)"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -1220,22 +1295,25 @@ export function FileExplorer({
 
       {/* ── Delete Confirmation ───────────────────────────────────────────── */}
       {confirmDeleteItems && (
-        <div className="flex items-center gap-3 px-4 py-3 bg-red-500/5 border border-red-500/20 rounded-xl animate-in slide-in-from-top-1 duration-150">
-          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-          <span className="text-xs text-red-300 flex-1">
-            Delete {confirmDeleteItems.length} item{confirmDeleteItems.length > 1 ? 's' : ''}? This cannot be undone.
+        <div className="dashboard-card flex items-center gap-3 rounded-xl px-4 py-2.5 animate-in slide-in-from-top-1 duration-150">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-400">
+            <AlertCircle className="h-4 w-4" />
+          </div>
+          <span className="flex-1 text-[12.5px] text-theme-fg">
+            Delete {confirmDeleteItems.length} item{confirmDeleteItems.length > 1 ? 's' : ''}?{' '}
+            <span className="text-theme-muted">This can't be undone.</span>
           </span>
           <button
-            onClick={handleDeleteSelected}
-            className="px-3 py-1 rounded-lg text-[11px] font-bold text-white bg-red-600 hover:bg-red-500 transition-colors"
+            onClick={() => setConfirmDeleteItems(null)}
+            className="rounded-lg border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-3 py-1.5 text-[12px] font-medium text-theme-fg transition-colors hover:bg-[color:var(--dashboard-hover)]"
           >
-            Delete
+            Cancel
           </button>
           <button
-            onClick={() => setConfirmDeleteItems(null)}
-            className="p-1 rounded-lg text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-colors"
+            onClick={handleDeleteSelected}
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-red-500"
           >
-            <X className="w-3.5 h-3.5" />
+            Delete
           </button>
         </div>
       )}
@@ -1259,6 +1337,7 @@ export function FileExplorer({
             files={files}
             currentPath={currentPath}
             onNavigate={navigateTo}
+            onOpenFile={openFileByPath}
             totalSize={files.reduce((s, f) => s + f.size, 0)}
             totalFiles={files.filter(f => !(f.size === 0 && f.name.endsWith('/'))).length}
           />
@@ -1406,6 +1485,41 @@ export function FileExplorer({
           </div>
         </div>
       </div>
+
+      {/* ── File Preview ──────────────────────────────────────────────────── */}
+      {previewFile && (
+        <FilePreviewModal
+          file={previewFile}
+          siblings={fileNodes.map(n => ({
+            name: n.name,
+            fullPath: n.fullPath,
+            size: n.size,
+            updated: n.updated,
+            contentType: n.contentType,
+          }))}
+          getFileUrl={getFileUrl}
+          onNavigate={setPreviewFile}
+          onShare={(objectName) => {
+            setShareTarget({ objectName, name: objectName.split('/').pop() || objectName });
+          }}
+          onDownload={onDownload}
+          onDelete={(objectName) => {
+            setPreviewFile(null);
+            setConfirmDeleteItems([objectName]);
+          }}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+
+      {/* ── Share Dialog ──────────────────────────────────────────────────── */}
+      {shareTarget && (
+        <ShareDialog
+          objectName={shareTarget.objectName}
+          filename={shareTarget.name}
+          shareFile={shareFile}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
 
       {/* ── Context Menus ─────────────────────────────────────────────────── */}
       {contextMenu && (

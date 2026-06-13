@@ -500,7 +500,7 @@ export function CloudVmSettings({ engine, className }: CloudVmSettingsProps) {
             <div>
               <div className="font-semibold">Engine paused</div>
               <p className="mt-0.5 text-amber-300/80">
-                Resume your cloud engine from the top bar to sync data, restart services, or push tokens.
+                Resume your cloud computer from the top bar to sync data, restart services, or push tokens.
               </p>
             </div>
           </div>

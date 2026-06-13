@@ -19,6 +19,7 @@ import { initVoiceProviders } from '../voice';
 import { telnyxBridgeWss } from '../routes/integrations/telnyx-bridge';
 import { verifyTelnyxConfig } from '../routes/integrations/telnyx';
 import { startReminderCron } from '../services/cloud-reminders';
+import { startShareCleanupCron } from '../services/cold-storage';
 import { restoreSocialTriggerRegistrations } from '../routes/integrations/social-triggers';
 import { restoreGoogleNativeTriggerRegistrations } from '../routes/integrations/google-native-triggers';
 
@@ -98,6 +99,11 @@ export function startCloudAiServer() {
       startReminderCron();
     } catch (error) {
       console.warn('[cloud-ai] Reminder cron failed to start:', error);
+    }
+    try {
+      startShareCleanupCron();
+    } catch (error) {
+      console.warn('[cloud-ai] Share cleanup cron failed to start:', error);
     }
     void verifyTelnyxConfig().catch((error) => {
       console.warn('[cloud-ai] Telnyx config verification failed:', error);

@@ -25,7 +25,7 @@ import { sendVMCommand } from '../../services/vm-command';
 import { messagingCreditCost, voiceCallCreditCost, MESSAGING_USD } from '../../pricing';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { MediaProcessor, fromTelnyxMms } from '../../media';
-import { runServerlessAgent } from '../serverless-agent';
+import { hasDesktopConnection } from '../../services/vm-bridge';
 
 const TELNYX_API = 'https://api.telnyx.com/v2';
 
@@ -119,8 +119,7 @@ const SMS_HELP_TEXT =
   'Stuard SMS Commands:\n' +
   '/vm - Route messages to Cloud VM agent\n' +
   '/desktop - Route messages to desktop agent\n' +
-  '/cloud - Route messages to cloud (no VM needed)\n' +
-  '/auto - Auto-detect best agent (default)\n' +
+  '/auto - Use VM if running, else desktop (default)\n' +
   '/status - Show current routing & VM status\n' +
   '/model <fast|balanced|smart> - Set AI model\n' +
   '/agent - Switch to agent mode\n' +
@@ -149,8 +148,11 @@ async function handleSmsSlashCommand(userId: string, fromPhone: string, command:
       return true;
     }
     case '/cloud': {
-      await upsertSmsUserState({ userId, agentTarget: 'cloud' });
-      await reply('SMS routing set to Cloud. Messages handled directly in the cloud — no VM or desktop needed.\n\nText /auto to switch back to automatic routing.');
+      // Cloud serverless replies were retired (they lost context, never synced
+      // to desktop, and mis-billed). Treat /cloud as auto: VM if it's running,
+      // otherwise your desktop when it's online.
+      await upsertSmsUserState({ userId, agentTarget: 'auto' });
+      await reply('Heads up: cloud-only replies were retired. Messages now run on your Cloud VM if it is on, otherwise your desktop when it is online.\n\nText /status to check what is available.');
       return true;
     }
     case '/auto': {
@@ -309,6 +311,29 @@ async function deductTelnyxCredit(userId: string): Promise<void> {
     });
   } catch (e: any) {
     console.error('[telnyx] credit deduction failed:', e?.message);
+  }
+}
+
+// ── Offline auto-reply ───────────────────────────────────────────────────────
+// When neither the user's Cloud VM nor their desktop is online, nothing can run
+// the agent right now. We still queue the message so the desktop answers it on
+// next launch, but we also text the sender once (per window) so they aren't left
+// hanging. Debounced per user so a burst of texts doesn't trigger a burst of
+// auto-replies.
+const _lastOfflineAutoReply = new Map<string, number>();
+const OFFLINE_AUTOREPLY_WINDOW_MS = 10 * 60 * 1000;
+
+async function maybeSendOfflineAutoReply(userId: string, toPhone: string): Promise<void> {
+  if (!toPhone) return;
+  const now = Date.now();
+  const last = _lastOfflineAutoReply.get(userId) || 0;
+  if (now - last < OFFLINE_AUTOREPLY_WINDOW_MS) return;
+  _lastOfflineAutoReply.set(userId, now);
+  try {
+    await sendSmsRaw(toPhone, "Got it — I'm offline right now, but I'll get back to you the moment I'm back online.");
+    await deductTelnyxCredit(userId);
+  } catch (e: any) {
+    console.error('[telnyx] offline auto-reply failed:', e?.message);
   }
 }
 
@@ -773,7 +798,11 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
       const preferredModel = body?.preferredModel;
       const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() || null : undefined;
       const resumeConversationId = typeof body?.resumeConversationId === 'string' ? body.resumeConversationId.trim() || null : undefined;
-      if (!queueItemId || !replyText) {
+      // When the desktop already streamed the reply as live per-thought texts via
+      // /sms-notify, it calls this route only to finalize state (mark replied +
+      // persist conversation/model). Don't re-send or double-charge the carrier fee.
+      const alreadyDelivered = body?.alreadyDelivered === true;
+      if (!queueItemId || (!replyText && !alreadyDelivered)) {
         sendJson(res, 400, { ok: false, error: 'queueItemId and replyText are required.' });
         return true;
       }
@@ -793,8 +822,10 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
         return true;
       }
 
-      await telnyxSendSms(targetPhone, replyText);
-      await deductTelnyxCredit(auth.userId);
+      if (!alreadyDelivered) {
+        await telnyxSendSms(targetPhone, replyText);
+        await deductTelnyxCredit(auth.userId);
+      }
       await markSmsQueueReplySent(queueItemId).catch(() => false);
       await upsertSmsUserState({
         userId: auth.userId,
@@ -1033,75 +1064,38 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               }
             }
 
-            // ── Cloud serverless handler ─────────────────────────────────
-            // Only runs when the user explicitly routed to cloud, or as a
-            // fallback from a VM turn. Desktop target must NEVER fall
-            // through here — it's supposed to land in the Supabase
-            // sms_inbox_queue so the desktop claims it via Realtime and
-            // runs the agent locally with the full desktop bridge
-            // (knowledge graph, tools, etc.).
-            if (!handled && (effectiveTarget === 'cloud' || effectiveTarget === 'vm')) {
-              try {
-                const cloudResult = await runServerlessAgent({
-                  userId,
-                  message: inboundText,
-                  conversationId: smsState.conversation_id,
-                  model: smsState.preferred_model || 'fast',
-                  source: msgSource as 'sms' | 'mms',
-                  ...(processedAttachments.length > 0 ? { attachments: processedAttachments } : {}),
-                });
-
-                if (cloudResult.ok && cloudResult.text) {
-                  const replyText = stripMarkdownForSms(cloudResult.text).slice(0, 1500);
-                  await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
-                    console.error('[telnyx] Failed to send cloud agent SMS reply:', e?.message);
-                  });
-                  await deductTelnyxCredit(userId);
-                  handled = true;
-
-                  if (cloudResult.conversationId && cloudResult.conversationId !== smsState.conversation_id) {
-                    await upsertSmsUserState({ userId, conversationId: cloudResult.conversationId });
-                  }
-
-                  console.log('[telnyx] SMS routed to cloud', { userId, conversationId: cloudResult.conversationId, responseLen: replyText.length });
-                }
-              } catch (e: any) {
-                console.error('[telnyx] Cloud agent failed:', e?.message);
-                // Fall through to desktop
-              }
-            }
-
-            // Desktop fallback (or primary desktop target)
+            // ── Desktop (local) handler ──────────────────────────────────
+            // No VM (or the VM turn failed). Route to the Supabase
+            // sms_inbox_queue so the desktop claims it via Realtime and runs
+            // the agent locally through the normal chat pipeline — exactly like
+            // a message typed in the app (full tool bridge, local memory/history,
+            // and correct token + tool billing). The cloud serverless fallback
+            // was removed: it lost multi-turn context, never synced to the
+            // desktop, and only charged the flat carrier fee.
             if (!handled) {
-              if (target === 'vm' && !vmRunning) {
-                // User explicitly chose VM but it's not deployed/running — and cloud also failed
-                await sendSmsRaw(fromPhone,
-                  'Your Cloud VM is not running. Start it from the desktop app, or text /cloud to use cloud mode, or /auto for automatic routing.'
-                ).catch(() => {});
-                await deductTelnyxCredit(userId);
-              } else if (effectiveTarget === 'desktop' || target === 'desktop') {
-                // Queue to desktop inbox
-                const queued = await enqueueSmsInboxItem({
-                  userId,
-                  provider: 'telnyx',
-                  providerMessageId,
-                  fromPhone,
-                  replyToPhone: fromPhone,
-                  messageText: inboundText,
-                  conversationId: smsState.conversation_id,
-                  metadata: {
-                    eventType,
-                    receivedAt: new Date().toISOString(),
-                    ...(processedAttachments.length > 0 ? { processedAttachments } : {}),
-                  },
+              const desktopOnline = hasDesktopConnection(userId);
+              const queued = await enqueueSmsInboxItem({
+                userId,
+                provider: 'telnyx',
+                providerMessageId,
+                fromPhone,
+                replyToPhone: fromPhone,
+                messageText: inboundText,
+                conversationId: smsState.conversation_id,
+                metadata: {
+                  eventType,
+                  receivedAt: new Date().toISOString(),
+                  ...(processedAttachments.length > 0 ? { processedAttachments } : {}),
+                },
+              });
+              if (!queued) {
+                console.warn('[telnyx] inbound SMS could not be queued', {
+                  fromPhone, userId, textPreview: inboundText.slice(0, 80),
                 });
-                if (!queued) {
-                  console.warn('[telnyx] inbound SMS could not be queued', {
-                    fromPhone,
-                    userId,
-                    textPreview: inboundText.slice(0, 80),
-                  });
-                }
+              }
+              // Neither VM nor desktop online → let the sender know we'll follow up.
+              if (!desktopOnline) {
+                await maybeSendOfflineAutoReply(userId, fromPhone);
               }
             }
           } else {
@@ -1290,57 +1284,26 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
               }
             }
 
-            // ── Cloud serverless handler for MMS ──────────────────────────
-            if (!handled && (effectiveTarget === 'cloud' || (effectiveTarget === 'vm' && !vmRunning))) {
-              try {
-                const cloudResult = await runServerlessAgent({
-                  userId,
-                  message: messageText,
-                  conversationId: smsState.conversation_id,
-                  model: smsState.preferred_model || 'fast',
-                  source: 'mms',
-                  attachments: mediaResult.attachments,
-                });
-
-                if (cloudResult.ok && cloudResult.text) {
-                  const replyText = stripMarkdownForSms(cloudResult.text).slice(0, 1500);
-                  await sendSmsRaw(from, replyText).catch((e: any) => {
-                    console.error('[telnyx] Failed to send cloud agent MMS reply:', e?.message);
-                  });
-                  await deductTelnyxCredit(userId);
-                  handled = true;
-
-                  if (cloudResult.conversationId && cloudResult.conversationId !== smsState.conversation_id) {
-                    await upsertSmsUserState({ userId, conversationId: cloudResult.conversationId });
-                  }
-
-                  console.log('[telnyx] MMS routed to cloud', { userId, conversationId: cloudResult.conversationId });
-                }
-              } catch (e: any) {
-                console.error('[telnyx] Cloud agent MMS failed:', e?.message);
-              }
-            }
-
+            // ── Desktop (local) handler for MMS ───────────────────────────
+            // Same as SMS: queue to the desktop so it runs locally with the full
+            // bridge + correct billing. Cloud serverless fallback removed.
             if (!handled) {
-              if (target === 'vm' && !vmRunning) {
-                await sendSmsRaw(from,
-                  'Your Cloud VM is not running. Text /cloud to use cloud mode, or /auto for automatic routing.'
-                ).catch(() => {});
-                await deductTelnyxCredit(userId);
-              } else if (effectiveTarget === 'desktop' || target === 'desktop') {
-                await enqueueSmsInboxItem({
-                  userId,
-                  provider: 'telnyx',
-                  providerMessageId,
-                  fromPhone: from,
-                  replyToPhone: from,
-                  messageText,
-                  conversationId: smsState.conversation_id,
-                  metadata: {
-                    processedAttachments: mediaResult.attachments,
-                    receivedAt: new Date().toISOString(),
-                  },
-                });
+              const desktopOnline = hasDesktopConnection(userId);
+              await enqueueSmsInboxItem({
+                userId,
+                provider: 'telnyx',
+                providerMessageId,
+                fromPhone: from,
+                replyToPhone: from,
+                messageText,
+                conversationId: smsState.conversation_id,
+                metadata: {
+                  processedAttachments: mediaResult.attachments,
+                  receivedAt: new Date().toISOString(),
+                },
+              });
+              if (!desktopOnline) {
+                await maybeSendOfflineAutoReply(userId, from);
               }
             }
 

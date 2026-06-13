@@ -515,7 +515,7 @@ async function handleInstagramEvents(payload: any): Promise<void> {
           reg.userId, 'instagram', type,
           `ig-${type}-${igId}-${Date.now()}`,
           { event: type, igAccountId: igId, field: change?.field, value: change?.value },
-          reg.workflowId, reg.triggerId,
+          reg.workflowId, reg.triggerId, reg.sourceKeys,
         );
       }
     }
@@ -530,7 +530,7 @@ async function handleInstagramEvents(payload: any): Promise<void> {
             reg.userId, 'instagram', 'instagram.new_message',
             `ig-message-${igId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             { event: 'instagram.new_message', igAccountId: igId, messaging: msg },
-            reg.workflowId, reg.triggerId,
+            reg.workflowId, reg.triggerId, reg.sourceKeys,
           );
         }
       }
@@ -705,7 +705,7 @@ async function handleXEvents(payload: any): Promise<void> {
           reg.userId, 'x', type,
           `x-${type}-${xUserId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           { event: type, xUserId, data: ev },
-          reg.workflowId, reg.triggerId,
+          reg.workflowId, reg.triggerId, reg.sourceKeys,
         );
       }
     }

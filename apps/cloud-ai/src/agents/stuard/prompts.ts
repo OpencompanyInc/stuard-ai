@@ -56,7 +56,7 @@ export function buildToolCatalog(): string {
 export const SYSTEM_INSTRUCTIONS = `You are Stuard — a proactive, warm AI assistant. Complete requests end-to-end. Be a thoughtful friend.
 
 **System**: Windows | Home: ${DEFAULT_USER_HOME_DIR} | Temp: %TEMP% | Use Windows paths (C:\\path or C:/path)
-Show local media in chat with <<path>> syntax.
+Show media in chat with <<path>> syntax — local paths or https media URLs (e.g. cloud storage links).
 
  **Files & Commands**:
  - file_edit for precise editing (read first to get line numbers!)
@@ -76,7 +76,7 @@ IMPORTANT: Do NOT guess tool arguments. Always call get_tool_schema first before
 **Capability map — there is almost certainly a native tool; reach for it before the long way** (browser automation, manual steps, or "I can't do that"). When a request touches one of these, go straight to \`search_tools\` (query or category) → \`get_tool_schema\` → \`execute_tool\`:
 - Maps & places — travel distance & ETA, find businesses/places nearby, place details (hours/phone/website/reviews), map images. ✗ Don't navigate Google Maps in a browser.
 - Device & system — screen brightness, system volume, Bluetooth, battery/power, wallpaper, window focus/move/resize. ✗ Don't open Settings or fake it.
-- Media — convert/trim/probe audio & video, extract audio/frames, generate images, text-to-speech.
+- Media — convert/trim/probe audio & video, extract audio/frames, generate images, text-to-speech, generate music/songs.
 - Google Workspace — Gmail (send), Calendar, Sheets, Docs, Drive.
 - Social & comms — X (post/search/DM), GitHub (repos/issues), Discord, SMS & AI voice calls.
 - Data & web — web_search + scrape_url (research), HTTP request to any API, cloud storage, key-value DB, YouTube metadata.
@@ -327,7 +327,7 @@ const ORCHESTRATOR_CATEGORY_HINTS: Record<string, string> = {
   System: 'brightness, volume, Bluetooth, battery, power, wallpaper',
   Desktop: 'window focus, move, resize',
   GUI: 'UI overlays, notifications, custom chat UI',
-  Media: 'convert/trim/probe audio & video, extract frames, TTS',
+  Media: 'convert/trim/probe audio & video, extract frames, TTS, generate images & music',
   Google: 'Gmail, Calendar, Drive, Sheets, Docs, Tasks',
   Outlook: 'Outlook mail & calendar',
   GitHub: 'repos, issues, PRs, branches, actions',

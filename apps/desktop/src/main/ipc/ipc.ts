@@ -20,8 +20,9 @@ import { getFileIconCached, getFilePreviewCached } from "../services/icon-cache"
 import * as fs from "fs";
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import { request as httpsRequest } from "node:https";
 import { getGlobalHotkey, setGlobalHotkey as saveGlobalHotkey, getTimezone, setTimezone, getRendererPrefs, setRendererPrefs, loadSettings, saveSettings } from "../settings";
-import { syncMainAuthSession } from "../services/auth-session";
+import { syncMainAuthSession, getValidMainAccessToken } from "../services/auth-session";
 import {
   deleteMediaItem,
   getMediaLibraryPrefs,
@@ -34,7 +35,7 @@ import {
   updateMediaLibraryPrefs,
 } from "../services/media-library";
 import { skills_list, skills_get, skills_save, skills_delete, skills_toggle, loadSkills } from "../skills";
-import { pushDesktopAgentDataToVM, requestAgentDataPush } from "../services/cloud-webhooks";
+import { pushDesktopAgentDataToVM, requestAgentDataPush, getAgentDataSyncState } from "../services/cloud-webhooks";
 import { TOOL_REGISTRY } from "../tools/registry";
 import { setCustomIntegrationToolNames, listCustomIntegrationToolNames } from "../tools/custom-integrations";
 import { testBotSetupPreflight } from "../services/bot-setup-preflight";
@@ -1118,6 +1119,15 @@ export function setupIpc() {
     }
   });
 
+  // Real desktop→VM sync state (pending changes / syncing / last push) so the
+  // dashboard's sync indicator reflects the auto-sync loop instead of guessing
+  // from cold-backup timestamps.
+  ipcMain.handle('cloud:agentSyncState', () => {
+    try { return { ok: true, state: getAgentDataSyncState() }; } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'sync_state_failed') };
+    }
+  });
+
   // Skills
   loadSkills();
   ipcMain.handle('skills:list', () => skills_list());
@@ -1327,9 +1337,14 @@ export function setupIpc() {
         ''
       ).trim().replace(/\/+$/, '');
 
+      // Cloud tools (storage upload, TTS, image gen, …) need the user's auth
+      // token — without it cloud-ai rejects the call with 401 unauthorized.
+      const accessToken = await getValidMainAccessToken().catch(() => null);
+
       const ctx: RouterContext = {
         agentWsUrl,
         cloudAiUrl,
+        accessToken: accessToken || undefined,
         logFn: (msg: string) => {
           try { logger.info(`[tool] ${msg}`); } catch { }
         },
@@ -2485,12 +2500,15 @@ export function setupIpc() {
   // Cloud storage upload via main process. Uses a signed GCS URL and PUTs the
   // file directly to storage, bypassing Cloud Run's 32MB request limit and
   // Electron renderer net.fetch / V8 string-length issues on large files.
-  ipcMain.handle('cloudStorage:upload', async (_e, payload: {
+  // Streams the PUT body in chunks and emits 'cloudStorage:uploadProgress'
+  // events ({ uploadId, loaded, total }) so the renderer can show a live bar.
+  ipcMain.handle('cloudStorage:upload', async (e, payload: {
     buffer: ArrayBuffer;
     filename: string;
     folderPath?: string;
     contentType?: string;
     token?: string;
+    uploadId?: string;
   }) => {
     try {
       const cloudAiUrl = String(
@@ -2505,10 +2523,10 @@ export function setupIpc() {
       if (!payload?.buffer) return { ok: false, error: 'missing_buffer' };
 
       const body = Buffer.from(payload.buffer);
-      // Always sign + PUT with octet-stream so the signed URL stays valid
-      // regardless of the browser-detected mime. GCS still serves the file
-      // back fine for arbitrary content.
-      const contentType = 'application/octet-stream';
+      // Sign + PUT with the real mime type — both sides use the same value so
+      // the signature stays valid, and GCS then serves the file back with the
+      // correct Content-Type (needed for in-app image/video/PDF previews).
+      const contentType = String(payload.contentType || 'application/octet-stream').trim() || 'application/octet-stream';
 
       const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
       if (payload.token) authHeaders['Authorization'] = `Bearer ${payload.token}`;
@@ -2536,22 +2554,67 @@ export function setupIpc() {
         };
       }
 
-      // 2. PUT raw buffer directly to GCS â€” no Cloud Run hop
-      const putResp = await fetch(urlData.uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': String(body.length),
-        },
-        body,
+      // 2. PUT raw buffer directly to GCS â€” no Cloud Run hop. Written in
+      // chunks via https.request so we can report bytes actually flushed to
+      // the socket (fetch with a Buffer body gives no upload progress).
+      const uploadId = String(payload.uploadId || '');
+      const sender = e.sender;
+      const emitProgress = (loaded: number) => {
+        if (!uploadId || sender.isDestroyed()) return;
+        try { sender.send('cloudStorage:uploadProgress', { uploadId, loaded, total: body.length }); } catch { /* noop */ }
+      };
+
+      const putResp = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+        const urlObj = new URL(urlData.uploadUrl);
+        const req = httpsRequest(
+          {
+            method: 'PUT',
+            hostname: urlObj.hostname,
+            path: `${urlObj.pathname}${urlObj.search}`,
+            headers: {
+              'Content-Type': contentType,
+              'Content-Length': String(body.length),
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (c: Buffer) => chunks.push(c));
+            res.on('end', () => resolve({ status: res.statusCode || 0, text: Buffer.concat(chunks).toString('utf-8') }));
+            res.on('error', reject);
+          },
+        );
+        req.on('error', reject);
+
+        const CHUNK = 256 * 1024;
+        let offset = 0;
+        let lastEmit = 0;
+        const writeNext = () => {
+          while (offset < body.length) {
+            const slice = body.subarray(offset, offset + CHUNK);
+            offset += slice.length;
+            const canContinue = req.write(slice);
+            const now = Date.now();
+            if (now - lastEmit > 100 || offset >= body.length) {
+              lastEmit = now;
+              emitProgress(offset);
+            }
+            if (!canContinue) {
+              req.once('drain', writeNext);
+              return;
+            }
+          }
+          req.end();
+        };
+        emitProgress(0);
+        writeNext();
       });
-      if (!putResp.ok) {
-        const text = await putResp.text().catch(() => '');
+
+      if (putResp.status < 200 || putResp.status >= 300) {
         return {
           ok: false,
           status: putResp.status,
           error: 'gcs_put_failed',
-          message: `GCS HTTP ${putResp.status}${text ? `: ${text.slice(0, 200)}` : ''}`,
+          message: `GCS HTTP ${putResp.status}${putResp.text ? `: ${putResp.text.slice(0, 200)}` : ''}`,
         };
       }
 

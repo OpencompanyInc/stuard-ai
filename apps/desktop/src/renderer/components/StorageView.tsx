@@ -265,7 +265,7 @@ const TABS: { id: StorageTab; label: string; icon: React.ComponentType<{ classNa
 export function StorageView() {
   const {
     plans, info, syncStatus, files, loading, error, uploading, uploadQueue, syncing, purchasing,
-    purchasePlan, uploadFile, downloadFile, deleteFile, createFolder, renameFile, fetchFiles,
+    purchasePlan, uploadFile, downloadFile, getFileUrl, shareFile, deleteFile, createFolder, renameFile, fetchFiles,
     syncToCloud, syncFromCloud, refresh,
   } = useStorage();
 
@@ -444,6 +444,8 @@ export function StorageView() {
           onDelete={handleDelete}
           onCreateFolder={createFolder}
           onRename={renameFile}
+          getFileUrl={getFileUrl}
+          shareFile={shareFile}
           info={info as StorageInfo | null}
         />
       )}

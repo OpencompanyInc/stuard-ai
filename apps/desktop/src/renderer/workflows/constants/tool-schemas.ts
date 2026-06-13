@@ -2355,6 +2355,12 @@ const VISIBILITY_OPTIONS = [
   { value: 'public', label: 'Public (Permanent URL)', description: 'Permanent public URL — anyone with the link can access' },
 ];
 
+// Upload / get-url additionally support a custom-duration signed URL.
+const URL_VISIBILITY_OPTIONS = [
+  ...VISIBILITY_OPTIONS,
+  { value: 'ttl', label: 'Custom Expiry (TTL)', description: 'Signed URL valid for a custom number of hours (max 168h / 7 days)' },
+];
+
 if (TOOL_SCHEMAS['cloud_storage_upload']) {
   TOOL_SCHEMAS['cloud_storage_upload'].args = {
     path: {
@@ -2373,9 +2379,16 @@ if (TOOL_SCHEMAS['cloud_storage_upload']) {
     visibility: {
       type: 'select',
       label: 'Visibility',
-      description: 'Public files get a permanent URL (useful for Instagram). Private files get a signed URL.',
-      options: VISIBILITY_OPTIONS,
+      description: 'Public files get a permanent URL (useful for Instagram). Private files get a signed URL. TTL gives a custom-duration signed URL.',
+      options: URL_VISIBILITY_OPTIONS,
       default: 'private',
+    },
+    ttl_hours: {
+      type: 'number',
+      label: 'TTL Hours',
+      description: 'Hours until the signed URL expires (only with TTL visibility, max 168).',
+      placeholder: '24',
+      advanced: true,
     },
     filename: {
       type: 'string',
@@ -2399,9 +2412,16 @@ if (TOOL_SCHEMAS['cloud_storage_get_url']) {
     visibility: {
       type: 'select',
       label: 'URL Type',
-      description: 'Public returns a permanent URL. Private returns a time-limited signed URL.',
-      options: VISIBILITY_OPTIONS,
+      description: 'Public returns a permanent URL. Private returns a time-limited signed URL. TTL returns a custom-duration signed URL.',
+      options: URL_VISIBILITY_OPTIONS,
       default: 'private',
+    },
+    ttl_hours: {
+      type: 'number',
+      label: 'TTL Hours',
+      description: 'Hours until the signed URL expires (only with TTL type, max 168).',
+      placeholder: '24',
+      advanced: true,
     },
   };
 }

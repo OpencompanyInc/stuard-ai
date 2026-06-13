@@ -57,10 +57,27 @@ function ensureRustIndexer() {
   }
 
   console.log('[run-agent] Building Rust file indexer...');
-  execSync(`cargo build --release --manifest-path "${rustIndexerManifest}"`, {
-    cwd: repoRoot,
-    stdio: 'inherit',
-  });
+  try {
+    execSync(`cargo build --release --manifest-path "${rustIndexerManifest}"`, {
+      cwd: repoRoot,
+      stdio: 'inherit',
+    });
+  } catch (err) {
+    console.warn(
+      '[run-agent] Rust file indexer build failed — continuing without it.',
+      'File indexing in the desktop app will be disabled until you fix the build.',
+      'On macOS: install Rust (https://rustup.rs) and Xcode CLI tools (xcode-select --install),',
+      'then run: cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml',
+    );
+    if (err && err.message) console.warn(`[run-agent] Build error: ${err.message}`);
+    return '';
+  }
+
+  if (!fs.existsSync(rustIndexerExe)) {
+    console.warn(`[run-agent] Build succeeded but binary missing at ${rustIndexerExe}`);
+    return '';
+  }
+
   console.log(`[run-agent] Rust file indexer built: ${rustIndexerExe}`);
   return rustIndexerExe;
 }

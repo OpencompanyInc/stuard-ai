@@ -88,20 +88,27 @@ function getPublicBucket() {
 
 /**
  * Build the permanent public URL for an object in the public bucket.
- * Routes through storage.stuard.ai (Cloudflare Worker → GCS).
+ * Routes through storage.stuard.ai (Cloudflare Worker → GCS) unless `raw`,
+ * which returns the direct storage.googleapis.com URL.
  */
-export function getPublicUrl(objectName: string): string {
-  const base = STORAGE_PUBLIC_BASE_URL || 'https://storage.googleapis.com';
-  return `${base.replace(/\/+$/, '')}/${PUBLIC_BUCKET}/${objectName}`;
+export function getPublicUrl(objectName: string, raw = false): string {
+  const base = (!raw && STORAGE_PUBLIC_BASE_URL) || 'https://storage.googleapis.com';
+  const encodedPath = objectName.split('/').map(encodeURIComponent).join('/');
+  return `${base.replace(/\/+$/, '')}/${PUBLIC_BUCKET}/${encodedPath}`;
 }
 
 /**
- * Rewrite a GCS signed URL to route through storage.stuard.ai.
- * The Cloudflare Worker proxies to storage.googleapis.com, so the signature stays valid.
+ * Signed URLs must go directly to storage.googleapis.com.
+ *
+ * The storage.stuard.ai Cloudflare Worker strips the query string when
+ * proxying to GCS, which deletes the V4 signature — GCS then rejects the
+ * request as anonymous ("AccessDenied"). Only unsigned public-bucket URLs
+ * (see getPublicUrl) can safely route through the branded domain. If the
+ * worker is ever fixed to forward the full query string, this can go back
+ * to rewriting the host.
  */
 function rewriteSignedUrl(signedUrl: string): string {
-  if (!STORAGE_PUBLIC_BASE_URL) return signedUrl;
-  return signedUrl.replace('https://storage.googleapis.com', STORAGE_PUBLIC_BASE_URL.replace(/\/+$/, ''));
+  return signedUrl;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +237,7 @@ export async function uploadUserFileBuffer(
   folderPath = '',
   visibility: 'private' | 'public' | 'ttl' = 'private',
   ttlMs?: number,
-): Promise<{ objectName: string; bytesWritten: number; url: string; visibility: 'private' | 'public' | 'ttl' }> {
+): Promise<{ objectName: string; bytesWritten: number; url: string; visibility: 'private' | 'public' | 'ttl'; expiresAt?: number }> {
   const safe = sanitizeFilename(filename);
   const prefix = folderPath
     ? folderPath.split('/').map(s => sanitizeFilename(s)).filter(Boolean).join('/')
@@ -238,6 +245,7 @@ export async function uploadUserFileBuffer(
   const objectName = prefix ? `${userId}/${prefix}/${safe}` : `${userId}/${safe}`;
 
   let url: string;
+  let expiresAt: number | undefined;
 
   if (visibility === 'public') {
     // Upload directly to the public bucket — permanently accessible
@@ -267,9 +275,10 @@ export async function uploadUserFileBuffer(
       expires,
     });
     url = rewriteSignedUrl(signedUrl);
+    expiresAt = expires;
   }
 
-  return { objectName, bytesWritten: data.length, url, visibility };
+  return { objectName, bytesWritten: data.length, url, visibility, expiresAt };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,11 +423,15 @@ export async function deleteUserFile(userId: string, objectName: string): Promis
 export async function makeFilePublic(
   userId: string,
   objectName: string,
+  disposition: 'inline' | 'attachment' = 'inline',
 ): Promise<{ publicUrl: string }> {
   assertUserPrefix(userId, objectName);
   const srcFile = getBucket().file(objectName);
   const destFile = getPublicBucket().file(objectName);
   await srcFile.copy(destFile);
+  if (disposition === 'attachment') {
+    await destFile.setMetadata({ contentDisposition: attachmentDisposition(objectName) });
+  }
   return { publicUrl: getPublicUrl(objectName) };
 }
 
@@ -432,6 +445,69 @@ export async function makeFilePrivate(
 ): Promise<void> {
   assertUserPrefix(userId, objectName);
   await getPublicBucket().file(objectName).delete({ ignoreNotFound: true });
+}
+
+/**
+ * Create an expiring share link as a public-bucket copy (Drive-style).
+ *
+ * Unlike signed URLs (whose signature lives in the query string the
+ * storage.stuard.ai proxy strips), a public copy needs no query string, so the
+ * link stays on the branded domain. Expiry is stored as shareExpiresAt object
+ * metadata; cleanupExpiredShares() deletes copies past it. Re-sharing the same
+ * object replaces the copy and its expiry; makeFilePublic over it upgrades the
+ * link to permanent (the fresh copy carries no shareExpiresAt); makeFilePrivate
+ * revokes it early.
+ */
+export async function createTtlShareCopy(
+  userId: string,
+  objectName: string,
+  ttlMs: number,
+  disposition: 'inline' | 'attachment' = 'inline',
+): Promise<{ url: string; expiresAt: number }> {
+  assertUserPrefix(userId, objectName);
+  const expiresAt = Date.now() + Math.min(Math.max(ttlMs, 60_000), MAX_SIGNED_URL_TTL_MS);
+  const srcFile = getBucket().file(objectName);
+  const destFile = getPublicBucket().file(objectName);
+  await srcFile.copy(destFile);
+  await destFile.setMetadata({
+    metadata: { shareExpiresAt: String(expiresAt) },
+    ...(disposition === 'attachment' ? { contentDisposition: attachmentDisposition(objectName) } : {}),
+  });
+  return { url: getPublicUrl(objectName), expiresAt };
+}
+
+/** Content-Disposition header value forcing a download with the original filename. */
+function attachmentDisposition(objectName: string): string {
+  const filename = (objectName.split('/').pop() || 'download').replace(/["\\]/g, '');
+  return `attachment; filename="${filename}"`;
+}
+
+/** Delete expired TTL share copies from the public bucket. Returns count deleted. */
+export async function cleanupExpiredShares(): Promise<number> {
+  const now = Date.now();
+  const [files] = await getPublicBucket().getFiles();
+  let deleted = 0;
+  for (const f of files) {
+    const exp = Number((f.metadata?.metadata as Record<string, string> | undefined)?.shareExpiresAt || 0);
+    if (exp > 0 && exp < now) {
+      await f.delete({ ignoreNotFound: true }).catch(() => { });
+      deleted++;
+    }
+  }
+  return deleted;
+}
+
+let shareCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Start the periodic expired-share cleanup (idempotent). */
+export function startShareCleanupCron(intervalMs = 10 * 60_000): void {
+  if (shareCleanupTimer) return;
+  shareCleanupTimer = setInterval(() => {
+    cleanupExpiredShares()
+      .then(n => { if (n > 0) console.log(`[cold-storage] cleaned up ${n} expired share link(s)`); })
+      .catch(e => console.warn('[cold-storage] share cleanup failed:', e?.message));
+  }, intervalMs);
+  shareCleanupTimer.unref?.();
 }
 
 /**

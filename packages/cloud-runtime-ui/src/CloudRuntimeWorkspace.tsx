@@ -232,7 +232,7 @@ function CloudRuntimeWorkspaceInner({
         {/* Compact top bar */}
         <header className="h-[40px] flex items-center justify-between gap-2 px-2 sm:gap-3 sm:px-4 border-b border-theme shrink-0">
           <div className="flex items-center gap-2 min-w-0 text-[11px]">
-            <span className="text-theme-muted truncate">{engine?.instance_name || 'Cloud Engine'}</span>
+            <span className="text-theme-muted truncate">{engine?.instance_name || 'Cloud Computer'}</span>
             <span className="text-theme-muted/30">/</span>
             <span className="text-theme-fg font-medium">{activeLabel}</span>
             {mode === 'developer' && (

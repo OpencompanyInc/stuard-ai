@@ -40,7 +40,7 @@ function inferMimeType(filename: string): string {
 export const cloud_storage_upload = createTool({
   id: 'cloud_storage_upload',
   description:
-    'Upload a local file to cloud storage. Choose "public" for a permanent URL (useful for Instagram, sharing), "private" for a 1-hour signed URL, or "ttl" for a custom-duration signed URL.',
+    'Upload a local file to cloud storage. Choose "public" for a permanent URL (useful for Instagram, sharing), "private" for a 1-hour signed URL, or "ttl" for a custom-duration signed URL. To show the uploaded image/video/audio inline in chat, wrap the returned url as <<url>> in your reply.',
   inputSchema: z.object({
     path: z.string().min(1).describe('Local file path to upload (e.g. C:\\Users\\me\\photo.jpg)'),
     folder: z.string().optional().describe('Optional subfolder in cloud storage (e.g. "instagram", "exports")'),
@@ -96,8 +96,10 @@ export const cloud_storage_upload = createTool({
       objectName: result.objectName,
       url: result.url,
       visibility: result.visibility,
+      ...(result.expiresAt ? { expiresAt: new Date(result.expiresAt).toISOString() } : {}),
       bytesWritten: result.bytesWritten,
       contentType,
+      hint: `To show this file inline in chat, include <<${result.url}>> in your reply.`,
     };
   },
 });
@@ -108,7 +110,7 @@ export const cloud_storage_upload = createTool({
 export const cloud_storage_get_url = createTool({
   id: 'cloud_storage_get_url',
   description:
-    'Get a download URL for a file already in cloud storage. Returns a signed (private/ttl) or permanent public URL.',
+    'Get a download URL for a file already in cloud storage. Returns a signed (private/ttl) or permanent public URL. To show the image/video/audio inline in chat, wrap the returned url as <<url>> in your reply.',
   inputSchema: z.object({
     objectName: z.string().min(1).describe('The object name / path in cloud storage'),
     visibility: z.enum(['public', 'private', 'ttl']).default('private').describe('"public" = copy to public bucket, return permanent URL. "private" = signed URL valid for 1 hour. "ttl" = signed URL with custom duration.'),

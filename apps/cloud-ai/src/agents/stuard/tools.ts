@@ -28,6 +28,7 @@ import { data_analysis_status, data_analysis_setup, data_analysis_uninstall, dat
 import { submitFeedback, reportBug, suggestFeature, listMyFeedback, getFeedbackDetails } from '../../tools/feedback-tools';
 import { http_request } from '../../tools/http-tools';
 import { vm_status, vm_execute_tool, vm_upload_file, vm_download_file } from '../../tools/vm-tools';
+import { cloud_storage_upload, cloud_storage_get_url, cloud_storage_list, cloud_storage_delete, cloud_storage_set_visibility } from '../../tools/cloud-storage-tools';
 import { createRequire } from 'node:module';
 import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
@@ -125,6 +126,12 @@ const RAW_ALL_TOOLS = {
   vm_execute_tool,
   vm_upload_file,
   vm_download_file,
+  // Cloud storage (Stuard Storage — upload/share/list/delete user files in GCS)
+  cloud_storage_upload,
+  cloud_storage_get_url,
+  cloud_storage_list,
+  cloud_storage_delete,
+  cloud_storage_set_visibility,
   python_install,
   run_python_script,
   // Background terminal polling (non-interactive)

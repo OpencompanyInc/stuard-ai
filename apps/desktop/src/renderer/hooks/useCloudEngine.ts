@@ -53,6 +53,45 @@ export const cloudClient = createCloudClient({
   getAccessToken: getAuthToken,
 });
 
+type LocalAgentSyncState = {
+  syncing: boolean;
+  pendingChanges: boolean;
+  lastPushAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+  autoSyncEnabled: boolean;
+};
+
+// Changes are pushed by the main process within ~15s (fast path) / 60s
+// (safety net). Only call the data "out of sync" once pending changes have
+// sat unpushed well past both windows — otherwise the pill flaps on every
+// local write even though auto-sync is about to handle it.
+const PENDING_STALE_MS = 3 * 60_000;
+
+/**
+ * Combine the desktop main-process sync state (authoritative for desktop→VM
+ * data sync) with the server's cold-backup heuristic (fallback only). The
+ * server's `lastSyncAt` tracks VM→cold-storage backups, not desktop↔VM data
+ * sync, so on its own it reported "Out of Sync" almost permanently.
+ */
+function deriveSyncStatus(
+  local: LocalAgentSyncState | null,
+  server: CloudSyncStatus,
+  isSyncingNow: boolean,
+): CloudSyncStatus {
+  if (!local) return server;
+  let state: SyncState;
+  if (isSyncingNow || local.syncing) state = 'syncing';
+  else if (local.lastError) state = 'out_of_sync';
+  else if (local.pendingChanges && (!local.lastPushAt || Date.now() - local.lastPushAt > PENDING_STALE_MS)) state = 'out_of_sync';
+  else state = 'synced';
+  return {
+    ...server,
+    state,
+    lastSyncAt: local.lastPushAt ? new Date(local.lastPushAt).toISOString() : server.lastSyncAt,
+  };
+}
+
 interface EngineCache {
   engine: CloudEngine | null;
   metrics: CloudMetrics | null;
@@ -87,9 +126,28 @@ export function useCloudEngine() {
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, []);
 
+  // Live sync-state updates from the main process (auto-sync job start/done/
+  // error) so the indicator reflects background pushes without waiting for the
+  // next status poll.
+  useEffect(() => {
+    const off = window.desktopAPI?.onAgentSyncStatus?.((payload) => {
+      const local = payload?.state;
+      if (!local) return;
+      setSyncStatus(prev => deriveSyncStatus(
+        local,
+        prev ?? { state: 'unknown', lastSyncAt: null, vm: null, desktop: null },
+        isSyncingRef.current,
+      ));
+    });
+    return () => { try { off?.(); } catch { /* noop */ } };
+  }, []);
+
   const fetchEngine = useCallback(async () => {
     try {
-      const data = await cloudClient.getCloudEngineStatus();
+      const [data, localSyncRes] = await Promise.all([
+        cloudClient.getCloudEngineStatus(),
+        window.desktopAPI?.getAgentSyncState?.().catch(() => null) ?? Promise.resolve(null),
+      ]);
       if (data.ok && data.engine) {
         const mapped = mapEngineResponse(data.engine)!;
         setEngine(mapped);
@@ -98,7 +156,8 @@ export function useCloudEngine() {
 
         let mappedSync: CloudSyncStatus | null = null;
         if (data.sync) {
-          mappedSync = computeSyncState(data.sync, isSyncingRef.current);
+          const localSync = localSyncRes?.ok && localSyncRes.state ? localSyncRes.state : null;
+          mappedSync = deriveSyncStatus(localSync, computeSyncState(data.sync, isSyncingRef.current), isSyncingRef.current);
           setSyncStatus(mappedSync);
         }
 
@@ -125,7 +184,7 @@ export function useCloudEngine() {
         lastTzSyncedStatusRef.current = null;
         setError(null);
       } else {
-        setError(data.message || data.error || 'Could not load cloud engine status');
+        setError(data.message || data.error || 'Could not load cloud computer status');
       }
     } catch {
       setError('Unable to connect to Stuard Cloud. Check your internet connection.');
@@ -208,7 +267,7 @@ export function useCloudEngine() {
         cloudClient.syncBrowserProfileToVm().catch(() => {});
         await fetchEngine();
       } else {
-        setError(data.message || data.error || 'Could not create your cloud engine. Please try again.');
+        setError(data.message || data.error || 'Could not create your cloud computer. Please try again.');
       }
     } catch {
       setError('Unable to reach Stuard Cloud. Please check your internet and try again.');

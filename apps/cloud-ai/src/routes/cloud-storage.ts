@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { verifyToken, getStorageUsage, upsertStorageUsage } from '../supabase';
+import {
+  verifyToken, getStorageUsage, upsertStorageUsage,
+  createShareLink, getShareLink, revokeShareLinks,
+} from '../supabase';
 import {
   generateUserUploadUrl,
   generateUserDownloadUrl,
@@ -14,6 +17,7 @@ import {
   makeFilePublic,
   makeFilePrivate,
   getPublicUrl,
+  createTtlShareCopy,
 } from '../services/cold-storage';
 import { checkColdStorageQuota } from '../services/hot-storage';
 
@@ -90,6 +94,26 @@ async function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<a
     });
     req.on('error', reject);
   });
+}
+
+/** Normalize a user-provided link name into a slug: lowercase, [a-z0-9-]. */
+function slugify(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
+function randomSlugSuffix(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
+
+/** Public base for short links, derived from the incoming request. */
+function shortLinkBase(req: IncomingMessage): string {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || 'http';
+  const host = String(req.headers['x-forwarded-host'] || req.headers['host'] || '').split(',')[0].trim();
+  return host ? `${proto}://${host}` : '';
 }
 
 async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<{ userId: string; email?: string } | null> {
@@ -320,7 +344,11 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
         const b64data = String(body.data || '').trim();
         const folderPath = String(body.folder || '').trim();
         const fileContentType = String(body.contentType || 'application/octet-stream');
-        const visibility = (body.visibility === 'public' ? 'public' : 'private') as 'public' | 'private';
+        const visRaw = String(body.visibility || 'private');
+        const visibility = (visRaw === 'public' || visRaw === 'ttl' ? visRaw : 'private') as 'public' | 'private' | 'ttl';
+        // TTL mode: signed URL valid for a custom duration (capped server-side at 7 days)
+        const ttlHours = Math.max(0, Number(body.ttlHours ?? body.ttl_hours ?? 0) || 0);
+        const ttlMs = visibility === 'ttl' && ttlHours > 0 ? ttlHours * 60 * 60 * 1000 : undefined;
 
         if (!filename) {
           json(res, 400, { ok: false, error: 'missing_filename' });
@@ -332,8 +360,8 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
         }
 
         const buffer = Buffer.from(b64data, 'base64');
-        console.log(`[cloud-storage] upload (json): user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${buffer.length} type=${fileContentType} vis=${visibility}`);
-        const result = await uploadUserFileBuffer(user.userId, filename, buffer, fileContentType, folderPath, visibility);
+        console.log(`[cloud-storage] upload (json): user=${user.userId} file=${filename} folder=${folderPath || '/'} size=${buffer.length} type=${fileContentType} vis=${visibility}${ttlMs ? ` ttl=${ttlMs}ms` : ''}`);
+        const result = await uploadUserFileBuffer(user.userId, filename, buffer, fileContentType, folderPath, visibility, ttlMs);
         console.log(`[cloud-storage] upload complete: ${result.objectName} (${result.bytesWritten} bytes, url=${result.url ? 'yes' : 'none'})`);
 
         // Update cold_storage_bytes so billing and UI stay accurate
@@ -350,6 +378,7 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
           bytesWritten: result.bytesWritten,
           url: result.url,
           visibility: result.visibility,
+          ...(result.expiresAt ? { expiresAt: new Date(result.expiresAt).toISOString() } : {}),
         });
       } else {
         // ── Raw stream mode (original behavior) ──
@@ -476,7 +505,122 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
     return true;
   }
 
-  // ── GET /v1/cloud-storage/files ──────────────────────────────────────────
+  // ── POST /v1/cloud-storage/share-url ─────────────────────────────────────
+  // Generate a shareable link for a file:
+  //   mode "public"  → copy to public bucket, permanent branded URL
+  //   mode "ttl"     → signed URL valid for ttlHours (capped at 7 days)
+  //   mode "private" → revoke public access (delete public-bucket copy)
+  if (method === 'POST' && path === '/v1/cloud-storage/share-url') {
+    const user = await authenticate(req, res);
+    if (!user) return true;
+    try {
+      const body = await readBody(req);
+      let objectName = String(body.objectName || '').trim();
+      const mode = String(body.mode || '').trim();
+      if (!objectName) {
+        json(res, 400, { ok: false, error: 'missing_object_name' });
+        return true;
+      }
+      if (mode !== 'public' && mode !== 'ttl' && mode !== 'private') {
+        json(res, 400, { ok: false, error: 'invalid_mode', valid: ['public', 'ttl', 'private'] });
+        return true;
+      }
+      if (!objectName.startsWith(`${user.userId}/`)) {
+        objectName = `${user.userId}/${objectName}`;
+      }
+      if (!validateObjectName(objectName)) {
+        json(res, 400, { ok: false, error: 'invalid_object_name' });
+        return true;
+      }
+
+      if (mode === 'private') {
+        await makeFilePrivate(user.userId, objectName);
+        await revokeShareLinks(user.userId, objectName);
+        json(res, 200, { ok: true, mode, objectName });
+        return true;
+      }
+
+      // Optional custom slug + download-vs-preview behaviour
+      const rawLinkName = String(body.linkName ?? body.link_name ?? '').trim();
+      const dispRaw = String(body.disposition || 'inline');
+      const disposition = (dispRaw === 'attachment' ? 'attachment' : 'inline') as 'inline' | 'attachment';
+      let customSlug = '';
+      if (rawLinkName) {
+        customSlug = slugify(rawLinkName);
+        if (customSlug.length < 3) {
+          json(res, 400, { ok: false, error: 'invalid_link_name', message: 'Link names need at least 3 letters or numbers.' });
+          return true;
+        }
+      }
+
+      // Create the public copy (permanent or expiring)
+      let directUrl: string;
+      let expiresAtIso: string | null = null;
+      if (mode === 'public') {
+        // Branded storage.stuard.ai URL — safe for public objects (no query
+        // string). Signed URLs can't go through the proxy (it strips the
+        // query string carrying the V4 signature), hence public copies.
+        const { publicUrl } = await makeFilePublic(user.userId, objectName, disposition);
+        directUrl = publicUrl;
+      } else {
+        // Fractional hours allowed (0.5 = 30 minutes); clamped to [1min, 7d].
+        const ttlHours = Math.max(0, Number(body.ttlHours ?? body.ttl_hours ?? 0) || 0);
+        if (ttlHours <= 0) {
+          json(res, 400, { ok: false, error: 'missing_ttl_hours' });
+          return true;
+        }
+        const { url, expiresAt } = await createTtlShareCopy(user.userId, objectName, ttlHours * 60 * 60 * 1000, disposition);
+        directUrl = url;
+        expiresAtIso = new Date(expiresAt).toISOString();
+      }
+
+      // Register the short link (/s/<slug>). Auto slugs retry on collision;
+      // custom names report the conflict so the user can pick another.
+      const filenameBase = slugify((objectName.split('/').pop() || 'file').replace(/\.[^.]+$/, '')).slice(0, 24) || 'file';
+      let slug = customSlug || `${filenameBase}-${randomSlugSuffix()}`;
+      let shortUrl: string | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const created = await createShareLink({
+          slug,
+          user_id: user.userId,
+          object_name: objectName,
+          mode,
+          disposition,
+          expires_at: expiresAtIso,
+        });
+        if (created.ok) {
+          const base = shortLinkBase(req);
+          shortUrl = base ? `${base}/s/${slug}` : null;
+          break;
+        }
+        if (created.error === 'slug_taken') {
+          if (customSlug) {
+            json(res, 409, { ok: false, error: 'link_name_taken', message: `"${customSlug}" is already in use. Try another name.` });
+            return true;
+          }
+          slug = `${filenameBase}-${randomSlugSuffix()}`;
+          continue;
+        }
+        console.warn('[cloud-storage] share link insert failed:', created.error);
+        break; // fall through with the direct URL only
+      }
+
+      json(res, 200, {
+        ok: true,
+        mode,
+        url: directUrl,
+        ...(shortUrl ? { shortUrl, slug } : {}),
+        objectName,
+        ...(expiresAtIso ? { expiresAt: expiresAtIso } : {}),
+      });
+    } catch (e: any) {
+      console.error('[cloud-storage] share-url error:', e?.message);
+      json(res, 500, { ok: false, error: 'share_url_failed', message: e?.message || 'failed' });
+    }
+    return true;
+  }
+
+  // ── GET /v1/cloud-storage/files ───────────────────────────────────────────
   // List files in the user's GCS prefix.
   if (method === 'GET' && path === '/v1/cloud-storage/files') {
     const user = await authenticate(req, res);
@@ -493,4 +637,54 @@ export async function handleCloudStorageRoutes(req: IncomingMessage, res: Server
   }
 
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Short share links — GET /s/<slug> (public, no auth)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function shareErrorPage(res: ServerResponse, status: number, title: string, detail: string): void {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · Stuard</title><style>
+  body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0c0a09;color:#fafaf9;font-family:system-ui,-apple-system,sans-serif}
+  .card{text-align:center;padding:48px 40px;max-width:380px}
+  .dot{width:48px;height:48px;border-radius:16px;background:rgba(229,72,77,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:22px}
+  h1{font-size:19px;margin:0 0 8px;font-weight:650;letter-spacing:-.01em}
+  p{font-size:13.5px;line-height:1.6;color:#a8a29e;margin:0}
+  </style></head><body><div class="card"><div class="dot">🔗</div><h1>${title}</h1><p>${detail}</p></div></body></html>`;
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
+}
+
+/** Resolve /s/<slug> short links → 302 to the public file URL. */
+export async function handleShareLinkRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
+  const path = parsedUrl.pathname;
+  if (!path.startsWith('/s/')) return false;
+  if ((req.method || '') !== 'GET' && (req.method || '') !== 'HEAD') return false;
+
+  const slug = decodeURIComponent(path.slice(3)).trim().toLowerCase();
+  if (!slug || slug.includes('/')) {
+    shareErrorPage(res, 404, 'Link not found', 'This share link doesn’t exist. Double-check the URL.');
+    return true;
+  }
+
+  const link = await getShareLink(slug);
+  if (!link) {
+    shareErrorPage(res, 404, 'Link not found', 'This share link doesn’t exist. Double-check the URL.');
+    return true;
+  }
+  if (link.revoked) {
+    shareErrorPage(res, 410, 'Link revoked', 'The owner removed access to this file.');
+    return true;
+  }
+  if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) {
+    shareErrorPage(res, 410, 'Link expired', 'This share link has expired and no longer works.');
+    return true;
+  }
+
+  res.writeHead(302, {
+    Location: getPublicUrl(link.object_name),
+    'Cache-Control': 'no-store',
+  });
+  res.end();
+  return true;
 }

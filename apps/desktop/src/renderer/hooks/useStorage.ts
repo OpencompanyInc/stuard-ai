@@ -52,11 +52,31 @@ export interface CloudFileEntry {
 }
 
 export interface UploadProgress {
+  id: string;
   filename: string;
   loaded: number;
   total: number;
   percent: number;
   status: 'pending' | 'uploading' | 'done' | 'error';
+  error?: string;
+}
+
+export type ShareMode = 'public' | 'ttl' | 'private';
+
+export interface ShareOptions {
+  /** Custom short-link slug (e.g. "demo-video" → stuard.../s/demo-video). */
+  linkName?: string;
+  /** "attachment" makes the link download immediately instead of previewing. */
+  disposition?: 'inline' | 'attachment';
+}
+
+export interface ShareResult {
+  ok: boolean;
+  mode?: ShareMode;
+  url?: string;
+  shortUrl?: string;
+  slug?: string;
+  expiresAt?: string;
   error?: string;
 }
 
@@ -202,7 +222,9 @@ export function useStorage() {
   // Falls back to JSON+base64 in the unlikely case the IPC bridge isn't loaded.
   const uploadFile = useCallback(async (file: File, folderPath = '') => {
     const filename = file.name;
+    const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const progress: UploadProgress = {
+      id: uploadId,
       filename,
       loaded: 0,
       total: file.size,
@@ -214,7 +236,7 @@ export function useStorage() {
 
     try {
       setUploadQueue(prev =>
-        prev.map(p => p.filename === filename ? { ...p, status: 'uploading' } : p)
+        prev.map(p => p.id === uploadId ? { ...p, status: 'uploading' } : p)
       );
 
       const token = await getAuthToken();
@@ -230,6 +252,7 @@ export function useStorage() {
           folderPath: folderPath || '',
           contentType: file.type || 'application/octet-stream',
           token: token || undefined,
+          uploadId,
         });
       } else {
         // Fallback for non-Electron contexts (e.g. browser-only dev): JSON+base64.
@@ -263,13 +286,13 @@ export function useStorage() {
       if (!data?.ok) {
         const errMsg = data?.message || data?.error || 'Upload failed';
         setUploadQueue(prev =>
-          prev.map(p => p.filename === filename ? { ...p, status: 'error', error: errMsg } : p)
+          prev.map(p => p.id === uploadId ? { ...p, status: 'error', error: errMsg } : p)
         );
         return { ok: false, error: errMsg };
       }
 
       setUploadQueue(prev =>
-        prev.map(p => p.filename === filename ? { ...p, status: 'done', percent: 100, loaded: file.size } : p)
+        prev.map(p => p.id === uploadId ? { ...p, status: 'done', percent: 100, loaded: file.size } : p)
       );
 
       await fetchInfo();
@@ -277,13 +300,34 @@ export function useStorage() {
       return { ok: true, objectName: data.objectName };
     } catch (e: any) {
       setUploadQueue(prev =>
-        prev.map(p => p.filename === filename ? { ...p, status: 'error', error: e?.message || 'Upload failed' } : p)
+        prev.map(p => p.id === uploadId ? { ...p, status: 'error', error: e?.message || 'Upload failed' } : p)
       );
       return { ok: false, error: e?.message };
     } finally {
       setUploading(false);
     }
   }, [fetchInfo, fetchQuota]);
+
+  // Live byte progress from the main-process streaming upload.
+  useEffect(() => {
+    const subscribe = (window as any).desktopAPI?.onCloudStorageUploadProgress;
+    if (typeof subscribe !== 'function') return;
+    const unsubscribe = subscribe((p: { uploadId: string; loaded: number; total: number }) => {
+      setUploadQueue(prev =>
+        prev.map(item =>
+          item.id === p.uploadId && item.status === 'uploading'
+            ? {
+                ...item,
+                loaded: p.loaded,
+                total: p.total || item.total,
+                percent: p.total > 0 ? Math.min(100, Math.round((p.loaded / p.total) * 100)) : 0,
+              }
+            : item,
+        ),
+      );
+    });
+    return () => { try { unsubscribe?.(); } catch { } };
+  }, []);
   // ── Create Folder ────────────────────────────────────────────────────────────
   const createFolder = useCallback(async (folderPath: string) => {
     try {
@@ -322,6 +366,40 @@ export function useStorage() {
         return { ok: true };
       }
       return { ok: false, error: data.error || 'Failed to get download URL' };
+    } catch (e: any) {
+      return { ok: false, error: e?.message };
+    }
+  }, []);
+
+  // ── Get File URL (signed, for in-app preview — does NOT open a browser) ──
+  const getFileUrl = useCallback(async (objectName: string): Promise<{ ok: boolean; url?: string; error?: string }> => {
+    try {
+      const data = await cloudFetch('/v1/cloud-storage/download-url', {
+        method: 'POST',
+        body: JSON.stringify({ objectName }),
+      });
+      if (data.ok && data.downloadUrl) return { ok: true, url: data.downloadUrl };
+      return { ok: false, error: data.error || 'Failed to get file URL' };
+    } catch (e: any) {
+      return { ok: false, error: e?.message };
+    }
+  }, []);
+
+  // ── Share File (public permanent link / expiring TTL link / revoke) ──────
+  const shareFile = useCallback(async (objectName: string, mode: ShareMode, ttlHours?: number, opts?: ShareOptions): Promise<ShareResult> => {
+    try {
+      const data = await cloudFetch('/v1/cloud-storage/share-url', {
+        method: 'POST',
+        body: JSON.stringify({
+          objectName,
+          mode,
+          ...(mode === 'ttl' ? { ttlHours: ttlHours || 24 } : {}),
+          ...(opts?.linkName ? { linkName: opts.linkName } : {}),
+          ...(opts?.disposition ? { disposition: opts.disposition } : {}),
+        }),
+      });
+      if (data.ok) return { ok: true, mode: data.mode, url: data.url, shortUrl: data.shortUrl, slug: data.slug, expiresAt: data.expiresAt };
+      return { ok: false, error: data.message || data.error || 'Failed to create share link' };
     } catch (e: any) {
       return { ok: false, error: e?.message };
     }
@@ -459,7 +537,7 @@ export function useStorage() {
     plans, info, quota, syncStatus, files, loading, error, uploading, uploadQueue, syncing, purchasing,
     // Actions
     fetchPlans, fetchInfo, fetchQuota, fetchSyncStatus, fetchFiles,
-    purchasePlan, uploadFile, downloadFile, deleteFile, createFolder, renameFile,
+    purchasePlan, uploadFile, downloadFile, getFileUrl, shareFile, deleteFile, createFolder, renameFile,
     syncToCloud, syncFromCloud, clearUploadQueue, refresh,
   };
 }

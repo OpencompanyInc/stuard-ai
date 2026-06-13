@@ -217,6 +217,125 @@ export const text_to_speech = createTool({
   },
 });
 
+const MUSIC_DEFAULT_LENGTH_MS = 30000;
+const MUSIC_MIN_LENGTH_MS = 3000;
+const MUSIC_MAX_LENGTH_MS = 600000;
+
+export const generate_music = createTool({
+  id: 'generate_music',
+  description: 'Generate original music/songs from a text prompt using ElevenLabs Music (model music_v1). Describe genre, mood, instruments, tempo, and optionally lyrics or a theme; set force_instrumental to guarantee no vocals. Saves the track to the media library. This is true music composition — distinct from text_to_speech, which only narrates text in a voice.',
+  inputSchema: z.object({
+    prompt: z.string().min(1).max(2000).describe('Description of the music to generate, e.g. "upbeat lo-fi hip hop with mellow piano and vinyl crackle" or "epic orchestral trailer score". Can include a theme or lyric direction.'),
+    length_ms: z.number().int().min(MUSIC_MIN_LENGTH_MS).max(MUSIC_MAX_LENGTH_MS).default(MUSIC_DEFAULT_LENGTH_MS).describe('Length of the song in milliseconds (3000–600000). Defaults to 30s.'),
+    force_instrumental: z.boolean().default(false).describe('If true, guarantees the generated song has no vocals.'),
+    format: z.enum(['mp3', 'opus', 'wav']).default('mp3').describe('Output audio format'),
+    save: z.boolean().default(true).describe('Whether to save the audio to a file'),
+    play: z.boolean().default(false).describe('Whether to play the audio immediately after generation'),
+    outputPath: z.string().optional().describe('Custom output path. If not provided and save=true, saves to the media gallery.'),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    filePath: z.string().optional(),
+    format: z.string().optional(),
+    lengthMs: z.number().optional(),
+    played: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+  execute: async (inputData: any, { writer }) => {
+    const { prompt, length_ms, force_instrumental, format, save, play, outputPath } = inputData;
+
+    try {
+      const client = getElevenLabsClient();
+      const outputFormat = FORMAT_TO_ELEVENLABS[format] || 'mp3_44100_128';
+
+      const audioStream = await client.music.compose({
+        prompt,
+        musicLengthMs: length_ms,
+        forceInstrumental: force_instrumental,
+        modelId: 'music_v1',
+        outputFormat: outputFormat as any,
+      });
+      const audioBuffer = await streamToBuffer(audioStream);
+
+      // Bill the call — the /tools route doesn't auto-bill, each media tool logs
+      // its own usage. Best-effort; never breaks the result.
+      try {
+        const userId = getBridgeSecrets()?.userId;
+        if (userId && typeof userId === 'string') {
+          await logUsageEvent(userId, null, 'elevenlabs/music_v1', {
+            totalTokens: 0,
+            provider: 'elevenlabs',
+            endpoint: '/tools/generate_music',
+            source_label: 'Music Generation',
+            format,
+            lengthMs: length_ms,
+          });
+        }
+      } catch {}
+
+      let filePath: string | undefined;
+      let played = false;
+
+      if (save || play) {
+        const fileName = `music_${randomUUID().slice(0, 8)}.${format}`;
+        const resolvedFilePath: string = outputPath || join(mediaGalleryDir('generated-audio'), fileName);
+        filePath = resolvedFilePath;
+
+        const dir = resolvedFilePath.substring(0, resolvedFilePath.lastIndexOf('/') || resolvedFilePath.lastIndexOf('\\'));
+        if (dir) {
+          await mkdir(dir, { recursive: true }).catch(() => {});
+        }
+
+        await writeFile(resolvedFilePath, audioBuffer);
+
+        // Register saved audio in the desktop media library via bridge (best-effort, silent)
+        try {
+          await execLocalTool('_media_register', {
+            b64: audioBuffer.toString('base64'),
+            fileName,
+            format,
+            mimeType: format === 'mp3' ? 'audio/mpeg' : `audio/${format}`,
+            source: 'generated-audio',
+            toolName: 'generate_music',
+            classification: 'Generated music',
+            tags: ['music', 'audio'],
+            metadata: {
+              prompt,
+              lengthMs: length_ms,
+              force_instrumental,
+            },
+          }, writer as any, 30000, { silent: true });
+        } catch (regErr: any) {
+          console.warn('[tts-tools] Media register (best-effort):', regErr?.message || regErr);
+        }
+      }
+
+      if (play && filePath) {
+        try {
+          await execLocalTool('launch_application_or_uri', { target: filePath }, writer as any);
+          played = true;
+        } catch (e: any) {
+          console.warn('[tts-tools] Failed to play music:', e?.message);
+        }
+      }
+
+      return {
+        ok: true,
+        filePath: save ? filePath : undefined,
+        format,
+        lengthMs: length_ms,
+        played,
+      };
+    } catch (e: any) {
+      console.error('[tts-tools] generate_music error:', e);
+      return {
+        ok: false,
+        error: errorMessage(e, 'Failed to generate music'),
+      };
+    }
+  },
+});
+
 export const list_tts_voices = createTool({
   id: 'list_tts_voices',
   description: 'List all available ElevenLabs text-to-speech voices.',

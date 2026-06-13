@@ -275,7 +275,7 @@ function computeBillingLabel(eventType: string): string {
     case "storage_purchase":
       return "Storage Purchase";
     default:
-      return "Cloud Engine";
+      return "Cloud Computer";
   }
 }
 
