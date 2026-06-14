@@ -127,6 +127,13 @@ def store_oauth_tokens(args: Dict[str, Any]) -> Dict[str, Any]:
                     continue
                 if not nxt["refreshToken"] and prev.get("refreshToken"):
                     nxt["refreshToken"] = prev["refreshToken"]
+                # Preserve prior flags/metadata when an incremental write omits them
+                # (e.g. a token-only refresh write-back must not drop the default
+                # marker or the account email).
+                if not nxt.get("isDefault") and prev.get("isDefault"):
+                    nxt["isDefault"] = True
+                if not nxt.get("accountEmail") and prev.get("accountEmail"):
+                    nxt["accountEmail"] = prev.get("accountEmail")
                 nxt["scopes"] = list(dict.fromkeys(
                     [*(prev.get("scopes") or []), *(nxt["scopes"] or [])]
                 ))

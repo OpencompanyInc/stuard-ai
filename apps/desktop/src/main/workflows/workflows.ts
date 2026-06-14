@@ -12,7 +12,7 @@ import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } fr
 import { getTimezone } from "../settings";
 import { waitForAgentReady } from "../services/agent";
 import { readClipboardSnapshot } from "../tools/clipboard-snapshot";
-import { getLocalXOAuth } from "../services/social-trigger-client";
+import { getLocalXOAuth, persistRefreshedXOAuth } from "../services/social-trigger-client";
 // Lazy-imported inside handlers to avoid circular deps with bot-trigger-dispatcher
 // → bot-service → proactive-service → … → workflows.
 let _routeWebhookToBots: ((slug: string, payload: any) => number) | null = null;
@@ -702,14 +702,11 @@ async function registerSocialNativeTrigger(
   type: SocialNativeTriggerType,
   args: any
 ) {
-  // X triggers need the user's X token once for the per-user webhook
-  // subscription; relay the device-local token (cloud uses it transiently and
-  // never stores it). Fetch once, outside the auth-retry loop.
-  const oauth = type.startsWith('x.')
-    ? await getLocalXOAuth(String(args?.profile || '').trim() || undefined)
+  const profileLabel = type.startsWith('x.')
+    ? String(args?.profile || '').trim() || undefined
     : undefined;
   // Same auth-retry pattern as Google native triggers (session may not be ready on autostart).
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = type.startsWith('x.') ? 5 : 5;
   const RETRY_DELAY_MS = 3000;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -721,6 +718,11 @@ async function registerSocialNativeTrigger(
         }
         return { ok: false, error: 'missing_access_token' };
       }
+
+      const oauth = type.startsWith('x.')
+        ? await getLocalXOAuth(profileLabel)
+        : undefined;
+
       const base = getCloudAiHttpBase();
       const resp = await net.fetch(`${base}/integrations/social/triggers/register`, {
         method: 'POST',
@@ -738,8 +740,18 @@ async function registerSocialNativeTrigger(
       if (!resp.ok || !out?.ok) {
         const err = String(out?.error || `http_${resp.status}`);
         const hint = out?.hint ? ` (${out.hint})` : '';
+        const retryable = type.startsWith('x.')
+          && (err === 'x_not_connected' || err === 'x_external_id_missing' || !oauth);
+        if (retryable && attempt < MAX_RETRIES - 1) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          continue;
+        }
         logFlow(flowId, `Social trigger '${type}' registration failed: ${err}${hint}`);
         return { ok: false, error: err, hint: out?.hint };
+      }
+      if (out.oauthRefreshed) void persistRefreshedXOAuth(profileLabel, out.oauthRefreshed);
+      if (out.subscription && out.subscription.ok === false) {
+        logFlow(flowId, `Social trigger '${type}' registered but the X subscription failed (${out.subscription.reason || out.subscription.status || 'unknown'}) — events may not be delivered until this is resolved.`);
       }
       return { ok: true };
     } catch (e: any) {
