@@ -128,9 +128,12 @@ describe('Capability Packs', () => {
     const { WORKFLOW_PACK } = await import('./capability-packs');
     expect(WORKFLOW_PACK.kind).toBe('workflow');
     expect(WORKFLOW_PACK.toolNames).toContain('modify_workflow');
-    // Docs are inlined in WORKFLOW_SYSTEM_PROMPT (docs-data.ts) — the pack
-    // must NOT carry a doc-search tool anymore.
-    expect(WORKFLOW_PACK.toolNames).not.toContain('search_workflow_docs');
+    // Token-lean DSL read/edit path (see workflow-dsl.ts).
+    expect(WORKFLOW_PACK.toolNames).toContain('read_workflow');
+    expect(WORKFLOW_PACK.toolNames).toContain('edit_workflow');
+    // CORE docs are inlined in WORKFLOW_SYSTEM_PROMPT; situational sections are
+    // fetched on demand, so the pack now DOES carry the doc-search tool.
+    expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_docs');
     expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_nodes');
     expect(WORKFLOW_PACK.toolNames).toContain('search_tools');
     expect(WORKFLOW_PACK.toolNames).toContain('get_tool_schema');

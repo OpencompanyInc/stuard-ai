@@ -19,6 +19,7 @@ import { writeLog } from '../../utils/logger';
 import { createSearchToolsTool, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
 import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
+import { readWorkflow, editWorkflow } from '../../tools/workflow-dsl';
 import { stop_automation, write_file, create_directory, read_file, list_directory } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
@@ -31,6 +32,7 @@ import {
   withActiveBridgeContext,
 } from '../../tools/device/shared';
 import { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
+import { createSearchWorkflowDocsTool } from './docs';
 import { deployWorkflow } from './deploy';
 import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
 import { normalizeToolInputForSchema, coerceToolInputSchema } from '../../tools/zod-utils';
@@ -173,11 +175,21 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
       createSearchWorkflowNodesTool({ seen: new Set<string>() }),
       'search_workflow_nodes',
     ),
+    // 2b. Search workflow docs — fetch ON-DEMAND reference sections (custom_ui,
+    // streams, agent_nodes, advanced variants). Core docs are inlined in the prompt.
+    search_workflow_docs: createLoggedTool(
+      createSearchWorkflowDocsTool({ seen: new Set<string>() }),
+      'search_workflow_docs',
+    ),
     // 3. Search tools (workflow surface — sees workflow-only tools, hides chat-only like chat_ui)
     search_tools: createLoggedTool(createSearchToolsTool('workflow'), 'search_tools'),
     // 4. Get tool schema
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
-    // 5. Inspect workflow topology
+    // 4b. Read workflow as compact DSL (outline | window | full) — the lean read path
+    read_workflow: createLoggedTool(readWorkflow, 'read_workflow'),
+    // 4c. Edit workflow via DSL find/replace — the lean edit path
+    edit_workflow: createLoggedTool(editWorkflow, 'edit_workflow'),
+    // 5. Inspect workflow topology (deep validation / topology only — prefer read_workflow)
     inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
     // 5b. Load an existing saved workflow into session for editing
     load_workflow: createLoggedTool(loadWorkflow, 'load_workflow'),

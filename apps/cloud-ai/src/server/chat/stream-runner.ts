@@ -53,7 +53,7 @@ type BridgeWebSocket = import('ws').WebSocket;
 // The tool stores the mutated workflow in session state, so before forwarding
 // the tool-result to the client we re-attach it. Only the client-bound copy
 // gets the workflow; the result persisted to model history stays compact.
-const WORKFLOW_MUTATION_TOOLS = new Set(['modify_workflow', 'workflow_modify']);
+const WORKFLOW_MUTATION_TOOLS = new Set(['modify_workflow', 'workflow_modify', 'edit_workflow']);
 
 export function attachWorkflowForClient(toolName: string, result: any): any {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return result;

@@ -25,7 +25,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { requireAuth, sendJson } from '../../auth/http';
-import { getExternalAccount } from '../../supabase';
+import { getExternalAccount, upsertExternalAccount } from '../../supabase';
+import { getVMOAuthAccountForUser } from '../../tools/vm-oauth';
 import { dispatchProviderWebhook } from '../../webhooks/dispatch';
 import {
   persistTriggerRegistration,
@@ -254,17 +255,64 @@ async function resolveXExternalIdFromToken(accessToken: string): Promise<string 
  *  For X, prefer a device-local token relayed by the desktop (no Supabase); fall
  *  back to the stored external_accounts row when no token is supplied. */
 async function resolveExternalId(userId: string, provider: Provider, profileLabel?: string, accessToken?: string): Promise<string> {
-  if (provider === 'x' && accessToken) {
-    const fromToken = await resolveXExternalIdFromToken(accessToken);
-    if (fromToken) return fromToken;
+  if (provider === 'x') {
+    let token = String(accessToken || '').trim();
+    if (!token) {
+      const vmAcc = await getVMOAuthAccountForUser(userId, 'x', profileLabel).catch(() => null);
+      token = String(vmAcc?.access_token || '').trim();
+    }
+    if (token) {
+      const fromToken = await resolveXExternalIdFromToken(token);
+      if (fromToken) return fromToken;
+    }
   }
   const acc = await getExternalAccount(userId, provider, profileLabel);
-  if (!acc) throw new Error(`${provider}_not_connected`);
+  if (!acc) {
+    if (provider === 'x') {
+      throw new Error(accessToken ? 'x_token_invalid' : 'x_not_connected');
+    }
+    throw new Error(`${provider}_not_connected`);
+  }
   const externalId = String(
     acc?.meta?.external_user_id || acc?.meta?.profile?.id || acc?.meta?.profile?.user_id || ''
   ).trim();
   if (!externalId) throw new Error(`${provider}_external_id_missing`);
   return externalId;
+}
+
+/** Best-effort: persist X external_user_id metadata for desktop-local OAuth users
+ *  so future trigger registrations can resolve the id without a token relay. */
+async function persistXExternalMetadata(
+  userId: string,
+  externalId: string,
+  profileLabel?: string,
+  accountEmail?: string | null,
+): Promise<void> {
+  if (!externalId) return;
+  try {
+    const existing = await getExternalAccount(userId, 'x', profileLabel);
+    const currentId = String(
+      existing?.meta?.external_user_id || existing?.meta?.profile?.id || existing?.meta?.profile?.user_id || '',
+    ).trim();
+    if (currentId === externalId) return;
+    await upsertExternalAccount({
+      userId,
+      provider: 'x',
+      access_token: existing?.access_token || 'linked',
+      scopes: existing?.scopes || [],
+      refresh_token: existing?.refresh_token ?? null,
+      expires_at: existing?.expires_at ?? null,
+      meta: {
+        ...(existing?.meta || {}),
+        external_user_id: externalId,
+        source: 'desktop_oauth',
+      },
+      profileLabel: profileLabel || existing?.profile_label || 'default',
+      accountEmail: accountEmail ?? existing?.account_email ?? null,
+    });
+  } catch (e: any) {
+    writeLog('x_metadata_upsert_failed', { userId, error: String(e?.message || e) });
+  }
 }
 
 /** Best-effort: subscribe this IG account to the app so Meta delivers webhook events for it. */
@@ -466,6 +514,9 @@ export async function registerSocialTrigger(
   }
 
   const externalId = await resolveExternalId(userId, provider, profileLabel, accessToken);
+  if (provider === 'x') {
+    void persistXExternalMetadata(userId, externalId, profileLabel);
+  }
   const reg: Registration = {
     key, userId, workflowId, triggerId, type, provider, externalId,
     sourceKeys: [normalizedSourceKey],
@@ -888,6 +939,7 @@ export async function handleSocialTriggerRoutes(
       const msg = String(e?.message || 'register_failed');
       const detail: Record<string, any> = { ok: false, error: msg };
       if (msg.endsWith('_not_connected')) detail.hint = 'Connect the account in Settings > Integrations first';
+      else if (msg === 'x_token_invalid') detail.hint = 'Reconnect X in Settings > Integrations — the relayed token could not be verified.';
       else if (msg.endsWith('_external_id_missing')) detail.hint = 'Reconnect the account so its id is stored';
       sendJson(res, 400, detail);
     }

@@ -928,3 +928,35 @@ export function getAllDocsInline(): string {
     .map(c => `### ${c.id} — ${c.title}\n${c.content}`)
     .join('\n\n');
 }
+
+/**
+ * Sections moved OUT of the always-on system prompt and fetched on demand via
+ * search_workflow_docs. They are SITUATIONAL — only needed when building that
+ * specific feature (custom UI, streams, agent nodes, advanced triggers/loops/
+ * guards) — so inlining them taxed every turn of every session for little
+ * benefit. Everyday authoring docs (triggers, nodes, wires, guards, loops,
+ * variables, templates, modify ops, scripts, utility) stay inlined so common
+ * edits never need a doc round-trip. See project_workflow_token_blowup_levers.
+ */
+export const REFERENCE_DOC_IDS: ReadonlySet<string> = new Set<string>([
+  'trigger_advanced', 'wires_callnode', 'guards_ai', 'loops_patterns',
+  'ai_inference', 'agent_nodes', 'streams', 'function_triggers',
+  'custom_ui_basics', 'custom_ui_packages', 'custom_ui_hooks', 'custom_ui_data',
+  'custom_ui_multiscreen', 'custom_ui_markdown', 'custom_ui_live_updates',
+  'custom_ui_stuard_api', 'custom_ui_node_routing', 'custom_ui_multi_page',
+  'custom_ui_window', 'custom_ui_visual', 'custom_ui_pitfalls',
+  'debugging', 'performance',
+]);
+
+/**
+ * The CORE corpus inlined into the system prompt, plus a compact index of the
+ * on-demand reference sections. Replaces getAllDocsInline() in the workflow
+ * agent prompt to shed ~6k of always-resent prefix tokens.
+ */
+export function getCoreDocsInline(): string {
+  const core = DOC_CHUNKS.filter(c => !REFERENCE_DOC_IDS.has(c.id));
+  const reference = DOC_CHUNKS.filter(c => REFERENCE_DOC_IDS.has(c.id));
+  const inlined = core.map(c => `### ${c.id} — ${c.title}\n${c.content}`).join('\n\n');
+  const index = reference.map(c => `- ${c.id} — ${c.title}`).join('\n');
+  return `${inlined}\n\n### ON-DEMAND REFERENCE SECTIONS\nThese are NOT inlined above. When (and only when) you build one of these features, fetch the section with search_workflow_docs({ query: "<id>" }):\n${index}`;
+}

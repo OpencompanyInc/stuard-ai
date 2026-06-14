@@ -3,6 +3,7 @@ import { randomUUID, createHmac, createHash, randomBytes } from 'crypto';
 import { storeOAuthTokensOnVM } from '../cloud-engine';
 import { stageTokensForClaim } from './oauth-claim-store';
 import { listVMOAuthAccountsForUser } from '../../tools/vm-oauth';
+import { upsertExternalAccount } from '../../supabase';
 import { authenticateHttpLegacy, sendAuthError } from '../../auth/http';
 import { AuthErrorCode } from '../../auth';
 import {
@@ -273,14 +274,17 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       const scopes = scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : [];
       const expiresAt = expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null;
 
-      // Fetch X user profile for the connected handle
+      // Fetch X user profile for the connected handle + stable user id used by
+      // social trigger routing (external_accounts metadata — tokens stay local).
       let accountEmail: string | null = null;
+      let externalUserId: string | null = null;
       try {
-        const userRes = await fetch(`${X_API}/users/me?user.fields=username`, {
+        const userRes = await fetch(`${X_API}/users/me?user.fields=username,id`, {
           headers: { Authorization: `Bearer ${access_token}` },
         });
         const user: any = await (async () => { try { return await userRes.json(); } catch { return null; } })();
         const handle = user?.data?.username;
+        externalUserId = user?.data?.id ? String(user.data.id) : null;
         accountEmail = handle ? `@${handle}` : null;
       } catch {}
 
@@ -311,6 +315,26 @@ export async function handleXRoutes(req: IncomingMessage, res: ServerResponse, p
       // Desktop target: stage for the desktop to claim over the authenticated
       // /integrations/oauth/claim endpoint. Held in memory only (TTL), never
       // written to Supabase — the desktop stores it locally encrypted.
+      // Also persist a metadata-only external_accounts row so cloud trigger
+      // registration can resolve the X user id even when the token relay fails.
+      try {
+        await upsertExternalAccount({
+          userId,
+          provider: 'x',
+          access_token: 'linked',
+          scopes,
+          refresh_token: null,
+          expires_at: null,
+          meta: {
+            external_user_id: externalUserId,
+            source: 'desktop_oauth',
+          },
+          profileLabel,
+          accountEmail,
+        });
+      } catch (metaErr: any) {
+        console.warn('[x] metadata upsert failed (non-fatal):', metaErr?.message || metaErr);
+      }
       stageTokensForClaim(userId, [{
         provider: 'x',
         profileLabel,

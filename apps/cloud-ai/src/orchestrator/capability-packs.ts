@@ -344,11 +344,15 @@ const WORKFLOW_TOOLS = [
   // it. Delegate-only — studio loads the workflow through the UI.
   'load_workflow',
   // ── identical to the studio agent's toolkit from here on ──
-  // (no search_workflow_docs — the full doc corpus is inlined in
-  //  WORKFLOW_SYSTEM_PROMPT via docs-data.ts)
+  // Core docs are inlined in WORKFLOW_SYSTEM_PROMPT (docs-data.ts); situational
+  // sections are fetched on demand via search_workflow_docs.
   'search_workflow_nodes',
+  'search_workflow_docs',
   'search_tools',
   'get_tool_schema',
+  // DSL read/edit — the token-lean read-window-then-edit path (see workflow-dsl.ts)
+  'read_workflow',
+  'edit_workflow',
   'inspect_workflow',
   'modify_workflow',
   'execute_step',

@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./types": "./src/types.ts",
     "./topology": "./src/topology.ts",
+    "./dsl": "./src/dsl.ts",
     "./compiler": "./src/compiler.ts",
     "./guards": "./src/guards.ts",
     "./shortcuts": "./src/shortcuts.ts",
