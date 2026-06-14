@@ -316,6 +316,27 @@ const BotBlueprintTriggerSchema = z.object({
 });
 type BotBlueprintTrigger = z.infer<typeof BotBlueprintTriggerSchema>;
 
+/** When the model writes an event-driven X agent (system prompt + X tools) but
+ *  forgets to put the trigger in the structured `triggers` array, the tools it
+ *  DID pick reveal the wake condition. Infer the matching X trigger so we don't
+ *  silently fall back to a 10-minute timer — a poll is the wrong wake for an X
+ *  engagement agent (it fires on a clock instead of on the comment/DM, and makes
+ *  the agent re-scan and risk duplicate replies). */
+function inferTriggerFromTools(tools: string[]): BotBlueprintTrigger | null {
+  const set = new Set((tools || []).map((t) => String(t || '').trim().toLowerCase()));
+  const has = (...names: string[]) => names.some((n) => set.has(n));
+  if (has('x_reply_to_comment', 'x_get_comments', 'x_like_comment', 'x_comment_on_post')) {
+    return { type: 'x.new_comment', args: {}, label: 'X: New Comment', rationale: 'Inferred from the X comment tools the agent uses.' };
+  }
+  if (has('x_send_dm', 'x_list_dms')) {
+    return { type: 'x.new_dm', args: {}, label: 'X: New DM', rationale: 'Inferred from the X DM tools the agent uses.' };
+  }
+  if (has('x_list_followers')) {
+    return { type: 'x.new_follower', args: {}, label: 'X: New Follower', rationale: 'Inferred from the X follower tools the agent uses.' };
+  }
+  return null;
+}
+
 const BotBlueprintResponseSchema = z.object({
   name: z.string().min(1).max(80),
   emoji: z.string().min(1).max(16).optional(),
@@ -774,9 +795,12 @@ export function sanitizeBotBlueprint(raw: unknown, args: {
     triggers.push(trigger);
   }
   // Always guarantee at least one trigger. If the model returned none (or only
-  // unusable ones), synthesize the interval trigger so the agent still runs.
+  // unusable ones), first try to infer the real wake condition from the agent's
+  // tools (e.g. X comment tools => x.new_comment) so an event-driven agent isn't
+  // silently downgraded to a timer; only then fall back to the interval.
   if (triggers.length === 0) {
-    triggers.push({ type: 'schedule.interval', args: { every: interval } });
+    const inferred = inferTriggerFromTools(allowedTools);
+    triggers.push(inferred || { type: 'schedule.interval', args: { every: interval } });
   }
 
   return BotBlueprintResponseSchema.parse({
