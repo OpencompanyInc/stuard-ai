@@ -475,13 +475,25 @@ function xWebhookCallbackUrl(): string {
 /** Ensure the app-level X webhook exists; returns its id or null. */
 async function ensureXWebhookRegistered(): Promise<string | null> {
   if (xWebhookIdCache) return xWebhookIdCache;
+  // The app-level Account Activity webhook is a single, stable resource. Listing or
+  // creating it needs an app-only bearer, which X mints ONLY from the API Key/Secret
+  // (OAuth 1.0a consumer keys) — never from the OAuth 2.0 client id/secret. When only
+  // the OAuth2 pair is configured (the common case here) that lookup is impossible, so
+  // allow the already-registered webhook id to be supplied directly. The per-user
+  // subscription below only needs the user's token, not the app bearer.
+  const configuredId = String(process.env.X_WEBHOOK_ID || '').trim();
+  if (configuredId) { xWebhookIdCache = configuredId; return configuredId; }
   const callbackUrl = xWebhookCallbackUrl();
   if (!callbackUrl || !X_WEBHOOK_SECRET) {
     writeLog('x_webhook_ensure_skipped', { reason: !callbackUrl ? 'no_public_base_url' : 'no_webhook_secret' });
     return null;
   }
   const bearer = await getXAppBearerToken();
-  if (!bearer) return null;
+  if (!bearer) {
+    // Surfaced to stdout (not just the file log) so it's visible in Cloud Run.
+    console.warn('[x-aaa] webhook lookup skipped: no app bearer — set X_WEBHOOK_ID, or X_CONSUMER_KEY/X_BEARER_TOKEN for self-managing webhook CRUD');
+    return null;
+  }
 
   try {
     const listResp = await fetch(`${X_API_BASE}/2/webhooks`, {
@@ -547,15 +559,18 @@ async function ensureXUserSubscribed(userId: string, externalId: string, accessT
     if (resp.ok || resp.status === 409) {
       xSubscribedExternalIds.add(externalId);
       writeLog('x_user_subscribed', { externalId, webhookId, status: resp.status });
+      console.log(`[x-aaa] subscribed externalId=${externalId} webhook=${webhookId} status=${resp.status}`);
       return { ok: true, status: resp.status, webhookId };
     }
     const body: any = await resp.json().catch(() => ({}));
     const reason = body?.detail || body?.title || body?.errors?.[0]?.message || null;
     writeLog('x_user_subscribe_failed', { externalId, status: resp.status, error: reason });
+    console.warn(`[x-aaa] subscribe FAILED externalId=${externalId} webhook=${webhookId} status=${resp.status} reason=${reason || `http_${resp.status}`}`);
     return { ok: false, status: resp.status, reason: reason || `http_${resp.status}`, webhookId };
   } catch (e: any) {
     const reason = String(e?.message || e);
     writeLog('x_user_subscribe_failed', { externalId, error: reason });
+    console.warn(`[x-aaa] subscribe ERROR externalId=${externalId} webhook=${webhookId} reason=${reason}`);
     return { ok: false, reason, webhookId };
   }
 }

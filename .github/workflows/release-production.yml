@@ -253,7 +253,7 @@ jobs:
             --concurrency 80 \
             --min-instances 1 \
             --max-instances 10 \
-            --set-env-vars NODE_ENV=production,CLOUD_PUBLIC_URL=https://api.stuard.ai,WEBSITE_BASE_URL=https://stuard.ai,SUPABASE_URL=${{ secrets.SUPABASE_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_ZONE=${{ secrets.GCP_ZONE || 'us-central1-a' }} \
+            --set-env-vars NODE_ENV=production,CLOUD_PUBLIC_URL=https://api.stuard.ai,WEBSITE_BASE_URL=https://stuard.ai,SUPABASE_URL=${{ secrets.SUPABASE_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_ZONE=${{ secrets.GCP_ZONE || 'us-central1-a' }},X_WEBHOOK_ID=2065133409106538496 \
             --set-secrets "$SECRETS"
 
       - name: Notify Ops – Deployed
