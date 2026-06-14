@@ -713,7 +713,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   botsGetAvailableTools: () => ipcRenderer.invoke('bots:getAvailableTools'),
   integrationsSyncToolNames: (names: string[]) => ipcRenderer.invoke('integrations:syncToolNames', names),
   botsTestSetup: (input: any) => ipcRenderer.invoke('bots:testSetup', input),
-  botsRunPreflightProbe: (payload: { request: { probe: string; args?: Record<string, any> }; cloudHttpBase: string; authToken: string | null }) =>
+  botsRunPreflightProbe: (payload: { request: { probe: string; args?: Record<string, any>; label?: string }; cloudHttpBase: string; authToken: string | null }) =>
     ipcRenderer.invoke('bots:runPreflightProbe', payload),
   botsDeployToVm: (id: string) => ipcRenderer.invoke('bots:deployToVm', id),
   botsStopOnVm: (id: string) => ipcRenderer.invoke('bots:stopOnVm', id),

@@ -66,7 +66,7 @@ export interface IBotsPlatform {
   getAvailableTools?(): Promise<BotsJsonResponse<{ tools?: string[] }>>;
   testSetup?(input: Record<string, unknown>): Promise<BotsJsonResponse<{ summary?: string; checks?: unknown[] }>>;
   runPreflightProbe?(payload: {
-    request: { probe: string; args?: Record<string, unknown> };
+    request: { probe: string; args?: Record<string, unknown>; label?: string };
     cloudHttpBase: string;
     authToken: string | null;
   }): Promise<BlueprintPreflightProbeResult>;

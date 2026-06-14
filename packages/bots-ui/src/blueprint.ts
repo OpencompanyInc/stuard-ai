@@ -229,6 +229,7 @@ export async function runBlueprintPreflightStep(
   step: {
     probe: string;
     args?: Record<string, any>;
+    label?: string;
   },
 ): Promise<{ status: 'pass' | 'fail' | 'warn' | 'unsupported'; detail: string }> {
   if (!platform.runPreflightProbe) {
@@ -236,7 +237,7 @@ export async function runBlueprintPreflightStep(
   }
   const token = (await platform.getAccessToken?.()) || null;
   const res = await platform.runPreflightProbe({
-    request: { probe: step.probe, args: step.args },
+    request: { probe: step.probe, args: step.args, label: step.label },
     cloudHttpBase: blueprintCloudBase(platform),
     authToken: token,
   });
@@ -315,6 +316,7 @@ export async function streamBotBlueprintWithAi(
     runId: string,
     probe: string,
     args: Record<string, any> | null | undefined,
+    label?: string,
   ) => {
     try {
       if (!platform.runPreflightProbe) {
@@ -323,7 +325,7 @@ export async function streamBotBlueprintWithAi(
       }
       const localToken = (await platform.getAccessToken?.()) || null;
       const res = await platform.runPreflightProbe({
-        request: { probe, args: args || undefined },
+        request: { probe, args: args || undefined, label },
         cloudHttpBase: blueprintCloudBase(platform),
         authToken: localToken,
       });
@@ -354,7 +356,7 @@ export async function streamBotBlueprintWithAi(
       if (event.type === 'blueprint') blueprintEvent = event;
       else if (event.type === 'error') errorEvent = event;
       else if (event.type === 'test_run.start') {
-        void runProbeAndReport(event.runId, event.probe, event.args || undefined);
+        void runProbeAndReport(event.runId, event.probe, event.args || undefined, event.label);
       }
     }
   }

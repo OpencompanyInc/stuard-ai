@@ -347,7 +347,7 @@ export function CreateBotModal({ onClose, onCreated }: { onClose: () => void; on
       for (const step of preflightSteps) {
         setPreflightRuns(prev => ({ ...prev, [step.id]: { status: 'running', detail: 'Running…' } }));
         try {
-          const probeResult = await runBlueprintPreflightStep(platform, { probe: step.probe, args: step.args });
+          const probeResult = await runBlueprintPreflightStep(platform, { probe: step.probe, args: step.args, label: step.label });
           probeRecords[step.id] = probeResult;
           setPreflightRuns(prev => ({ ...prev, [step.id]: probeResult }));
         } catch (e: any) {
