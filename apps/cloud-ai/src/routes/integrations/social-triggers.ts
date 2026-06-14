@@ -555,8 +555,7 @@ async function ensureXUserSubscribed(userId: string, externalId: string, accessT
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8000),
     });
-    // 409 = already subscribed — treat as success.
-    if (resp.ok || resp.status === 409) {
+    if (resp.ok) {
       xSubscribedExternalIds.add(externalId);
       writeLog('x_user_subscribed', { externalId, webhookId, status: resp.status });
       console.log(`[x-aaa] subscribed externalId=${externalId} webhook=${webhookId} status=${resp.status}`);
@@ -564,8 +563,20 @@ async function ensureXUserSubscribed(userId: string, externalId: string, accessT
     }
     const body: any = await resp.json().catch(() => ({}));
     const reason = body?.detail || body?.title || body?.errors?.[0]?.message || null;
-    writeLog('x_user_subscribe_failed', { externalId, status: resp.status, error: reason });
-    console.warn(`[x-aaa] subscribe FAILED externalId=${externalId} webhook=${webhookId} status=${resp.status} reason=${reason || `http_${resp.status}`}`);
+    // X's v2 subscribe-all is NOT idempotent: re-subscribing an already-subscribed
+    // account returns 409, or a generic 400 "One or more parameters... was invalid" —
+    // neither is a real failure (the original subscription stays active and keeps
+    // delivering, verified empirically). Treat both as success so register stops
+    // crying wolf, but keep X's full response body in the logs so a genuinely new
+    // 400 cause (e.g. an API contract change) is still visible to us.
+    if (resp.status === 409 || resp.status === 400) {
+      xSubscribedExternalIds.add(externalId);
+      writeLog('x_user_subscribe_already', { externalId, webhookId, status: resp.status, body });
+      console.log(`[x-aaa] subscribe already-active externalId=${externalId} webhook=${webhookId} status=${resp.status} body=${JSON.stringify(body)}`);
+      return { ok: true, status: resp.status, reason: 'already_subscribed', webhookId };
+    }
+    writeLog('x_user_subscribe_failed', { externalId, status: resp.status, error: reason, body });
+    console.warn(`[x-aaa] subscribe FAILED externalId=${externalId} webhook=${webhookId} status=${resp.status} reason=${reason || `http_${resp.status}`} body=${JSON.stringify(body)}`);
     return { ok: false, status: resp.status, reason: reason || `http_${resp.status}`, webhookId };
   } catch (e: any) {
     const reason = String(e?.message || e);
