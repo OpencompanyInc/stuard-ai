@@ -80,31 +80,37 @@ function mimeForFormat(format: string): string {
   }
 }
 
-/**
- * Synthesize speech via OpenRouter. Streams the SSE response, concatenates the
- * base64 audio segments, and decodes once into a Buffer.
- */
-export async function synthesizeSpeechOpenRouter(params: {
+/** True when the model id is a Google Lyria music model (served via OpenRouter). */
+export function isOpenRouterMusicModel(model: string): boolean {
+  return /lyria/i.test(String(model || '').trim());
+}
+
+/** Normalize a bare Lyria model name into an OpenRouter slug. */
+export function normalizeMusicModelId(model: string): string {
+  const m = String(model || '').trim();
+  if (!m) return 'google/lyria-3-pro-preview';
+  if (m.includes('/')) return m;
+  if (/^lyria/i.test(m)) return `google/${m}`;
+  return m;
+}
+
+export interface OpenRouterMusicResult {
+  audioBuffer: Buffer;
+  format: string;
+  mimeType: string;
+  costUsd: number;
+  usage: any;
   model: string;
-  text: string;
-  voice?: string;
-  format?: string;
-}): Promise<OpenRouterTtsResult> {
+}
+
+/**
+ * POST the chat/completions modalities request and accumulate the streamed
+ * base64 audio segments. Shared by speech (gpt-audio) and music (Lyria) — the
+ * only difference is the request body, so the SSE parsing lives here once.
+ */
+async function streamAudioCompletion(body: any): Promise<{ audioB64: string; transcript: string; usage: any }> {
   const apiKey = process.env.OPENROUTER_API_KEY || '';
   if (!apiKey) throw new Error('openrouter_not_configured');
-
-  const model = normalizeTtsModelId(params.model);
-  const voice = resolveVoice(params.voice);
-  const format = resolveFormat(params.format);
-
-  const body = {
-    model,
-    messages: [{ role: 'user', content: params.text }],
-    modalities: ['text', 'audio'],
-    audio: { voice, format },
-    stream: true,
-    usage: { include: true },
-  };
 
   const resp = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
     method: 'POST',
@@ -155,6 +161,32 @@ export async function synthesizeSpeechOpenRouter(params: {
   }
   if (buffer) consumeLine(buffer);
 
+  return { audioB64, transcript, usage };
+}
+
+/**
+ * Synthesize speech via OpenRouter. Streams the SSE response, concatenates the
+ * base64 audio segments, and decodes once into a Buffer.
+ */
+export async function synthesizeSpeechOpenRouter(params: {
+  model: string;
+  text: string;
+  voice?: string;
+  format?: string;
+}): Promise<OpenRouterTtsResult> {
+  const model = normalizeTtsModelId(params.model);
+  const voice = resolveVoice(params.voice);
+  const format = resolveFormat(params.format);
+
+  const { audioB64, transcript, usage } = await streamAudioCompletion({
+    model,
+    messages: [{ role: 'user', content: params.text }],
+    modalities: ['text', 'audio'],
+    audio: { voice, format },
+    stream: true,
+    usage: { include: true },
+  });
+
   if (!audioB64) throw new Error('no_audio_generated');
 
   const costUsd = Number(usage?.cost);
@@ -163,6 +195,41 @@ export async function synthesizeSpeechOpenRouter(params: {
     format,
     mimeType: mimeForFormat(format),
     transcript: transcript || undefined,
+    costUsd: Number.isFinite(costUsd) ? costUsd : 0,
+    usage,
+    model,
+  };
+}
+
+/**
+ * Compose music via OpenRouter (Google Lyria). Unlike speech, music takes no
+ * voice — just a descriptive prompt and an output format. Lyria controls its
+ * own clip length, so callers can't pass a duration.
+ */
+export async function composeMusicOpenRouter(params: {
+  model: string;
+  prompt: string;
+  format?: string;
+}): Promise<OpenRouterMusicResult> {
+  const model = normalizeMusicModelId(params.model);
+  const format = resolveFormat(params.format);
+
+  const { audioB64, usage } = await streamAudioCompletion({
+    model,
+    messages: [{ role: 'user', content: params.prompt }],
+    modalities: ['text', 'audio'],
+    audio: { format },
+    stream: true,
+    usage: { include: true },
+  });
+
+  if (!audioB64) throw new Error('no_audio_generated');
+
+  const costUsd = Number(usage?.cost);
+  return {
+    audioBuffer: Buffer.from(audioB64, 'base64'),
+    format,
+    mimeType: mimeForFormat(format),
     costUsd: Number.isFinite(costUsd) ? costUsd : 0,
     usage,
     model,

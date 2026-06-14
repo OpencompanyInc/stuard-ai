@@ -237,10 +237,13 @@ export async function prepareChatRequest({
   // Drain the in-flight per-user reads kicked off above the access gate. By
   // the time the router (which often makes an LLM call) returns, these are
   // typically already resolved, so the await is usually free.
-  // Quick sends skip integration/MCP loading — not needed for fast Q&A.
-  const { enabledIntegrations, mcpTools, customTools, customCatalog } = quickRequest
-    ? { enabledIntegrations: [] as string[], mcpTools: {} as Record<string, any>, customTools: {} as Record<string, any>, customCatalog: [] as Array<{ name: string; description: string; category: string; inputSchema?: any }> }
-    : await integrationsPromise;
+  // Compact/quick send is the same chat system as a normal turn — just a
+  // different client visualization — so it must expose the same tools. We load
+  // integrations for it too (the promise is already in flight from above, so
+  // this adds no work, only a usually-already-resolved await). Previously quick
+  // sends discarded this result, which silently dropped every deployed custom +
+  // MCP tool from search_tools/execute_tool on those turns.
+  const { enabledIntegrations, mcpTools, customTools, customCatalog } = await integrationsPromise;
 
   // Stash deployed custom-integration tools on the per-request secret bag so
   // search_tools / execute_tool can surface + run them without bloating the

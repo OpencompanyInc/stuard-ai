@@ -297,6 +297,30 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'x_get_user', category: 'integrations', kind: 'cloud', description: 'Look up an X/Twitter user profile by username or user_id', argsTemplate: { username: '', user_id: '', profile: '' }, outputSchema: { id: 'string', username: 'string', name: 'string', description: 'string', verified: 'boolean', location: 'string', profile_image_url: 'string', created_at: 'string', metrics: 'object', url: 'string' } },
   { id: 'x_list_followers', category: 'integrations', kind: 'cloud', description: 'List followers of an X/Twitter user', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
   { id: 'x_list_following', category: 'integrations', kind: 'cloud', description: 'List the accounts an X/Twitter user is following', argsTemplate: { username: '', user_id: '', max_results: 100, profile: '' }, outputSchema: { user_id: 'string', items: 'any[]', count: 'number', next_token: 'string' } },
+
+  // --- GitHub --- (args mirror cloud-ai/src/tools/github-tools.ts; `profile` picks the connected account)
+  { id: 'github_get_me', category: 'integrations', kind: 'cloud', description: 'Get the authenticated GitHub user profile', argsTemplate: { profile: '' }, outputSchema: { me: 'object' } },
+  { id: 'github_list_repos', category: 'integrations', kind: 'cloud', description: 'List repositories for the authenticated GitHub user', argsTemplate: { visibility: 'all', per_page: 30, page: 1, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'github_get_repo', category: 'integrations', kind: 'cloud', description: 'Get details about a GitHub repository (default branch, visibility, topics, stats)', argsTemplate: { owner: '', repo: '', profile: '' }, outputSchema: { repository: 'object' } },
+  { id: 'github_list_issues', category: 'integrations', kind: 'cloud', description: 'List issues in a GitHub repository', argsTemplate: { owner: '', repo: '', state: 'open', per_page: 30, page: 1, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'github_create_issue', category: 'integrations', kind: 'cloud', description: 'Create an issue in a GitHub repository', argsTemplate: { owner: '', repo: '', title: '', body: '', labels: [], assignees: [], profile: '' }, outputSchema: { issue: 'object' } },
+  { id: 'github_list_issue_comments', category: 'integrations', kind: 'cloud', description: 'List comments on a GitHub issue or pull request', argsTemplate: { owner: '', repo: '', issue_number: 1, per_page: 30, page: 1, profile: '' }, outputSchema: { items: 'any[]', count: 'number' } },
+  { id: 'github_create_issue_comment', category: 'integrations', kind: 'cloud', description: 'Add a comment to a GitHub issue or pull request', argsTemplate: { owner: '', repo: '', issue_number: 1, body: '', profile: '' }, outputSchema: { comment: 'object' } },
+  { id: 'github_get_file_content', category: 'integrations', kind: 'cloud', description: 'Get the content of a file (or directory listing) from a GitHub repository', argsTemplate: { owner: '', repo: '', path: '', ref: '', profile: '' }, outputSchema: { content: 'object' } },
+  { id: 'github_search_code', category: 'integrations', kind: 'cloud', description: 'Search code across GitHub repositories (qualifiers like repo:, language:, path:)', argsTemplate: { q: '', per_page: 30, page: 1, profile: '' }, outputSchema: { total_count: 'number', items: 'any[]', count: 'number' } },
+  { id: 'github_search_repos', category: 'integrations', kind: 'cloud', description: 'Search for GitHub repositories (qualifiers like language:, stars:, topic:)', argsTemplate: { q: '', sort: '', order: 'desc', per_page: 30, page: 1, profile: '' }, outputSchema: { total_count: 'number', items: 'any[]', count: 'number' } },
+
+  // --- Notion --- (args mirror cloud-ai/src/tools/notion-tools.ts; `profile` picks the connected account)
+  { id: 'notion_get_me', category: 'integrations', kind: 'cloud', description: 'Get the connected Notion bot user and workspace info', argsTemplate: { profile: '' }, outputSchema: { me: 'object' } },
+  { id: 'notion_search', category: 'integrations', kind: 'cloud', description: 'Search pages and databases in the connected Notion workspace', argsTemplate: { query: '', page_size: 25, filter: '', start_cursor: '', profile: '' }, outputSchema: { results: 'any[]', has_more: 'boolean', next_cursor: 'string' } },
+  { id: 'notion_get_page', category: 'integrations', kind: 'cloud', description: 'Retrieve a Notion page and its properties by id', argsTemplate: { page_id: '', profile: '' }, outputSchema: { page: 'object' } },
+  { id: 'notion_get_database', category: 'integrations', kind: 'cloud', description: 'Retrieve a Notion database schema and metadata by id', argsTemplate: { database_id: '', profile: '' }, outputSchema: { database: 'object' } },
+  { id: 'notion_query_database', category: 'integrations', kind: 'cloud', description: 'Query rows from a Notion database (optional filter and sorts)', argsTemplate: { database_id: '', page_size: 50, start_cursor: '', filter: {}, sorts: [], profile: '' }, outputSchema: { results: 'any[]', has_more: 'boolean', next_cursor: 'string' } },
+  { id: 'notion_list_block_children', category: 'integrations', kind: 'cloud', description: 'List the content blocks under a Notion page or block', argsTemplate: { block_id: '', page_size: 50, start_cursor: '', profile: '' }, outputSchema: { results: 'any[]', has_more: 'boolean', next_cursor: 'string' } },
+  { id: 'notion_create_page', category: 'integrations', kind: 'cloud', description: 'Create a Notion page under a parent page or as a database row', argsTemplate: { parent_type: 'page_id', parent_id: '', title: '', properties: {}, children: [], profile: '' }, outputSchema: { page: 'object' } },
+  { id: 'notion_append_paragraph', category: 'integrations', kind: 'cloud', description: 'Append a plain-text paragraph to a Notion page', argsTemplate: { page_id: '', text: '', profile: '' }, outputSchema: { results: 'any[]' } },
+  { id: 'notion_append_blocks', category: 'integrations', kind: 'cloud', description: 'Append one or more content blocks to a Notion page or block', argsTemplate: { block_id: '', children: [], profile: '' }, outputSchema: { results: 'any[]' } },
+  { id: 'notion_update_page', category: 'integrations', kind: 'cloud', description: 'Update properties on an existing Notion page (title, status, dates, archive)', argsTemplate: { page_id: '', properties: {}, archived: false, profile: '' }, outputSchema: { page: 'object' } },
   // Telnyx (SMS / Voice — verified number only)
   { id: 'telnyx_send_sms', category: 'integrations', kind: 'cloud', description: 'Send an SMS to the user\'s verified phone number', argsTemplate: { message: '' }, outputSchema: { ok: 'boolean', messageId: 'string', to: 'string', error: 'string' } },
   { id: 'telnyx_call_control', category: 'integrations', kind: 'cloud', description: 'Send a control action (hangup, hold, unhold, speak, playback_stop) to an active Telnyx call', argsTemplate: { call_control_id: '', action: 'hangup' }, outputSchema: { ok: 'boolean', error: 'string' } },
@@ -907,6 +931,7 @@ const KNOWN_DESCRIPTIONS: Record<string, string> = {
   'pattern': 'The pattern to match files.',
   'recursive': 'Also check inside subfolders.',
   'events': 'Which file events to listen for.',
+  'profile': 'Which connected account to use. Leave blank to use your default account.',
   'passthrough': 'Let the key press continue to other apps.',
   'hold': 'Fire on both key press AND release (for hold-to-record patterns).',
   // Maps & location
@@ -931,6 +956,7 @@ const KNOWN_LABELS: Record<string, string> = {
   'url': 'URL',
   'workflowId': 'Workflow',
   'inputs': 'Input Data',
+  'profile': 'Account',
   'place_id': 'Place ID',
   'maptype': 'Map Type',
   'radius_meters': 'Search Radius (meters)',

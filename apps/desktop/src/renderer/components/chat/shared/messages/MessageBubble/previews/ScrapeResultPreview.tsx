@@ -32,7 +32,7 @@ export const ScrapeResultPreview: React.FC<{ results: ScrapeRow[] }> = ({ result
         return (
           <div
             key={`${r.url}-${i}`}
-            className="overflow-hidden rounded-lg border border-theme/10"
+            className="overflow-hidden rounded-lg border border-cot-subtle"
             style={{ backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)' }}
           >
             <a

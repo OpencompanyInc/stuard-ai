@@ -50,11 +50,11 @@ export function RichCodeEditor({
   const [showSearch, setShowSearch] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
-  const [matches, setMatches] = useState<number[]>([]);
+  const [matches, setMatches] = useState<Array<{ start: number; end: number }>>([]);
   const [useRegex, setUseRegex] = useState(false);
   const [matchCase, setMatchCase] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [wordWrap, setWordWrap] = useState(true);
+  const [wordWrap, setWordWrap] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
   
@@ -126,30 +126,35 @@ export function RichCodeEditor({
     try {
       const flags = matchCase ? "g" : "gi";
       const regex = useRegex ? new RegExp(searchTerm, flags) : new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
-      const newMatches: number[] = [];
+      const newMatches: Array<{ start: number; end: number }> = [];
       let match;
-      while ((match = regex.exec(value)) !== null) newMatches.push(match.index);
+      while ((match = regex.exec(value)) !== null) {
+        newMatches.push({ start: match.index, end: match.index + match[0].length });
+        // Guard against zero-length matches (e.g. regex like `^` or `\b`) looping forever
+        if (match.index === regex.lastIndex) regex.lastIndex++;
+      }
       setMatches(newMatches);
       if (newMatches.length > 0) { setCurrentMatchIndex(0); scrollToMatch(newMatches[0]); }
       else setCurrentMatchIndex(-1);
-    } catch { setMatches([]); }
+    } catch { setMatches([]); setCurrentMatchIndex(-1); }
   }, [searchTerm, value, useRegex, matchCase]);
 
-  const scrollToMatch = (index: number) => {
-    if (!textareaRef.current) return;
-    const activeEl = document.activeElement;
-    // Set selection and briefly focus to trigger scroll-to-selection
-    textareaRef.current.setSelectionRange(index, index + searchTerm.length);
-    textareaRef.current.blur();
-    textareaRef.current.focus();
-    // Sync gutter and backdrop to new scroll position
-    const scrollTop = textareaRef.current.scrollTop;
+  const scrollToMatch = (range: { start: number; end: number }) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    // Select the actual matched range so the native selection box marks it.
+    ta.setSelectionRange(range.start, range.end);
+    // Compute the match's line and scroll directly — reliable regardless of focus.
+    // (With word-wrap off, logical line === visual row, so this lands exactly.)
+    const lineHeight = parseInt(VSCODE.lineHeight, 10) || 20;
+    const line = value.slice(0, range.start).split('\n').length - 1;
+    const target = line * lineHeight;
+    const viewHeight = ta.clientHeight;
+    let scrollTop = target - viewHeight / 2 + lineHeight;
+    if (scrollTop < 0) scrollTop = 0;
+    ta.scrollTop = scrollTop;
     if (backdropRef.current) backdropRef.current.scrollTop = scrollTop;
     if (scrollRef.current) scrollRef.current.scrollTop = scrollTop;
-    // Restore focus to previous element (e.g. search input) so user can keep typing
-    if (activeEl && activeEl instanceof HTMLElement && activeEl !== textareaRef.current) {
-      activeEl.focus();
-    }
   };
 
   const nextMatch = () => { if (matches.length === 0) return; const next = (currentMatchIndex + 1) % matches.length; setCurrentMatchIndex(next); scrollToMatch(matches[next]); };
@@ -157,8 +162,8 @@ export function RichCodeEditor({
 
   const replaceCurrent = () => {
     if (currentMatchIndex === -1 || matches.length === 0) return;
-    const index = matches[currentMatchIndex];
-    const newValue = value.substring(0, index) + replaceTerm + value.substring(index + searchTerm.length);
+    const { start, end } = matches[currentMatchIndex];
+    const newValue = value.substring(0, start) + replaceTerm + value.substring(end);
     onChange(newValue);
   };
 
@@ -368,12 +373,26 @@ export function RichCodeEditor({
           </div>
 
           {/* Textarea */}
+          <style>{`.rce-textarea::selection{background:${VSCODE.findMatch};}`}</style>
           <textarea
             ref={textareaRef}
             value={value}
             onChange={e => onChange(e.target.value)}
             onScroll={handleScroll}
-            className={`absolute inset-0 w-full h-full bg-transparent resize-none focus:outline-none ${readOnly ? 'cursor-default' : 'cursor-text'}`}
+            onKeyDown={e => {
+              const mod = e.ctrlKey || e.metaKey;
+              if (mod && (e.key === 'f' || e.key === 'F')) {
+                e.preventDefault();
+                setShowSearch(true);
+                setTimeout(() => document.getElementById('code-search')?.focus(), 30);
+              } else if (mod && (e.key === 'h' || e.key === 'H') && !readOnly) {
+                e.preventDefault();
+                setShowReplace(true);
+                setShowSearch(true);
+                setTimeout(() => document.getElementById('code-search')?.focus(), 30);
+              }
+            }}
+            className={`rce-textarea absolute inset-0 w-full h-full bg-transparent resize-none focus:outline-none ${readOnly ? 'cursor-default' : 'cursor-text'}`}
             style={{
               fontFamily: VSCODE.font,
               fontSize: VSCODE.fontSize,

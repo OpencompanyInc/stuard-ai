@@ -5,7 +5,7 @@ import { basename, extname, join } from 'path';
 import { readFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { mediaGalleryDir } from '../utils/platform';
-import { getBridgeSecrets } from './bridge';
+import { getBridgeSecrets, hasClientBridge, execLocalTool } from './bridge';
 import { logUsageEvent } from '../supabase';
 
 // ─── OpenRouter transport ────────────────────────────────────────────────────
@@ -94,34 +94,89 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   '.avif': 'image/avif',
 };
 
-function inferImageMimeType(filePath: string, contentType?: string): string {
+/** Infer an image MIME type, never throwing — defaults to image/png. */
+function safeImageMimeType(filePath?: string, contentType?: string): string {
   if (contentType?.startsWith('image/')) return contentType;
-  const mimeType = IMAGE_MIME_TYPES[extname(filePath).toLowerCase()];
-  if (mimeType) return mimeType;
-  throw new Error(`Unsupported input image type for ${filePath}. Use a common image file like png, jpg, jpeg, or webp.`);
+  return IMAGE_MIME_TYPES[extname(filePath || '').toLowerCase()] || 'image/png';
+}
+
+/**
+ * Strip a leading `data:<mime>;base64,` URL prefix so we always store/encode raw
+ * base64. Models commonly pass a full data URL in the `data` field; without this
+ * the prefix would be double-encoded into the image and corrupt it.
+ */
+export function stripDataUrlPrefix(data: string): string {
+  const s = String(data || '').trim();
+  const m = /^data:[^,]*,(.*)$/s.exec(s);
+  return m ? m[1] : s;
 }
 
 async function loadInputImages(inputImages: InputImageFile[] = []): Promise<LoadedInputImage[]> {
-  return Promise.all(
-    inputImages.map(async (image) => {
-      let b64: string;
-      let mimeType: string;
+  return Promise.all(inputImages.map(loadOneInputImage));
+}
 
-      if (image.data) {
-        b64 = image.data;
-        mimeType = image.contentType || (image.path ? inferImageMimeType(image.path, image.contentType) : 'image/png');
-      } else if (image.path) {
-        const buffer = await readFile(image.path);
-        b64 = buffer.toString('base64');
-        mimeType = inferImageMimeType(image.path, image.contentType);
-      } else {
-        throw new Error('Input image must have either a "data" (base64) or "path" field.');
+async function loadOneInputImage(image: InputImageFile): Promise<LoadedInputImage> {
+  const fallbackName = () =>
+    image.filename || (image.path ? basename(image.path) : `input_${Date.now()}.png`);
+
+  // 1. Inline base64 — the desktop handler pre-encodes here, and models may pass
+  //    data directly. Tolerate a full `data:` URL by stripping the prefix.
+  if (image.data) {
+    return {
+      name: fallbackName(),
+      mimeType: image.contentType || safeImageMimeType(image.path, image.contentType),
+      b64: stripDataUrlPrefix(image.data),
+    };
+  }
+
+  const filePath = String(image.path || '').trim();
+  if (!filePath) {
+    throw new Error('Each input image needs a "path" or base64 "data" field.');
+  }
+
+  // 2. Read from the local filesystem — works when the image service runs on the
+  //    same machine as the file (local dev / desktop-hosted cloud-ai).
+  try {
+    const buffer = await readFile(filePath);
+    return {
+      name: fallbackName(),
+      mimeType: safeImageMimeType(filePath, image.contentType),
+      b64: buffer.toString('base64'),
+    };
+  } catch (localErr: any) {
+    // 3. The path is on the user's device but cloud-ai is remote — pull the bytes
+    //    back over the client bridge instead of failing with ENOENT. This is what
+    //    makes image-to-image / reference chaining work in production.
+    if (hasClientBridge()) {
+      try {
+        const res: any = await execLocalTool(
+          'read_file_base64',
+          { path: filePath, inline: true },
+          undefined,
+          60_000,
+          { silent: true },
+        );
+        const data = typeof res?.data === 'string' ? res.data : '';
+        if (res?.ok && data) {
+          return {
+            name: fallbackName(),
+            mimeType: image.contentType || res.mimeType || safeImageMimeType(filePath, image.contentType),
+            b64: stripDataUrlPrefix(data),
+          };
+        }
+        throw new Error(res?.error || 'device bridge returned no data');
+      } catch (bridgeErr: any) {
+        throw new Error(
+          `Could not read input image "${filePath}" over the device bridge (${bridgeErr?.message || bridgeErr}). ` +
+          `Pass the image as base64 in the "data" field instead.`,
+        );
       }
-
-      const name = image.filename || (image.path ? basename(image.path) : `input_${Date.now()}.png`);
-      return { name, mimeType, b64 };
-    }),
-  );
+    }
+    throw new Error(
+      `Could not read input image "${filePath}" (${localErr?.message || localErr}). ` +
+      `If the file is on a different machine than the image service, pass it as base64 in the "data" field instead of "path".`,
+    );
+  }
 }
 
 // ─── Request / response shaping ──────────────────────────────────────────────
@@ -174,12 +229,60 @@ export function extractImagesFromResponse(data: any): GeneratedImage[] {
   return images;
 }
 
+/**
+ * Extract any assistant text from the response. When a model can't produce an
+ * image it usually replies with text explaining why ("I can't generate images…")
+ * — surfacing that makes the "no image" failure actionable instead of opaque.
+ */
+export function extractTextFromResponse(data: any): string {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((p: any) => (typeof p === 'string' ? p : p?.text || ''))
+      .join(' ')
+      .trim();
+  }
+  return '';
+}
+
+/**
+ * OpenRouter request error that carries enough context to map common upstream
+ * failures (bad model id, unsupported modality) to a clear, model-readable hint.
+ */
+class ImageGenError extends Error {
+  constructor(public status: number, public body: string) {
+    super(`OpenRouter image error ${status}: ${String(body || '').slice(0, 400)}`);
+    this.name = 'ImageGenError';
+  }
+
+  friendlyMessage(supportedIds: string[]): string {
+    const supported = `Supported image models: ${supportedIds.join(', ')}.`;
+    const b = String(this.body || '').toLowerCase();
+    if (
+      this.status === 404 ||
+      b.includes('no endpoints found') ||
+      b.includes('not a valid model') ||
+      b.includes('no allowed providers') ||
+      b.includes('is not a valid model id')
+    ) {
+      return `Model not available for image generation. ${supported}`;
+    }
+    if (b.includes('modalit') || b.includes('does not support') || b.includes('image output')) {
+      return `That model does not support image generation. ${supported}`;
+    }
+    if (this.status === 429) return 'Image generation is rate-limited right now — try again in a moment.';
+    if (this.status === 401 || this.status === 403) return 'Image generation auth failed (check the OpenRouter key).';
+    return `${this.message}. ${supported}`;
+  }
+}
+
 async function generateOneImage(params: {
   model: string;
   prompt: string;
   aspectRatio?: string;
   inputImages: LoadedInputImage[];
-}): Promise<{ images: GeneratedImage[]; costUsd: number; usage: any }> {
+}): Promise<{ images: GeneratedImage[]; text: string; costUsd: number; usage: any }> {
   const body = {
     model: params.model,
     messages: [
@@ -198,14 +301,15 @@ async function generateOneImage(params: {
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter image error ${resp.status}: ${errText.slice(0, 400)}`);
+    throw new ImageGenError(resp.status, errText);
   }
 
   const data: any = await resp.json();
   const images = extractImagesFromResponse(data);
+  const text = extractTextFromResponse(data);
   const usage = data?.usage || null;
   const costUsd = Number(usage?.cost);
-  return { images, costUsd: Number.isFinite(costUsd) ? costUsd : 0, usage };
+  return { images, text, costUsd: Number.isFinite(costUsd) ? costUsd : 0, usage };
 }
 
 async function logImageUsage(model: string, costUsd: number, usages: any[]): Promise<void> {
@@ -280,8 +384,9 @@ export const generate_image = createTool({
       return { ok: false, error: 'openrouter_not_configured' };
     }
 
+    const resolvedModel = normalizeImageModelId(model);
+
     try {
-      const resolvedModel = normalizeImageModelId(model);
       const loadedInputImages = input_images.length ? await loadInputImages(input_images) : [];
       const count = Math.min(Math.max(1, Number(n) || 1), 4);
 
@@ -296,13 +401,16 @@ export const generate_image = createTool({
       const generated = results.flatMap((r) => r.images);
 
       if (!generated.length) {
-        // Surface the supported image models so the agent can self-correct if it
-        // asked for a non-image model.
-        return {
-          ok: false,
-          error: `no_images_generated. Supported image models: ${SUPPORTED_IMAGE_MODEL_IDS.join(', ')}.`,
-          model: resolvedModel,
-        };
+        // The model returned no image. Surface its own text (it usually explains
+        // that it can't generate images) plus the supported list so the agent can
+        // switch to a real image model instead of retrying the same one.
+        const modelText = results.map((r) => r.text).filter(Boolean).join(' ').trim();
+        const hadInputs = loadedInputImages.length > 0;
+        const supported = `Supported image models: ${SUPPORTED_IMAGE_MODEL_IDS.join(', ')}.`;
+        const error = modelText
+          ? `Model "${resolvedModel}" returned text instead of an image${hadInputs ? ' (it may not support reference/input images)' : ''}: "${modelText.slice(0, 240)}". It likely does not support image generation. ${supported}`
+          : `Model "${resolvedModel}" did not return an image${hadInputs ? ' — it may not support reference/input images for image-to-image editing' : ' and may not support image generation'}. ${supported}`;
+        return { ok: false, error, model: resolvedModel, ...(modelText ? { note: modelText.slice(0, 240) } : {}) };
       }
 
       const totalCost = results.reduce((s, r) => s + (r.costUsd || 0), 0);
@@ -334,7 +442,6 @@ export const generate_image = createTool({
 
       // Register images in the desktop media library via bridge (best-effort, silent)
       try {
-        const { execLocalTool } = await import('./bridge');
         const reg: any = await execLocalTool('_media_register', {
           images: images.map((img) => ({
             _b64: img._b64,
@@ -363,7 +470,12 @@ export const generate_image = createTool({
       return { ok: true, images, model: resolvedModel, provider: vendorFromModelId(resolvedModel) };
     } catch (e: any) {
       console.error('[image-gen] Error:', e);
-      return { ok: false, error: e?.message || 'image_generation_failed' };
+      // Map upstream OpenRouter failures (bad model id, unsupported modality, auth,
+      // rate limit) to a clear, actionable message instead of a raw HTTP dump.
+      if (e instanceof ImageGenError) {
+        return { ok: false, error: e.friendlyMessage(SUPPORTED_IMAGE_MODEL_IDS), model: resolvedModel };
+      }
+      return { ok: false, error: e?.message || 'image_generation_failed', model: resolvedModel };
     }
   },
 });

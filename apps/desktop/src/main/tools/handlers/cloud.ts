@@ -593,6 +593,16 @@ async function execAnalyzeMedia(args: any, ctx: RouterContext): Promise<any> {
  */
 async function execAiInference(args: any, ctx: RouterContext): Promise<any> {
   try {
+    // Live streaming transcription: the audio stream produced by capture_media
+    // (stream mode) lives ONLY in the local Python agent. The (typically remote)
+    // cloud-ai cannot read it back — it would fall back to ws://127.0.0.1:8765
+    // and fail with ECONNREFUSED. So run the windowing loop locally and ship only
+    // utterance-sized WAVs to the cloud's stateless one-shot transcription.
+    if (String(args?.mode || '') === 'transcription' && String(args?.audioStreamId || '').trim()) {
+      const { runDesktopStreamingTranscription } = await import('../../engine/streaming-transcription');
+      return runDesktopStreamingTranscription(args, ctx);
+    }
+
     const sources = Array.isArray(args?.sources) ? args.sources : [];
     const modelId = String(args?.model || 'openai/gpt-4.1-mini');
 
@@ -863,17 +873,31 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
     // Cloud can't access local desktop file paths
     const cloudArgs = { ...args };
     if (Array.isArray(args.input_images) && args.input_images.length > 0) {
-      const encodedImages: Array<{ path: string; filename?: string; contentType?: string; data?: string }> = [];
+      const encodedImages: Array<{ path?: string; filename?: string; contentType?: string; data?: string }> = [];
+      const mimeMap: Record<string, string> = {
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.avif': 'image/avif',
+      };
       for (const img of args.input_images) {
         const filePath = String(img?.path || '').trim();
-        if (!filePath) continue;
+        const inlineData = typeof img?.data === 'string' && img.data ? img.data : '';
+
+        // Already-encoded image (e.g. a chained reference passed as base64) —
+        // forward it as-is instead of dropping it for having no local path.
+        if (!filePath) {
+          if (inlineData) {
+            encodedImages.push({
+              filename: img.filename,
+              contentType: img.contentType,
+              data: inlineData,
+            });
+          }
+          continue;
+        }
+
         try {
           const buf = fs.readFileSync(filePath);
           const ext = path.extname(filePath).toLowerCase();
-          const mimeMap: Record<string, string> = {
-            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-            '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.avif': 'image/avif',
-          };
           const mimeType = img.contentType || mimeMap[ext] || 'image/png';
           encodedImages.push({
             path: filePath,
@@ -883,6 +907,12 @@ async function execGenerateImage(args: any, ctx: RouterContext): Promise<any> {
           });
           ctx.logFn(`Image Gen: Encoded input ${path.basename(filePath)} (${mimeType}, ${Math.round(buf.length / 1024)}KB)`);
         } catch (e: any) {
+          // Fall back to any inline data before hard-failing the whole call.
+          if (inlineData) {
+            encodedImages.push({ path: filePath, filename: img.filename || path.basename(filePath), contentType: img.contentType, data: inlineData });
+            ctx.logFn(`Image Gen: Using inline data for ${path.basename(filePath)} (local read failed: ${e?.message})`);
+            continue;
+          }
           ctx.logFn(`Image Gen: Failed to read input image ${filePath}: ${e?.message}`);
           return { ok: false, error: `failed_to_read_input_image: ${filePath}` };
         }

@@ -601,8 +601,32 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
     items: [
       { k: 'cloud.tool', t: 'github_get_me', label: 'Get Profile', icon: User, args: {} },
       { k: 'cloud.tool', t: 'github_list_repos', label: 'List Repos', icon: Database, args: { visibility: 'all' } },
+      { k: 'cloud.tool', t: 'github_get_repo', label: 'Get Repo', icon: GitBranch, args: { owner: '', repo: '' } },
       { k: 'cloud.tool', t: 'github_list_issues', label: 'List Issues', icon: MessageSquare, args: { owner: '', repo: '', state: 'open' } },
       { k: 'cloud.tool', t: 'github_create_issue', label: 'Create Issue', icon: GitPullRequest, args: { owner: '', repo: '', title: '', body: '' } },
+      { k: 'cloud.tool', t: 'github_list_issue_comments', label: 'List Issue Comments', icon: MessageSquare, args: { owner: '', repo: '', issue_number: 1 } },
+      { k: 'cloud.tool', t: 'github_create_issue_comment', label: 'Comment on Issue', icon: Send, args: { owner: '', repo: '', issue_number: 1, body: '' } },
+      { k: 'cloud.tool', t: 'github_get_file_content', label: 'Get File', icon: FileText, args: { owner: '', repo: '', path: '' } },
+      { k: 'cloud.tool', t: 'github_search_code', label: 'Search Code', icon: Search, args: { q: '' } },
+      { k: 'cloud.tool', t: 'github_search_repos', label: 'Search Repos', icon: Search, args: { q: '' } },
+    ],
+  },
+  {
+    id: 'notion',
+    label: 'Notion',
+    icon: BookOpen,
+    color: 'slate',
+    items: [
+      { k: 'cloud.tool', t: 'notion_get_me', label: 'Get Profile', icon: User, args: {} },
+      { k: 'cloud.tool', t: 'notion_search', label: 'Search', icon: Search, args: { query: '' } },
+      { k: 'cloud.tool', t: 'notion_get_page', label: 'Get Page', icon: FileText, args: { page_id: '' } },
+      { k: 'cloud.tool', t: 'notion_get_database', label: 'Get Database', icon: Database, args: { database_id: '' } },
+      { k: 'cloud.tool', t: 'notion_query_database', label: 'Query Database', icon: Database, args: { database_id: '' } },
+      { k: 'cloud.tool', t: 'notion_list_block_children', label: 'List Page Content', icon: List, args: { block_id: '' } },
+      { k: 'cloud.tool', t: 'notion_create_page', label: 'Create Page', icon: PlusCircle, args: { parent_type: 'page_id', parent_id: '', title: '' } },
+      { k: 'cloud.tool', t: 'notion_append_paragraph', label: 'Append Text', icon: PenLine, args: { page_id: '', text: '' } },
+      { k: 'cloud.tool', t: 'notion_append_blocks', label: 'Append Blocks', icon: ListPlus, args: { block_id: '', children: [] } },
+      { k: 'cloud.tool', t: 'notion_update_page', label: 'Update Page', icon: PenLine, args: { page_id: '', properties: {} } },
     ],
   },
   // Disabled — WhatsApp integration temporarily hidden (see shared/integration-flags.ts)
@@ -720,7 +744,7 @@ export const PALETTE_GROUPS: { id: string; label: string; categoryIds: string[] 
   { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use'] },
   { id: 'media_ai', label: 'Media Tooling & Local AI', categoryIds: ['ffmpeg', 'mediapipe', 'ollama', 'tts'] },
   { id: 'google', label: 'Google', categoryIds: ['gmail', 'google_drive', 'google_calendar', 'google_sheets', 'google_docs', 'google_tasks'] },
-  { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'telnyx', 'x', 'maps'] },
+  { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'notion', 'telnyx', 'x', 'maps'] },
 ];
 
 /** Lookup: category id → group id. Used by the palette to render dividers. */

@@ -122,6 +122,36 @@ export function getDefaultLocationForCategory(category: string): ToolLocation {
   return CATEGORY_LOCATION[category] || 'compute';
 }
 
+// ─── Discovery surfaces ──────────────────────────────────────────────────────
+// A tool can be discovered in the main chat ('chat'), the workflow builder
+// ('workflow'), or both (the default — most tools intersect). Only a few are
+// surface-specific. search_tools (chat) and search_workflow_nodes (workflow)
+// both run through isToolDiscoverableForSurface so the two catalogs don't
+// cross-contaminate.
+export type ToolSurface = 'chat' | 'workflow';
+
+// Categories that only make sense INSIDE a workflow graph → hidden from main-chat
+// tool search. Note: run_sequential/run_parallel are category 'Core' and stay
+// shared (legit chat orchestration); the pure graph nodes (call_function,
+// return_value, end, loop_executor) aren't in this registry at all, so they
+// can't leak into chat search regardless.
+const WORKFLOW_ONLY_CATEGORIES = new Set<string>(['Variables', 'Workspace', 'Workflow']);
+
+// Tools that only work in a live chat turn → hidden from workflow node search.
+// (chat_ui renders in the chat bubble; name_conversation renames the chat.)
+const CHAT_ONLY_TOOLS = new Set<string>(['chat_ui', 'name_conversation']);
+
+/** Whether a tool should surface in a given discovery surface's search results. */
+export function isToolDiscoverableForSurface(name: string, surface: ToolSurface): boolean {
+  if (surface === 'workflow') {
+    return !CHAT_ONLY_TOOLS.has(name);
+  }
+  // chat surface: chat-only tools belong here; workflow-only categories do not.
+  if (CHAT_ONLY_TOOLS.has(name)) return true;
+  const category = TOOL_METADATA.get(name)?.category;
+  return !(category && WORKFLOW_ONLY_CATEGORIES.has(category));
+}
+
 /**
  * Returns true if the tool must be routed through the user's desktop bridge.
  * - Device tools always need desktop

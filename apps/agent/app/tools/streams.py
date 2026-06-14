@@ -381,14 +381,21 @@ async def stream_read(
             if chunks:
                 break
 
-    # Update cursor
+    # Atomically claim the chunks against the subscriber cursor. Two reads on the
+    # SAME subscriber can run concurrently (e.g. a poller whose read blocks longer
+    # than its tick); both started from `cursor`, so without this both would
+    # return the same chunks and advance independently → the SAME chunk delivered
+    # more than once (this surfaced as duplicated transcripts). If another read
+    # already advanced the cursor past part of what we read, drop those chunks.
     new_cursor = cursor
-    if chunks:
-        new_cursor = chunks[-1]["index"] + 1
-
     with stream.subscribers_lock:
-        if subscriber_id in stream.subscribers:
-            stream.subscribers[subscriber_id].cursor = new_cursor
+        sub = stream.subscribers.get(subscriber_id)
+        if sub is not None:
+            if chunks and sub.cursor > cursor:
+                chunks = [c for c in chunks if c["index"] >= sub.cursor]
+            if chunks:
+                sub.cursor = chunks[-1]["index"] + 1
+            new_cursor = sub.cursor
 
     # Check if there are more chunks beyond what we returned
     has_more = False

@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 import { mediaGalleryDir } from '../utils/platform';
 import { execLocalTool, getBridgeSecrets } from './bridge';
 import { logUsageEvent } from '../supabase';
-import { isOpenRouterTtsModel, synthesizeSpeechOpenRouter } from '../media/openrouter-tts';
+import { isOpenRouterTtsModel, synthesizeSpeechOpenRouter, composeMusicOpenRouter, isOpenRouterMusicModel } from '../media/openrouter-tts';
 
 const ELEVENLABS_DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
 
@@ -38,7 +38,23 @@ function getElevenLabsClient(): ElevenLabsClient {
 }
 
 function errorMessage(e: any, fallback: string): string {
-  return String(e?.body?.detail || e?.body?.message || e?.message || fallback);
+  // ElevenLabs SDK errors put the useful payload on `body`, but `body.detail`
+  // is often a STRUCTURED OBJECT (e.g. { status, message }) — String()'ing it
+  // yields "[object Object]" and hides the real reason. Unwrap nested messages
+  // (and fall back to JSON) before giving up.
+  const unwrap = (v: any): string | undefined => {
+    if (v == null) return undefined;
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') {
+      const nested = v.message || v.detail || v.error || v.description;
+      if (typeof nested === 'string') return nested;
+      try { return JSON.stringify(v); } catch { return undefined; }
+    }
+    return String(v);
+  };
+  const status = e?.statusCode || e?.status;
+  const core = unwrap(e?.body?.detail) || unwrap(e?.body?.message) || unwrap(e?.body) || (typeof e?.message === 'string' ? e.message : undefined) || fallback;
+  return status ? `[${status}] ${core}` : core;
 }
 
 async function streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
@@ -223,11 +239,12 @@ const MUSIC_MAX_LENGTH_MS = 600000;
 
 export const generate_music = createTool({
   id: 'generate_music',
-  description: 'Generate original music/songs from a text prompt using ElevenLabs Music (model music_v1). Describe genre, mood, instruments, tempo, and optionally lyrics or a theme; set force_instrumental to guarantee no vocals. Saves the track to the media library. This is true music composition — distinct from text_to_speech, which only narrates text in a voice.',
+  description: 'Generate original instrumental music from a text prompt. Defaults to Google Lyria (served through Stuard — no extra account needed); also supports ElevenLabs Music (pass model "music_v1", requires a paid ElevenLabs plan). Describe genre, mood, instruments, tempo, and theme. Saves the track to the media library. This is true music composition — distinct from text_to_speech, which only narrates text in a voice. Note: Lyria controls its own clip length and is instrumental, so length_ms / force_instrumental apply only to the ElevenLabs model.',
   inputSchema: z.object({
     prompt: z.string().min(1).max(2000).describe('Description of the music to generate, e.g. "upbeat lo-fi hip hop with mellow piano and vinyl crackle" or "epic orchestral trailer score". Can include a theme or lyric direction.'),
-    length_ms: z.number().int().min(MUSIC_MIN_LENGTH_MS).max(MUSIC_MAX_LENGTH_MS).default(MUSIC_DEFAULT_LENGTH_MS).describe('Length of the song in milliseconds (3000–600000). Defaults to 30s.'),
-    force_instrumental: z.boolean().default(false).describe('If true, guarantees the generated song has no vocals.'),
+    model: z.string().default('lyria-3-pro-preview').describe('Music model. Default "lyria-3-pro-preview" (Google Lyria via OpenRouter; also "lyria-3-clip-preview" for shorter clips). Pass "music_v1" for ElevenLabs Music (needs a paid ElevenLabs plan).'),
+    length_ms: z.number().int().min(MUSIC_MIN_LENGTH_MS).max(MUSIC_MAX_LENGTH_MS).default(MUSIC_DEFAULT_LENGTH_MS).describe('Length of the song in milliseconds (3000–600000). Defaults to 30s. Only honored by the ElevenLabs model; Lyria sets its own length.'),
+    force_instrumental: z.boolean().default(false).describe('ElevenLabs only: guarantees no vocals. Lyria is already instrumental.'),
     format: z.enum(['mp3', 'opus', 'wav']).default('mp3').describe('Output audio format'),
     save: z.boolean().default(true).describe('Whether to save the audio to a file'),
     play: z.boolean().default(false).describe('Whether to play the audio immediately after generation'),
@@ -237,41 +254,67 @@ export const generate_music = createTool({
     ok: z.boolean(),
     filePath: z.string().optional(),
     format: z.string().optional(),
+    model: z.string().optional(),
     lengthMs: z.number().optional(),
     played: z.boolean().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData: any, { writer }) => {
-    const { prompt, length_ms, force_instrumental, format, save, play, outputPath } = inputData;
+    const { prompt, model, length_ms, force_instrumental, format, save, play, outputPath } = inputData;
+    // ElevenLabs Music is opt-in (needs a paid plan). Everything else routes to
+    // Lyria via OpenRouter on Stuard's account — the default so music works
+    // out of the box.
+    const useElevenLabs = /^(eleven|music_v1)/i.test(String(model || '').trim());
 
     try {
-      const client = getElevenLabsClient();
-      const outputFormat = FORMAT_TO_ELEVENLABS[format] || 'mp3_44100_128';
+      let audioBuffer: Buffer;
 
-      const audioStream = await client.music.compose({
-        prompt,
-        musicLengthMs: length_ms,
-        forceInstrumental: force_instrumental,
-        modelId: 'music_v1',
-        outputFormat: outputFormat as any,
-      });
-      const audioBuffer = await streamToBuffer(audioStream);
+      if (useElevenLabs) {
+        const client = getElevenLabsClient();
+        const outputFormat = FORMAT_TO_ELEVENLABS[format] || 'mp3_44100_128';
+        const audioStream = await client.music.compose({
+          prompt,
+          musicLengthMs: length_ms,
+          forceInstrumental: force_instrumental,
+          modelId: 'music_v1',
+          outputFormat: outputFormat as any,
+        });
+        audioBuffer = await streamToBuffer(audioStream);
 
-      // Bill the call — the /tools route doesn't auto-bill, each media tool logs
-      // its own usage. Best-effort; never breaks the result.
-      try {
-        const userId = getBridgeSecrets()?.userId;
-        if (userId && typeof userId === 'string') {
-          await logUsageEvent(userId, null, 'elevenlabs/music_v1', {
-            totalTokens: 0,
-            provider: 'elevenlabs',
-            endpoint: '/tools/generate_music',
-            source_label: 'Music Generation',
-            format,
-            lengthMs: length_ms,
-          });
-        }
-      } catch {}
+        // Bill the call — the /tools route doesn't auto-bill, each media tool
+        // logs its own usage. Best-effort; never breaks the result.
+        try {
+          const userId = getBridgeSecrets()?.userId;
+          if (userId && typeof userId === 'string') {
+            await logUsageEvent(userId, null, 'elevenlabs/music_v1', {
+              totalTokens: 0,
+              provider: 'elevenlabs',
+              endpoint: '/tools/generate_music',
+              source_label: 'Music Generation',
+              format,
+              lengthMs: length_ms,
+            });
+          }
+        } catch {}
+      } else {
+        const music = await composeMusicOpenRouter({ model, prompt, format });
+        audioBuffer = music.audioBuffer;
+
+        // Bill the OpenRouter (Lyria) cost against the user.
+        try {
+          const userId = getBridgeSecrets()?.userId;
+          if (userId && typeof userId === 'string') {
+            await logUsageEvent(userId, null, music.model, {
+              totalTokens: Number(music.usage?.total_tokens) || 0,
+              ...(music.costUsd > 0 ? { costUsd: Number(music.costUsd.toFixed(8)) } : {}),
+              provider: 'openrouter',
+              endpoint: '/tools/generate_music',
+              source_label: 'Music Generation',
+              format,
+            });
+          }
+        } catch {}
+      }
 
       let filePath: string | undefined;
       let played = false;
@@ -323,7 +366,8 @@ export const generate_music = createTool({
         ok: true,
         filePath: save ? filePath : undefined,
         format,
-        lengthMs: length_ms,
+        model: useElevenLabs ? 'music_v1' : (model || 'lyria-3-pro-preview'),
+        lengthMs: useElevenLabs ? length_ms : undefined,
         played,
       };
     } catch (e: any) {
@@ -336,6 +380,47 @@ export const generate_music = createTool({
   },
 });
 
+// ─── ElevenLabs response normalizers ─────────────────────────────────────────
+// The ElevenLabs JS SDK returns camelCase fields (voiceId / modelId /
+// canDoTextToSpeech). Reading the old snake_case names yielded undefined, which
+// then failed the tools' required-string output schema and turned a successful
+// API call into a "tool output validation failed" error. These pure mappers keep
+// snake_case fallbacks and coerce every field to its schema type so a single
+// missing/oddly-typed field can never nuke the whole list.
+
+export interface NormalizedVoice {
+  id: string;
+  name: string;
+  description: string;
+  labels?: Record<string, any>;
+}
+
+export function normalizeVoiceEntry(v: any): NormalizedVoice {
+  const id = String(v?.voiceId ?? v?.voice_id ?? '').trim();
+  const name = String(v?.name ?? id ?? 'Unknown voice');
+  const labels = v?.labels && typeof v.labels === 'object' ? v.labels : undefined;
+  const labelSummary = labels
+    ? Object.values(labels).filter((x) => typeof x === 'string' && x).join(', ')
+    : '';
+  return {
+    id,
+    name,
+    description: String(v?.description || labelSummary || `Voice: ${name}`),
+    ...(labels ? { labels } : {}),
+  };
+}
+
+/** Whether a raw ElevenLabs model can do TTS. Missing flag → include (don't hide). */
+export function modelCanDoTts(m: any): boolean {
+  return !!(m?.canDoTextToSpeech ?? m?.can_do_text_to_speech ?? true);
+}
+
+export function normalizeModelEntry(m: any): { id: string; name: string; description: string } {
+  const id = String(m?.modelId ?? m?.model_id ?? '').trim();
+  const name = String(m?.name ?? id);
+  return { id, name, description: String(m?.description || `Model: ${name}`) };
+}
+
 export const list_tts_voices = createTool({
   id: 'list_tts_voices',
   description: 'List all available ElevenLabs text-to-speech voices.',
@@ -346,7 +431,9 @@ export const list_tts_voices = createTool({
       id: z.string(),
       name: z.string(),
       description: z.string(),
-      labels: z.record(z.string(), z.string()).optional(),
+      // Labels are loose (any value) so an unexpected non-string label can never
+      // fail output validation and nuke an otherwise-successful voice list.
+      labels: z.record(z.string(), z.any()).optional(),
     })),
     error: z.string().optional(),
   }),
@@ -355,12 +442,9 @@ export const list_tts_voices = createTool({
       const client = getElevenLabsClient();
       const voicesResponse = await client.voices.search();
 
-      const voices = (voicesResponse.voices || []).map((v: any) => ({
-        id: v.voice_id,
-        name: v.name,
-        description: v.description || `Voice: ${v.name}`,
-        labels: v.labels,
-      }));
+      const voices = (voicesResponse.voices || [])
+        .map(normalizeVoiceEntry)
+        .filter((v) => v.id);
 
       return { ok: true, voices };
     } catch (e: any) {
@@ -368,7 +452,7 @@ export const list_tts_voices = createTool({
       return {
         ok: false,
         voices: [],
-        error: e?.message || 'Failed to list voices',
+        error: errorMessage(e, 'Failed to list voices'),
       };
     }
   },
@@ -393,12 +477,9 @@ export const get_tts_models = createTool({
       const modelsResponse = await client.models.list();
 
       const models = (modelsResponse || [])
-        .filter((m: any) => m.can_do_text_to_speech)
-        .map((m: any) => ({
-          id: m.model_id,
-          name: m.name,
-          description: m.description || `Model: ${m.name}`,
-        }));
+        .filter(modelCanDoTts)
+        .map(normalizeModelEntry)
+        .filter((m) => m.id);
 
       return { ok: true, models };
     } catch (e: any) {

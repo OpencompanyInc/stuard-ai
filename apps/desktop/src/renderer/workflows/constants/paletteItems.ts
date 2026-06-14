@@ -362,8 +362,26 @@ export const INTEGRATION_ITEMS: PaletteItem[] = [
   // ── GitHub ────────────────────────────────────────────────────────────────
   { k: 'cloud.tool', t: 'github_get_me', label: 'GitHub: Get Profile', args: {} },
   { k: 'cloud.tool', t: 'github_list_repos', label: 'GitHub: List Repos', args: { visibility: 'all' } },
+  { k: 'cloud.tool', t: 'github_get_repo', label: 'GitHub: Get Repo', args: { owner: '', repo: '' } },
   { k: 'cloud.tool', t: 'github_list_issues', label: 'GitHub: List Issues', args: { owner: '', repo: '', state: 'open' } },
   { k: 'cloud.tool', t: 'github_create_issue', label: 'GitHub: Create Issue', args: { owner: '', repo: '', title: '', body: '' } },
+  { k: 'cloud.tool', t: 'github_list_issue_comments', label: 'GitHub: List Issue Comments', args: { owner: '', repo: '', issue_number: 1 } },
+  { k: 'cloud.tool', t: 'github_create_issue_comment', label: 'GitHub: Comment on Issue', args: { owner: '', repo: '', issue_number: 1, body: '' } },
+  { k: 'cloud.tool', t: 'github_get_file_content', label: 'GitHub: Get File', args: { owner: '', repo: '', path: '' } },
+  { k: 'cloud.tool', t: 'github_search_code', label: 'GitHub: Search Code', args: { q: '' } },
+  { k: 'cloud.tool', t: 'github_search_repos', label: 'GitHub: Search Repos', args: { q: '' } },
+
+  // ── Notion ────────────────────────────────────────────────────────────────
+  { k: 'cloud.tool', t: 'notion_get_me', label: 'Notion: Get Profile', args: {} },
+  { k: 'cloud.tool', t: 'notion_search', label: 'Notion: Search', args: { query: '' } },
+  { k: 'cloud.tool', t: 'notion_get_page', label: 'Notion: Get Page', args: { page_id: '' } },
+  { k: 'cloud.tool', t: 'notion_get_database', label: 'Notion: Get Database', args: { database_id: '' } },
+  { k: 'cloud.tool', t: 'notion_query_database', label: 'Notion: Query Database', args: { database_id: '' } },
+  { k: 'cloud.tool', t: 'notion_list_block_children', label: 'Notion: List Page Content', args: { block_id: '' } },
+  { k: 'cloud.tool', t: 'notion_create_page', label: 'Notion: Create Page', args: { parent_type: 'page_id', parent_id: '', title: '' } },
+  { k: 'cloud.tool', t: 'notion_append_paragraph', label: 'Notion: Append Text', args: { page_id: '', text: '' } },
+  { k: 'cloud.tool', t: 'notion_append_blocks', label: 'Notion: Append Blocks', args: { block_id: '', children: [] } },
+  { k: 'cloud.tool', t: 'notion_update_page', label: 'Notion: Update Page', args: { page_id: '', properties: {} } },
 
   // ── Facebook ──────────────────────────────────────────────────────────────
   // Disabled — Meta integrations temporarily hidden (see shared/integration-flags.ts)

@@ -181,11 +181,6 @@ export function DeployPanelModal({
                 </p>
               </div>
             </div>
-            
-            {/* Decorative element */}
-            {isDeployed && (
-              <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-emerald-200/30 rounded-full blur-2xl" />
-            )}
           </div>
           
           {/* Triggers Section */}
@@ -237,7 +232,11 @@ export function DeployPanelModal({
                 </button>
                 <button 
                   onClick={onDeploy} 
-                  className="group flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-white bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 rounded-xl shadow-lg shadow-emerald-200 transition-all hover:shadow-xl hover:shadow-emerald-200 hover:-translate-y-0.5"
+                  className={`group flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium rounded-xl border transition-all ${
+                    d
+                      ? 'text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border-emerald-500/20'
+                      : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+                  }`}
                 >
                   <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
                   <span>Redeploy</span>

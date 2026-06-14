@@ -31,12 +31,27 @@ import { UIBuilderModal } from '../../../ui-builder';
 
 export type { UpstreamNode };
 
-let googleProfileOptionsCache: ArgOption[] | null = null;
-let googleProfileOptionsPromise: Promise<ArgOption[]> | null = null;
+// ─── Connected-account profile dropdown (Google, X, Notion, GitHub) ──────────
+// These providers store OAuth tokens in the desktop's local encrypted store
+// (not Supabase) per the device-local migration — see DEVICE_LOCAL_PROVIDERS in
+// useIntegrationsState. A tool's `profile` arg selects WHICH connected account
+// to act as, so we render it as a dropdown of the user's real connected
+// accounts (read from the local agent's oauth_list), never a raw text box. This
+// mirrors useIntegrationsState.refreshProfiles(provider).
 
-function isGoogleProfileArg(toolName: string, argKey: string): boolean {
-  if (argKey !== 'profile') return false;
-  return (
+type ProfileProvider = 'google' | 'x' | 'notion' | 'github';
+
+const PROFILE_PROVIDER_LABEL: Record<ProfileProvider, string> = {
+  google: 'Google',
+  x: 'X',
+  notion: 'Notion',
+  github: 'GitHub',
+};
+
+/** Map a tool name to the OAuth provider whose account its `profile` arg picks. */
+function profileProviderForTool(toolName: string, argKey: string): ProfileProvider | null {
+  if (argKey !== 'profile') return null;
+  if (
     toolName.startsWith('google_') ||
     toolName.startsWith('gmail_') ||
     toolName.startsWith('drive_') ||
@@ -46,17 +61,26 @@ function isGoogleProfileArg(toolName: string, argKey: string): boolean {
     toolName.startsWith('tasks_') ||
     toolName === 'gmail.new_email' ||
     toolName === 'drive.new_file'
-  );
+  ) return 'google';
+  // X tools (x_*) and X trigger types (x.new_comment, x.new_dm, …) share one account.
+  if (toolName.startsWith('x_') || toolName.startsWith('x.')) return 'x';
+  if (toolName.startsWith('notion_')) return 'notion';
+  if (toolName.startsWith('github_')) return 'github';
+  return null;
 }
 
-async function fetchGoogleProfileOptions(): Promise<ArgOption[]> {
-  if (googleProfileOptionsCache) return googleProfileOptionsCache;
-  if (googleProfileOptionsPromise) return googleProfileOptionsPromise;
+// Per-provider cache + in-flight dedupe so switching nodes doesn't re-hit the
+// agent on every render.
+const profileOptionsCache: Partial<Record<ProfileProvider, ArgOption[]>> = {};
+const profileOptionsPromise: Partial<Record<ProfileProvider, Promise<ArgOption[]>>> = {};
 
-  googleProfileOptionsPromise = (async () => {
-    // Google OAuth tokens live in the desktop's local encrypted store (not
-    // Supabase) since the device-local migration — read profiles from the local
-    // agent's oauth_list, mirroring useIntegrationsState.refreshProfiles('google').
+async function fetchProfileOptions(provider: ProfileProvider): Promise<ArgOption[]> {
+  const cached = profileOptionsCache[provider];
+  if (cached) return cached;
+  const inflight = profileOptionsPromise[provider];
+  if (inflight) return inflight;
+
+  const promise = (async () => {
     const agentHttp = (window as any).__AGENT_HTTP__ || 'http://127.0.0.1:8765';
     let tokens: any[] = [];
     try {
@@ -74,61 +98,59 @@ async function fetchGoogleProfileOptions(): Promise<ArgOption[]> {
     }
 
     const options = tokens
-      .filter((t) => String(t?.provider || '').toLowerCase() === 'google')
+      .filter((t) => String(t?.provider || '').toLowerCase() === provider)
       .map((t): ArgOption | null => {
         const value = String(t?.profileLabel || t?.profile_label || '').trim();
         if (!value) return null;
         const email = String(t?.accountEmail || t?.account_email || '').trim();
         const isDefault = Boolean(t?.isDefault ?? t?.is_default);
+        const primary = email || value;
         return {
           value,
-          label: email ? `${email}${isDefault ? ' (default)' : ''}` : `${value}${isDefault ? ' (default)' : ''}`,
+          label: `${primary}${isDefault ? ' (default)' : ''}`,
           description: email && email !== value ? value : undefined,
         };
       })
       .filter((option): option is ArgOption => !!option);
 
-    googleProfileOptionsCache = options;
+    profileOptionsCache[provider] = options;
     return options;
   })().finally(() => {
-    googleProfileOptionsPromise = null;
+    delete profileOptionsPromise[provider];
   });
 
-  return googleProfileOptionsPromise;
+  profileOptionsPromise[provider] = promise;
+  return promise;
 }
 
-function useGoogleProfileOptions(enabled: boolean): ArgOption[] {
-  const [options, setOptions] = useState<ArgOption[]>(googleProfileOptionsCache || []);
+function useProfileOptions(provider: ProfileProvider | null): ArgOption[] {
+  const [options, setOptions] = useState<ArgOption[]>(provider ? (profileOptionsCache[provider] || []) : []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!provider) {
+      setOptions([]);
+      return;
+    }
     let cancelled = false;
 
-    fetchGoogleProfileOptions()
-      .then((nextOptions) => {
-        if (!cancelled) setOptions(nextOptions);
-      })
-      .catch(() => {
-        if (!cancelled) setOptions([]);
-      });
-
-    const refresh = () => {
-      googleProfileOptionsCache = null;
-      fetchGoogleProfileOptions()
-        .then((nextOptions) => {
-          if (!cancelled) setOptions(nextOptions);
-        })
-        .catch(() => {
-          if (!cancelled) setOptions([]);
-        });
+    const load = () => {
+      fetchProfileOptions(provider)
+        .then((next) => { if (!cancelled) setOptions(next); })
+        .catch(() => { if (!cancelled) setOptions([]); });
     };
+    load();
 
+    // Re-fetch when an account is connected/disconnected anywhere in the app.
+    const refresh = () => {
+      delete profileOptionsCache[provider];
+      load();
+    };
     window.addEventListener('integrations.connected.changed', refresh);
     return () => {
       cancelled = true;
       window.removeEventListener('integrations.connected.changed', refresh);
     };
-  }, [enabled]);
+  }, [provider]);
 
   return options;
 }
@@ -330,8 +352,8 @@ export interface SmartArgEditorProps {
 export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNodes, workflowVariables }: SmartArgEditorProps) {
   const schema = useMemo(() => getToolSchema(toolName), [toolName]);
   const argSchema = schema?.args[argKey];
-  const isGoogleProfile = isGoogleProfileArg(toolName, argKey);
-  const googleProfileOptions = useGoogleProfileOptions(isGoogleProfile);
+  const profileProvider = profileProviderForTool(toolName, argKey);
+  const profileOptions = useProfileOptions(profileProvider);
   const isAiModel = isAiModelArg(toolName, argKey);
   const liveModelOptions = useLiveModelOptions(isAiModel);
   const isTranscriptionModel = isTranscriptionModelArg(toolName, argKey);
@@ -443,13 +465,14 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
       );
     }
 
-    if (isGoogleProfile) {
+    if (profileProvider) {
+      const providerLabel = PROFILE_PROVIDER_LABEL[profileProvider];
       return (
         <SelectInput
           value={value}
           onChange={onChange}
-          options={googleProfileOptions}
-          placeholder={googleProfileOptions.length > 0 ? 'Use default Google account' : 'No Google accounts connected'}
+          options={profileOptions}
+          placeholder={profileOptions.length > 0 ? `Use default ${providerLabel} account` : `No ${providerLabel} accounts connected`}
           allowFreeform
         />
       );

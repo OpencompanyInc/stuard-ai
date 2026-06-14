@@ -289,14 +289,21 @@ const BotBlueprintPreflightStepSchema = z.object({
 });
 
 // Trigger types the builder may choose. Mirrors the desktop trigger picker
-// (TriggersSection.tsx) minus gmail.new_email, which is gated on Google CASA
-// verification. ANY trigger firing wakes the agent.
+// (TriggersSection.tsx). X social triggers are included — X webhooks are live
+// and the desktop fully wires their subscriptions. gmail.new_email stays out
+// (gated on Google CASA verification) and instagram.* stays out (gated on
+// META_INTEGRATION_ENABLED). ANY trigger firing wakes the agent.
 const BOT_BLUEPRINT_TRIGGER_TYPES = [
   'schedule.interval',
   'schedule.cron',
   'webhook',
   'fs.watch',
   'command.watch',
+  'x.new_comment',
+  'x.new_mention',
+  'x.new_dm',
+  'x.new_follower',
+  'x.user_post',
   'manual',
 ] as const;
 type BotBlueprintTriggerType = typeof BOT_BLUEPRINT_TRIGGER_TYPES[number];
@@ -1066,6 +1073,12 @@ export async function handleInferenceRoutes(req: IncomingMessage, res: ServerRes
         '- schedule.interval: poll on a fixed cadence. args: { every: one of 10m/15m/30m/1h/2h/random }. Best for "check periodically"; use "random" for "random day / at-least-weekly".',
         '- webhook: an external system POSTs a URL. args: {} (the desktop generates the URL). Best for "when Zapier/my script/another app fires".',
         '- command.watch: a long-running script emits output. args: { cmd, args:[...] }. Best for custom watchers.',
+        '- x.new_comment: someone replies to the user\'s post on X (Twitter). args (all optional): { post_id (limit to one post/thread), from_username, contains_text }. THIS is the right trigger for "reply to comments on my posts" / engagement bots — not a timer.',
+        '- x.new_mention: someone @-mentions the user on X. args: {}.',
+        '- x.new_dm: a new X direct message. args: {}.',
+        '- x.new_follower: the user gains a new follower on X. args: {}.',
+        '- x.user_post: the user publishes a new post on X. args: {}.',
+        'X triggers are event-driven (the X webhook wakes the agent the instant the event arrives — no polling) and require the user\'s X account to be connected in Settings > Integrations. When you pick an X trigger, add a setupCheck reminding the user to connect their X account so events can flow.',
         '- manual: only when the user presses Run. args: {}. Use only for on-demand agents.',
         'Pick the smallest set of triggers that covers the real wake conditions (usually one). ANY trigger firing wakes the agent. If unsure which wake condition the user wants, ask via agent_clarify_user rather than guessing a timer. Always set "interval" too (it is the fallback cadence), but the triggers array is what actually gets wired up.',
       ].filter(Boolean).join('\n');

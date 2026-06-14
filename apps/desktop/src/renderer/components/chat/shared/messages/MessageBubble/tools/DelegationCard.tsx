@@ -1,9 +1,5 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronRight, ExternalLink, Loader2, Users, XCircle } from 'lucide-react';
 import { ChainOfThoughtStep } from '../../../../../ai-elements/ChainOfThought';
@@ -16,6 +12,7 @@ import { normalizeMarkdownSpacing } from '../helpers/markdown';
 import { humanizeToolName } from '../helpers/toolLabels';
 import type { AssistantTraceStepData } from '../types';
 import { ToolTraceContent } from './ToolTraceContent';
+import { TraceMarkdown } from './TraceMarkdown';
 
 interface DelegationCardProps {
   step: AssistantTraceStepData;
@@ -122,7 +119,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
   return (
     <div className={clsx('w-full', isLast ? 'mb-0' : 'mb-4')}>
       <div
-        className="rounded-xl border overflow-hidden transition-colors duration-150"
+        className="rounded-xl border border-cot-subtle overflow-hidden transition-colors duration-150"
         style={{
           backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
           borderColor,
@@ -258,8 +255,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
               className="overflow-hidden"
             >
               <div
-                className="border-t px-3 pt-2.5 pb-1"
-                style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 12%, transparent)' }}
+                className="border-t border-t-cot-faint px-3 pt-2.5 pb-1"
               >
                 {visibleChildSteps.map((child, idx) => (
                   <ChainOfThoughtStep
@@ -273,20 +269,15 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
                     }
                   >
                     {(child.kind === 'reasoning' || child.kind === 'text') && child.content ? (
-                      <div
-                        className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed break-words prose prose-sm max-w-none prose-p:my-1 prose-headings:font-semibold prose-headings:text-[12px] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[10px] prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:p-2 prose-pre:rounded-md prose-pre:text-[10px] prose-strong:font-semibold"
+                      <TraceMarkdown
+                        className="scrollbar-none max-h-40 overflow-y-auto rounded-lg px-3 py-2 text-[11px] leading-relaxed break-words"
                         style={{
                           backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 25%, transparent)',
                           color: 'color-mix(in srgb, var(--foreground) 62%, transparent)',
                         }}
                       >
-                        <ReactMarkdown
-                          remarkPlugins={[remarkMath, remarkGfm]}
-                          rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                        >
-                          {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(child.content)))}
-                        </ReactMarkdown>
-                      </div>
+                        {normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(child.content)))}
+                      </TraceMarkdown>
                     ) : null}
                     {child.kind === 'tool' && child.tool ? (
                       <ToolTraceContent tool={child.tool} />

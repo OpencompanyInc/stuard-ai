@@ -54,8 +54,7 @@ export const CollapsibleToolGroup: React.FC<CollapsibleToolGroupProps> = ({ tool
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="overflow-hidden ml-3 border-l-[1.5px] pl-3"
-            style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 15%, transparent)' }}
+            className="overflow-hidden ml-3 border-l-[1.5px] border-l-cot-rail pl-3"
           >
             {steps.map(({ step, idx }) => (
               <ChainOfThoughtStep

@@ -1450,13 +1450,24 @@ function OAuthRedirectHint() {
     try { await navigator.clipboard.writeText(redirectUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch { /* noop */ }
   };
   return (
-    <div className="rounded-lg border wf-border-subtle p-3 space-y-1.5" style={{ background: "var(--wf-bg)" }}>
-      <div className="text-[11.5px] font-semibold wf-fg-muted">Redirect URL — add this to your provider's OAuth app</div>
+    <div className="rounded-lg border wf-border-subtle p-3 space-y-2" style={{ background: "var(--wf-bg)" }}>
+      <div className="text-[11.5px] font-semibold wf-fg">Step 1 — Add this redirect URI to your provider's OAuth app</div>
       <div className="flex items-center gap-2">
         <code className="flex-1 text-[11.5px] wf-fg break-all rounded-md px-2 py-1.5 wf-surface-muted">{redirectUrl}</code>
-        <button onClick={onCopy} className={`p-1.5 rounded-md ${IB_ICON_BUTTON}`} title="Copy redirect URL">
+        <button onClick={onCopy} className={`p-1.5 rounded-md ${IB_ICON_BUTTON}`} title="Copy redirect URI">
           {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
         </button>
+      </div>
+      <div className="text-[11px] wf-fg-muted leading-relaxed space-y-1">
+        <p>
+          Paste it <span className="wf-fg font-medium">exactly</span> — it must match character-for-character
+          (same scheme, host, port, and no trailing <code className="wf-surface-muted rounded px-1">/</code>). The field is named:
+        </p>
+        <ul className="space-y-0.5 pl-1">
+          <li>• <span className="wf-fg font-medium">Google</span> — APIs &amp; Services → Credentials → your <span className="wf-fg font-medium">Web application</span> client → <span className="wf-fg font-medium">Authorized redirect URIs</span></li>
+          <li>• <span className="wf-fg font-medium">GitHub</span> — OAuth App → <span className="wf-fg font-medium">Authorization callback URL</span></li>
+          <li>• <span className="wf-fg font-medium">Notion / Slack / others</span> — usually <span className="wf-fg font-medium">Redirect URI(s)</span> or <span className="wf-fg font-medium">Callback URL</span></li>
+        </ul>
       </div>
     </div>
   );
@@ -1575,11 +1586,34 @@ function AuthEditor({ auth, setAuth }: { auth: Draft["auth"]; setAuth: (a: Draft
               placeholder="read write offline_access"
             />
           </Field>
+          <Field label="Extra authorize params" hint="key=value pairs added to the consent URL (e.g. Google offline access)">
+            <Input
+              value={Object.entries(strategy.extraAuthParams || {}).map(([k, v]) => `${k}=${v}`).join(" ")}
+              onChange={v => {
+                const params: Record<string, string> = {};
+                for (const pair of v.split(/[\s,]+/).filter(Boolean)) {
+                  const idx = pair.indexOf("=");
+                  if (idx <= 0) continue;
+                  params[pair.slice(0, idx)] = pair.slice(idx + 1);
+                }
+                setAuth({ ...auth, strategy: { ...strategy, extraAuthParams: Object.keys(params).length ? params : undefined } });
+              }}
+              placeholder="access_type=offline prompt=consent"
+              mono
+            />
+          </Field>
           <OAuthRedirectHint />
           <p className="text-[11.5px] wf-fg-muted leading-relaxed">
-            Register an OAuth app on the provider, add the redirect URL above, then enter its
-            <span className="wf-fg font-medium"> client id &amp; secret</span> below. After you <span className="wf-fg font-medium">Deploy</span>, a
-            <span className="wf-fg font-medium"> Connect</span> button appears — that runs the provider sign-in. Don't add token fields; Stuard fetches and refreshes those.
+            <span className="wf-fg font-medium">Step 2</span> — enter the app's
+            <span className="wf-fg font-medium"> client id &amp; secret</span> in the fields below.
+            <span className="wf-fg font-medium"> Step 3</span> — hit <span className="wf-fg font-medium">Deploy</span>, then click the
+            <span className="wf-fg font-medium"> Connect</span> button that appears to run the provider sign-in. Don't add token fields; Stuard fetches and refreshes those for you.
+          </p>
+          <p className="text-[11px] wf-fg-faint leading-relaxed">
+            Tip: to keep access alive after the first hour you need a refresh token. For Google put
+            <code className="wf-surface-muted rounded px-1 mx-0.5">access_type=offline</code> and
+            <code className="wf-surface-muted rounded px-1 mx-0.5">prompt=consent</code> in <span className="wf-fg-muted font-medium">Extra authorize params</span>; for most other providers add the
+            <code className="wf-surface-muted rounded px-1 mx-0.5">offline_access</code> scope above.
           </p>
         </div>
       )}

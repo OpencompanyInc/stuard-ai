@@ -231,8 +231,33 @@ function safeEqualHex(a: string, b: string): boolean {
   }
 }
 
-/** Resolve the provider-side account id we'll receive events under for this user. */
-async function resolveExternalId(userId: string, provider: Provider, profileLabel?: string): Promise<string> {
+/** Resolve the X numeric user id from a user OAuth token (GET /2/users/me).
+ *  Local-integration path: X tokens are device-local now, so the desktop relays
+ *  one at register time and we derive the id from it instead of reading a
+ *  Supabase external_accounts row. The token is used here and never persisted. */
+async function resolveXExternalIdFromToken(accessToken: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`${X_API_BASE}/2/users/me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const body: any = await resp.json().catch(() => ({}));
+    const id = String(body?.data?.id || '').trim();
+    if (resp.ok && id) return id;
+    writeLog('x_users_me_failed', { status: resp.status, error: body?.detail || body?.title || null });
+  } catch (e: any) {
+    writeLog('x_users_me_failed', { error: String(e?.message || e) });
+  }
+  return null;
+}
+
+/** Resolve the provider-side account id we'll receive events under for this user.
+ *  For X, prefer a device-local token relayed by the desktop (no Supabase); fall
+ *  back to the stored external_accounts row when no token is supplied. */
+async function resolveExternalId(userId: string, provider: Provider, profileLabel?: string, accessToken?: string): Promise<string> {
+  if (provider === 'x' && accessToken) {
+    const fromToken = await resolveXExternalIdFromToken(accessToken);
+    if (fromToken) return fromToken;
+  }
   const acc = await getExternalAccount(userId, provider, profileLabel);
   if (!acc) throw new Error(`${provider}_not_connected`);
   const externalId = String(
@@ -368,13 +393,18 @@ async function ensureXWebhookRegistered(): Promise<string | null> {
 }
 
 /** Best-effort: add a per-user Account Activity subscription for this X account. */
-async function ensureXUserSubscribed(userId: string, externalId: string, profileLabel?: string): Promise<void> {
+async function ensureXUserSubscribed(userId: string, externalId: string, accessToken?: string, profileLabel?: string): Promise<void> {
   if (xSubscribedExternalIds.has(externalId)) return;
   const webhookId = await ensureXWebhookRegistered();
   if (!webhookId) return;
   try {
-    const acc = await getExternalAccount(userId, 'x', profileLabel);
-    const token = String(acc?.access_token || '').trim();
+    // Prefer the device-local token relayed at register time; fall back to a
+    // stored account only if one still exists (pre-local-migration users).
+    let token = String(accessToken || '').trim();
+    if (!token) {
+      const acc = await getExternalAccount(userId, 'x', profileLabel);
+      token = String(acc?.access_token || '').trim();
+    }
     if (!token) return;
     const resp = await fetch(`${X_API_BASE}/2/account_activity/webhooks/${encodeURIComponent(webhookId)}/subscriptions/all`, {
       method: 'POST',
@@ -408,6 +438,7 @@ export async function registerSocialTrigger(
   type: SocialTriggerType,
   args: any,
   sourceKey?: string,
+  oauth?: { accessToken?: string; refreshToken?: string | null },
 ) {
   // Make sure persisted registrations are loaded first so a re-register right
   // after a restart merges source keys instead of clobbering them.
@@ -416,6 +447,9 @@ export async function registerSocialTrigger(
   const key = nativeKey(userId, workflowId, triggerId);
   const normalizedSourceKey = normalizeSourceKey(sourceKey, workflowId, triggerId);
   const profileLabel = String(args?.profile || '').trim() || undefined;
+  // Device-local X token relayed by the desktop — used once to derive the X id
+  // and subscribe the user to the app webhook, then dropped (never persisted).
+  const accessToken = String(oauth?.accessToken || '').trim() || undefined;
 
   const existing = regs.get(key);
   if (existing) {
@@ -425,10 +459,13 @@ export async function registerSocialTrigger(
     regs.set(key, existing);
     indexExternalId(provider, existing.externalId, key);
     persistReg(existing);
+    // Re-attempt the per-user subscription on re-register (cheap: cached per
+    // process by externalId) so it self-heals after a Cloud Run restart.
+    if (provider === 'x' && accessToken) void ensureXUserSubscribed(userId, existing.externalId, accessToken, profileLabel);
     return { ok: true, registration: { type, workflowId, triggerId, externalId: existing.externalId, args: existing.args } };
   }
 
-  const externalId = await resolveExternalId(userId, provider, profileLabel);
+  const externalId = await resolveExternalId(userId, provider, profileLabel, accessToken);
   const reg: Registration = {
     key, userId, workflowId, triggerId, type, provider, externalId,
     sourceKeys: [normalizedSourceKey],
@@ -441,7 +478,7 @@ export async function registerSocialTrigger(
   if (provider === 'instagram') {
     void ensureInstagramSubscribed(userId, externalId, profileLabel);
   } else if (provider === 'x') {
-    void ensureXUserSubscribed(userId, externalId, profileLabel);
+    void ensureXUserSubscribed(userId, externalId, accessToken, profileLabel);
   }
 
   return { ok: true, registration: { type, workflowId, triggerId, externalId, args: reg.args } };
@@ -835,8 +872,17 @@ export async function handleSocialTriggerRoutes(
       sendJson(res, 400, { ok: false, error: 'instagram_triggers_disabled' });
       return true;
     }
+    // Optional device-local X OAuth relayed by the desktop. Used transiently to
+    // derive the X user id + create the per-user subscription; never persisted.
+    const oauthRaw = body?.oauth && typeof body.oauth === 'object' ? body.oauth : undefined;
+    const oauth = oauthRaw
+      ? {
+          accessToken: String(oauthRaw.accessToken || '').trim() || undefined,
+          refreshToken: oauthRaw.refreshToken ? String(oauthRaw.refreshToken) : null,
+        }
+      : undefined;
     try {
-      const out = await registerSocialTrigger(auth.userId, workflowId, triggerId, type, body?.args || {}, source);
+      const out = await registerSocialTrigger(auth.userId, workflowId, triggerId, type, body?.args || {}, source, oauth);
       sendJson(res, 200, out);
     } catch (e: any) {
       const msg = String(e?.message || 'register_failed');

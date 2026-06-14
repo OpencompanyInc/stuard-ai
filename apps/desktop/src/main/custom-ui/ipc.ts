@@ -611,16 +611,24 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
       const subscriberId = subResult.subscriberId;
       const win = BrowserWindow.fromWebContents(event.sender);
       let chunkIndex = 0;
+      // Re-entrancy guard. Each stream_read can block up to waitMs, so a bare
+      // setInterval fires OVERLAPPING reads on the same subscriber cursor: both
+      // in-flight reads start from cursor C, both return chunk C, both advance to
+      // C+1 → the SAME chunk delivered 2–3× → the transcript pill (and the pasted
+      // text) shows duplicated sentences. Only ever run one read at a time.
+      let polling = false;
 
       // Poll for chunks and push to the window
       const poll = async () => {
-        if (!win || win.isDestroyed()) {
-          clearInterval(pollInterval);
-          streamPollers.delete(subscriberId);
-          await execLocalTool('stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => { });
-          return;
-        }
+        if (polling) return;
+        polling = true;
         try {
+          if (!win || win.isDestroyed()) {
+            clearInterval(pollInterval);
+            streamPollers.delete(subscriberId);
+            await execLocalTool('stream_unsubscribe', { streamId, subscriberId }, ctx).catch(() => { });
+            return;
+          }
           const readResult = await execLocalTool(
             'stream_read',
             {
@@ -660,6 +668,8 @@ export function initCustomUiIpc(getRouterContext: () => RouterContext): void {
           }
         } catch (_e) {
           // Ignore read errors, keep polling
+        } finally {
+          polling = false;
         }
       };
 

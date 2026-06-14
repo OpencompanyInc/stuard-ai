@@ -236,11 +236,11 @@ export const ExecutionGroupCard: React.FC<ExecutionGroupCardProps> = memo(({ ste
   return (
     <div className={clsx('w-full', isLast ? 'mb-0' : 'mb-3')}>
       <div
-        className="overflow-hidden rounded-2xl border backdrop-blur-sm transition-colors"
+        className="overflow-hidden rounded-2xl border border-cot-subtle backdrop-blur-sm transition-colors"
         style={{
           background:
             'linear-gradient(180deg, color-mix(in srgb, var(--sidebar-item-hover) 26%, transparent), color-mix(in srgb, var(--sidebar-item-hover) 12%, transparent))',
-          borderColor: isAccented ? tinted(30) : 'color-mix(in srgb, var(--foreground-muted) 16%, transparent)',
+          borderColor: isAccented ? tinted(30) : undefined,
           boxShadow: isAccented ? `0 0 0 1px ${tinted(8)}` : 'none',
         }}
       >
@@ -306,8 +306,7 @@ export const ExecutionGroupCard: React.FC<ExecutionGroupCardProps> = memo(({ ste
               className="overflow-hidden"
             >
               <div
-                className="border-t px-3.5 pb-2 pt-2"
-                style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 10%, transparent)' }}
+                className="border-t border-t-cot-faint px-3.5 pb-2 pt-2"
               >
                 <div className="relative">
                   <div

@@ -102,10 +102,14 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
 
   const processTextChunk = (chunk: string) => {
     if (!chunk) return;
-    let t = chunk
+    // While streaming, hide a trailing incomplete <<media marker so users don't
+    // briefly see raw "<<" or ">>" before the closing delimiter arrives.
+    let sanitized = chunk.replace(/<<[^>\n]*$/, '');
+    let t = sanitized
       .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
       .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)');
     t = normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(t)));
+    if (!t.trim()) return;
     result.push({ kind: 'text', value: t });
   };
 

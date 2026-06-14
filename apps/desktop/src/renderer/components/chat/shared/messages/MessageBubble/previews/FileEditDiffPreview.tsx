@@ -67,9 +67,8 @@ export const FileEditDiffPreview: React.FC<FileEditDiffPreviewProps> = ({ oldTex
         </div>
       ) : null}
       <div
-        className="overflow-hidden rounded-lg font-mono text-[11px] leading-[1.55]"
+        className="overflow-hidden rounded-lg border border-cot-subtle font-mono text-[11px] leading-[1.55]"
         style={{
-          border: '1px solid color-mix(in srgb, var(--foreground-muted) 14%, transparent)',
           backgroundColor: 'color-mix(in srgb, var(--sidebar-item-hover) 18%, transparent)',
         }}
       >

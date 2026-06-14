@@ -51,6 +51,7 @@ def _register_bus_capture_session(
     path: str | None = None,
     bus_id: str | None = None,
     stream_id: str | None = None,
+    persist: bool = False,
 ) -> None:
     """Register a bus capture session before subscribe completes so stop_capture can find it."""
     info: Dict[str, Any] = {
@@ -67,6 +68,11 @@ def _register_bus_capture_session(
         "silence_threshold": silence_threshold,
         "silence_duration_ms": silence_duration_ms,
         "flow_id": flow_id,
+        # Persistent captures (e.g. a hotkey-toggle dictation: start the stream in
+        # one run, stop it in a later run) must outlive the run that started them.
+        # The graceful run-end cleanup passes excludePersistent=true to skip these;
+        # an explicit stop/abort still reaps them so the mic never leaks.
+        "persist": bool(persist),
         "status": "starting",
     }
     if stream_id:
@@ -212,6 +218,10 @@ async def capture_media(
     audio_device = args.get("audioDevice")  # For audiovideo mode
     flow_id = str(args.get("flowId") or "").strip()  # Track which workflow started this
     mirror = bool(args.get("mirror", False))  # Horizontal flip for selfie-cam
+    # Persist the capture across the run that started it (hotkey-toggle dictation):
+    # the graceful run-end cleanup skips persistent captures; an explicit stop/abort
+    # still reaps them. Defaults false → existing flows behave exactly as before.
+    persist = bool(args.get("persist", False))
 
     if kind not in ("photo", "video", "audio", "audiovideo"):
         raise ValueError("kind must be one of 'photo' | 'video' | 'audio' | 'audiovideo'")
@@ -234,6 +244,7 @@ async def capture_media(
             audio_device,
             flow_id,
             mirror,
+            persist,
         )
 
     # Validate mode
@@ -313,6 +324,7 @@ async def _capture_via_bus(
     audio_device: Any = None,
     flow_id: str = "",
     mirror: bool = False,
+    persist: bool = False,
 ) -> Dict[str, Any]:
     """
     Capture media using the shared media bus system.
@@ -366,6 +378,7 @@ async def _capture_via_bus(
             mode="stream",
             flow_id=flow_id,
             stream_id=stream_id,
+            persist=persist,
         )
         
         # Subscribe to the bus with stream linked (no file recording needed)
@@ -437,6 +450,7 @@ async def _capture_via_bus(
         silence_threshold=silence_threshold if mode == "silence" else None,
         silence_duration_ms=silence_duration_ms if mode == "silence" else None,
         path=explicit_path or None,
+        persist=persist,
     )
 
     # Subscribe to the bus (starts it if not running)
@@ -1275,12 +1289,18 @@ async def stop_captures_by_flow(
         exclude_modes = [exclude_modes]
     exclude_modes = {str(m) for m in exclude_modes}
 
+    # On graceful run-end the engine passes excludePersistent=true so a capture
+    # explicitly marked persist (hotkey-toggle dictation) survives the run that
+    # started it. An explicit stop/abort omits it and reaps everything.
+    exclude_persistent = bool(args.get("excludePersistent", False))
+
     # Find sessions belonging to this workflow
     with _sessions_lock:
         matching_sids = [
             sid for sid, info in _active_recordings.items()
             if isinstance(info, dict) and info.get("flow_id") == flow_id
             and str(info.get("mode") or "") not in exclude_modes
+            and not (exclude_persistent and bool(info.get("persist")))
         ]
     
     if not matching_sids:

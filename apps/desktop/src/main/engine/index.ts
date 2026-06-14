@@ -811,7 +811,11 @@ export async function runStuardEngine(id: string, payload: any, engineCtx: Engin
         // stops it in a later run via stop_capture, so the mic must survive this
         // run ending. On ABORT/stop we reap everything so the mic never leaks.
         const excludeModes = controller.signal.aborted ? [] : ['until_stop'];
-        execLocalTool('stop_captures_by_flow', { flowId: cleanupFlowId, excludeModes }, engineCtx, 10000)
+        // On graceful completion also spare captures explicitly marked `persist`
+        // (e.g. a hotkey-toggle dictation streams audio in one run and is stopped
+        // in a later run). An abort/stop reaps everything so the mic never leaks.
+        const excludePersistent = !controller.signal.aborted;
+        execLocalTool('stop_captures_by_flow', { flowId: cleanupFlowId, excludeModes, excludePersistent }, engineCtx, 10000)
           .then((r: any) => { if (r?.stopped > 0) engineCtx.logFn(`🎤 Released ${r.stopped} capture session(s) on run end`); })
           .catch(() => {});
         execLocalTool('close_all_streams', { flowId: cleanupFlowId }, engineCtx, 10000).catch(() => {});

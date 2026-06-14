@@ -98,6 +98,29 @@ export async function listVMOAuthAccountsForUser(
       !!account && (!provider || account.provider.toLowerCase() === provider.toLowerCase()));
 }
 
+/**
+ * Fetch a user's VM-stored OAuth account (with secrets) by explicit userId,
+ * bypassing the bridge-secrets execution-target gate — for plain server
+ * contexts like deploy-manager that register a VM-deployed workflow's social
+ * triggers and need the VM-local token to drive the per-user provider
+ * subscription. Returns null when the VM is unreachable or has no such account.
+ */
+export async function getVMOAuthAccountForUser(
+  userId: string,
+  provider: string,
+  profileLabel?: string,
+): Promise<VmOAuthAccount | null> {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  const result = await sendVMCommand(id, 'get_oauth_token', {
+    provider,
+    ...(profileLabel ? { profileLabel } : {}),
+  }, 10_000);
+  if (!result.ok) return null;
+  const token = result.result?.token || result.result?.result?.token;
+  return normalizeVmOAuthToken(provider, token);
+}
+
 export async function storeVMOAuthAccount(
   provider: string,
   account: Partial<VmOAuthAccount> & {

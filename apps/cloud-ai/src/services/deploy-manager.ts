@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { Storage } from '@google-cloud/storage';
 import { CLOUD_ENGINE_BUCKET } from '../utils/config';
 import { sendVMCommand } from './vm-command';
+import { getVMOAuthAccountForUser } from '../tools/vm-oauth';
 import { supabaseAdmin, hasSupabase } from '../supabase';
 import { createWebhook, deleteWebhook, getWebhooksByUser, updateWebhook } from '../webhooks/core';
 import {
@@ -583,13 +584,23 @@ async function ensureDeploymentTriggerBindings(userId: string, deployId: string,
       // Best-effort: a disconnected social account shouldn't block the VM deploy;
       // the trigger registers on the next deploy/start once the account exists.
       try {
+        // X needs the user's token once for the per-user webhook subscription.
+        // For VM-deployed workflows the token lives in the VM's OAuth store
+        // (device-local migration — not Supabase), so fetch it from the VM and
+        // relay it; registerSocialTrigger uses it transiently and never stores it.
+        let oauth: { accessToken: string; refreshToken: string | null } | undefined;
+        if (String(binding.type || '').startsWith('x.')) {
+          const acc = await getVMOAuthAccountForUser(userId, 'x', String(binding.args?.profile || '').trim() || undefined);
+          if (acc?.access_token) oauth = { accessToken: acc.access_token, refreshToken: acc.refresh_token };
+        }
         await registerSocialTrigger(
           userId,
           req.workflowId,
           binding.triggerId,
           binding.type,
           binding.args || {},
-          consumerId
+          consumerId,
+          oauth
         );
       } catch (e: any) {
         console.warn(`[deploy-manager] social trigger ${binding.type} registration failed for ${req.workflowId}/${binding.triggerId}: ${e?.message || e}`);

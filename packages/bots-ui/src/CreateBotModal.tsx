@@ -11,6 +11,7 @@ import { COMMON_EMOJIS, TRIGGER_META } from './constants';
 import { buildBotBlueprint, streamBotBlueprintWithAi, submitBlueprintClarifyAnswers, runBlueprintPreflightStep } from './blueprint';
 import { compactWhitespace, describeTrigger, humanizeModelName, humanizeToolName } from './helpers';
 import { ToolsPickerModal } from './ToolsSection';
+import { Select } from './primitives';
 import { useBotsPlatform } from './BotsPlatformContext';
 import { useStudioThemeScope } from './theme-scope';
 
@@ -1346,20 +1347,16 @@ function ReviewStep({
               })}
 
               {hasInterval && (
-                <div className={clsx(CARD_CLASS, 'px-3 py-2.5')}>
-                  <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-medium text-theme-fg">
+                <div className={clsx(CARD_CLASS, 'flex items-center justify-between gap-3 px-3 py-2.5')}>
+                  <div className="flex items-center gap-2 text-[11.5px] font-medium text-theme-fg">
                     <Clock className={clsx('h-3.5 w-3.5', ACCENT_TEXT)} />
                     {nonInterval.length > 0 ? 'Also on a schedule' : 'On a schedule'}
                   </div>
-                  <select
+                  <Select<ScheduleInterval>
                     value={interval}
-                    onChange={e => setInterval(e.target.value as ScheduleInterval)}
-                    className={clsx(FIELD_CLASS, 'px-3 py-2.5 text-[13.5px]')}
-                  >
-                    {Object.entries(SCHEDULE_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
+                    onChange={setInterval}
+                    options={Object.entries(SCHEDULE_LABELS).map(([value, label]) => ({ value: value as ScheduleInterval, label }))}
+                  />
                 </div>
               )}
             </div>

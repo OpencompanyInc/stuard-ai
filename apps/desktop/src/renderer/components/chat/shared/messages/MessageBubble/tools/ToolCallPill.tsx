@@ -43,17 +43,17 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
 
   // Format result for display
   const formatResult = (result: any): React.ReactNode => {
-    if (!result) return <span className="text-gray-500 italic">No result</span>;
+    if (!result) return <span className="text-theme-muted italic">No result</span>;
 
     // Extract file paths first — show them prominently with actions
     const filePaths = extractFilePaths(result);
 
     const filtered = filterInternalIds(result);
-    if (!filtered && filePaths.length === 0) return <span className="text-green-600">✓ Success</span>;
+    if (!filtered && filePaths.length === 0) return <span className="text-emerald-500">✓ Success</span>;
 
     // Handle common result patterns
     if (filtered?.error) {
-      return <span className="text-red-600">Error: {String(filtered.error)}</span>;
+      return <span className="text-red-500">Error: {String(filtered.error)}</span>;
     }
 
     return (
@@ -69,16 +69,23 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
               // Skip keys whose values are file paths (already shown above)
               if (isFilePath(value)) return null;
               return (
-                <div key={key} className="flex items-center gap-1 bg-green-50 border border-green-200 rounded px-2 py-1">
-                  <span className="font-medium text-green-800 text-[10px]">{key}:</span>
-                  <span className="text-green-700 text-[10px] max-w-[200px] truncate">
+                <div
+                  key={key}
+                  className="flex items-center gap-1 rounded px-2 py-1"
+                  style={{
+                    backgroundColor: 'color-mix(in srgb, rgb(16, 185, 129) 12%, transparent)',
+                    border: '1px solid color-mix(in srgb, rgb(16, 185, 129) 22%, transparent)',
+                  }}
+                >
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400 text-[10px]">{key}:</span>
+                  <span className="text-emerald-700 dark:text-emerald-300 text-[10px] max-w-[200px] truncate">
                     {typeof value === 'string' ? value : JSON.stringify(value)}
                   </span>
                 </div>
               );
             })}
             {Object.keys(filtered).length > 5 && (
-              <span className="text-gray-500 text-[10px]">+{Object.keys(filtered).length - 5} more</span>
+              <span className="text-theme-muted text-[10px]">+{Object.keys(filtered).length - 5} more</span>
             )}
           </div>
         )}
@@ -95,9 +102,9 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
     return (
       <div className="flex flex-wrap gap-1 items-center">
         {Object.entries(filtered).slice(0, 4).map(([key, value]) => (
-          <div key={key} className="flex items-center gap-1 bg-gray-50 rounded px-2 py-1">
-            <span className="font-medium text-gray-800 text-[10px]">{key}:</span>
-            <span className="text-gray-700 text-[10px] max-w-[150px] truncate">
+          <div key={key} className="flex items-center gap-1 rounded px-2 py-1 bg-theme-hover/50">
+            <span className="font-medium text-theme-fg text-[10px]">{key}:</span>
+            <span className="text-theme-muted text-[10px] max-w-[150px] truncate">
               {typeof value === 'string' ? value : JSON.stringify(value)}
             </span>
           </div>
@@ -130,7 +137,7 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
           <span className={clsx(
             "transition-all duration-300",
             status === 'running' ? "tool-glow-sweep font-semibold" :
-            isError ? "text-red-600" :
+            isError ? "text-red-500" :
             "text-theme-fg tool-complete-fade"
           )}>
             {displayText}
@@ -139,7 +146,7 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
 
         <button
           onClick={() => setShowDetails(!showDetails)}
-          className="flex items-center justify-center p-1 hover:bg-gray-100 rounded transition-colors"
+          className="flex items-center justify-center p-1 rounded transition-colors hover:bg-theme-hover/60"
         >
           <ChevronRight
             className={`w-3.5 h-3.5 text-theme-fg transition-transform duration-200 ${showDetails ? 'rotate-90' : ''
@@ -152,12 +159,12 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
-          className="ml-8 text-[11px] text-gray-600 font-normal"
+          className="ml-8 text-[11px] text-theme-muted font-normal"
         >
           {isCompleted && tool.result ? (
             // Show results for completed tools
             <div className="py-1" data-onboarding="tool-result">
-              <span className="text-gray-500 text-[10px] font-medium uppercase mb-1 block">Result:</span>
+              <span className="text-theme-muted text-[10px] font-medium uppercase mb-1 block">Result:</span>
               {formatResult(tool.result)}
             </div>
           ) : isError && tool.error ? (

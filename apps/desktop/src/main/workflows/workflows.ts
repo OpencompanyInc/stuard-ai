@@ -12,6 +12,7 @@ import { setVariable, initializeWorkflowVariables, cleanupWorkflowVariables } fr
 import { getTimezone } from "../settings";
 import { waitForAgentReady } from "../services/agent";
 import { readClipboardSnapshot } from "../tools/clipboard-snapshot";
+import { getLocalXOAuth } from "../services/social-trigger-client";
 // Lazy-imported inside handlers to avoid circular deps with bot-trigger-dispatcher
 // → bot-service → proactive-service → … → workflows.
 let _routeWebhookToBots: ((slug: string, payload: any) => number) | null = null;
@@ -701,6 +702,12 @@ async function registerSocialNativeTrigger(
   type: SocialNativeTriggerType,
   args: any
 ) {
+  // X triggers need the user's X token once for the per-user webhook
+  // subscription; relay the device-local token (cloud uses it transiently and
+  // never stores it). Fetch once, outside the auth-retry loop.
+  const oauth = type.startsWith('x.')
+    ? await getLocalXOAuth(String(args?.profile || '').trim() || undefined)
+    : undefined;
   // Same auth-retry pattern as Google native triggers (session may not be ready on autostart).
   const MAX_RETRIES = 5;
   const RETRY_DELAY_MS = 3000;
@@ -724,6 +731,7 @@ async function registerSocialNativeTrigger(
           type,
           args: args || {},
           source: getDesktopTriggerSourceId(flowId, triggerId),
+          ...(oauth ? { oauth } : {}),
         }),
       });
       const out: any = await resp.json().catch(() => ({}));

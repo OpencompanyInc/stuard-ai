@@ -263,7 +263,13 @@ const traceMarkdownComponents = {
   h4: (props: any) => <h4 className="mb-1 mt-1.5 text-[11px] font-semibold first:mt-0" {...props} />,
   strong: (props: any) => <strong className="font-semibold text-theme-fg/90" {...props} />,
   em: (props: any) => <em className="italic" {...props} />,
-  blockquote: (props: any) => <blockquote className="my-1.5 border-l-2 border-theme/30 pl-2 italic" {...props} />,
+  blockquote: (props: any) => (
+    <blockquote
+      className="my-1.5 border-l-2 pl-2 italic"
+      style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 30%, transparent)' }}
+      {...props}
+    />
+  ),
   code: ({ className, children, ...props }: any) => {
     const isBlock = className?.startsWith('language-');
     if (isBlock) {
@@ -276,11 +282,20 @@ const traceMarkdownComponents = {
     );
   },
   pre: ({ children, ...props }: any) => (
-    <pre className="my-1.5 overflow-x-auto rounded-md border border-theme/10 bg-black/20 p-2 text-[10px] leading-relaxed" {...props}>
+    <pre
+      className="my-1.5 overflow-x-auto rounded-md bg-black/20 p-2 text-[10px] leading-relaxed"
+      style={{ border: '1px solid color-mix(in srgb, var(--foreground-muted) 16%, transparent)' }}
+      {...props}
+    >
       {children}
     </pre>
   ),
-  hr: () => <hr className="my-2 border-theme/10" />,
+  hr: () => (
+    <hr
+      className="my-2"
+      style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 10%, transparent)' }}
+    />
+  ),
 };
 
 function TraceMarkdown({ content }: { content: string }) {
@@ -964,8 +979,14 @@ function FilePathChip({ filePath }: { filePath: string }) {
   };
 
   return (
-    <div className="my-0.5 flex items-center gap-2 rounded-lg border border-theme/10 bg-transparent px-2.5 py-1.5">
-      <span className="shrink-0 rounded-full border border-theme/10 px-1.5 py-0.5 text-[9px] font-medium text-theme-muted">
+    <div
+      className="my-0.5 flex items-center gap-2 rounded-lg border bg-transparent px-2.5 py-1.5"
+      style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 16%, transparent)' }}
+    >
+      <span
+        className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium text-theme-muted"
+        style={{ borderColor: 'color-mix(in srgb, var(--foreground-muted) 10%, transparent)' }}
+      >
         {kindLabel}
       </span>
       <span className="max-w-[220px] truncate text-[10px] font-medium text-theme-fg/85" title={filePath}>

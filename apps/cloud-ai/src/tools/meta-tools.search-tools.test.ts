@@ -5,10 +5,12 @@ const {
   getSupabaseServiceMock,
   resolveEmbedderMock,
   embedManyMock,
+  getBridgeSecretsMock,
 } = vi.hoisted(() => ({
   getSupabaseServiceMock: vi.fn(),
   resolveEmbedderMock: vi.fn(),
   embedManyMock: vi.fn(),
+  getBridgeSecretsMock: vi.fn(() => undefined as any),
 }));
 
 vi.mock('../supabase', () => ({
@@ -30,6 +32,7 @@ vi.mock('ai', async () => {
 vi.mock('./bridge', () => ({
   execLocalTool: vi.fn(),
   hasClientBridge: vi.fn(() => false),
+  getBridgeSecrets: getBridgeSecretsMock,
 }));
 
 describe('search_tools Supabase-backed discovery', () => {
@@ -37,6 +40,8 @@ describe('search_tools Supabase-backed discovery', () => {
     getSupabaseServiceMock.mockReset();
     resolveEmbedderMock.mockReset();
     embedManyMock.mockReset();
+    getBridgeSecretsMock.mockReset();
+    getBridgeSecretsMock.mockReturnValue(undefined);
   });
 
   it('requires a non-empty query', async () => {
@@ -148,6 +153,38 @@ describe('search_tools Supabase-backed discovery', () => {
     const result = await (search_tools as any).execute({ query: 'video recording webcam capture media recording' });
 
     expect(result.tools.some((tool: any) => tool.name === 'capture_media')).toBe(true);
+  });
+
+  it('surfaces a matching custom-integration tool even when semantic search fills the page', async () => {
+    // Semantic RPC returns a full page of native tools — none of them custom.
+    const fullPage = Array.from({ length: 8 }, (_, i) => ({
+      name: `native_search_tool_${i}`,
+      description: 'A native tool that mentions search.',
+      category: 'System',
+    }));
+    const rpcMock = vi.fn(async () => ({ data: fullPage, error: null }));
+
+    getSupabaseServiceMock.mockReturnValue({ from: vi.fn(), rpc: rpcMock });
+    resolveEmbedderMock.mockResolvedValue({ embedder: { id: 'fake-embedder' } });
+    embedManyMock.mockResolvedValue({ embeddings: [[0.11, 0.22, 0.33]] });
+
+    // A deployed custom integration tool lives only on the request-scoped bag.
+    getBridgeSecretsMock.mockReturnValue({
+      __customCatalog: [
+        {
+          name: 'google_search_console_list_sites',
+          description: '[Google Search Console] List verified sites and search analytics.',
+          category: 'Marketing',
+        },
+      ],
+    });
+
+    const result = await (search_tools as any).execute({ query: 'search console sites' });
+
+    // It must appear despite the semantic page already being full (regression:
+    // it used to be appended after the page and truncated by the slice).
+    expect(result.tools.some((t: any) => t.name === 'google_search_console_list_sites')).toBe(true);
+    expect(result.tools.length).toBeLessThanOrEqual(8);
   });
 
   it('returns schema-enriched workflow node search results in one call', async () => {

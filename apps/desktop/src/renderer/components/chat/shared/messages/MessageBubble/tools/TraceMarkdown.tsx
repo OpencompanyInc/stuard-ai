@@ -1,6 +1,8 @@
 import React, { memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { normalizeMarkdownSpacing } from '../helpers/markdown';
 
 // Compact markdown renderer for tool-result text shown in the chain-of-thought
@@ -87,7 +89,12 @@ export const TraceMarkdown: React.FC<{ children: string; className?: string; sty
   if (!text.trim()) return null;
   return (
     <div className={className} style={style}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url} components={TRACE_MD_COMPONENTS}>
+      <ReactMarkdown
+        remarkPlugins={[remarkMath, remarkGfm]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+        urlTransform={(url) => url}
+        components={TRACE_MD_COMPONENTS}
+      >
         {text}
       </ReactMarkdown>
     </div>

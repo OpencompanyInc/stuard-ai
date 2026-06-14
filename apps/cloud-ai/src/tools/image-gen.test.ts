@@ -5,6 +5,8 @@ import {
   buildImageMessageContent,
   parseImageDataUrl,
   extractImagesFromResponse,
+  extractTextFromResponse,
+  stripDataUrlPrefix,
 } from './image-gen';
 
 describe('normalizeImageModelId', () => {
@@ -76,5 +78,37 @@ describe('extractImagesFromResponse', () => {
   it('returns an empty array when there are no images', () => {
     expect(extractImagesFromResponse({ choices: [{ message: { content: 'no image' } }] })).toEqual([]);
     expect(extractImagesFromResponse({})).toEqual([]);
+  });
+});
+
+describe('extractTextFromResponse', () => {
+  it('reads plain string content (model explaining it cannot make images)', () => {
+    const data = { choices: [{ message: { content: "I can't generate images." } }] };
+    expect(extractTextFromResponse(data)).toBe("I can't generate images.");
+  });
+
+  it('joins array (multimodal) content parts', () => {
+    const data = { choices: [{ message: { content: [{ type: 'text', text: 'sorry' }, { type: 'text', text: 'no image' }] } }] };
+    expect(extractTextFromResponse(data)).toBe('sorry no image');
+  });
+
+  it('returns empty string when there is no text', () => {
+    expect(extractTextFromResponse({})).toBe('');
+    expect(extractTextFromResponse({ choices: [{ message: {} }] })).toBe('');
+  });
+});
+
+describe('stripDataUrlPrefix', () => {
+  it('strips a data: URL prefix down to raw base64', () => {
+    expect(stripDataUrlPrefix('data:image/png;base64,AAAA')).toBe('AAAA');
+    expect(stripDataUrlPrefix('data:image/jpeg;base64,BBBB')).toBe('BBBB');
+  });
+
+  it('passes through bare base64 untouched', () => {
+    expect(stripDataUrlPrefix('AAAA')).toBe('AAAA');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(stripDataUrlPrefix('  AAAA  ')).toBe('AAAA');
   });
 });

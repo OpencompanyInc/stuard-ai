@@ -51,6 +51,7 @@ const TOOL_SEMANTIC_GROUPS: Record<string, string[]> = {
 
   // FFmpeg / media processing
   generate_image: ['image generation', 'generate image', 'create image', 'ai image', 'picture', 'visual mockup'],
+  generate_music: ['music', 'song', 'generate music', 'create music', 'compose', 'make a song', 'soundtrack', 'background music', 'theme music', 'jingle', 'instrumental', 'beat'],
   ffmpeg_run: ['ffmpeg', 'video', 'audio', 'media processing', 'convert'],
   ffmpeg_convert_media: ['ffmpeg', 'video', 'audio', 'convert', 'transcode'],
   ffmpeg_extract_audio: ['ffmpeg', 'audio', 'extract audio'],
@@ -450,6 +451,9 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   vault_get_credential: ['use credential', 'login with saved password', 'get login info', 'use saved password'],
   vault_search: ['find password', 'search credentials', 'find credential for', 'lookup password'],
   vault_stats: ['vault statistics', 'how many passwords', 'credential count'],
+
+  // Media generation
+  generate_music: ['generate music', 'create a song', 'compose music', 'make a song', 'write a song', 'background track', 'soundtrack', 'theme music', 'instrumental', 'jingle', 'lo-fi beat', 'orchestral score', 'eerie space theme', 'xylophone melody', 'produce a track'],
 
   // Web Search
   web_search: ['google', 'search online', 'look up', 'find information', 'research'],

@@ -16,7 +16,7 @@ import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreferen
 import { writeLog } from '../../utils/logger';
 
 // Core tools
-import { search_tools, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
+import { createSearchToolsTool, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
 import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
 import { stop_automation, write_file, create_directory, read_file, list_directory } from '../../tools/device-tools';
@@ -173,8 +173,8 @@ function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> 
       createSearchWorkflowNodesTool({ seen: new Set<string>() }),
       'search_workflow_nodes',
     ),
-    // 3. Search tools (sis search)
-    search_tools: createLoggedTool(search_tools, 'search_tools'),
+    // 3. Search tools (workflow surface — sees workflow-only tools, hides chat-only like chat_ui)
+    search_tools: createLoggedTool(createSearchToolsTool('workflow'), 'search_tools'),
     // 4. Get tool schema
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
     // 5. Inspect workflow topology

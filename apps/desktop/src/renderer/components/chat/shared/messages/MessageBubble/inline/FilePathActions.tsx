@@ -43,19 +43,12 @@ export const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) =>
     try { (window as any).desktopAPI?.showItemInFolder?.(filePath); } catch {}
   };
 
-  // `border-theme/10` is a dead class (no rule) so the bare `border` would render
-  // Tailwind's default light-gray = a white outline in dark mode. Use a real
-  // foreground-derived border colour instead.
-  const subtleBorder = 'color-mix(in srgb, var(--foreground) 12%, transparent)';
-
   return (
     <div
-      className="my-0.5 flex items-center gap-2 rounded-lg border bg-transparent px-2.5 py-1.5"
-      style={{ borderColor: subtleBorder }}
+      className="my-0.5 flex items-center gap-2 rounded-lg border border-cot-subtle bg-transparent px-2.5 py-1.5"
     >
       <span
-        className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium text-theme-muted"
-        style={{ borderColor: subtleBorder }}
+        className="shrink-0 rounded-full border border-cot-faint px-1.5 py-0.5 text-[9px] font-medium text-theme-muted"
       >
         {kindLabel}
       </span>

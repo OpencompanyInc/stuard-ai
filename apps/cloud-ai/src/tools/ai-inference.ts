@@ -257,6 +257,18 @@ export const aiInferenceTool = createTool({
       .string()
       .optional()
       .describe('Internal: owning workflow id (threaded by the engine). Scopes the transcript output stream so it is cleaned up when the run stops.'),
+    streamWindow: z
+      .boolean()
+      .optional()
+      .describe('Internal: set by the desktop windowed-STT loop on each per-window transcription call. Skips per-window usage logging; the whole session is billed once via billUsageOnly so short windows do not each hit the 0.1-credit floor.'),
+    billUsageOnly: z
+      .boolean()
+      .optional()
+      .describe('Internal: when true (transcription mode), log a single STT usage event for `audioSeconds` of audio and return — no transcription is performed. Used by the desktop windowed-STT loop to bill the whole session once at the end.'),
+    audioSeconds: z
+      .number()
+      .optional()
+      .describe('Internal: total transcribed audio seconds, used with billUsageOnly to price one accumulated STT usage event.'),
     schema: z
       .record(z.string(), z.any())
       .optional()
@@ -335,6 +347,9 @@ export const aiInferenceTool = createTool({
       maxDurationMs = 0,
       stopSessionId,
       flowId,
+      streamWindow = false,
+      billUsageOnly = false,
+      audioSeconds,
     } = (inputData || {}) as {
       prompt: string;
       input?: string;
@@ -354,6 +369,9 @@ export const aiInferenceTool = createTool({
       maxDurationMs?: number;
       stopSessionId?: string;
       flowId?: string;
+      streamWindow?: boolean;
+      billUsageOnly?: boolean;
+      audioSeconds?: number;
     };
 
     const hasMedia = Array.isArray(sources) && sources.length > 0;
@@ -414,6 +432,26 @@ export const aiInferenceTool = createTool({
           : /whisper|transcribe|scribe/i.test(modelId)
             ? modelId
             : DEFAULT_STT_MODEL;
+
+      // ── Bill-only finalize ──────────────────────────────────────────────────
+      // The desktop windowed-STT loop runs the windowing locally (the live audio
+      // stream only exists on the device) and transcribes each window via the
+      // per-window path below with streamWindow:true (which skips billing). It
+      // then sends ONE bill-only call with the total transcribed seconds so the
+      // session is billed as a single usage event instead of flooring every short
+      // window at 0.1 credits. No transcription is performed here.
+      if (billUsageOnly) {
+        const billSec = Number(audioSeconds) || 0;
+        if (billSec > 0) {
+          await logAiInferenceUsage(
+            sttModel,
+            { costUsd: sttCostUsd(sttModel, billSec), audioSeconds: billSec },
+            'ai_inference:transcription_stream',
+          );
+        }
+        await safeToolWrite(writer, { type: 'tool_event', tool: 'ai_inference', status: 'completed', mode: 'transcription' });
+        return { ok: true, model: sttModel };
+      }
 
       // ── Streaming speech-to-text: consume a live audio stream window-by-window ──
       // Works for any STT model (each window is a one-shot transcribe). With
@@ -484,19 +522,23 @@ export const aiInferenceTool = createTool({
             : Number.isFinite(audioSec) && audioSec > 0
               ? sttCostUsd(sttModel, audioSec)
               : undefined;
-        await logAiInferenceUsage(
-          result.model,
-          result.usage || billUsd != null
-            ? {
-                ...(billUsd != null ? { costUsd: billUsd } : {}),
-                promptTokens: result.usage?.input_tokens,
-                completionTokens: result.usage?.output_tokens,
-                totalTokens: result.usage?.total_tokens,
-                audioSeconds: result.usage?.seconds,
-              }
-            : null,
-          'ai_inference:transcription',
-        );
+        // streamWindow: this is one window of a desktop windowed-STT session —
+        // skip per-window billing; the session is billed once via billUsageOnly.
+        if (!streamWindow) {
+          await logAiInferenceUsage(
+            result.model,
+            result.usage || billUsd != null
+              ? {
+                  ...(billUsd != null ? { costUsd: billUsd } : {}),
+                  promptTokens: result.usage?.input_tokens,
+                  completionTokens: result.usage?.output_tokens,
+                  totalTokens: result.usage?.total_tokens,
+                  audioSeconds: result.usage?.seconds,
+                }
+              : null,
+            'ai_inference:transcription',
+          );
+        }
 
         await safeToolWrite(writer, {
           type: 'tool_event',

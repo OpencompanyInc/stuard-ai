@@ -23,6 +23,34 @@ export function getCloudAiHttpBase(): string {
   ).trim().replace(/\/+$/, '');
 }
 
+function agentHttpBase(): string {
+  return String(process.env.AGENT_HTTP || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+}
+
+/**
+ * Read the device-local X OAuth token from the agent store so it can be relayed
+ * to cloud-ai at registration time. Registering an X trigger needs the user's
+ * token once: cloud-ai uses it to derive the X user id and subscribe the account
+ * to the app webhook, then drops it (never persisted). Tokens are device-resident
+ * per the OAuth-local migration, so cloud-ai can no longer read them from Supabase.
+ */
+export async function getLocalXOAuth(profileLabel?: string): Promise<{ accessToken: string; refreshToken: string | null } | undefined> {
+  try {
+    const resp = await net.fetch(`${agentHttpBase()}/v1/tools/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: 'get_oauth_token', args: { provider: 'x', ...(profileLabel ? { profileLabel } : {}) } }),
+    });
+    const out: any = await resp.json().catch(() => ({}));
+    const token = out?.token || out?.result?.token;
+    const accessToken = String(token?.accessToken || '').trim();
+    if (!resp.ok || !accessToken) return undefined;
+    return { accessToken, refreshToken: token?.refreshToken ? String(token.refreshToken) : null };
+  } catch {
+    return undefined;
+  }
+}
+
 export function socialTriggerSourceKey(scope: string, ownerId: string, triggerId: string): string {
   return `${scope}:${ownerId}:${triggerId}`;
 }
@@ -37,6 +65,13 @@ export async function registerSocialNativeTrigger(input: {
   const token = getMainAccessToken();
   if (!token) return { ok: false, error: 'missing_access_token' };
 
+  // X triggers need the user's X token once for the per-user webhook
+  // subscription. Relay the device-local token so cloud-ai doesn't depend on
+  // Supabase; it uses the token transiently and never stores it.
+  const oauth = input.type.startsWith('x.')
+    ? await getLocalXOAuth(String((input.args as any)?.profile || '').trim() || undefined)
+    : undefined;
+
   try {
     const base = getCloudAiHttpBase();
     const resp = await net.fetch(`${base}/integrations/social/triggers/register`, {
@@ -48,6 +83,7 @@ export async function registerSocialNativeTrigger(input: {
         type: input.type,
         args: input.args || {},
         source: input.sourceKey,
+        ...(oauth ? { oauth } : {}),
       }),
     });
     const out: any = await resp.json().catch(() => ({}));

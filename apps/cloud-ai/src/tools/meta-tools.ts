@@ -38,10 +38,10 @@ import { executeAgenticTask } from './agentic-task';
 import { routeToWorkflowAgent } from './workflow-subagent';
 import { runSequentialTool, runParallelTool } from './workflow-system';
 import { searchWorkflowDocs } from '../agents/workflow-agent/docs';
-import { resolveEmbedder } from '../utils/embeddings';
+import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory, isToolDiscoverableForSurface, type ToolSurface } from './tool-registry';
 import { execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
 
@@ -702,103 +702,200 @@ function compactToolSearchEntry(entry: {
     };
 }
 
-export const search_tools = createTool({
-    id: 'search_tools',
-    description: 'Search for available tools with a required free-text query. Optionally narrow by category or kind. Returns up to 8 compact results.',
-    inputSchema: z.object({
-        query: z.string().min(1).describe('Required free-text query for semantic tool search.'),
-        category: z.string().optional().describe('Filter results to a specific tool category.'),
-        kind: z.string().optional().describe('Filter results to a specific tool kind (local, cloud, orchestration).'),
-    }),
-    outputSchema: z.object({
-        tools: z.array(z.object({
-            name: z.string(),
-            description: z.string(),
-            category: z.string(),
-        })),
-    }),
-    execute: async (inputData) => {
-        const { query, category, kind } = inputData as {
-            query?: string;
-            category?: string;
-            kind?: string;
-        };
-        const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-        if (!normalizedQuery) {
-            throw new Error('search_tools requires a non-empty query');
-        }
-        const supabase = getSupabaseService();
+// Deployed custom-integration tools are request-scoped and never written to the
+// global tool_embeddings table, so the semantic RPC can't rank them. To give
+// them real semantic discovery (not just keyword overlap) we embed each tool's
+// text once — lazily, cached by name+description so a redeploy that changes the
+// description re-embeds — and cosine-rank against the same query embedding. The
+// embedder is the same model/dimension native tools use, so scores are
+// comparable and the two sets can be merged into one ranking.
+const SEARCH_CUSTOM_SIMILARITY_MIN = 0.25;
+const customToolEmbedCache = new Map<string, number[]>();
 
-        const keywordFallback = () => {
-            const registry = getToolRegistry();
-            const categories = getToolCategories();
-            const results: Array<{ name: string; description: string; category: string; score: number }> = [];
-            const q = normalizedQuery.toLowerCase();
-            const tokens = Array.from(new Set(q.split(/[^a-z0-9_]+/i).map((part) => part.trim()).filter((part) => part.length >= 3)));
+async function semanticCustomToolMatches(
+    queryEmbedding: number[],
+    opts: { category?: string; kind?: string; allow: (name: string) => boolean },
+): Promise<Array<{ entry: { name: string; description: string; category: string }; similarity: number }>> {
+    const { category, kind, allow } = opts;
+    if (kind && kind !== 'cloud') return [];
+    const catalog = getCustomCatalog().filter((e) =>
+        e?.name && e?.description && allow(e.name) && (!category || e.category === category),
+    );
+    if (catalog.length === 0) return [];
 
-            for (const [cat, names] of categories.entries()) {
-                if (category && cat !== category) continue;
-                for (const name of names) {
-                    const tool = registry.get(name);
-                    if (!tool) continue;
-                    const desc = tool.description || '';
-                    const haystack = `${name} ${cat} ${desc}`.toLowerCase();
-                    const exact = q && haystack.includes(q) ? 4 : 0;
-                    const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
-                    if (q && exact === 0 && tokenScore === 0) continue;
-                    results.push({ ...compactToolSearchEntry({ name, description: desc, category: cat }), score: exact + tokenScore });
-                }
-            }
-
-            // Deployed custom-integration tools (treated as 'cloud' kind).
-            if (!kind || kind === 'cloud') {
-                for (const entry of getCustomCatalog()) {
-                    if (category && entry.category !== category) continue;
-                    const haystack = `${entry.name} ${entry.category} ${entry.description}`.toLowerCase();
-                    const exact = q && haystack.includes(q) ? 4 : 0;
-                    const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
-                    if (q && exact === 0 && tokenScore === 0) continue;
-                    results.push({ ...compactToolSearchEntry(entry), score: exact + tokenScore });
-                }
-            }
-
-            return { tools: results.sort((a, b) => b.score - a.score).slice(0, SEARCH_TOOL_RESULT_LIMIT).map(({ score: _score, ...entry }) => entry) };
-        };
-
-        if (!supabase) return keywordFallback();
+    const keyFor = (e: { name: string; description: string }) => `${e.name}\u0000${e.description}`;
+    const missing = catalog.filter((e) => !customToolEmbedCache.has(keyFor(e)));
+    if (missing.length > 0) {
         try {
             const { embedder } = await resolveEmbedder();
-            const { embeddings } = await embedMany({ model: embedder as any, values: [normalizedQuery] });
-            const queryEmbedding = embeddings[0];
-
-            const { data, error } = await supabase.rpc('search_tools', {
-                query_embedding: queryEmbedding,
-                match_threshold: 0.25,
-                match_count: SEARCH_TOOL_RESULT_LIMIT,
-                filter_category: category ?? null,
-                filter_kind: kind ?? null,
-                enabled_only: true,
+            const { embeddings } = await embedMany({
+                model: embedder as any,
+                values: missing.map((e) => `${e.name}: ${e.description}`),
             });
-            if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
-            const registry = getToolRegistry();
-            const tools = (data as any[])
-                .filter((row) => registry.has(String(row?.name || '')))
-                .map(compactToolSearchEntry);
-            const localMatches = keywordFallback().tools;
-            const seen = new Set(tools.map((tool) => tool.name));
-            for (const tool of localMatches) {
-                if (!seen.has(tool.name)) {
-                    tools.push(tool);
-                    seen.add(tool.name);
-                }
-            }
-            return { tools: tools.slice(0, SEARCH_TOOL_RESULT_LIMIT) };
-        } catch (e) {
-            console.warn('Vector search failed, falling back to keyword search', e);
-            return keywordFallback();
+            missing.forEach((e, i) => { if (embeddings[i]) customToolEmbedCache.set(keyFor(e), embeddings[i]); });
+        } catch (err) {
+            console.warn('[search_tools] custom tool embedding failed', err);
+            return [];
         }
-    },
-});
+    }
+
+    const out: Array<{ entry: { name: string; description: string; category: string }; similarity: number }> = [];
+    for (const e of catalog) {
+        const vec = customToolEmbedCache.get(keyFor(e));
+        if (!vec) continue;
+        let similarity = 0;
+        try { similarity = cosineSimilarity(queryEmbedding, vec); } catch { continue; }
+        if (similarity > SEARCH_CUSTOM_SIMILARITY_MIN) out.push({ entry: compactToolSearchEntry(e), similarity });
+    }
+    return out.sort((a, b) => b.similarity - a.similarity);
+}
+
+// Core tool search, surface-aware. Both search_tools (chat) and
+// search_workflow_nodes (workflow) call this, so the two discovery catalogs stay
+// separated: the chat surface hides workflow-only categories (Variables /
+// Workspace / Workflow-authoring) while the workflow surface hides chat-only
+// tools (chat_ui, name_conversation). See isToolDiscoverableForSurface.
+export async function runToolSearch(args: {
+    query?: string;
+    category?: string;
+    kind?: string;
+    surface: ToolSurface;
+}): Promise<{ tools: Array<{ name: string; description: string; category: string }> }> {
+    const { query, category, kind, surface } = args;
+    const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    if (!normalizedQuery) {
+        throw new Error('search_tools requires a non-empty query');
+    }
+    const allow = (name: string) => isToolDiscoverableForSurface(name, surface);
+    const supabase = getSupabaseService();
+
+    const q = normalizedQuery.toLowerCase();
+    const tokens = Array.from(new Set(q.split(/[^a-z0-9_]+/i).map((part) => part.trim()).filter((part) => part.length >= 3)));
+
+    // Deployed custom-integration tools are request-scoped — they're NEVER in the
+    // tool_embeddings table, so the semantic RPC can't surface them. Score them
+    // independently here (uncapped + sorted) so they can be merged with priority.
+    // Previously they were appended after a full page of semantic hits and then
+    // truncated by the slice, so a broad query never showed a user's own tools.
+    const customMatches = (): Array<{ name: string; description: string; category: string; score: number }> => {
+        if (kind && kind !== 'cloud') return [];
+        const out: Array<{ name: string; description: string; category: string; score: number }> = [];
+        for (const entry of getCustomCatalog()) {
+            if (!allow(entry.name)) continue;
+            if (category && entry.category !== category) continue;
+            const haystack = `${entry.name} ${entry.category} ${entry.description}`.toLowerCase();
+            const exact = q && haystack.includes(q) ? 4 : 0;
+            const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+            if (q && exact === 0 && tokenScore === 0) continue;
+            out.push({ ...compactToolSearchEntry(entry), score: exact + tokenScore });
+        }
+        return out.sort((a, b) => b.score - a.score);
+    };
+
+    const keywordFallback = () => {
+        const registry = getToolRegistry();
+        const categories = getToolCategories();
+        const results: Array<{ name: string; description: string; category: string; score: number }> = [];
+
+        for (const [cat, names] of categories.entries()) {
+            if (category && cat !== category) continue;
+            for (const name of names) {
+                if (!allow(name)) continue;
+                const tool = registry.get(name);
+                if (!tool) continue;
+                const desc = tool.description || '';
+                const haystack = `${name} ${cat} ${desc}`.toLowerCase();
+                const exact = q && haystack.includes(q) ? 4 : 0;
+                const tokenScore = tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+                if (q && exact === 0 && tokenScore === 0) continue;
+                results.push({ ...compactToolSearchEntry({ name, description: desc, category: cat }), score: exact + tokenScore });
+            }
+        }
+
+        // Custom matches lead so they aren't starved by the native-tool slice.
+        const merged = [...customMatches(), ...results];
+        const seen = new Set<string>();
+        const deduped = merged.filter((entry) => (seen.has(entry.name) ? false : (seen.add(entry.name), true)));
+        return { tools: deduped.sort((a, b) => b.score - a.score).slice(0, SEARCH_TOOL_RESULT_LIMIT).map(({ score: _score, ...entry }) => entry) };
+    };
+
+    if (!supabase) return keywordFallback();
+    try {
+        const { embedder } = await resolveEmbedder();
+        const { embeddings } = await embedMany({ model: embedder as any, values: [normalizedQuery] });
+        const queryEmbedding = embeddings[0];
+
+        const { data, error } = await supabase.rpc('search_tools', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.25,
+            match_count: SEARCH_TOOL_RESULT_LIMIT,
+            filter_category: category ?? null,
+            filter_kind: kind ?? null,
+            enabled_only: true,
+        });
+        if (error || !data) throw error ?? new Error('search_tools RPC returned no data');
+        const registry = getToolRegistry();
+
+        // Native vector hits carry their cosine similarity from the RPC.
+        const nativeScored = (data as any[])
+            .filter((row) => registry.has(String(row?.name || '')) && allow(String(row?.name || '')))
+            .map((row) => ({ entry: compactToolSearchEntry(row), similarity: Number(row?.similarity) || 0 }));
+
+        // Custom-integration tools, semantically ranked in-memory against the
+        // same query embedding (they're never in tool_embeddings).
+        const customScored = await semanticCustomToolMatches(queryEmbedding, { category, kind, allow });
+
+        // One unified ranking by similarity (custom + native interleave on merit,
+        // so a user's deployed tools surface semantically — not just on keyword
+        // overlap and not truncated off the end). Then keyword backfill catches
+        // anything the vector search scored below threshold. Dedupe, then cap.
+        const merged: Array<{ name: string; description: string; category: string }> = [];
+        const seen = new Set<string>();
+        const push = (tool: { name: string; description: string; category: string }) => {
+            if (seen.has(tool.name)) return;
+            seen.add(tool.name);
+            merged.push(tool);
+        };
+        [...nativeScored, ...customScored]
+            .sort((a, b) => b.similarity - a.similarity)
+            .forEach((s) => push(s.entry));
+        for (const tool of keywordFallback().tools) push(tool);
+        return { tools: merged.slice(0, SEARCH_TOOL_RESULT_LIMIT) };
+    } catch (e) {
+        console.warn('Vector search failed, falling back to keyword search', e);
+        return keywordFallback();
+    }
+}
+
+// Surface-bound factory: the orchestrator gets the chat instance (default),
+// the workflow agent gets a 'workflow' instance so it still sees workflow-only
+// tools (variables/workspace/etc.) while chat does not. Both hide the other
+// surface's exclusive tools.
+export function createSearchToolsTool(surface: ToolSurface = 'chat') {
+    return createTool({
+        id: 'search_tools',
+        description: 'Search for available tools with a required free-text query. Optionally narrow by category or kind. Returns up to 8 compact results.',
+        inputSchema: z.object({
+            query: z.string().min(1).describe('Required free-text query for semantic tool search.'),
+            category: z.string().optional().describe('Filter results to a specific tool category.'),
+            kind: z.string().optional().describe('Filter results to a specific tool kind (local, cloud, orchestration).'),
+        }),
+        outputSchema: z.object({
+            tools: z.array(z.object({
+                name: z.string(),
+                description: z.string(),
+                category: z.string(),
+            })),
+        }),
+        execute: async (inputData) => {
+            const { query, category, kind } = inputData as { query?: string; category?: string; kind?: string };
+            return runToolSearch({ query, category, kind, surface });
+        },
+    });
+}
+
+// Default chat-surface instance (used by the orchestrator and registered globally).
+export const search_tools = createSearchToolsTool('chat');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compact schema signatures for bulk node discovery.
@@ -994,8 +1091,10 @@ export function createSearchWorkflowNodesTool(opts: SearchWorkflowNodesOptions =
             const queryTrim = typeof query === 'string' ? query.trim() : '';
 
             // Explicit tool name re-request bypasses dedup (same as docs section id).
+            // Still honor the workflow surface so a chat-only tool (chat_ui) can't be
+            // pulled into a workflow by exact name.
             const registry = getToolRegistry();
-            if (queryTrim && registry.has(queryTrim)) {
+            if (queryTrim && registry.has(queryTrim) && isToolDiscoverableForSurface(queryTrim, 'workflow')) {
                 const node = await enrichWorkflowNodeFromSearchEntry(
                     { name: queryTrim, description: registry.get(queryTrim)?.description },
                     includeSchema,
@@ -1004,7 +1103,7 @@ export function createSearchWorkflowNodesTool(opts: SearchWorkflowNodesOptions =
                 return { nodes: [node] };
             }
 
-            const result = await (search_tools as any).execute({ query: queryTrim, category, kind });
+            const result = await runToolSearch({ query: queryTrim, category, kind, surface: 'workflow' });
             const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
 
             const nodes = await Promise.all(
@@ -1103,6 +1202,20 @@ export const get_tool_schema = createTool({
     },
 });
 
+/**
+ * Mastra's Tool.execute() does NOT throw on schema-validation failure — it returns
+ * { error: true, message, validationErrors }. Wrapping that in { success: true }
+ * hid real failures (e.g. a tool whose output didn't match its schema) behind an
+ * apparent success. Detect that shape and report it as a clean failure so the model
+ * can self-correct, otherwise wrap the result as a success.
+ */
+function finalizeToolResult(toolName: string, result: any) {
+    if (result && typeof result === 'object' && (result as any).error === true && typeof (result as any).message === 'string') {
+        return { success: false, tool: toolName, error: (result as any).message };
+    }
+    return { success: true, tool: toolName, result: sanitizeToolResultForModel(result) };
+}
+
 export const execute_tool = createTool({
     id: 'execute_tool',
     description: 'Execute any tool by name with arguments. Use get_tool_schema first if you are unsure of the args format.',
@@ -1126,7 +1239,7 @@ export const execute_tool = createTool({
             }
             try {
                 const result = await tool.execute(toolArgs, runCtx);
-                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
+                return finalizeToolResult(tool_name, result);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
@@ -1137,7 +1250,7 @@ export const execute_tool = createTool({
         if (customTool && typeof customTool.execute === 'function') {
             try {
                 const result = await customTool.execute(toolArgs, runCtx);
-                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
+                return finalizeToolResult(tool_name, result);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
@@ -1150,7 +1263,7 @@ export const execute_tool = createTool({
                 if (result && typeof result === 'object' && (result as any).error === 'unknown_tool') {
                     return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
                 }
-                return { success: true, tool: tool_name, result: sanitizeToolResultForModel(result) };
+                return finalizeToolResult(tool_name, result);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }

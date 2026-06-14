@@ -92,7 +92,7 @@ const SourceCard: React.FC<{ source: SourceRow }> = ({ source }) => {
   const snippet = snippetOf(source.content || source.snippet);
   const notes = typeof source.notes === 'number' ? source.notes : source.noteCount;
   return (
-    <div className="overflow-hidden rounded-lg border border-theme/10" style={cardStyle}>
+    <div className="overflow-hidden rounded-lg border border-cot-subtle" style={cardStyle}>
       <a
         href={source.url}
         target="_blank"
@@ -228,7 +228,7 @@ export const ResearchReadPreview: React.FC<{ result: any }> = ({ result }) => {
   })();
 
   return (
-    <div className="overflow-hidden rounded-lg border border-theme/10" style={cardStyle}>
+    <div className="overflow-hidden rounded-lg border border-cot-subtle" style={cardStyle}>
       <a
         href={url || undefined}
         target="_blank"
@@ -308,7 +308,7 @@ export const ResearchNotePreview: React.FC<{ args: any; result: any }> = ({ args
         const noteId = added[i];
         const sourceIds = Array.isArray(note.source_ids) ? note.source_ids : [];
         return (
-          <div key={i} className="rounded-lg border border-theme/10 px-2.5 py-1.5" style={cardStyle}>
+          <div key={i} className="rounded-lg border border-cot-subtle px-2.5 py-1.5" style={cardStyle}>
             <div className="mb-0.5 flex items-center gap-1.5">
               <span
                 className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide"
@@ -383,7 +383,7 @@ const ResearchDashboard: React.FC<{ result: any; icon: React.ReactNode; title: s
   const brief = typeof result?.brief === 'string' ? result.brief : '';
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-theme/10 p-2.5" style={cardStyle}>
+    <div className="flex flex-col gap-2 rounded-lg border border-cot-subtle p-2.5" style={cardStyle}>
       <div className="flex items-center gap-1.5">
         <span style={{ color: ACCENT }}>{icon}</span>
         <span className="text-[11px] font-semibold" style={{ color: ACCENT }}>{title}</span>
@@ -406,14 +406,14 @@ const ResearchDashboard: React.FC<{ result: any; icon: React.ReactNode; title: s
       </div>
 
       {notes.length > 0 ? (
-        <div className="flex flex-col gap-1 border-t border-theme/10 pt-2">
+        <div className="flex flex-col gap-1 border-t border-t-cot-faint pt-2">
           {notes.slice(0, 5).map((n, i) => <NoteLine key={n.id || i} note={n} />)}
           {notes.length > 5 ? <span className="text-[10px] text-theme-muted">+{notes.length - 5} more notes</span> : null}
         </div>
       ) : null}
 
       {sources.length > 0 ? (
-        <div className="flex flex-col gap-1.5 border-t border-theme/10 pt-2">
+        <div className="flex flex-col gap-1.5 border-t border-t-cot-faint pt-2">
           {sources.slice(0, 4).map((s, i) => <SourceCard key={(s.id || s.url) + i} source={s} />)}
           {sources.length > 4 ? <span className="text-[10px] text-theme-muted">+{sources.length - 4} more sources</span> : null}
         </div>

@@ -17,14 +17,11 @@ import {
   Mic,
   Monitor,
   Music,
-  Pause,
   Play,
   RefreshCw,
   Search,
   Trash2,
   Upload,
-  Volume2,
-  VolumeX,
   Wand2,
   X,
 } from 'lucide-react';
@@ -34,6 +31,7 @@ import {
   type MediaLibraryItem,
 } from '../hooks/useMediaLibrary';
 import { GenerativeCover } from './media/GenerativeCover';
+import { AudioPlayer } from './AudioPlayer';
 
 /** Brand-red tint helper — opacity modifiers on the manual --primary class are
  *  dead no-ops, so mix the channel explicitly (see styles.css / project memory). */
@@ -129,58 +127,6 @@ function kindIcon(kind: MediaKind, className = 'h-4 w-4') {
   return <File className={className} />;
 }
 
-function formatTime(time: number) {
-  if (!Number.isFinite(time) || time < 0) return '0:00';
-  const m = Math.floor(time / 60);
-  const s = Math.floor(time % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-/* ────────────────────────── Inline Audio Player ────────────────────────── */
-
-function InlineAudioPlayer({ src, name }: { src: string; name: string }) {
-  const ref = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [current, setCurrent] = useState(0);
-  const [muted, setMuted] = useState(false);
-  const [err, setErr] = useState(false);
-
-  const safeDur = Number.isFinite(duration) && duration > 0 ? duration : 0;
-  const safeCur = Number.isFinite(current) && current >= 0 ? current : 0;
-
-  const toggle = () => {
-    if (!ref.current) return;
-    if (playing) { ref.current.pause(); } else {
-      ref.current.play().catch(() => setErr(true));
-    }
-  };
-
-  if (err) return <div className="flex items-center gap-2 text-sm text-red-400"><AlertCircle className="h-4 w-4" />Failed to load audio</div>;
-
-  return (
-    <div className="w-full max-w-lg space-y-4">
-      <div className="flex items-center gap-4">
-        <button onClick={toggle} className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:scale-105 active:scale-95">
-          {playing ? <Pause className="h-6 w-6 fill-current" /> : <Play className="h-6 w-6 fill-current ml-0.5" />}
-        </button>
-        <div className="min-w-0 flex-1 space-y-2">
-          <p className="truncate text-sm font-medium text-theme-fg">{name}</p>
-          <input type="range" min={0} max={safeDur || 1} value={safeDur > 0 ? Math.min(safeCur, safeDur) : 0} onChange={(e) => { if (ref.current && safeDur > 0) { ref.current.currentTime = parseFloat(e.target.value); setCurrent(parseFloat(e.target.value)); } }} className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-md" />
-          <div className="flex items-center justify-between text-[11px] text-theme-muted font-mono">
-            <span>{formatTime(safeCur)}</span>
-            <span>{safeDur > 0 ? formatTime(safeDur) : '--:--'}</span>
-          </div>
-        </div>
-        <button onClick={() => { if (ref.current) { ref.current.muted = !muted; setMuted(!muted); } }} className="p-2 text-theme-muted hover:text-theme-fg transition">
-          {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-        </button>
-      </div>
-      <audio ref={ref} src={src} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onTimeUpdate={() => ref.current && setCurrent(ref.current.currentTime)} onLoadedMetadata={() => { if (ref.current) { const d = ref.current.duration; setDuration(Number.isFinite(d) ? d : 0); } }} onEnded={() => { setPlaying(false); setCurrent(0); if (ref.current) ref.current.currentTime = 0; }} onError={() => setErr(true)} className="hidden" />
-    </div>
-  );
-}
-
 /* ────────────────────────── Media Lightbox ────────────────────────── */
 
 function MediaLightbox({
@@ -256,7 +202,7 @@ function MediaLightbox({
                 kind="audio"
                 className="aspect-square w-full max-w-[260px] rounded-2xl shadow-2xl ring-1 ring-white/10"
               />
-              <InlineAudioPlayer src={src} name={item.name} />
+              <AudioPlayer src={src} title={item.name} className="max-w-lg" />
             </div>
           )}
           {(item.kind === 'document' || item.kind === 'unknown' || !src) && (
