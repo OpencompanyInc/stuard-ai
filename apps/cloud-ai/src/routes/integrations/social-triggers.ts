@@ -911,11 +911,18 @@ function eventMatchesRegistrationFilters(
 async function handleXEvents(payload: any): Promise<void> {
   await restoreSocialTriggerRegistrations().catch(() => {});
   const xUserId = String(payload?.for_user_id || payload?.for_user || '').trim();
+  // Inbound visibility (stdout → Cloud Run): which event types X actually delivers.
+  const dmCount = (Array.isArray(payload?.direct_message_events) ? payload.direct_message_events.length : 0)
+    + (Array.isArray(payload?.dm_events) ? payload.dm_events.length : 0);
+  const tweetCount = (Array.isArray(payload?.tweet_create_events) ? payload.tweet_create_events.length : 0)
+    + (Array.isArray(payload?.post_create_events) ? payload.post_create_events.length : 0);
+  console.log(`[x-aaa] inbound for_user_id=${xUserId || '(none)'} keys=[${Object.keys(payload || {}).join(',')}] dm=${dmCount} tweets=${tweetCount} follows=${Array.isArray(payload?.follow_events) ? payload.follow_events.length : 0} mentions=${Array.isArray(payload?.mention_events) ? payload.mention_events.length : 0}`);
   if (!xUserId) return;
 
   const dispatch = async (type: SocialTriggerType, events: any[]) => {
     if (!Array.isArray(events) || events.length === 0) return;
     const matches = registrationsForExternalId('x', xUserId, type);
+    console.log(`[x-aaa] dispatch type=${type} events=${events.length} matchingRegs=${matches.length}`);
     for (const reg of matches) {
       for (const ev of events) {
         if (!eventMatchesRegistrationFilters(type, ev, reg.args)) continue;
