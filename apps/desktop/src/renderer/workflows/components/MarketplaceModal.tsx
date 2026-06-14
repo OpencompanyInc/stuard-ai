@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { getMarketplaceApi, MarketplaceWorkflow, MarketplaceCategory, MarketplaceVersion, MarketplaceUpdate, MarketplaceCreatorProfile, MarketplaceWorkflowMedia } from "../../utils/cloud";
 import { supabase } from "../../lib/supabaseClient";
 import {
@@ -238,6 +239,107 @@ function MarketplaceIdentityPanel({
   );
 }
 
+type MarketplaceSelectOption = { value: string; label: string };
+
+function MarketplaceSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+  placeholder = "Select...",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: MarketplaceSelectOption[];
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const selected = options.find((o) => o.value === value);
+
+  const updateDropdownPos = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dropdownHeight = Math.min(options.length * 40 + 8, 240);
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const showAbove = spaceBelow < dropdownHeight && rect.top > spaceBelow;
+    setDropdownPos({
+      top: showAbove ? rect.top - dropdownHeight - 4 : rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+    });
+  }, [options.length]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          if (!open) updateDropdownPos();
+          setOpen(!open);
+        }}
+        className="w-full px-3 py-2 border rounded-xl text-sm wf-input flex items-center justify-between gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)]"
+      >
+        <span className={selected ? "wf-fg font-medium" : "wf-fg-faint"}>
+          {selected?.label || placeholder}
+        </span>
+        <ChevronDown className={`w-4 h-4 wf-fg-faint shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "fixed",
+            top: dropdownPos.top,
+            left: dropdownPos.left,
+            width: dropdownPos.width,
+            zIndex: 10001,
+          }}
+          className="wf-bg-elevated border wf-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
+        >
+          <div className="p-1 max-h-60 overflow-y-auto custom-scrollbar">
+            {options.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={`w-full px-3 py-2 text-left text-sm rounded-lg flex items-center justify-between gap-2 transition-colors mb-0.5 ${
+                  opt.value === value ? "wf-accent-chip font-medium" : "wf-fg wf-hover-bg"
+                }`}
+              >
+                <span>{opt.label}</span>
+                {opt.value === value && <Check className="w-4 h-4 wf-accent-fg shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
 function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[]) => void }) {
   const [input, setInput] = useState("");
   const { isDark } = useWorkflowTheme();
@@ -312,42 +414,40 @@ function SecurityReviewPanel({
   const d = isDark;
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
 
+  const alertSurface = {
+    background: d
+      ? "color-mix(in srgb, #ef4444 10%, var(--wf-bg-elevated))"
+      : "color-mix(in srgb, #ef4444 6%, var(--wf-bg-elevated))",
+    borderColor: "color-mix(in srgb, #ef4444 28%, var(--wf-border))",
+  };
+
   // Simple blocked message (quick static check failed)
-  if (code === 'SECURITY_BLOCKED') {
+  if (code === "SECURITY_BLOCKED") {
     return (
       <div
-        className="rounded-2xl border p-5 space-y-3 animate-in slide-in-from-top-2 duration-300"
-        style={{
-          background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
-          borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
-        }}
+        className="wf-card rounded-2xl p-5 space-y-3 animate-in slide-in-from-top-2 duration-300"
+        style={alertSurface}
       >
         <div className="flex items-start gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: d ? "rgba(239,68,68,0.15)" : "#fee2e2",
+              background: "color-mix(in srgb, #ef4444 14%, transparent)",
               color: d ? "#fca5a5" : "#dc2626",
             }}
           >
             <ShieldAlert className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="font-semibold text-sm" style={{ color: d ? "#fca5a5" : "#991b1b" }}>
+            <h4 className="font-semibold text-sm" style={{ color: d ? "#fca5a5" : "#b91c1c" }}>
               Security Check Blocked
             </h4>
-            <p
-              className="text-xs mt-1 leading-relaxed"
-              style={{ color: d ? "rgba(252,165,165,0.85)" : "rgba(153,27,27,0.85)" }}
-            >
-              {reason || 'Your workflow was blocked by our security checks.'}
+            <p className="text-xs mt-1 leading-relaxed wf-fg-muted">
+              {reason || "Your workflow was blocked by our security checks."}
             </p>
           </div>
         </div>
-        <p
-          className="text-xs leading-relaxed"
-          style={{ color: d ? "rgba(252,165,165,0.65)" : "rgba(153,27,27,0.65)" }}
-        >
+        <p className="text-xs leading-relaxed wf-fg-faint">
           Please review your workflow and remove any patterns that access sensitive system files,
           contain destructive commands, or could be used for data exfiltration. Then try publishing again.
         </p>
@@ -359,16 +459,13 @@ function SecurityReviewPanel({
   if (!analysis) {
     return (
       <div
-        className="p-4 rounded-2xl border flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
-        style={{
-          background: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
-          borderColor: d ? "rgba(239,68,68,0.22)" : "#fecaca",
-        }}
+        className="wf-card p-4 rounded-2xl flex items-start gap-3 animate-in slide-in-from-top-2 duration-300"
+        style={alertSurface}
       >
         <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" style={{ color: d ? "#fca5a5" : "#dc2626" }} />
         <div>
-          <span className="text-sm font-medium" style={{ color: d ? "#fca5a5" : "#991b1b" }}>
-            {reason || 'Security review failed. Please try again.'}
+          <span className="text-sm font-medium" style={{ color: d ? "#fca5a5" : "#b91c1c" }}>
+            {reason || "Security review failed. Please try again."}
           </span>
         </div>
       </div>
@@ -379,39 +476,19 @@ function SecurityReviewPanel({
   const { score, riskLevel, issues, warnings, summary, recommendations } = analysis;
   const scorePercent = Math.max(0, Math.min(100, score || 0));
 
-  const riskColors: Record<string, { bg: string; border: string; text: string; badge: string }> = {
-    critical: {
-      bg: d ? "rgba(239,68,68,0.08)" : "#fef2f2",
-      border: d ? "rgba(239,68,68,0.22)" : "#fecaca",
-      text: d ? "#fca5a5" : "#991b1b",
-      badge: d ? "bg-red-900/40 text-red-300 border-red-700/30" : "bg-red-100 text-red-800 border-red-200",
-    },
-    high: {
-      bg: d ? "rgba(249,115,22,0.08)" : "#fff7ed",
-      border: d ? "rgba(249,115,22,0.22)" : "#fed7aa",
-      text: d ? "#fdba74" : "#9a3412",
-      badge: d ? "bg-orange-900/40 text-orange-300 border-orange-700/30" : "bg-orange-100 text-orange-800 border-orange-200",
-    },
-    medium: {
-      bg: d ? "rgba(245,158,11,0.08)" : "#fffbeb",
-      border: d ? "rgba(245,158,11,0.22)" : "#fde68a",
-      text: d ? "#fcd34d" : "#92400e",
-      badge: d ? "bg-amber-900/40 text-amber-300 border-amber-700/30" : "bg-amber-100 text-amber-800 border-amber-200",
-    },
-    low: {
-      bg: d ? "rgba(34,197,94,0.08)" : "#f0fdf4",
-      border: d ? "rgba(34,197,94,0.22)" : "#bbf7d0",
-      text: d ? "#86efac" : "#166534",
-      badge: d ? "bg-green-900/40 text-green-300 border-green-700/30" : "bg-green-100 text-green-800 border-green-200",
-    },
+  const riskPalette: Record<string, { hue: string; text: string }> = {
+    critical: { hue: "#ef4444", text: d ? "#fca5a5" : "#b91c1c" },
+    high: { hue: "#f97316", text: d ? "#fdba74" : "#c2410c" },
+    medium: { hue: "#f59e0b", text: d ? "#fcd34d" : "#b45309" },
+    low: { hue: "#22c55e", text: d ? "#86efac" : "#15803d" },
   };
-  const colors = riskColors[riskLevel] || riskColors.high;
+  const palette = riskPalette[riskLevel] || riskPalette.high;
 
-  const severityConfig: Record<string, { color: string; bg: string; label: string }> = {
-    critical: { color: d ? "#fca5a5" : "#dc2626", bg: d ? "rgba(239,68,68,0.10)" : "#fef2f2", label: "CRITICAL" },
-    high: { color: d ? "#fdba74" : "#ea580c", bg: d ? "rgba(249,115,22,0.10)" : "#fff7ed", label: "HIGH" },
-    medium: { color: d ? "#fcd34d" : "#d97706", bg: d ? "rgba(245,158,11,0.10)" : "#fffbeb", label: "MEDIUM" },
-    low: { color: d ? "#86efac" : "#16a34a", bg: d ? "rgba(34,197,94,0.10)" : "#f0fdf4", label: "LOW" },
+  const severityConfig: Record<string, { hue: string; label: string }> = {
+    critical: { hue: "#ef4444", label: "CRITICAL" },
+    high: { hue: "#f97316", label: "HIGH" },
+    medium: { hue: "#f59e0b", label: "MEDIUM" },
+    low: { hue: "#22c55e", label: "LOW" },
   };
 
   const scoreBarColor =
@@ -419,8 +496,11 @@ function SecurityReviewPanel({
 
   return (
     <div
-      className="rounded-2xl border p-5 space-y-4 animate-in slide-in-from-top-2 duration-300"
-      style={{ background: colors.bg, borderColor: colors.border }}
+      className="wf-card rounded-2xl p-5 space-y-4 animate-in slide-in-from-top-2 duration-300"
+      style={{
+        background: `color-mix(in srgb, ${palette.hue} 8%, var(--wf-bg-elevated))`,
+        borderColor: `color-mix(in srgb, ${palette.hue} 24%, var(--wf-border))`,
+      }}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
@@ -428,22 +508,29 @@ function SecurityReviewPanel({
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: d ? "rgba(239,68,68,0.15)" : "#fee2e2",
-              color: d ? "#fca5a5" : "#dc2626",
+              background: `color-mix(in srgb, ${palette.hue} 14%, transparent)`,
+              color: palette.text,
             }}
           >
             <ShieldAlert className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="font-semibold text-sm" style={{ color: colors.text }}>
+            <h4 className="font-semibold text-sm" style={{ color: palette.text }}>
               Security Review Failed
             </h4>
-            <p className="text-xs mt-0.5" style={{ color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
+            <p className="text-xs mt-0.5 wf-fg-muted">
               Your workflow did not pass the automated security review. Fix the issues below and try again.
             </p>
           </div>
         </div>
-        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0 ${colors.badge}`}>
+        <span
+          className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0"
+          style={{
+            background: `color-mix(in srgb, ${palette.hue} 12%, transparent)`,
+            color: palette.text,
+            borderColor: `color-mix(in srgb, ${palette.hue} 28%, transparent)`,
+          }}
+        >
           {riskLevel}
         </span>
       </div>
@@ -451,48 +538,34 @@ function SecurityReviewPanel({
       {/* Score bar */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium" style={{ color: colors.text }}>Security Score</span>
-          <span className="text-xs font-bold" style={{ color: colors.text }}>{scorePercent}/100</span>
+          <span className="text-xs font-medium wf-fg">Security Score</span>
+          <span className="text-xs font-bold" style={{ color: palette.text }}>{scorePercent}/100</span>
         </div>
         <div
           className="h-2 rounded-full overflow-hidden"
-          style={{ background: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)" }}
+          style={{ background: "color-mix(in srgb, var(--wf-fg) 8%, transparent)" }}
         >
           <div
             className="h-full rounded-full transition-all duration-700"
             style={{ width: `${scorePercent}%`, background: scoreBarColor }}
           />
         </div>
-        <p className="text-[11px]" style={{ color: d ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.35)" }}>
+        <p className="text-[11px] wf-fg-faint">
           A score of 40+ with no critical issues is required to publish.
         </p>
       </div>
 
       {/* AI Summary */}
       {summary && (
-        <div
-          className="rounded-xl p-3 border"
-          style={{
-            background: d ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.7)",
-            borderColor: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
-          }}
-        >
-          <p
-            className="text-xs leading-relaxed"
-            style={{ color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.65)" }}
-          >
-            {summary}
-          </p>
+        <div className="wf-surface-muted rounded-xl p-3">
+          <p className="text-xs leading-relaxed wf-fg-muted">{summary}</p>
         </div>
       )}
 
       {/* Issues */}
       {issues && issues.length > 0 && (
         <div className="space-y-2">
-          <h5
-            className="text-[11px] font-semibold uppercase tracking-wide"
-            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
-          >
+          <h5 className="text-[11px] font-semibold uppercase tracking-wide wf-fg-faint">
             Issues ({issues.length})
           </h5>
           <div className="space-y-2">
@@ -504,41 +577,49 @@ function SecurityReviewPanel({
                   type="button"
                   key={i}
                   onClick={() => setExpandedIssue(isExpanded ? null : i)}
-                  className="w-full rounded-xl p-3 border text-left transition-all"
-                  style={{ background: sev.bg, borderColor: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
+                  className="w-full rounded-xl p-3 border text-left transition-all wf-hover-bg"
+                  style={{
+                    background: `color-mix(in srgb, ${sev.hue} 6%, var(--wf-bg-elevated))`,
+                    borderColor: `color-mix(in srgb, ${sev.hue} 18%, var(--wf-border))`,
+                  }}
                 >
                   <div className="flex items-center gap-2">
                     <span
                       className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                      style={{ background: sev.bg, color: sev.color, border: `1px solid ${sev.color}33` }}
+                      style={{
+                        background: `color-mix(in srgb, ${sev.hue} 12%, transparent)`,
+                        color: d
+                          ? `color-mix(in srgb, ${sev.hue} 72%, white)`
+                          : `color-mix(in srgb, ${sev.hue} 78%, black)`,
+                        border: `1px solid color-mix(in srgb, ${sev.hue} 30%, transparent)`,
+                      }}
                     >
                       {sev.label}
                     </span>
-                    <span className="text-xs font-semibold flex-1" style={{ color: sev.color }}>
+                    <span
+                      className="text-xs font-semibold flex-1"
+                      style={{
+                        color: d
+                          ? `color-mix(in srgb, ${sev.hue} 70%, white)`
+                          : `color-mix(in srgb, ${sev.hue} 75%, black)`,
+                      }}
+                    >
                       {issue.title}
                     </span>
                     <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                      style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.3)" }}
+                      className={`w-3.5 h-3.5 wf-fg-faint transition-transform ${isExpanded ? "rotate-180" : ""}`}
                     />
                   </div>
                   {isExpanded && (
                     <div className="mt-2 space-y-1.5 animate-in slide-in-from-top-1 duration-200">
-                      <p
-                        className="text-xs leading-relaxed"
-                        style={{ color: d ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.55)" }}
-                      >
-                        {issue.description}
-                      </p>
+                      <p className="text-xs leading-relaxed wf-fg-muted">{issue.description}</p>
                       {issue.remediation && (
-                        <p className="text-xs flex items-start gap-1.5 pt-0.5" style={{ color: d ? "rgba(96,165,250,0.85)" : "#2563eb" }}>
+                        <p className="text-xs flex items-start gap-1.5 pt-0.5 wf-accent-text">
                           <span className="font-semibold shrink-0">Fix:</span> {issue.remediation}
                         </p>
                       )}
                       {issue.location && (
-                        <p className="text-[10px] font-mono" style={{ color: d ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)" }}>
-                          Node: {issue.location}
-                        </p>
+                        <p className="text-[10px] font-mono wf-fg-faint">Node: {issue.location}</p>
                       )}
                     </div>
                   )}
@@ -552,34 +633,18 @@ function SecurityReviewPanel({
       {/* Warnings */}
       {warnings && warnings.length > 0 && (
         <div className="space-y-2">
-          <h5
-            className="text-[11px] font-semibold uppercase tracking-wide"
-            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
-          >
+          <h5 className="text-[11px] font-semibold uppercase tracking-wide wf-fg-faint">
             Warnings ({warnings.length})
           </h5>
           <div className="space-y-1.5">
             {warnings.map((w: any, i: number) => (
-              <div
-                key={i}
-                className="flex items-start gap-2 text-xs rounded-lg p-2.5"
-                style={{ background: d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)" }}
-              >
-                <AlertCircle
-                  className="w-3.5 h-3.5 shrink-0 mt-0.5"
-                  style={{ color: d ? "#fcd34d" : "#d97706" }}
-                />
+              <div key={i} className="flex items-start gap-2 text-xs rounded-lg p-2.5 wf-surface-muted">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: d ? "#fcd34d" : "#d97706" }} />
                 <div>
-                  <span className="font-medium" style={{ color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.65)" }}>
-                    {w.category}:{' '}
-                  </span>
-                  <span style={{ color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
-                    {w.message}
-                  </span>
+                  <span className="font-medium wf-fg">{w.category}: </span>
+                  <span className="wf-fg-muted">{w.message}</span>
                   {w.suggestion && (
-                    <p className="mt-0.5" style={{ color: d ? "rgba(96,165,250,0.7)" : "#3b82f6" }}>
-                      {w.suggestion}
-                    </p>
+                    <p className="mt-0.5 wf-accent-text">{w.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -591,19 +656,12 @@ function SecurityReviewPanel({
       {/* Recommendations */}
       {recommendations && recommendations.length > 0 && (
         <div className="space-y-1.5">
-          <h5
-            className="text-[11px] font-semibold uppercase tracking-wide"
-            style={{ color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
-          >
+          <h5 className="text-[11px] font-semibold uppercase tracking-wide wf-fg-faint">
             Recommendations
           </h5>
           <ul className="space-y-1">
             {recommendations.map((rec: string, i: number) => (
-              <li
-                key={i}
-                className="flex items-start gap-2 text-xs"
-                style={{ color: d ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)" }}
-              >
+              <li key={i} className="flex items-start gap-2 text-xs wf-fg-muted">
                 <ShieldCheck className="w-3 h-3 shrink-0 mt-0.5" style={{ color: d ? "#86efac" : "#16a34a" }} />
                 <span>{rec}</span>
               </li>
@@ -619,32 +677,31 @@ function SecurityReviewPanel({
 // PUBLISHING PROGRESS BANNER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function PublishingProgress({ phase, isDark }: { phase: string; isDark: boolean }) {
-  const d = isDark;
+function PublishingProgress({ phase }: { phase: string; isDark: boolean }) {
   const steps = [
-    { key: 'reviewing', label: 'Security Review', description: 'AI is analyzing your workflow for security issues...' },
-    { key: 'publishing', label: 'Publishing', description: 'Saving and indexing your workflow...' },
+    { key: "reviewing", label: "Security Review", description: "AI is analyzing your workflow for security issues..." },
+    { key: "publishing", label: "Publishing", description: "Saving and indexing your workflow..." },
   ];
-  const currentIndex = steps.findIndex(s => s.key === phase);
+  const currentIndex = steps.findIndex((s) => s.key === phase);
 
   return (
     <div
-      className="rounded-2xl p-5 border animate-in fade-in duration-300"
+      className="wf-card rounded-2xl p-5 animate-in fade-in duration-300"
       style={{
-        background: d ? "rgba(99,102,241,0.08)" : "#eef2ff",
-        borderColor: d ? "rgba(99,102,241,0.2)" : "#c7d2fe",
+        background: "color-mix(in srgb, var(--wf-accent) 8%, var(--wf-bg-elevated))",
+        borderColor: "color-mix(in srgb, var(--wf-accent) 22%, var(--wf-border))",
       }}
     >
       <div className="flex items-center gap-4">
         <div className="relative">
-          <Loader2 className="w-8 h-8 animate-spin" style={{ color: d ? "#818cf8" : "#4f46e5" }} />
+          <Loader2 className="w-8 h-8 animate-spin wf-accent-text" />
         </div>
         <div className="flex-1">
-          <h4 className="text-sm font-semibold" style={{ color: d ? "#c7d2fe" : "#3730a3" }}>
-            {steps[currentIndex]?.label || 'Processing'}...
+          <h4 className="text-sm font-semibold wf-fg">
+            {steps[currentIndex]?.label || "Processing"}...
           </h4>
-          <p className="text-xs mt-0.5" style={{ color: d ? "rgba(199,210,254,0.72)" : "rgba(55,48,163,0.72)" }}>
-            {steps[currentIndex]?.description || 'Please wait...'}
+          <p className="text-xs mt-0.5 wf-fg-muted">
+            {steps[currentIndex]?.description || "Please wait..."}
           </p>
         </div>
       </div>
@@ -653,18 +710,18 @@ function PublishingProgress({ phase, isDark }: { phase: string; isDark: boolean 
           <div
             key={step.key}
             className="flex-1 h-1.5 rounded-full overflow-hidden"
-            style={{ background: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
+            style={{ background: "color-mix(in srgb, var(--wf-fg) 8%, transparent)" }}
           >
             <div
               className={`h-full rounded-full transition-all duration-700 ${
                 i < currentIndex
-                  ? 'w-full'
+                  ? "w-full"
                   : i === currentIndex
-                  ? 'w-full animate-pulse'
-                  : 'w-0'
+                  ? "w-full animate-pulse"
+                  : "w-0"
               }`}
               style={{
-                background: i <= currentIndex ? (d ? "#818cf8" : "#4f46e5") : 'transparent',
+                background: i <= currentIndex ? "var(--wf-accent)" : "transparent",
               }}
             />
           </div>
@@ -674,12 +731,7 @@ function PublishingProgress({ phase, isDark }: { phase: string; isDark: boolean 
         {steps.map((step, i) => (
           <div key={step.key} className="flex-1">
             <span
-              className="text-[10px] font-medium"
-              style={{
-                color: i <= currentIndex
-                  ? (d ? "#a5b4fc" : "#4338ca")
-                  : (d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"),
-              }}
+              className={`text-[10px] font-medium ${i <= currentIndex ? "wf-accent-text" : "wf-fg-faint"}`}
             >
               {step.label}
             </span>
@@ -1283,23 +1335,16 @@ export function PublishModal({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium wf-fg">Category</label>
-            <div className="relative">
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                disabled={fetchingCats}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm appearance-none pr-8 transition-all"
-                style={inputStyle}
-              >
-                <option value="general">General</option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none wf-fg-faint">
-                <ChevronRight className="w-4 h-4 rotate-90" />
-              </div>
-            </div>
+            <MarketplaceSelect
+              value={category}
+              onChange={setCategory}
+              disabled={fetchingCats}
+              placeholder={fetchingCats ? "Loading categories..." : "Select category"}
+              options={[
+                { value: "general", label: "General" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -1893,23 +1938,16 @@ export function UpdateWorkflowModal({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium wf-fg">Category</label>
-            <div className="relative">
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                disabled={fetchingData}
-                className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)] text-sm appearance-none pr-8 transition-all"
-                style={inputStyle}
-              >
-                <option value="general">General</option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none wf-fg-faint">
-                <ChevronRight className="w-4 h-4 rotate-90" />
-              </div>
-            </div>
+            <MarketplaceSelect
+              value={category}
+              onChange={setCategory}
+              disabled={fetchingData}
+              placeholder={fetchingData ? "Loading categories..." : "Select category"}
+              options={[
+                { value: "general", label: "General" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium wf-fg">Tags</label>
@@ -3341,20 +3379,15 @@ export function MarketplaceBrowser({
                     placeholder="Search for workflows..."
                   />
                 </div>
-                <div className="relative">
-                  <select
+                <div className="min-w-[170px]">
+                  <MarketplaceSelect
                     value={category}
-                    onChange={e => setCategory(e.target.value)}
-                    className="min-w-[170px] appearance-none rounded-xl border wf-border wf-bg-elevated px-4 py-2.5 pr-8 text-sm wf-fg shadow-sm transition-colors focus:border-[color:var(--wf-accent)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wf-accent)_30%,transparent)]"
-                  >
-                    <option value="all">All Categories</option>
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 wf-fg-faint">
-                    <ChevronRight className="w-4 h-4 rotate-90" />
-                  </div>
+                    onChange={setCategory}
+                    options={[
+                      { value: "all", label: "All Categories" },
+                      ...categories.map((c) => ({ value: c.id, label: c.name })),
+                    ]}
+                  />
                 </div>
               </div>
 
@@ -3962,19 +3995,20 @@ function PortListEditor({
               style={inputStyle}
               placeholder="port_name"
             />
-            <select
-              value={p.type}
-              onChange={(e) => onUpdate(i, { type: e.target.value as FunctionPort['type'] })}
-              className="px-2 py-1.5 border rounded-lg text-xs focus:outline-none"
-              style={inputStyle}
-            >
-              <option value="any">any</option>
-              <option value="string">string</option>
-              <option value="number">number</option>
-              <option value="boolean">boolean</option>
-              <option value="object">object</option>
-              <option value="array">array</option>
-            </select>
+            <div className="w-[108px] shrink-0">
+              <MarketplaceSelect
+                value={p.type}
+                onChange={(type) => onUpdate(i, { type: type as FunctionPort["type"] })}
+                options={[
+                  { value: "any", label: "any" },
+                  { value: "string", label: "string" },
+                  { value: "number", label: "number" },
+                  { value: "boolean", label: "boolean" },
+                  { value: "object", label: "object" },
+                  { value: "array", label: "array" },
+                ]}
+              />
+            </div>
             <button
               type="button"
               onClick={() => onRemove(i)}
