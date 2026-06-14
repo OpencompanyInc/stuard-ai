@@ -232,21 +232,73 @@ function safeEqualHex(a: string, b: string): boolean {
   }
 }
 
+type RefreshedXOAuth = {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string | null;
+  scopes: string[];
+};
+
 /** Resolve the X numeric user id from a user OAuth token (GET /2/users/me).
  *  Local-integration path: X tokens are device-local now, so the desktop relays
  *  one at register time and we derive the id from it instead of reading a
- *  Supabase external_accounts row. The token is used here and never persisted. */
-async function resolveXExternalIdFromToken(accessToken: string): Promise<string | null> {
+ *  Supabase external_accounts row. The token is used here and never persisted.
+ *  Returns the HTTP status too so the caller can tell an expired token (401 →
+ *  worth a refresh) apart from a scope/enrollment problem (403) or rate limit. */
+async function fetchXUserId(accessToken: string): Promise<{ id: string | null; status: number; error?: string | null }> {
   try {
     const resp = await fetch(`${X_API_BASE}/2/users/me`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const body: any = await resp.json().catch(() => ({}));
     const id = String(body?.data?.id || '').trim();
-    if (resp.ok && id) return id;
-    writeLog('x_users_me_failed', { status: resp.status, error: body?.detail || body?.title || null });
+    if (resp.ok && id) return { id, status: resp.status };
+    const error = body?.detail || body?.title || body?.errors?.[0]?.message || null;
+    writeLog('x_users_me_failed', { status: resp.status, error });
+    return { id: null, status: resp.status, error };
   } catch (e: any) {
     writeLog('x_users_me_failed', { error: String(e?.message || e) });
+    return { id: null, status: 0, error: String(e?.message || e) };
+  }
+}
+
+/** Refresh a device-local X OAuth2 token from a relayed refresh_token. X rotates
+ *  refresh tokens, so the rotated pair is returned to the caller and relayed back
+ *  to the device — the desktop store still holds the now-invalidated old token.
+ *  Mirrors x-tools.ts refreshXToken; public clients send client_id in the body,
+ *  confidential clients add Basic auth. */
+async function refreshXAccessToken(refreshToken?: string): Promise<RefreshedXOAuth | null> {
+  const refresh = String(refreshToken || '').trim();
+  if (!refresh || !X_CLIENT_ID) return null;
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    const params: Record<string, string> = {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+      client_id: X_CLIENT_ID,
+    };
+    if (X_CLIENT_SECRET) {
+      headers.Authorization = `Basic ${Buffer.from(`${X_CLIENT_ID}:${X_CLIENT_SECRET}`).toString('base64')}`;
+    }
+    const resp = await fetch(`${X_API_BASE}/2/oauth2/token`, {
+      method: 'POST',
+      headers,
+      body: new URLSearchParams(params),
+    });
+    const body: any = await resp.json().catch(() => ({}));
+    if (resp.ok && body?.access_token) {
+      const scopeStr = String(body.scope || '');
+      return {
+        accessToken: String(body.access_token),
+        // X rotates refresh tokens — keep the new one if returned, else the old.
+        refreshToken: body.refresh_token ? String(body.refresh_token) : refresh,
+        expiresAt: new Date(Date.now() + Number(body.expires_in || 7200) * 1000).toISOString(),
+        scopes: scopeStr ? scopeStr.split(' ').map((s: string) => s.trim()).filter(Boolean) : [],
+      };
+    }
+    writeLog('x_token_refresh_failed', { status: resp.status, error: body?.error_description || body?.error || null });
+  } catch (e: any) {
+    writeLog('x_token_refresh_failed', { error: String(e?.message || e) });
   }
   return null;
 }
@@ -254,16 +306,43 @@ async function resolveXExternalIdFromToken(accessToken: string): Promise<string 
 /** Resolve the provider-side account id we'll receive events under for this user.
  *  For X, prefer a device-local token relayed by the desktop (no Supabase); fall
  *  back to the stored external_accounts row when no token is supplied. */
-async function resolveExternalId(userId: string, provider: Provider, profileLabel?: string, accessToken?: string): Promise<string> {
+type ResolvedExternalId = {
+  externalId: string;
+  /** The token that actually worked (original or refreshed) — used to subscribe. */
+  workingToken?: string;
+  /** Set only when the relayed token was expired and we minted a fresh one; the
+   *  caller relays this back to the device so its store isn't left with a stale
+   *  (rotated-out) refresh token. */
+  refreshedOAuth?: RefreshedXOAuth | null;
+};
+
+async function resolveExternalId(
+  userId: string,
+  provider: Provider,
+  profileLabel?: string,
+  accessToken?: string,
+  refreshToken?: string,
+): Promise<ResolvedExternalId> {
   if (provider === 'x') {
     let token = String(accessToken || '').trim();
     if (!token) {
       const vmAcc = await getVMOAuthAccountForUser(userId, 'x', profileLabel).catch(() => null);
       token = String(vmAcc?.access_token || '').trim();
     }
+    let refreshed: RefreshedXOAuth | null = null;
     if (token) {
-      const fromToken = await resolveXExternalIdFromToken(token);
-      if (fromToken) return fromToken;
+      let me = await fetchXUserId(token);
+      // X OAuth2 access tokens expire in ~2h and nothing on this HTTP path (no
+      // bridge context) refreshes them. If the relayed token is rejected, mint a
+      // fresh one from the relayed refresh_token and retry once before giving up.
+      if (!me.id && refreshToken && me.status !== 429) {
+        refreshed = await refreshXAccessToken(refreshToken);
+        if (refreshed?.accessToken) {
+          token = refreshed.accessToken;
+          me = await fetchXUserId(token);
+        }
+      }
+      if (me.id) return { externalId: me.id, workingToken: token, refreshedOAuth: refreshed };
     }
   }
   const acc = await getExternalAccount(userId, provider, profileLabel);
@@ -277,7 +356,7 @@ async function resolveExternalId(userId: string, provider: Provider, profileLabe
     acc?.meta?.external_user_id || acc?.meta?.profile?.id || acc?.meta?.profile?.user_id || ''
   ).trim();
   if (!externalId) throw new Error(`${provider}_external_id_missing`);
-  return externalId;
+  return { externalId };
 }
 
 /** Best-effort: persist X external_user_id metadata for desktop-local OAuth users
@@ -440,11 +519,16 @@ async function ensureXWebhookRegistered(): Promise<string | null> {
   return null;
 }
 
-/** Best-effort: add a per-user Account Activity subscription for this X account. */
-async function ensureXUserSubscribed(userId: string, externalId: string, accessToken?: string, profileLabel?: string): Promise<void> {
-  if (xSubscribedExternalIds.has(externalId)) return;
+type XSubscriptionResult = { ok: boolean; status?: number; reason?: string; webhookId?: string | null };
+
+/** Add a per-user Account Activity subscription for this X account. Without an
+ *  active subscription X delivers no events to the webhook even though the
+ *  webhook itself validates (CRC) fine — so the outcome is surfaced to the caller
+ *  for the register response, not just logged. */
+async function ensureXUserSubscribed(userId: string, externalId: string, accessToken?: string, profileLabel?: string): Promise<XSubscriptionResult> {
+  if (xSubscribedExternalIds.has(externalId)) return { ok: true, reason: 'cached' };
   const webhookId = await ensureXWebhookRegistered();
-  if (!webhookId) return;
+  if (!webhookId) return { ok: false, reason: 'no_webhook' };
   try {
     // Prefer the device-local token relayed at register time; fall back to a
     // stored account only if one still exists (pre-local-migration users).
@@ -453,30 +537,36 @@ async function ensureXUserSubscribed(userId: string, externalId: string, accessT
       const acc = await getExternalAccount(userId, 'x', profileLabel);
       token = String(acc?.access_token || '').trim();
     }
-    if (!token) return;
+    if (!token) return { ok: false, reason: 'no_token', webhookId };
     const resp = await fetch(`${X_API_BASE}/2/account_activity/webhooks/${encodeURIComponent(webhookId)}/subscriptions/all`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
     });
-    if (resp.ok) {
+    // 409 = already subscribed — treat as success.
+    if (resp.ok || resp.status === 409) {
       xSubscribedExternalIds.add(externalId);
-      writeLog('x_user_subscribed', { externalId, webhookId });
-      return;
+      writeLog('x_user_subscribed', { externalId, webhookId, status: resp.status });
+      return { ok: true, status: resp.status, webhookId };
     }
     const body: any = await resp.json().catch(() => ({}));
-    // 409 = already subscribed — treat as success.
-    if (resp.status === 409) {
-      xSubscribedExternalIds.add(externalId);
-      return;
-    }
-    writeLog('x_user_subscribe_failed', {
-      externalId,
-      status: resp.status,
-      error: body?.detail || body?.title || body?.errors?.[0]?.message || null,
-    });
+    const reason = body?.detail || body?.title || body?.errors?.[0]?.message || null;
+    writeLog('x_user_subscribe_failed', { externalId, status: resp.status, error: reason });
+    return { ok: false, status: resp.status, reason: reason || `http_${resp.status}`, webhookId };
   } catch (e: any) {
-    writeLog('x_user_subscribe_failed', { externalId, error: String(e?.message || e) });
+    const reason = String(e?.message || e);
+    writeLog('x_user_subscribe_failed', { externalId, error: reason });
+    return { ok: false, reason, webhookId };
   }
+}
+
+/** Subscribe with an overall timeout so a slow/hung X call can never block the
+ *  register response — the subscription self-heals on the next register anyway. */
+async function subscribeXUser(userId: string, externalId: string, token: string | undefined, profileLabel?: string): Promise<XSubscriptionResult> {
+  return Promise.race([
+    ensureXUserSubscribed(userId, externalId, token, profileLabel),
+    new Promise<XSubscriptionResult>((resolve) => setTimeout(() => resolve({ ok: false, reason: 'timeout' }), 10_000)),
+  ]);
 }
 
 export async function registerSocialTrigger(
@@ -497,7 +587,10 @@ export async function registerSocialTrigger(
   const profileLabel = String(args?.profile || '').trim() || undefined;
   // Device-local X token relayed by the desktop — used once to derive the X id
   // and subscribe the user to the app webhook, then dropped (never persisted).
+  // The refresh token lets us mint a fresh access token when the relayed one has
+  // expired (X access tokens last ~2h and nothing else on this path refreshes).
   const accessToken = String(oauth?.accessToken || '').trim() || undefined;
+  const refreshToken = String(oauth?.refreshToken || '').trim() || undefined;
 
   const existing = regs.get(key);
   if (existing) {
@@ -509,11 +602,22 @@ export async function registerSocialTrigger(
     persistReg(existing);
     // Re-attempt the per-user subscription on re-register (cheap: cached per
     // process by externalId) so it self-heals after a Cloud Run restart.
-    if (provider === 'x' && accessToken) void ensureXUserSubscribed(userId, existing.externalId, accessToken, profileLabel);
-    return { ok: true, registration: { type, workflowId, triggerId, externalId: existing.externalId, args: existing.args } };
+    let subscription: XSubscriptionResult | undefined;
+    if (provider === 'x') {
+      subscription = await subscribeXUser(userId, existing.externalId, accessToken, profileLabel);
+    }
+    return {
+      ok: true,
+      registration: { type, workflowId, triggerId, externalId: existing.externalId, args: existing.args },
+      ...(subscription ? { subscription } : {}),
+    };
   }
 
-  const externalId = await resolveExternalId(userId, provider, profileLabel, accessToken);
+  const resolved = await resolveExternalId(userId, provider, profileLabel, accessToken, refreshToken);
+  const externalId = resolved.externalId;
+  // Prefer the token that actually authenticated (refreshed one if the relayed
+  // token was stale) when creating the per-user Account Activity subscription.
+  const workingToken = resolved.workingToken || accessToken;
   if (provider === 'x') {
     void persistXExternalMetadata(userId, externalId, profileLabel);
   }
@@ -526,13 +630,24 @@ export async function registerSocialTrigger(
   indexExternalId(provider, externalId, key);
   persistReg(reg);
 
+  let subscription: XSubscriptionResult | undefined;
   if (provider === 'instagram') {
     void ensureInstagramSubscribed(userId, externalId, profileLabel);
   } else if (provider === 'x') {
-    void ensureXUserSubscribed(userId, externalId, accessToken, profileLabel);
+    // Await so the response can report whether the Account Activity subscription
+    // (the thing that makes events actually flow) was created — a 200 register
+    // with subscription.ok === false means the webhook is live but X won't push.
+    subscription = await subscribeXUser(userId, externalId, workingToken, profileLabel);
   }
 
-  return { ok: true, registration: { type, workflowId, triggerId, externalId, args: reg.args } };
+  return {
+    ok: true,
+    registration: { type, workflowId, triggerId, externalId, args: reg.args },
+    // Relay a rotated token back so the desktop store stays in sync (X rotates
+    // refresh tokens on use; the desktop's stored one is now invalidated).
+    ...(resolved.refreshedOAuth ? { oauthRefreshed: resolved.refreshedOAuth } : {}),
+    ...(subscription ? { subscription } : {}),
+  };
 }
 
 export async function unregisterSocialTrigger(

@@ -121,6 +121,42 @@ export async function getVMOAuthAccountForUser(
   return normalizeVmOAuthToken(provider, token);
 }
 
+/**
+ * Write an OAuth account back to a user's VM store by explicit userId (mirrors
+ * getVMOAuthAccountForUser). Used by plain server contexts like deploy-manager
+ * to persist a token that was refreshed/rotated while registering a VM-deployed
+ * workflow's social triggers, so the VM store isn't left with a stale token.
+ * Merge mode (replace:false) preserves untouched fields.
+ */
+export async function storeVMOAuthAccountForUser(
+  userId: string,
+  provider: string,
+  account: {
+    access_token?: string;
+    refresh_token?: string | null;
+    expires_at?: string | null;
+    scopes?: string[];
+    profile_label?: string;
+    account_email?: string | null;
+  },
+): Promise<boolean> {
+  const id = String(userId || '').trim();
+  if (!id || !account.access_token) return false;
+  const result = await sendVMCommand(id, 'store_oauth_tokens', {
+    replace: false,
+    tokens: [{
+      provider,
+      profileLabel: account.profile_label || 'default',
+      accessToken: account.access_token,
+      refreshToken: account.refresh_token || null,
+      expiresAt: account.expires_at || null,
+      scopes: Array.isArray(account.scopes) ? account.scopes : [],
+      accountEmail: account.account_email || null,
+    }],
+  }, 10_000);
+  return !!result.ok;
+}
+
 export async function storeVMOAuthAccount(
   provider: string,
   account: Partial<VmOAuthAccount> & {

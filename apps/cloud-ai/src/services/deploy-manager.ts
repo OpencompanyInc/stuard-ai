@@ -15,7 +15,7 @@ import { randomUUID } from 'crypto';
 import { Storage } from '@google-cloud/storage';
 import { CLOUD_ENGINE_BUCKET } from '../utils/config';
 import { sendVMCommand } from './vm-command';
-import { getVMOAuthAccountForUser } from '../tools/vm-oauth';
+import { getVMOAuthAccountForUser, storeVMOAuthAccountForUser } from '../tools/vm-oauth';
 import { supabaseAdmin, hasSupabase } from '../supabase';
 import { createWebhook, deleteWebhook, getWebhooksByUser, updateWebhook } from '../webhooks/core';
 import {
@@ -588,12 +588,13 @@ async function ensureDeploymentTriggerBindings(userId: string, deployId: string,
         // For VM-deployed workflows the token lives in the VM's OAuth store
         // (device-local migration — not Supabase), so fetch it from the VM and
         // relay it; registerSocialTrigger uses it transiently and never stores it.
+        const profileLabel = String(binding.args?.profile || '').trim() || undefined;
         let oauth: { accessToken: string; refreshToken: string | null } | undefined;
         if (String(binding.type || '').startsWith('x.')) {
-          const acc = await getVMOAuthAccountForUser(userId, 'x', String(binding.args?.profile || '').trim() || undefined);
+          const acc = await getVMOAuthAccountForUser(userId, 'x', profileLabel);
           if (acc?.access_token) oauth = { accessToken: acc.access_token, refreshToken: acc.refresh_token };
         }
-        await registerSocialTrigger(
+        const result = await registerSocialTrigger(
           userId,
           req.workflowId,
           binding.triggerId,
@@ -602,6 +603,18 @@ async function ensureDeploymentTriggerBindings(userId: string, deployId: string,
           consumerId,
           oauth
         );
+        // If cloud refreshed the relayed X token, persist the rotated pair back to
+        // the VM store so it isn't left holding an invalidated refresh token.
+        const refreshed = (result as any)?.oauthRefreshed;
+        if (refreshed?.accessToken) {
+          await storeVMOAuthAccountForUser(userId, 'x', {
+            access_token: refreshed.accessToken,
+            refresh_token: refreshed.refreshToken ?? null,
+            expires_at: refreshed.expiresAt ?? null,
+            scopes: Array.isArray(refreshed.scopes) ? refreshed.scopes : [],
+            profile_label: profileLabel,
+          }).catch(() => {});
+        }
       } catch (e: any) {
         console.warn(`[deploy-manager] social trigger ${binding.type} registration failed for ${req.workflowId}/${binding.triggerId}: ${e?.message || e}`);
       }
