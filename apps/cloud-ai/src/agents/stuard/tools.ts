@@ -1,6 +1,7 @@
 import { waitTool } from '../../tools/wait';
 import { runSequentialTool, runParallelTool, createWorkflowTool } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
+import { readWorkflow, editWorkflow } from '../../tools/workflow-dsl';
 import { analyzeMediaTool } from '../../tools/analyze-media';
 import { outlook_get_me, outlook_list_messages, outlook_search_messages, outlook_send_mail } from '../../tools/outlook-tools';
 import { github_get_me, github_list_repos, github_list_issues, github_create_issue } from '../../tools/github-tools';
@@ -651,6 +652,8 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
     create_workflow: createWorkflowTool,
     load_workflow: loadWorkflow,
     modify_workflow: workflowModifyTool,
+    read_workflow: readWorkflow,
+    edit_workflow: editWorkflow,
     inspect_workflow: inspectWorkflow,
     execute_step: executeStep,
     search_workflows: searchWorkflows,
