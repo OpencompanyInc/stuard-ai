@@ -1,6 +1,6 @@
 {
   "name": "@stuardai/vm-agent",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "commonjs",
   "description": "Stuard VM Agent — runs on each user's cloud VM. Hosts the multi-bot scheduler, deploy/shell/file/memory commands, and a relay to the local Python tool agent.",

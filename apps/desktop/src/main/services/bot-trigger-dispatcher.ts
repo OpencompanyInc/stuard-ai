@@ -369,8 +369,15 @@ async function registerCloudTrigger(botId: string, trigger: BotTrigger): Promise
       });
   if (result.ok) {
     logger.info(`[bot-triggers] Registered ${trigger.type} for ${botId}/${trigger.id}`);
+    return true;
   }
-  return result.ok;
+  if (trigger.type.startsWith('x.') && (result.error === 'x_not_connected' || result.error === 'x_external_id_missing' || result.error === 'x_token_invalid')) {
+    logger.warn(`[bot-triggers] ${trigger.type} for ${botId}/${trigger.id} will retry after local X token/metadata is available (${result.error})`);
+    setTimeout(() => {
+      try { queueCloudTriggerSync(botId); } catch { /* ignore */ }
+    }, 30_000);
+  }
+  return false;
 }
 
 async function syncCloudTriggersForBot(botId: string): Promise<void> {

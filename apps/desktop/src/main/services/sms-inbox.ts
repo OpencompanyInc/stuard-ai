@@ -1,4 +1,6 @@
 import { app, net } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
 import WebSocket from 'ws';
 import { randomUUID } from 'crypto';
 import logger from '../utils/logger';
@@ -138,6 +140,90 @@ function defaultSmsState(): SmsUserState {
     last_reply_to_phone: null,
     proactive_message: null,
   };
+}
+
+// ── Device-owned SMS thread pointer ──────────────────────────────────────────
+// The conversation id for a text thread lives on the device, not in Supabase.
+// Generating it here (and persisting the active pointer locally) means a text
+// thread compounds into one conversation across turns without depending on a
+// Supabase `sms_user_state` round-trip — that round-trip raced the next inbound
+// webhook and made every text look like a brand-new chat. The conversation rows
+// themselves sync to the VM via the normal desktop↔VM memory sync.
+type LocalSmsThread = { conversationId: string | null; resumeConversationId: string | null };
+
+const SMS_THREADS_FILE = path.join(app.getPath('userData'), 'sms-threads.json');
+let smsThreadsCache: Record<string, LocalSmsThread> | null = null;
+
+function loadLocalSmsThreads(): Record<string, LocalSmsThread> {
+  if (smsThreadsCache) return smsThreadsCache;
+  try {
+    if (fs.existsSync(SMS_THREADS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SMS_THREADS_FILE, 'utf8'));
+      if (data && typeof data === 'object') {
+        smsThreadsCache = data as Record<string, LocalSmsThread>;
+        return smsThreadsCache;
+      }
+    }
+  } catch (e: any) {
+    logger.warn('[sms-inbox] Failed to load local SMS threads:', e?.message);
+  }
+  smsThreadsCache = {};
+  return smsThreadsCache;
+}
+
+function getLocalSmsThread(userId: string): LocalSmsThread {
+  const all = loadLocalSmsThreads();
+  return all[userId] || { conversationId: null, resumeConversationId: null };
+}
+
+function setLocalSmsThread(userId: string, patch: Partial<LocalSmsThread>): LocalSmsThread {
+  const all = loadLocalSmsThreads();
+  const next: LocalSmsThread = {
+    conversationId: patch.conversationId !== undefined ? patch.conversationId : (all[userId]?.conversationId ?? null),
+    resumeConversationId: patch.resumeConversationId !== undefined ? patch.resumeConversationId : (all[userId]?.resumeConversationId ?? null),
+  };
+  all[userId] = next;
+  try {
+    fs.mkdirSync(path.dirname(SMS_THREADS_FILE), { recursive: true });
+    fs.writeFileSync(SMS_THREADS_FILE, JSON.stringify(all, null, 2), 'utf8');
+  } catch (e: any) {
+    logger.warn('[sms-inbox] Failed to persist local SMS thread:', e?.message);
+  }
+  return next;
+}
+
+/**
+ * Load the full prior thread from the local encrypted SQLite so the cloud agent
+ * sees real multi-turn context. The cloud's own getConversationMessages is a
+ * privacy stub (message bodies never touch Supabase) and every SMS turn opens a
+ * fresh WS, so without sending the history here every text looked like the first
+ * message of a new chat.
+ */
+async function fetchLocalConversationMessages(
+  conversationId: string,
+): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  const base = getLocalAgentHttpUrl();
+  try {
+    const resp = await net.fetch(`${base}/tools/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: 'message_list', args: { conversation_id: conversationId } }),
+    });
+    if (!resp.ok) return [];
+    const data: any = await resp.json().catch(() => ({}));
+    const rows: any[] = Array.isArray(data?.messages) ? data.messages : [];
+    const out: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    for (const m of rows) {
+      const role = m?.role === 'assistant' ? 'assistant' : m?.role === 'user' ? 'user' : null;
+      const content = typeof m?.content === 'string' ? m.content : '';
+      if (role && content.trim()) out.push({ role, content });
+    }
+    // Bound the context window — SMS threads are short, but cap defensively.
+    return out.slice(-40);
+  } catch (e: any) {
+    logger.warn('[sms-inbox] Failed to load local conversation history:', e?.message);
+    return [];
+  }
 }
 
 function getCloudAiUrl(): string {
@@ -556,6 +642,9 @@ async function runSmsTurn(input: {
   mode: SmsMode;
   preferredModel: SmsPreferredModel;
   conversationId: string | null;
+  /** Full prior thread (oldest→newest) so the cloud agent has real multi-turn
+   *  context. The current user message is appended below. */
+  priorMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   userId: string;
   replyToPhone: string;
   proactiveMessage?: string | null;
@@ -640,9 +729,15 @@ async function runSmsTurn(input: {
     ws.on('open', () => {
       if (connectTimeout) clearTimeout(connectTimeout);
       try {
+        // Send the full prior thread + this turn so the cloud uses real
+        // multi-turn context (it reads `messages` directly; its server-side
+        // history hydration is a no-op for mobile — bodies aren't in Supabase).
+        const priorMessages = Array.isArray(input.priorMessages) ? input.priorMessages : [];
+        const chatMessages = [...priorMessages, { role: 'user', content: input.text }];
         wsSend({
           type: 'chat',
           requestId,
+          messages: chatMessages,
           text: input.text,
           model: input.preferredModel,
           conversationId: input.conversationId || undefined,
@@ -651,8 +746,13 @@ async function runSmsTurn(input: {
           // Signal to cloud WS that this is a mobile-originated message:
           // - forcePersist: bypass sync_conversations pref (SMS convos must always save)
           // - mobileSource: provider name so cloud can generate title and finishRun
+          // - mobileLocalPersist: the desktop stores message rows itself
+          //   (ingestSmsConversationLocally), so the cloud should skip the
+          //   duplicate store but still run the post-turn analysis over the
+          //   persistent desktop bridge (segmentation, auto-journal, title).
           forcePersist: true,
           mobileSource: input.provider || 'sms',
+          mobileLocalPersist: true,
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         });
       } catch (e: any) {
@@ -790,11 +890,23 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   }
 
   const state = await loadSmsUserState(userId);
+
+  // Conversation identity is device-owned. Seed the local pointer once from any
+  // existing Supabase pointer so threads in flight before this change carry over,
+  // then treat the local store as the source of truth from here on.
+  let localThread = getLocalSmsThread(userId);
+  if (!localThread.conversationId && (state.conversation_id || item.conversation_id)) {
+    localThread = setLocalSmsThread(userId, {
+      conversationId: state.conversation_id || item.conversation_id || null,
+      resumeConversationId: state.resume_conversation_id || state.conversation_id || item.conversation_id || null,
+    });
+  }
+
   const effectiveState: SmsUserState = {
     mode: normalizeMode(item.mode ?? state.mode),
     preferred_model: normalizeModel(item.preferred_model ?? state.preferred_model),
-    conversation_id: state.conversation_id || item.conversation_id || null,
-    resume_conversation_id: state.resume_conversation_id || state.conversation_id || item.conversation_id || null,
+    conversation_id: localThread.conversationId,
+    resume_conversation_id: localThread.resumeConversationId || localThread.conversationId,
     last_reply_to_phone: state.last_reply_to_phone || item.reply_to_phone || null,
     proactive_message: state.proactive_message || null,
   };
@@ -825,6 +937,12 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   const itemProvider = item.provider || 'telnyx';
   const commandResult = handleSmsCommand(incomingText, effectiveState);
   if (commandResult.handled && commandResult.replyText && commandResult.nextState) {
+    // Commands like /new and /resume change which thread is active — persist the
+    // pointer locally (device-owned) so the next text compounds correctly.
+    setLocalSmsThread(userId, {
+      conversationId: commandResult.nextState.conversation_id,
+      resumeConversationId: commandResult.nextState.resume_conversation_id,
+    });
     await submitSmsReply({
       queueItemId: item.id,
       replyText: commandResult.replyText,
@@ -852,11 +970,23 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     });
   }
 
+  // Resolve the device-owned conversation id. A brand-new thread gets its UUID
+  // generated here so the id is stable across turns (no Supabase round-trip) and
+  // the next inbound text compounds into the same conversation.
+  const isNewConversation = !effectiveState.conversation_id;
+  const conversationId = effectiveState.conversation_id || randomUUID();
+
+  // Load the prior thread so the cloud agent has real multi-turn context.
+  const priorMessages = isNewConversation
+    ? []
+    : await fetchLocalConversationMessages(conversationId);
+
   const turn = await runSmsTurn({
     text: incomingText,
     mode: effectiveState.mode,
     preferredModel: effectiveState.preferred_model,
-    conversationId: effectiveState.conversation_id,
+    conversationId,
+    priorMessages,
     userId,
     replyToPhone,
     proactiveMessage: effectiveState.proactive_message,
@@ -865,26 +995,28 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   });
   if (!turn.replyText && !turn.alreadyDelivered) throw new Error('sms_empty_agent_reply');
 
-  // Ingest into local SQLite so this conversation appears in desktop history + title search.
-  // Done fire-and-forget — local storage failures must not block the SMS reply.
-  if (turn.conversationId) {
-    void ingestSmsConversationLocally({
-      conversationId: turn.conversationId,
-      userText: incomingText,
-      assistantText: turn.fullReplyText || turn.replyText,
-      preferredModel: effectiveState.preferred_model,
-      provider: itemProvider,
-      isNewConversation: !effectiveState.conversation_id,
-    }).catch((e) => logger.warn('[sms-inbox] Local ingest failed:', e?.message));
-  }
+  // Persist the device-owned thread pointer so the next text compounds in.
+  setLocalSmsThread(userId, { conversationId, resumeConversationId: conversationId });
+
+  // Ingest into local SQLite so this conversation appears in desktop history +
+  // title search and compounds into one chat — the same pipeline a desktop
+  // message uses. Fire-and-forget: local storage failures must not block the reply.
+  void ingestSmsConversationLocally({
+    conversationId,
+    userText: incomingText,
+    assistantText: turn.fullReplyText || turn.replyText,
+    preferredModel: effectiveState.preferred_model,
+    provider: itemProvider,
+    isNewConversation,
+  }).catch((e) => logger.warn('[sms-inbox] Local ingest failed:', e?.message));
 
   await submitSmsReply({
     queueItemId: item.id,
     replyText: turn.replyText,
     mode: effectiveState.mode,
     preferredModel: effectiveState.preferred_model,
-    conversationId: turn.conversationId,
-    resumeConversationId: turn.conversationId || effectiveState.resume_conversation_id,
+    conversationId,
+    resumeConversationId: conversationId,
     provider: itemProvider,
     alreadyDelivered: turn.alreadyDelivered,
   });

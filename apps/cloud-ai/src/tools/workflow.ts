@@ -1202,7 +1202,12 @@ Optional stuardFile targets a sub-workflow FILE in the workflow's workspace
 file saved back — the main canvas workflow is untouched. Studio only.`,
 
   inputSchema: z.object({
-    ...opItemShape,
+    // Single-op (flat) form: same fields as a batch op, but description-free so the
+    // ~22 field docs aren't sent twice (the ops[] items below carry them, and every
+    // op is documented in this tool's description). Saves prefix tokens every turn.
+    ...(Object.fromEntries(
+      Object.entries(opItemShape).map(([k, v]) => [k, (v as any).describe('')]),
+    ) as typeof opItemShape),
 
     // op is optional at the top level — supply EITHER a single op (flat fields)
     // OR an ops[] batch.

@@ -13,6 +13,13 @@ import { getTimezone } from "../settings";
 import { waitForAgentReady } from "../services/agent";
 import { readClipboardSnapshot } from "../tools/clipboard-snapshot";
 import { getLocalXOAuth, persistRefreshedXOAuth } from "../services/social-trigger-client";
+import {
+  recordDeployVersion,
+  listWorkflowVersions,
+  restoreWorkflowVersion,
+  deleteWorkflowVersion,
+  deleteAllWorkflowVersions,
+} from "./versions";
 // Lazy-imported inside handlers to avoid circular deps with bot-trigger-dispatcher
 // → bot-service → proactive-service → … → workflows.
 let _routeWebhookToBots: ((slug: string, payload: any) => number) | null = null;
@@ -1999,6 +2006,9 @@ export function workflows_delete(id: string) {
     const safe = safeFlowId(String(id || ''));
     if (!safe) return { ok: false, error: 'invalid_id' };
 
+    // Drop the local deploy version history alongside the workflow.
+    try { deleteAllWorkflowVersions(safe); } catch { }
+
     // Check for workspace directory first
     const wsDir = getWorkspaceDir(safe);
     if (wsDir && fs.existsSync(wsDir)) {
@@ -2035,6 +2045,22 @@ export function workflows_deploy(id: string) {
     // Save with autostart enabled (subfolder-aware)
     const p = getWorkflowPathById(safe);
     fs.writeFileSync(p, JSON.stringify(model, null, 2), { encoding: 'utf-8' });
+
+    // Snapshot this deploy into the local version history so the user can
+    // revert to a previous deploy. Deduped automatically for no-op redeploys.
+    try {
+      const wsDir = getWorkspaceDir(safe);
+      const snap = recordDeployVersion({
+        id: safe,
+        model,
+        workspaceDir: wsDir,
+        flatFilePath: wsDir ? undefined : p,
+        source: 'deploy',
+      });
+      if (!snap.ok) console.warn('[workflows] version snapshot skipped:', snap.error);
+    } catch (e) {
+      console.warn('[workflows] version snapshot failed:', e);
+    }
 
     // IMPORTANT: Stop and clean up any legacy stuard runtime with the same ID
     // This prevents hotkey/trigger conflicts between the old and new systems
@@ -2126,6 +2152,84 @@ export function workflows_getDeployStatus(id: string) {
       running: hasRuntime,
       triggers,
     };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/**
+ * List the local deploy version history for a workflow (newest first).
+ */
+export function workflows_listVersions(id: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    const data = listWorkflowVersions(safe);
+    return { ok: data.ok, versions: data.versions, currentVersionId: data.currentVersionId, error: data.error };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/**
+ * Revert a workflow to a previous deploy version: restore the snapshot's files,
+ * keep the workflow deployed, and restart its runtime so the old version goes live.
+ */
+export function workflows_revertToVersion(id: string, versionId: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    if (!versionId) return { ok: false, error: 'invalid_version' };
+
+    const wsDir = getWorkspaceDir(safe);
+    const flatPath = wsDir ? undefined : getWorkflowPathById(safe);
+
+    // Stop runtime + any legacy stuard runtime before swapping files on disk
+    // (file watchers/hotkeys must release handles first).
+    stopFlowRuntime(safe);
+    try {
+      stopStuardRuntime(safe);
+      const stuardPath = getStuardPathById(safe);
+      if (fs.existsSync(stuardPath)) fs.unlinkSync(stuardPath);
+    } catch { }
+
+    const restored = restoreWorkflowVersion({
+      id: safe,
+      versionId,
+      workspaceDir: wsDir,
+      flatFilePath: flatPath,
+    });
+    if (!restored.ok) {
+      // Restore failed — bring the runtime back up on whatever is on disk.
+      try { startFlowRuntime(safe); } catch { }
+      return { ok: false, error: restored.error || 'revert_failed' };
+    }
+
+    // Keep the reverted version deployed (a "previous deploy" is meant to run).
+    const model = readWorkflowModel(safe) || restored.model;
+    if (model && !model.autostart) {
+      model.autostart = true;
+      try { fs.writeFileSync(getWorkflowPathById(safe), JSON.stringify(model, null, 2), { encoding: 'utf-8' }); } catch { }
+    }
+
+    startFlowRuntime(safe);
+    console.log(`[workflows] Reverted workflow ${safe} to version ${restored.version}`);
+    return { ok: true, version: restored.version, deployed: true };
+  } catch (e: any) {
+    console.error('[workflows] Revert failed:', e);
+    return { ok: false, error: String(e?.message || 'failed') };
+  }
+}
+
+/**
+ * Delete a single local deploy version (never the one currently live).
+ */
+export function workflows_deleteVersion(id: string, versionId: string) {
+  try {
+    const safe = safeFlowId(String(id || ''));
+    if (!safe) return { ok: false, error: 'invalid_id' };
+    if (!versionId) return { ok: false, error: 'invalid_version' };
+    return deleteWorkflowVersion(safe, versionId);
   } catch (e: any) {
     return { ok: false, error: String(e?.message || 'failed') };
   }

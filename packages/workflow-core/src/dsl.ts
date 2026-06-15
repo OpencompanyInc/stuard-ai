@@ -75,6 +75,62 @@ function scanValueEnd(s: string, i: number): number {
   return j;
 }
 
+/**
+ * Normalize the lightly-malformed JSON an LLM commonly emits into strict JSON:
+ *   • unquoted / bareword object keys      →  "key":
+ *   • trailing commas before } or ]        →  removed
+ * String contents are copied verbatim (the scan tracks string + escape state), so
+ * a `:` `,` `{` `}` inside a value is never touched. Single-quoted strings are
+ * deliberately NOT handled here — scanValueEnd/coalesce track only `"`, so a `'…}'`
+ * value would mis-balance braces upstream; that case stays a hard parse error.
+ */
+function normalizeLooseJson(src: string): string {
+  const out: string[] = [];
+  const n = src.length;
+  const skipWs = (j: number) => { while (j < n && /\s/.test(src[j])) j++; return j; };
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    if (c === '"') { // copy a double-quoted string verbatim
+      out.push(c);
+      let j = i + 1;
+      while (j < n) {
+        const d = src[j];
+        out.push(d);
+        if (d === '\\') { if (j + 1 < n) out.push(src[++j]); j++; continue; }
+        j++;
+        if (d === '"') break;
+      }
+      i = j;
+      continue;
+    }
+    if (c === ',') { // drop a trailing comma before a closer
+      const k = skipWs(i + 1);
+      if (k < n && (src[k] === '}' || src[k] === ']')) { i++; continue; }
+      out.push(c); i++;
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(c)) { // a bareword: quote it only when it's an object key
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(src[j])) j++;
+      const ident = src.slice(i, j);
+      if (src[skipWs(j)] === ':') out.push(JSON.stringify(ident));
+      else out.push(ident); // a value bareword (true/false/null/number-ish) — leave as-is
+      i = j;
+      continue;
+    }
+    out.push(c); i++;
+  }
+  return out.join('');
+}
+
+/** Strict JSON.parse, falling back to a lenient normalize for LLM-style JSON. */
+function tolerantJsonParse(src: string): { ok: true; value: any } | { ok: false } {
+  try { return { ok: true, value: JSON.parse(src) }; } catch {}
+  try { return { ok: true, value: JSON.parse(normalizeLooseJson(src)) }; } catch {}
+  return { ok: false };
+}
+
 interface ParsedAnnotations {
   flags: Set<string>;
   vals: Record<string, any>;
@@ -102,7 +158,9 @@ function readAnnotations(rest: string): ParsedAnnotations {
     while (k < rest.length && rest[k] === ' ') k++;
     if (k < rest.length && rest[k] !== '@') {
       const end = scanValueEnd(rest, k);
-      try { vals[name] = JSON.parse(rest.slice(k, end)); } catch { vals[name] = rest.slice(k, end); }
+      const slice = rest.slice(k, end);
+      const parsed = tolerantJsonParse(slice);
+      vals[name] = parsed.ok ? parsed.value : slice;
       i = end;
     } else {
       flags.add(name);
@@ -239,9 +297,64 @@ export interface ParseResult {
   errors: string[];
 }
 
+/**
+ * Coalesce physical lines into logical statements so a node/trigger whose JSON
+ * args span multiple lines (pretty-printed) still parses as ONE line.
+ *
+ * The serializer always emits single-line minified JSON, so for serializer
+ * output this is a no-op (each line balances on its own). It exists purely to
+ * tolerate what LLMs naturally produce — pretty-printed `{ ... }` over several
+ * lines — instead of erroring and forcing a retry. The structural flow block
+ * braces (`flow … {` and the closing lone `}`) are passed straight through so
+ * they don't swallow the whole document.
+ */
+function coalesceLogicalLines(rawLines: string[]): string[] {
+  const out: string[] = [];
+  let buf: string | null = null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+
+  const scan = (s: string) => {
+    for (let j = 0; j < s.length; j++) {
+      const ch = s[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') depth++;
+      else if (ch === '}' || ch === ']') { if (depth > 0) depth--; }
+    }
+  };
+
+  for (const physical of rawLines) {
+    if (buf === null) {
+      const trimmed = physical.trim();
+      // Flow block scaffolding / blanks pass through untracked — only
+      // statement-level JSON values get merged across newlines.
+      if (!trimmed || trimmed === '}' || trimmed === '{' || trimmed.startsWith('flow ')) {
+        out.push(physical);
+        continue;
+      }
+      buf = physical;
+      depth = 0; inStr = false; esc = false;
+      scan(physical);
+    } else {
+      buf += '\n' + physical;
+      scan(physical);
+    }
+    if (depth <= 0) { out.push(buf); buf = null; }
+  }
+  if (buf !== null) out.push(buf);
+  return out;
+}
+
 export function parseDsl(text: string): ParseResult {
   const res: ParseResult = { nodes: [], wires: [], triggers: [], variables: [], errors: [] };
-  const rawLines = text.split('\n');
+  const rawLines = coalesceLogicalLines(text.split('\n'));
   for (let li = 0; li < rawLines.length; li++) {
     let line = rawLines[li];
     // strip trailing `# comment` (but not inside a JSON string — comments only
@@ -271,8 +384,8 @@ export function parseDsl(text: string): ParseResult {
       const valStr = line.slice(eq + 1).trim();
       const m = left.match(/^(\w+):(\w+)(.*)$/);
       if (!m) { res.errors.push(`bad var decl: ${line}`); continue; }
-      let val: any = null;
-      try { val = JSON.parse(valStr); } catch { val = valStr; }
+      const pv = tolerantJsonParse(valStr);
+      const val: any = pv.ok ? pv.value : valStr;
       res.variables.push({
         name: m[1], type: m[2],
         scope: /@local/.test(m[3]) ? 'local' : undefined,
@@ -286,10 +399,17 @@ export function parseDsl(text: string): ParseResult {
       const m = line.match(/^trigger\s+(\S+)\s*=\s*(\S+)\s*/);
       if (!m) { res.errors.push(`bad trigger line: ${line}`); continue; }
       let rest = line.slice(m[0].length);
-      let args = {};
-      if (rest.startsWith('{')) { const end = scanValueEnd(rest, 0); try { args = JSON.parse(rest.slice(0, end)); } catch {} rest = rest.slice(end); }
+      let args: any = {};
+      if (rest.startsWith('{')) { const end = scanValueEnd(rest, 0); const p = tolerantJsonParse(rest.slice(0, end)); if (p.ok) args = p.value; rest = rest.slice(end); }
       const ann = readAnnotations(rest);
-      res.triggers.push({ id: m[1], type: m[2], args, labelProvided: 'label' in ann.vals, label: ann.vals.label, inputParams: ann.vals.inputs });
+      // Tolerate inputParams written inside the trigger args (LLMs do this instead
+      // of the `@inputs [...]` form) — lift it to the trigger's top-level field.
+      let inputParams = ann.vals.inputs;
+      if (args && typeof args === 'object' && 'inputParams' in args) {
+        if (inputParams === undefined) inputParams = (args as any).inputParams;
+        delete (args as any).inputParams;
+      }
+      res.triggers.push({ id: m[1], type: m[2], args, labelProvided: 'label' in ann.vals, label: ann.vals.label, inputParams });
       continue;
     }
 
@@ -313,12 +433,14 @@ export function parseDsl(text: string): ParseResult {
     }
 
     // node: `id = tool {args}? annotations`
-    const nm = line.match(/^(\S+)\s*=\s*(\S+)\s*/);
+    // Tolerate a leading `node ` keyword (LLMs often emit `node id = tool {…}`).
+    const nodeLine = /^node\s+\S+\s*=/.test(line) ? line.replace(/^node\s+/, '') : line;
+    const nm = nodeLine.match(/^(\S+)\s*=\s*(\S+)\s*/);
     if (!nm) { res.errors.push(`unrecognized line: ${line}`); continue; }
-    let rest = line.slice(nm[0].length);
+    let rest = nodeLine.slice(nm[0].length);
     let args: any;
     let full = false;
-    if (rest.startsWith('{')) { const end = scanValueEnd(rest, 0); try { args = JSON.parse(rest.slice(0, end)); full = true; } catch { res.errors.push(`bad args JSON for ${nm[1]}: ${rest.slice(0, 40)}`); } rest = rest.slice(end); }
+    if (rest.startsWith('{')) { const end = scanValueEnd(rest, 0); const p = tolerantJsonParse(rest.slice(0, end)); if (p.ok) { args = p.value; full = true; } else { res.errors.push(`bad args JSON for ${nm[1]}: ${rest.slice(0, 40)}`); } rest = rest.slice(end); }
     const ann = readAnnotations(rest);
     res.nodes.push({
       id: nm[1], tool: nm[2], full, args,

@@ -6,9 +6,10 @@ import {
   WorkflowUpdateModal,
 } from "../components/MarketplaceModal";
 import { DeployPanelModal } from "../components/DeployPanelModal";
+import { VersionHistoryModal } from "../components/VersionHistoryModal";
 import { ImportJsonModal } from "../components/ImportJsonModal";
 import type { DesignerModel } from "../types";
-import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
+import type { CloudVM, CloudDeployState, WorkflowVersion } from "../hooks/useWorkflowDeploy";
 import type { WorkflowContextMenu } from "./types";
 import { WorkflowContextMenuOverlay } from "./WorkflowContextMenu";
 import type { MarketplaceUpdate } from "../../utils/cloud";
@@ -48,6 +49,17 @@ interface WorkflowOverlaysProps {
   cloudDeployId: string | null;
   onDeployToCloud: (vmId?: string) => void;
   onResetCloudDeploy: () => void;
+  // Local deploy version history
+  showVersionHistory: boolean;
+  versions: WorkflowVersion[];
+  currentVersionId: string | null;
+  versionsLoading: boolean;
+  revertingVersionId: string | null;
+  onOpenVersionHistory: () => void;
+  onCloseVersionHistory: () => void;
+  onRefreshVersions: () => void;
+  onRevertVersion: (versionId: string) => void;
+  onDeleteVersion: (versionId: string) => void;
   showImport: boolean;
   importJson: string;
   setImportJson: (value: string) => void;
@@ -104,6 +116,16 @@ export function WorkflowOverlays({
   cloudDeployId,
   onDeployToCloud,
   onResetCloudDeploy,
+  showVersionHistory,
+  versions,
+  currentVersionId,
+  versionsLoading,
+  revertingVersionId,
+  onOpenVersionHistory,
+  onCloseVersionHistory,
+  onRefreshVersions,
+  onRevertVersion,
+  onDeleteVersion,
   showImport,
   importJson,
   setImportJson,
@@ -165,6 +187,22 @@ export function WorkflowOverlays({
           cloudDeployId={cloudDeployId}
           onDeployToCloud={onDeployToCloud}
           onResetCloudDeploy={onResetCloudDeploy}
+          onOpenVersionHistory={onOpenVersionHistory}
+          versionCount={versions.length}
+        />
+      )}
+
+      {showVersionHistory && (
+        <VersionHistoryModal
+          workflowName={model?.name}
+          versions={versions}
+          currentVersionId={currentVersionId}
+          loading={versionsLoading}
+          revertingVersionId={revertingVersionId}
+          onClose={onCloseVersionHistory}
+          onRefresh={onRefreshVersions}
+          onRevert={onRevertVersion}
+          onDelete={onDeleteVersion}
         />
       )}
 

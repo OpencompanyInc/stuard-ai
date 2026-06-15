@@ -9,6 +9,20 @@ export interface WorkflowDeployStatus {
   triggers: string[];
 }
 
+export interface WorkflowVersion {
+  id: string;
+  version: number;
+  deployedAt: string;
+  name: string;
+  triggerTypes: string[];
+  nodeCount: number;
+  storage: 'workspace' | 'file';
+  hash: string;
+  source: 'deploy' | 'revert';
+  restoredFrom?: number;
+  note?: string;
+}
+
 export interface CloudVM {
   id: string;
   instance_name: string;
@@ -115,6 +129,36 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
   const [showDeployPanel, setShowDeployPanel] = useState(false);
   const [deployStatus, setDeployStatus] = useState<WorkflowDeployStatus | null>(null);
 
+  // ── Local deploy version history ──────────────────────────────────────────
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versions, setVersions] = useState<WorkflowVersion[]>([]);
+  const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [revertingVersionId, setRevertingVersionId] = useState<string | null>(null);
+
+  const fetchVersions = useCallback(async () => {
+    if (!selectedId) { setVersions([]); setCurrentVersionId(null); return; }
+    setVersionsLoading(true);
+    try {
+      const res = await (window as any).desktopAPI?.workflowsListVersions?.(selectedId);
+      if (res?.ok) {
+        setVersions(Array.isArray(res.versions) ? res.versions : []);
+        setCurrentVersionId(res.currentVersionId || null);
+      } else {
+        setVersions([]);
+        setCurrentVersionId(null);
+      }
+    } catch {
+      setVersions([]);
+      setCurrentVersionId(null);
+    } finally {
+      setVersionsLoading(false);
+    }
+  }, [selectedId]);
+
+  // Keep the version list fresh whenever the workflow changes.
+  useEffect(() => { fetchVersions(); }, [fetchVersions]);
+
   // Cloud VM state
   const [cloudVMs, setCloudVMs] = useState<CloudVM[]>([]);
   const [selectedVM, setSelectedVM] = useState<string | null>(null);
@@ -186,13 +230,50 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
       if (res?.ok) {
         setDeployStatus({ deployed: true, running: true, triggers: model.triggers?.map((t) => t.type) || [] });
         setShowDeployPanel(false);
+        // A new deploy adds (or de-dupes into) a version — refresh history.
+        void fetchVersions();
       } else {
         alert(res?.error || "Deploy failed");
       }
     } catch (e: any) {
       alert(e?.message || "Failed");
     }
-  }, [model, selectedId]);
+  }, [model, selectedId, fetchVersions]);
+
+  // ── Revert to a previous local deploy version ─────────────────────────────
+  const revertToVersion = useCallback(async (versionId: string) => {
+    if (!selectedId || !versionId) return { ok: false, error: 'invalid' };
+    setRevertingVersionId(versionId);
+    try {
+      const res = await (window as any).desktopAPI?.workflowsRevertToVersion?.(selectedId, versionId);
+      if (res?.ok) {
+        await fetchVersions();
+        await fetchDeployStatus();
+      } else {
+        alert(res?.error || "Revert failed");
+      }
+      return res;
+    } catch (e: any) {
+      alert(e?.message || "Revert failed");
+      return { ok: false, error: e?.message };
+    } finally {
+      setRevertingVersionId(null);
+    }
+  }, [selectedId, fetchVersions, fetchDeployStatus]);
+
+  const deleteVersion = useCallback(async (versionId: string) => {
+    if (!selectedId || !versionId) return;
+    try {
+      const res = await (window as any).desktopAPI?.workflowsDeleteVersion?.(selectedId, versionId);
+      if (res?.ok) {
+        await fetchVersions();
+      } else if (res?.error) {
+        alert(res.error === 'cannot_delete_current' ? "Can't delete the version that's currently live." : res.error);
+      }
+    } catch (e: any) {
+      alert(e?.message || "Delete failed");
+    }
+  }, [selectedId, fetchVersions]);
 
   const undeploy = useCallback(async () => {
     if (!selectedId) return;
@@ -300,6 +381,16 @@ export function useWorkflowDeploy({ selectedId, model }: UseWorkflowDeployProps)
     deploy,
     undeploy,
     exportWorkflow,
+    // Local deploy version history
+    showVersionHistory,
+    setShowVersionHistory,
+    versions,
+    currentVersionId,
+    versionsLoading,
+    revertingVersionId,
+    fetchVersions,
+    revertToVersion,
+    deleteVersion,
     // Cloud deploy
     cloudVMs,
     selectedVM,

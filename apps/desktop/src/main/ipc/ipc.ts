@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativ
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, captureScreenExcludingStuard, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow, isAnyAppWindowFocused } from "../windows";
-import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_listVersions, workflows_revertToVersion, workflows_deleteVersion, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
@@ -280,6 +280,7 @@ export function setupIpc() {
   const proactiveAvailableTools = Object.keys(TOOL_REGISTRY)
     .filter((toolName) => !toolName.startsWith('proactive_task_'))
     .sort((a, b) => a.localeCompare(b));
+  const botAvailableTools = [...proactiveAvailableTools, ...listCustomIntegrationToolNames()];
   // Overlay
   ipcMain.handle("overlay:show", () => showWindow());
   ipcMain.handle("overlay:focusAgentTasks", () => {
@@ -1172,6 +1173,10 @@ export function setupIpc() {
   ipcMain.handle('workflows:deploy', (_e, id: string) => workflows_deploy(id));
   ipcMain.handle('workflows:undeploy', (_e, id: string) => workflows_undeploy(id));
   ipcMain.handle('workflows:getDeployStatus', (_e, id: string) => workflows_getDeployStatus(id));
+  // Local deploy version history
+  ipcMain.handle('workflows:listVersions', (_e, id: string) => workflows_listVersions(id));
+  ipcMain.handle('workflows:revertToVersion', (_e, id: string, versionId: string) => workflows_revertToVersion(id, versionId));
+  ipcMain.handle('workflows:deleteVersion', (_e, id: string, versionId: string) => workflows_deleteVersion(id, versionId));
   ipcMain.handle('workflows:runStep', (_e, id: string, options: { step: { id: string; tool: string; args: any }; accessToken?: string }) =>
     workflows_runStep(id, options)
   );
@@ -1664,10 +1669,10 @@ export function setupIpc() {
   // Available tools for the bot tools picker. Mirrors proactive:getAvailableTools
   // because the underlying registry is process-global; both views show the
   // same union, minus the proactive_task_* helpers (those are kanban plumbing).
-  ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: [...proactiveAvailableTools, ...listCustomIntegrationToolNames()] }));
+  ipcMain.handle('bots:getAvailableTools', () => ({ ok: true, tools: botAvailableTools }));
   ipcMain.handle('bots:testSetup', (_e, input: any) => {
     try {
-      return testBotSetupPreflight(input || {}, proactiveAvailableTools);
+      return testBotSetupPreflight(input || {}, botAvailableTools);
     } catch (err: any) {
       return {
         ok: false,

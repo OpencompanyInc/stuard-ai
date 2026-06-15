@@ -447,8 +447,16 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
           }
           startLocalMemoryPersistence(conversationId || resource, history, prompt, finalText, {
             bridgeWs,
-            // SMS/mobile turns have their own local ingest path after `final`.
-            userId: msg?.mobileSource ? undefined : authUser?.userId,
+            // Mobile (SMS/WhatsApp) turns persist their own message rows on the
+            // desktop (ingestSmsConversationLocally), so we'd double-write if we
+            // stored them again here. But when the client signals `mobileLocalPersist`
+            // we still run the same post-turn analysis a normal desktop message gets
+            // (segmentation, auto-journal, title) over the *persistent* desktop bridge
+            // — we just skip the duplicate message store. Older mobile paths without
+            // that flag keep the prior behavior (no bridge persistence) so they don't
+            // lose their history.
+            userId: (msg?.mobileSource && !msg?.mobileLocalPersist) ? undefined : authUser?.userId,
+            skipMessageStore: !!msg?.mobileLocalPersist,
             userAttachments: Array.isArray(msg?.attachments) ? msg.attachments : undefined,
             userMetadata: contextPathsForMeta ? { contextPaths: contextPathsForMeta } : undefined,
             assistantMetadata: buildMetadata(),
@@ -1090,11 +1098,15 @@ function startLocalMemoryPersistence(
     assistantMetadata?: Record<string, any>;
     source?: 'stuard' | 'workflow' | 'skill' | 'proactive';
     owner?: memoryService.MemoryOwnerScope;
+    /** The caller already stored the user+assistant message rows locally (mobile
+     *  turns ingest directly over HTTP). Skip the message store here so we don't
+     *  duplicate rows, while still running the conversation-turn analysis. */
+    skipMessageStore?: boolean;
   },
 ) {
   startWithPostRunBridge(options?.bridgeWs, options?.userId, () => {
     try {
-      if (prompt) {
+      if (prompt && !options?.skipMessageStore) {
         memoryService.storeMessageLocally(localConversationId, 'user', prompt, {
           attachments: options?.userAttachments,
           metadata: options?.userMetadata,
@@ -1105,7 +1117,7 @@ function startLocalMemoryPersistence(
         });
       }
 
-      if (finalText) {
+      if (finalText && !options?.skipMessageStore) {
         memoryService.storeMessageLocally(localConversationId, 'assistant', finalText, {
           metadata: options?.assistantMetadata,
           source: options?.source,

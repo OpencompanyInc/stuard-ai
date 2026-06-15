@@ -5,7 +5,8 @@ import React from "react";
 import { 
   Rocket, X, Check, Download, Upload, Play, Square, RefreshCw,
   Clock, Keyboard, FolderOpen, Link2, Zap, CircleDot, Cloud,
-  Server, Loader2, CheckCircle2, AlertCircle, ChevronRight, AppWindow
+  Server, Loader2, CheckCircle2, AlertCircle, ChevronRight, AppWindow,
+  History
 } from "lucide-react";
 import type { DesignerModel, DesignerTrigger } from "../types";
 import type { CloudVM, CloudDeployState } from "../hooks/useWorkflowDeploy";
@@ -28,6 +29,9 @@ interface DeployPanelModalProps {
   cloudDeployId: string | null;
   onDeployToCloud: (vmId?: string) => void;
   onResetCloudDeploy: () => void;
+  // Local deploy version history
+  onOpenVersionHistory: () => void;
+  versionCount: number;
 }
 
 // Helper to get trigger display info
@@ -89,9 +93,10 @@ function getTriggerInfo(trigger: DesignerTrigger, d: boolean): { icon: React.Rea
   }
 }
 
-export function DeployPanelModal({ 
+export function DeployPanelModal({
   model, deployStatus, onClose, onDeploy, onUndeploy, onExport, onPublish,
   cloudVMs, selectedVM, onSelectVM, cloudDeployState, cloudDeployError, cloudDeployId, onDeployToCloud, onResetCloudDeploy,
+  onOpenVersionHistory, versionCount,
 }: DeployPanelModalProps) {
   const { isDark } = useWorkflowTheme();
   const d = isDark;
@@ -251,6 +256,21 @@ export function DeployPanelModal({
                 <span>Deploy Workflow</span>
               </button>
             )}
+            {/* Deploy history entry point */}
+            <button
+              onClick={onOpenVersionHistory}
+              className="mt-3 w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm rounded-xl border transition-colors"
+              style={{ background: d ? "rgba(255,255,255,0.02)" : "var(--wf-bg)", borderColor: "var(--wf-border)", color: "var(--wf-fg)" }}
+            >
+              <div className="flex items-center justify-center w-7 h-7 rounded-lg" style={{ background: d ? "rgba(255,255,255,0.04)" : "#f1f5f9", color: "var(--wf-fg-muted)" }}>
+                <History className="w-3.5 h-3.5" />
+              </div>
+              <span className="font-medium">Deploy history</span>
+              <span className="ml-auto flex items-center gap-1.5 text-xs wf-fg-faint">
+                {versionCount > 0 ? `${versionCount} version${versionCount !== 1 ? 's' : ''}` : 'No versions yet'}
+                <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+              </span>
+            </button>
           </div>
           {/* Cloud Deploy Section */}
           <div className="pt-1">

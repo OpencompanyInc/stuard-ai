@@ -598,6 +598,15 @@ function WorkflowsApp() {
     cloudDeployId,
     deployToCloud,
     resetCloudDeploy,
+    showVersionHistory,
+    setShowVersionHistory,
+    versions,
+    currentVersionId,
+    versionsLoading,
+    revertingVersionId,
+    fetchVersions,
+    revertToVersion,
+    deleteVersion,
   } = useWorkflowDeploy({ selectedId, model });
 
   // Get manual triggers from the model
@@ -1569,6 +1578,16 @@ function WorkflowsApp() {
           cloudDeployId={null}
           onDeployToCloud={() => { }}
           onResetCloudDeploy={() => { }}
+          showVersionHistory={false}
+          versions={[]}
+          currentVersionId={null}
+          versionsLoading={false}
+          revertingVersionId={null}
+          onOpenVersionHistory={() => { }}
+          onCloseVersionHistory={() => { }}
+          onRefreshVersions={() => { }}
+          onRevertVersion={() => { }}
+          onDeleteVersion={() => { }}
           showImport={showImport}
           importJson={importJson}
           setImportJson={setImportJson}
@@ -1888,6 +1907,23 @@ function WorkflowsApp() {
         cloudDeployId={cloudDeployId}
         onDeployToCloud={deployToCloud}
         onResetCloudDeploy={resetCloudDeploy}
+        showVersionHistory={showVersionHistory}
+        versions={versions}
+        currentVersionId={currentVersionId}
+        versionsLoading={versionsLoading}
+        revertingVersionId={revertingVersionId}
+        onOpenVersionHistory={() => { fetchVersions(); setShowVersionHistory(true); }}
+        onCloseVersionHistory={() => setShowVersionHistory(false)}
+        onRefreshVersions={fetchVersions}
+        onRevertVersion={async (versionId) => {
+          const res = await revertToVersion(versionId);
+          if (res?.ok) {
+            // Reload the canvas from disk so it reflects the restored version.
+            if (selectedId) await load(selectedId);
+            setShowVersionHistory(false);
+          }
+        }}
+        onDeleteVersion={deleteVersion}
         showImport={showImport}
         importJson={importJson}
         setImportJson={setImportJson}

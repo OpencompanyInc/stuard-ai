@@ -79,6 +79,146 @@ describe('workflow DSL (serialize/parse)', () => {
     expect(r.model.nodes.length).toBe(wf.nodes.length + 1);
   });
 
+  it('tolerates pretty-printed multi-line JSON args (what LLMs emit)', () => {
+    const wf = fixture();
+    // A brand-new node generated with indented, multi-line JSON + a `node` keyword
+    // prefix — the exact shape that used to fail with "bad args JSON" / "unrecognized line".
+    const dsl = `flow "Gen" v1 {
+  trigger t = manual {}
+
+  node story = ai_inference {
+    "model": "openai/gpt-4.1-mini",
+    "mode": "json",
+    "prompt": "Make a 4-scene storyboard with #hashtags and a -> arrow",
+    "schema": {
+      "scenes": ["string"]
+    }
+  } @label "Generate Storyboard"
+
+  t -> story
+}`;
+    const { model, errors } = parseWorkflow(dsl, {});
+    expect(errors).toEqual([]);
+    const story = model.nodes.find((n: any) => n.id === 'story');
+    expect(story).toBeTruthy();
+    expect(story.tool).toBe('ai_inference');
+    expect(story.args.model).toBe('openai/gpt-4.1-mini');
+    expect(story.args.schema).toEqual({ scenes: ['string'] });
+    expect(story.label).toBe('Generate Storyboard');
+    expect(model.wires.find((w: any) => w.from === 't' && w.to === 'story')).toBeTruthy();
+  });
+
+  it('full multi-line generation succeeds via applyDslContent on a blank base', () => {
+    const dsl = `flow "Social" v1 {
+  trigger t = manual {}
+
+  node a = http_get {
+    "url": "https://x"
+  }
+  node b = transform {
+    "expr": "{{a.body}}"
+  }
+
+  t -> a
+  a -> b
+}`;
+    const r = applyDslContent({ nodes: [], wires: [] }, dsl);
+    expect(r.ok).toBe(true);
+    expect(r.model.nodes.map((n: any) => n.id).sort()).toEqual(['a', 'b']);
+    expect(r.model.nodes.find((n: any) => n.id === 'a').args.url).toBe('https://x');
+  });
+
+  it('tolerates unquoted (JS-style) keys and trailing commas', () => {
+    const dsl = `flow "Gen" v1 {
+  trigger t = manual {}
+
+  node a = generate_image {
+    prompt: "a cat",
+    model: "google/gemini-3.1-flash-image-preview",
+    aspect_ratio: "16:9",
+  }
+
+  t -> a
+}`;
+    const { model, errors } = parseWorkflow(dsl, {});
+    expect(errors).toEqual([]);
+    const a = model.nodes.find((n: any) => n.id === 'a');
+    expect(a.args.prompt).toBe('a cat');
+    expect(a.args.aspect_ratio).toBe('16:9');
+  });
+
+  it('lifts inputParams written inside the trigger args (LLM style) to the trigger', () => {
+    const dsl = `flow "Gen" v1 {
+  trigger t = manual {
+    inputParams: [
+      {
+        name: "topic",
+        type: "string",
+        defaultValue: "stone tools to airplanes",
+        required: true
+      }
+    ]
+  } @label "Manual Trigger"
+}`;
+    const { model, errors } = parseWorkflow(dsl, {});
+    expect(errors).toEqual([]);
+    const t = model.triggers.find((x: any) => x.id === 't');
+    expect(Array.isArray(t.inputParams)).toBe(true);
+    expect(t.inputParams[0]).toEqual({ name: 'topic', type: 'string', defaultValue: 'stone tools to airplanes', required: true });
+    expect(t.args.inputParams).toBeUndefined(); // lifted out of args
+  });
+
+  it('reproduces the failing social-video generation (node prefix + JS keys + multi-line + inputParams) — now parses clean', () => {
+    // This is the shape that failed 3× in the real trace before falling back to a 33-op modify_workflow.
+    const dsl = `flow "Social Media" v1 {
+  @desc "Whiteboard tech-evolution video, then post to X."
+
+  trigger trig_manual = manual {
+    inputParams: [
+      { name: "topic", type: "string", defaultValue: "stone tools to airplanes", required: true }
+    ]
+  } @label "Manual Trigger"
+
+  node ffmpeg_status = ffmpeg_status {} @label "Check FFmpeg"
+
+  node generate_storyboard = ai_inference {
+    model: "openai/gpt-4.1-mini",
+    mode: "json",
+    prompt: "Create a 4-scene storyboard about '{{trigger.data.topic}}'. Keep #hashtags. Arrow -> stays literal.",
+    schema: {
+      type: "object",
+      properties: {
+        scenes: { type: "array", items: { type: "object", properties: { narration: { type: "string" } } } },
+        tweet_text: { type: "string" },
+      },
+      required: ["scenes", "tweet_text"],
+    },
+  } @label "Generate Storyboard"
+
+  node generate_image_1 = generate_image {
+    prompt: "{{generate_storyboard.json.scenes[0].image_prompt}}",
+    model: "google/gemini-3.1-flash-image-preview",
+    aspect_ratio: "16:9",
+  } @label "Generate Frame 1"
+
+  trig_manual -> ffmpeg_status
+  ffmpeg_status -> generate_storyboard
+  generate_storyboard -> generate_image_1
+}`;
+    const r = applyDslContent({ nodes: [], wires: [] }, dsl);
+    expect(r.ok).toBe(true);
+    const ids = r.model.nodes.map((n: any) => n.id).sort();
+    expect(ids).toEqual(['ffmpeg_status', 'generate_image_1', 'generate_storyboard']);
+    const story = r.model.nodes.find((n: any) => n.id === 'generate_storyboard');
+    expect(story.args.model).toBe('openai/gpt-4.1-mini');
+    expect(story.args.schema.required).toEqual(['scenes', 'tweet_text']);
+    expect(story.args.prompt).toContain('#hashtags');
+    expect(story.args.prompt).toContain('->');
+    const trig = r.model.triggers.find((t: any) => t.id === 'trig_manual');
+    expect(trig.inputParams[0].name).toBe('topic');
+    expect(r.model.wires.length).toBe(3);
+  });
+
   it('removing an annotation removes the field (authoritative)', () => {
     const wf = fixture();
     const r = applyDslEdit(wf, ' @guard {"if":"{{n2.score}} > 0.7"}', '');

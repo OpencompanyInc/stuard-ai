@@ -168,6 +168,9 @@ declare global {
       workflowsExport: (id: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
       workflowsImport: (filePath: string) => Promise<{ ok: boolean; id?: string; error?: string }>;
       workflowsValidate: (id: string) => Promise<{ ok: boolean; requirements?: string[]; error?: string }>;
+      workflowsListVersions: (id: string) => Promise<{ ok: boolean; versions?: Array<{ id: string; version: number; deployedAt: string; name: string; triggerTypes: string[]; nodeCount: number; storage: 'workspace' | 'file'; hash: string; source: 'deploy' | 'revert'; restoredFrom?: number; note?: string }>; currentVersionId?: string; error?: string }>;
+      workflowsRevertToVersion: (id: string, versionId: string) => Promise<{ ok: boolean; version?: number; deployed?: boolean; error?: string }>;
+      workflowsDeleteVersion: (id: string, versionId: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsRunStep: (id: string, options: { step: { id: string; tool: string; args: any }; accessToken?: string }) => Promise<{ ok: boolean; result?: any; error?: string }>;
       workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
       // Folder operations

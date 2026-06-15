@@ -688,6 +688,10 @@ Object.values(vmTools).forEach(t => {
 // 2. Meta Tools
 
 const SEARCH_TOOL_RESULT_LIMIT = 8;
+// Workflow node discovery returns compact schemas per candidate, so each result is
+// far heavier than a chat tool-search row and lands in the agent's resent history.
+// Keep this tight (4) — enough to choose from without bloating every later turn.
+const SEARCH_WORKFLOW_NODES_RESULT_LIMIT = 4;
 const SEARCH_TOOL_DESCRIPTION_LIMIT = 240;
 
 function compactToolSearchEntry(entry: {
@@ -760,8 +764,10 @@ export async function runToolSearch(args: {
     category?: string;
     kind?: string;
     surface: ToolSurface;
+    limit?: number;
 }): Promise<{ tools: Array<{ name: string; description: string; category: string }> }> {
     const { query, category, kind, surface } = args;
+    const limit = Math.max(1, Math.min(args.limit ?? SEARCH_TOOL_RESULT_LIMIT, SEARCH_TOOL_RESULT_LIMIT));
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
     if (!normalizedQuery) {
         throw new Error('search_tools requires a non-empty query');
@@ -816,7 +822,7 @@ export async function runToolSearch(args: {
         const merged = [...customMatches(), ...results];
         const seen = new Set<string>();
         const deduped = merged.filter((entry) => (seen.has(entry.name) ? false : (seen.add(entry.name), true)));
-        return { tools: deduped.sort((a, b) => b.score - a.score).slice(0, SEARCH_TOOL_RESULT_LIMIT).map(({ score: _score, ...entry }) => entry) };
+        return { tools: deduped.sort((a, b) => b.score - a.score).slice(0, limit).map(({ score: _score, ...entry }) => entry) };
     };
 
     if (!supabase) return keywordFallback();
@@ -828,7 +834,7 @@ export async function runToolSearch(args: {
         const { data, error } = await supabase.rpc('search_tools', {
             query_embedding: queryEmbedding,
             match_threshold: 0.25,
-            match_count: SEARCH_TOOL_RESULT_LIMIT,
+            match_count: limit,
             filter_category: category ?? null,
             filter_kind: kind ?? null,
             enabled_only: true,
@@ -860,7 +866,7 @@ export async function runToolSearch(args: {
             .sort((a, b) => b.similarity - a.similarity)
             .forEach((s) => push(s.entry));
         for (const tool of keywordFallback().tools) push(tool);
-        return { tools: merged.slice(0, SEARCH_TOOL_RESULT_LIMIT) };
+        return { tools: merged.slice(0, limit) };
     } catch (e) {
         console.warn('Vector search failed, falling back to keyword search', e);
         return keywordFallback();
@@ -1046,7 +1052,7 @@ export function createSearchWorkflowNodesTool(opts: SearchWorkflowNodesOptions =
     return createTool({
         id: 'search_workflow_nodes',
         description:
-            'Search workflow node/tool types by semantic query or filters. Returns category, runtime type, and compact input/output signatures per candidate. Nodes already returned earlier in this session are omitted (see "omitted") — re-request by exact tool name only if you need full schemas again. For the full JSON Schema of one tool, use get_tool_schema.',
+            'Search workflow node/tool types by semantic query or filters. Returns up to 4 best candidates, each with category, runtime type, and a compact input/output signature — enough to wire the node without a follow-up call. Nodes already returned earlier in this session are omitted (see "omitted") — re-request by exact tool name only if you need the signature again. For the full JSON Schema of one tool, use get_tool_schema.',
         inputSchema: z.object({
             query: z.string().min(1).describe('Required free-text query for semantic node search, or an exact tool name.'),
             category: z.string().optional().describe('Filter nodes to a specific category.'),
@@ -1103,7 +1109,7 @@ export function createSearchWorkflowNodesTool(opts: SearchWorkflowNodesOptions =
                 return { nodes: [node] };
             }
 
-            const result = await runToolSearch({ query: queryTrim, category, kind, surface: 'workflow' });
+            const result = await runToolSearch({ query: queryTrim, category, kind, surface: 'workflow', limit: SEARCH_WORKFLOW_NODES_RESULT_LIMIT });
             const tools = Array.isArray((result as any)?.tools) ? (result as any).tools : [];
 
             const nodes = await Promise.all(

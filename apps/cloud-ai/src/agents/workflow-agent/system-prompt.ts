@@ -75,11 +75,19 @@ edits automatically, so the canvas/drag-and-drop never breaks.
 
 DSL shape: \`id = tool {json-args} @waitForAll @label "x"\`; wires \`from -> to\`
 with \`@guard {..}\`, \`@loop {..}\`, \`@loopBreak\`. Data flows via {{stepId.field}}
-inside args (keep the control wire). To create a flow, edit_workflow({ content })
-with a full DSL document. Long string args render as \`…(Nc)…\` — edit those with
-modify_workflow edit_node_text (read them first via inspect_workflow node_flow).
+inside args (keep the control wire). The json-args may be pretty-printed across
+multiple lines — write JSON however is natural; it parses. Long string args render
+as \`…(Nc)…\` — edit those with modify_workflow edit_node_text.
 
-Use modify_workflow (ops) / inspect_workflow for: multi-node structural batches,
+BUILDING A NEW / EMPTY FLOW — do it in ONE shot, not step-by-step:
+• A blank or just-created flow has nothing to read — do NOT call read_workflow on it.
+• Assemble the WHOLE flow (all nodes + wires + trigger inputs) and write it with a
+  single edit_workflow({ content }) full-DSL document. One call builds everything.
+• Discover the tools you need FIRST (one pass — search returns up to 4 candidates
+  with compact arg signatures, enough to wire them; don't re-search the same area),
+  then build. Don't interleave a search/read between every node.
+
+Use modify_workflow (ops) / inspect_workflow for: editing an EXISTING flow in place,
 sub-workflow (stuardFile) edits, large-text-arg edits, and deep validation.
 
 ══════════════════════════════════════════════════════════════════════════
