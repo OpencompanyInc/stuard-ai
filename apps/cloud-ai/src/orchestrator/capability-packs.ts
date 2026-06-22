@@ -17,6 +17,8 @@ import {
   WORKFLOW_SYSTEM_PROMPT,
   WORKFLOW_DELEGATE_ADDENDUM,
 } from '../agents/workflow-agent/system-prompt';
+import { INTEGRATION_MANIFEST_SYSTEM_PROMPT } from '../integrations/manifest-prompt';
+import { SKILL_SYSTEM_PROMPT } from '../agents/skill-prompt';
 
 // ─── Browser ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,7 @@ const BROWSER_TOOLS = [
   'browser_use_wait_for',
   'browser_use_execute_script',
   'capture_screen',
+  'variables',
 ] as const;
 
 const BROWSER_SYSTEM_PROMPT = `You are the Browser Subagent for StuardAI.
@@ -147,6 +150,7 @@ const FILE_OPS_TOOLS = [
   'terminal_destroy',
   'list_terminals',
   'read_terminal',
+  'variables',
 ] as const;
 
 const FILE_OPS_SYSTEM_PROMPT = `You are the File Operations Subagent for StuardAI.
@@ -340,7 +344,7 @@ const WORKFLOW_TOOLS = [
   // Bootstrap (delegate-only — studio always has a session workflow loaded).
   // Single step: seeds session + persists to Automations.
   'create_workflow',
-  // Load an existing saved workflow into session so inspect/modify can act on
+  // Load an existing saved workflow into session so read/modify can act on
   // it. Delegate-only — studio loads the workflow through the UI.
   'load_workflow',
   // ── identical to the studio agent's toolkit from here on ──
@@ -348,23 +352,25 @@ const WORKFLOW_TOOLS = [
   // sections are fetched on demand via search_workflow_docs.
   'search_workflow_nodes',
   'search_workflow_docs',
-  'search_tools',
   'get_tool_schema',
-  // DSL read/edit — the token-lean read-window-then-edit path (see workflow-dsl.ts)
+  // DSL read/edit — the token-lean read-window-then-edit path (see workflow-dsl.ts).
+  // read_workflow with validate:true folds in the old inspect_workflow topology check.
   'read_workflow',
   'edit_workflow',
-  'inspect_workflow',
   'modify_workflow',
   'execute_step',
-  'search_workflows',
-  'stop_automation',
+  // Web: find pages (web_search) then read one (scrape_url).
   'web_search',
+  'scrape_url',
   'write_file',
   'read_file',
   'list_directory',
   'create_directory',
   'file_edit',
+  // Delegate-only: find + run/stop saved automations (main-chat capability).
+  'search_workflows',
   'deploy_workflow',
+  'stop_automation',
 ] as const;
 
 export const WORKFLOW_PACK: CapabilityPack = {
@@ -467,6 +473,7 @@ const FFMPEG_TOOLS = [
   'write_file',
   'list_directory',
   'glob',
+  'variables',
 ] as const;
 
 const FFMPEG_SYSTEM_PROMPT = `You are the FFmpeg Subagent for StuardAI.
@@ -543,6 +550,7 @@ const DATA_ANALYSIS_TOOLS = [
   'get_datetime',
   'search_tools',
   'get_tool_schema',
+  'variables',
 ] as const;
 
 const DATA_ANALYSIS_SYSTEM_PROMPT = `You are the Data Analysis Subagent for StuardAI.
@@ -794,6 +802,97 @@ export function buildCustomPack(
   };
 }
 
+// ─── Integration Builder (author → deploy → use a custom integration) ────────
+
+const INTEGRATION_BUILDER_TOOLS = [
+  'web_search',
+  'scrape_url',
+  'deploy_integration',
+  'run_integration',
+  'variables',
+  'search_tools',
+  'get_tool_schema',
+  'execute_tool',
+] as const;
+
+const INTEGRATION_BUILDER_DELEGATE_ADDENDUM = `
+
+## Delegated Orchestrator Run
+
+You are running as a delegated subagent that builds and uses custom integrations end-to-end.
+
+Your loop:
+1. **Research** the target API with web_search + scrape_url when you're unsure of the real
+   endpoint, method, auth header, or request body. Don't fabricate endpoints.
+2. **Author** the manifest in your head per the schema above (slug, name, version, auth,
+   outbound_hosts, tools).
+3. **Deploy** it with \`deploy_integration({ manifest, secrets?, enabled: true })\`. If the
+   API needs a key/secret you don't have, call \`ask_orchestrator\` for it before deploying —
+   never invent credentials.
+4. **Use** it immediately with \`run_integration({ slug, toolName, args })\` to verify it works
+   and to actually accomplish the task. (The compiled tools also become discoverable via
+   search_tools on later turns, but run_integration works right after deploy.)
+5. When done, call \`return_control\` with a summary: the slug, the tools you deployed, and the
+   result of any call you made.
+
+Notes:
+- deploy_integration is scoped to the current user and merges secrets, so a redeploy of an
+  edited manifest keeps previously-entered credentials.
+- For oauth2 integrations the user must connect via the dashboard before run_integration can
+  authenticate — say so in your summary rather than guessing tokens.
+- If a value is large (e.g. a file or image payload an API returns), use \`variables\` and pass
+  the \`{{var:NAME}}\` handle onward instead of carrying the raw bytes.`;
+
+export const INTEGRATION_BUILDER_PACK: CapabilityPack = {
+  kind: 'integration_builder',
+  label: 'Integration Builder',
+  toolNames: [...INTEGRATION_BUILDER_TOOLS],
+  systemPrompt: INTEGRATION_MANIFEST_SYSTEM_PROMPT + INTEGRATION_BUILDER_DELEGATE_ADDENDUM,
+  maxSteps: 40,
+};
+
+// ─── Skills (record a reusable skill from work that repeats) ──────────────────
+
+const SKILLS_TOOLS = [
+  'modify_skill',
+  'save_skill',
+  'search_tools',
+  'get_tool_schema',
+  'web_search',
+] as const;
+
+const SKILLS_DELEGATE_ADDENDUM = `
+
+## Delegated Orchestrator Run
+
+You are running as a delegated subagent whose job is to capture a reusable SKILL from work
+that was just done (or that the user wants to repeat), so the assistant doesn't have to be
+re-taught next time.
+
+Your loop:
+1. From the task/context the orchestrator gave you, identify the GOLDEN PATH — the clean,
+   successful sequence of steps and tool calls (drop the dead ends and corrections).
+2. Build the skill with \`modify_skill\` — usually one \`set_skill\` with name, description,
+   trigger ("When the user asks to…"), icon, color, and ordered steps. For tool steps, set the
+   correct \`toolName\` (use search_tools/get_tool_schema to confirm exact names) and describe the
+   right arguments in the step content. Encode any correction the user made as an explicit step
+   instruction or guardrail.
+3. **Persist** it with \`save_skill({ activate? })\`. Leave it inactive (default) for the user to
+   review unless they explicitly asked to enable it.
+4. Call \`return_control\` with the skill name and a one-line summary of what it automates.
+
+If the work isn't actually repeatable (a one-off, pure Q&A, or casual chat), don't invent a
+skill — call return_control and say so. If you're missing a detail needed to make the skill
+correct, call ask_orchestrator once.`;
+
+export const SKILLS_PACK: CapabilityPack = {
+  kind: 'skills',
+  label: 'Skills',
+  toolNames: [...SKILLS_TOOLS],
+  systemPrompt: SKILL_SYSTEM_PROMPT + SKILLS_DELEGATE_ADDENDUM,
+  maxSteps: 25,
+};
+
 // ─── Integration Groups ─────────────────────────────────────────────────────
 
 export const INTEGRATION_PREFIX_MAP: Record<string, string[]> = {
@@ -908,6 +1007,8 @@ const PACKS: Record<string, CapabilityPack> = {
   vm: VM_PACK,
   bot: BOT_PACK,
   agent: AGENT_PACK,
+  integration_builder: INTEGRATION_BUILDER_PACK,
+  skills: SKILLS_PACK,
 };
 
 export function getCapabilityPack(kind: SubagentKind): CapabilityPack | undefined {
@@ -920,7 +1021,7 @@ export function getAllCapabilityPacks(): CapabilityPack[] {
 
 // ─── Subagent Name Registry (used by the unified `delegate` tool) ────────────
 
-const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'custom'] as const;
+const STATIC_SUBAGENT_NAMES = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'integration_builder', 'skills', 'custom'] as const;
 const INTEGRATION_SUBAGENT_NAMES = Object.keys(INTEGRATION_PREFIX_MAP) as Array<keyof typeof INTEGRATION_PREFIX_MAP>;
 
 export const KNOWN_SUBAGENT_NAMES = [

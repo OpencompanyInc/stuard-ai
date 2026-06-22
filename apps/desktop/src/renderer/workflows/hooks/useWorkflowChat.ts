@@ -848,10 +848,14 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                   } catch (e) { }
                 }
 
-                // Handle workflow_modify / modify_workflow - returns modified workflow directly
-                // IMPORTANT: Apply immediately when we receive the completed event, don't wait for stream end
-                if ((tool === 'workflow_modify' || tool === 'modify_workflow') && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
-                  console.log('[useWorkflowChat] Received workflow_modify event:', {
+                // Handle workflow_modify / modify_workflow / edit_workflow - returns modified workflow directly
+                // IMPORTANT: Apply immediately when we receive the completed event, don't wait for stream end.
+                // edit_workflow is the lean DSL path the agent now PREFERS (and the one-shot builder for
+                // blank flows); it emits the same { ok, workflow } tool_event, so it must repaint the canvas
+                // exactly like modify_workflow — otherwise the build succeeds server-side but the workspace
+                // stays empty.
+                if ((tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'edit_workflow') && (normalizedStatus === 'completed' || normalizedStatus === 'error')) {
+                  console.log(`[useWorkflowChat] Received ${tool} event:`, {
                     status: normalizedStatus,
                     hasResult: !!d.result,
                     hasWorkflow: !!d.result?.workflow,
@@ -906,12 +910,13 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                 // Update stream items
                 let idx = id ? currentItems.findIndex(item => item.type === 'tool' && item.event.id === id) : -1;
 
-                // FALLBACK: If no ID match and this is a completed workflow_modify with result,
-                // find any pending workflow_modify entry and update it
-                if (idx < 0 && (tool === 'workflow_modify' || tool === 'modify_workflow') && normalizedStatus === 'completed' && d.result) {
+                // FALLBACK: If no ID match and this is a completed modify/edit with result,
+                // find any pending entry for the same tool and update it. The tool's own
+                // tool_event write has no toolCallId, so id-matching misses it.
+                if (idx < 0 && (tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'edit_workflow') && normalizedStatus === 'completed' && d.result) {
                   idx = currentItems.findIndex(item =>
                     item.type === 'tool' &&
-                    (item.event.tool === 'workflow_modify' || item.event.tool === 'modify_workflow') &&
+                    (item.event.tool === 'workflow_modify' || item.event.tool === 'modify_workflow' || item.event.tool === 'edit_workflow') &&
                     !item.event.result // Find one without a result yet
                   );
                   if (idx >= 0) {
@@ -942,7 +947,7 @@ Files:\n${fileTree || '  (empty workspace)'}\n`;
                   };
                 } else if (id) {
                   // For workflow modification tools, capture current model as snapshot for undo
-                  const isModifyTool = tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'create_workflow';
+                  const isModifyTool = tool === 'workflow_modify' || tool === 'modify_workflow' || tool === 'create_workflow' || tool === 'edit_workflow';
                   const workflowSnapshot = isModifyTool && model ? cloneWorkflowSnapshot(model) : undefined;
 
                   currentItems.push({

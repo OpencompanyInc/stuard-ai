@@ -18,7 +18,8 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { serializeWorkflow, applyDslEdit, applyDslContent } from '@stuardai/workflow-core/dsl';
-import { getSessionWorkflow, setSessionWorkflow, getWorkflowById } from './workflow';
+import { analyzeWorkflowTopology, formatWorkflowSchematic } from '@stuardai/workflow-core/topology';
+import { getSessionWorkflow, setSessionWorkflow, getWorkflowById, loadSubWorkflowFile } from './workflow';
 import { workflowMap } from './workflow-system';
 import { safeToolWrite, getBridgeSecrets, hasClientBridge, execLocalTool } from './bridge';
 import { validateNodeTools, formatNodeIssuesSummary } from './workflow-node-validation';
@@ -47,30 +48,48 @@ function resolveWorkflow(workflowId?: string | null): any | null {
 export const readWorkflow = createTool({
   id: 'read_workflow',
   description:
-    'Read the current workflow as a compact DSL (token-lean — prefer this over inspect_workflow for editing).\n' +
-    '  mode="outline" → one line per node (id = tool) + all wires. The cheap MAP; start here to navigate.\n' +
-    '  mode="window"  → full args for the nodes in focusIds + their 1-hop neighbours + incident wires. ~flat cost on any flow size. Read this right before editing a node.\n' +
-    '  mode="full"    → the entire workflow DSL (only for small flows or a full rewrite).\n' +
-    'DSL shape: `id = tool {json-args} @waitForAll @label "x"`, wires `from -> to @guard {..} @loop {..}`. Data flows via {{stepId.field}} inside args. Long string args show as `…(Nc)…` — edit those with modify_workflow edit_node_text.',
+    'Read the workflow as a compact DSL, and optionally validate it. The single read/inspect tool.\n' +
+    '  mode="outline" → one line per node (id = tool) + all wires. The cheap MAP; start here.\n' +
+    '  mode="window"  → full args for focusIds + 1-hop neighbours + incident wires. ~Flat cost on any size; read right before editing a node.\n' +
+    '  mode="full"    → the entire DSL (small flows / full rewrite only).\n' +
+    '  validate=true  → also return a topology check (cycles, orphans, dangling wires, missing tools) + labelled schematic. Use after structural edits or before deploy.\n' +
+    '  stuardFile     → read a sub-workflow .stuard FILE from the workspace instead of the main flow.\n' +
+    'DSL: `id = tool {json-args} @label "x"`, wires `from -> to @guard {..} @loop {..}`. Data flows via {{stepId.field}}. Long string args show as `…(Nc)…` — edit with modify_workflow edit_node_text.',
   inputSchema: z.object({
     mode: z.enum(['outline', 'window', 'full']),
-    focusIds: z.array(z.string()).nullable().describe('Node/trigger ids to show at full detail (required for mode="window").'),
-    workflowId: z.string().nullable().describe('Optional explicit workflow id; defaults to the session workflow.'),
+    focusIds: z.array(z.string()).nullable().describe('Node/trigger ids shown in full (required for mode="window").'),
+    validate: z.boolean().nullable().optional().describe('Also return topology validation + schematic.'),
+    stuardFile: z.string().nullable().optional().describe('Sub-workflow .stuard file to read instead of the main flow.'),
+    workflowId: z.string().nullable().describe('Explicit workflow id; defaults to the session workflow.'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     dsl: z.string().optional(),
     counts: z.any().optional(),
+    validation: z.any().optional(),
+    summary: z.string().optional(),
     error: z.string().optional(),
   }),
-  execute: async (inputData) => {
+  execute: async (inputData, { writer }) => {
     const raw = inputData as any;
     const mode = raw?.mode || 'outline';
     const focusIds = Array.isArray(raw?.focusIds) ? raw.focusIds.filter((s: any) => typeof s === 'string' && s) : [];
     const workflowId = typeof raw?.workflowId === 'string' && raw.workflowId ? raw.workflowId : null;
-    dslLog('read', { mode, focusIds, workflowId });
+    const stuardFile = typeof raw?.stuardFile === 'string' && raw.stuardFile.trim() ? raw.stuardFile.trim() : null;
+    const validate = raw?.validate === true;
+    dslLog('read', { mode, focusIds, workflowId, stuardFile, validate });
 
-    const wf = resolveWorkflow(workflowId);
+    // Sub-workflow file read: load the .stuard from the workspace instead of the
+    // session/canvas flow (the capability inspect_workflow used to own).
+    let wf: any;
+    if (stuardFile) {
+      const mainId = getSessionWorkflow()?.id;
+      const loaded = await loadSubWorkflowFile(stuardFile, mainId, writer);
+      if ('error' in loaded) return { ok: false, error: loaded.error };
+      wf = loaded.workflow;
+    } else {
+      wf = resolveWorkflow(workflowId);
+    }
     if (!wf) return { ok: false, error: 'No workflow is loaded in this session.' };
     if (mode === 'window' && focusIds.length === 0) {
       return { ok: false, error: 'mode="window" needs focusIds (the node ids you want to see in detail). Use mode="outline" first to find them.' };
@@ -81,10 +100,21 @@ export const readWorkflow = createTool({
       focusIds,
       abbreviateOver: mode === 'window' ? 800 : (mode === 'full' ? 1200 : undefined),
     });
+
+    // Topology validation folded in from the former inspect_workflow.
+    let validation: any;
+    let summary: string | undefined;
+    if (validate) {
+      const analysis = analyzeWorkflowTopology(wf);
+      validation = analysis.validation;
+      summary = formatWorkflowSchematic(wf, { validationIssues: analysis.validation.issues });
+    }
+
     return {
       ok: true,
       dsl,
       counts: { nodes: wf.nodes?.length || 0, wires: wf.wires?.length || 0, triggers: wf.triggers?.length || 0 },
+      ...(validation ? { validation, summary } : {}),
     };
   },
 });

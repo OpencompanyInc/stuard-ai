@@ -90,7 +90,7 @@ Node not firing? (1) no incoming wire, (2) all incoming guards false, (3) parent
 • AI picks branch → guard: { ai: { instruction, produceArgs? } }
 • Error recovery → fallbackTo on the failing node
 RULES OF THUMB: parallel branches when independent (don't serialize needlessly); JSONLogic guards for deterministic decisions; AI guards only for fuzzy ones (token + latency cost); callNode for custom_ui→worker edges; two triggers (hotkey + hotkey.release) for push-to-talk instead of guards; function trigger + call_function when the same sub-flow runs from multiple places.
-COMMON BUG: trigger not wired to any node → nothing runs. Verify with inspect_workflow({ mode: "trigger_flow" }).`,
+COMMON BUG: trigger not wired to any node → nothing runs. Verify with read_workflow({ mode: "outline", validate: true }).`,
   },
 
   // ── TRIGGERS ───────────────────────────────────────────────────────────────
@@ -415,7 +415,7 @@ WORKSPACE TOOLS (preferred — flowId auto-injected, relative paths, keeps the w
 SCRIPTS: run_python_script { filePath: "{{$workspace.scripts}}/do.py", packages: ["pandas"] } · run_node_script { filePath: "{{$workspace.scripts}}/do.js" }
 OPEN OUTPUT: open_file { path } (default app) · launch_application_or_uri { target } (apps, URLs)
 For one-off scripts prefer inline code (pass "code" instead of "filePath") so logic lives in the workflow JSON.
-EDITING WORKSPACE FILES AS THE ARCHITECT: the studio context gives you workspacePath + a file listing. Use read_file { path } / list_directory { path } to look, file_edit { path, old_string, new_string } for surgical edits, write_file { path, content } to create — with absolute paths under workspacePath. For .stuard sub-workflow files, do NOT hand-edit the JSON — use inspect_workflow/modify_workflow with stuardFile.`,
+EDITING WORKSPACE FILES AS THE ARCHITECT: the studio context gives you workspacePath + a file listing. Use read_file { path } / list_directory { path } to look, file_edit { path, old_string, new_string } for surgical edits, write_file { path, content } to create — with absolute paths under workspacePath. For .stuard sub-workflow files, do NOT hand-edit the JSON — use read_workflow/modify_workflow with stuardFile.`,
   },
 
   // ── UTILITY TOOLS ──────────────────────────────────────────────────────────
@@ -796,7 +796,7 @@ update_node (MUST include a change): { op: "update_node", nodeId: "step_abc", ar
 edit_node_text — find/replace inside a string arg; ALWAYS prefer over update_node for small changes to LARGE text (custom_ui component, inline scripts, long prompts):
   { op: "edit_node_text", nodeId: "ui", old_string: "<h1>Old</h1>", new_string: "<h1>New</h1>" }
   { op: "edit_node_text", nodeId: "ui", path: "args.component", old_string: "...", new_string: "...", replace_all?: true }
-  old_string must match EXACTLY and be unique in the field (else pass replace_all or a longer string); path optional when old_string appears in only one string field of the node. Read the current text first via inspect_workflow node_flow.
+  old_string must match EXACTLY and be unique in the field (else pass replace_all or a longer string); path optional when old_string appears in only one string field of the node. Read the current text first via read_workflow({ mode: "window", focusIds: [nodeId] }).
 remove_node: { op: "remove_node", nodeId: "step_abc" } (also removes its wires)
 add_wire: { op: "add_wire", from, to, guard? }
 callNode / loop wires — use set_path on the wires array:
@@ -805,7 +805,7 @@ remove_wire: { op: "remove_wire", from, to }
 set_path (any JSON path): { op: "set_path", path: "triggers[0].inputParams", value: [...] } · "outputSchema" · "wires[2].loop"
 add_variable: { op: "add_variable", varName: "counter", varType: "number", varDefault: 0 }
 rename: { op: "rename", name: "My Flow v2" }
-Sub-workflows (studio only): stuardFile: "helpers/sub.stuard" on modify_workflow OR inspect_workflow loads that workspace file, applies ops/inspects, and modify saves it back — the main canvas workflow is untouched.`,
+Sub-workflows (studio only): stuardFile: "helpers/sub.stuard" on modify_workflow OR read_workflow loads that workspace file, applies ops/reads, and modify saves it back — the main canvas workflow is untouched.`,
   },
 
   {
@@ -818,14 +818,14 @@ Sub-workflows (studio only): stuardFile: "helpers/sub.stuard" on modify_workflow
     content: `1. Passing full workflow JSON as "workflow" → corrupts the store; it auto-loads from session.
 2. add_node without a wire → orphan that never runs (use connectFrom or add_wire).
 3. update_node without args/path+value/label/tool → fails; say WHAT to change.
-4. remove_node leaves dangling wires in some paths → inspect_workflow flags them.
+4. remove_node leaves dangling wires in some paths → read_workflow({ validate:true }) flags them.
 5. set_path paths use brackets: "triggers[0].args", NOT "triggers.0.args".
 6. Editing the wrong file → pass stuardFile for sub-workflows.
 7. UI wires missing callNode: true → {{caller.X}} empty.
 8. Duplicate node ids → silent ctx overwrite.
 9. Guard operator keys must be plain ("=="), never quote-escaped.
 10. Positions outside x: 20-800 / y: 20-600 render off-canvas.
-After structural changes, verify with inspect_workflow({ mode: "overview" }).`,
+After structural changes, verify with read_workflow({ mode: "outline", validate: true }).`,
   },
 
   // ── OUTPUT SCHEMA ──────────────────────────────────────────────────────────

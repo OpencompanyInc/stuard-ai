@@ -17,6 +17,7 @@ import {
   formatWorkflowSchematic,
   type WorkflowElementFlowContext,
 } from '@stuardai/workflow-core/topology';
+import { geminiSafeJsonValue } from './zod-utils';
 
 // ============================================================================
 // Types
@@ -993,7 +994,7 @@ function applyOp(
     // ADD_WIRE
     // ==================================================================
     case 'add_wire': {
-      const { from, to, guard } = ctx;
+      const { from, to, guard, loop, loopBreak, loopFanoutMode, stream } = ctx;
       if (!from || !to) throw new Error('from and to are required for add_wire');
       addTouchedId(touchedIds, from);
       addTouchedId(touchedIds, to);
@@ -1002,13 +1003,51 @@ function applyOp(
       if (!elementExists(wf, to)) throw new Error(`Target not found: ${to}`);
 
       const exists = wf.wires.some(w => w.from === from && w.to === to);
-      if (exists) throw new Error(`Wire already exists: ${from} → ${to}`);
+      if (exists) throw new Error(`Wire already exists: ${from} → ${to}. Use op "update_wire" to change its guard/loop/loopBreak.`);
 
       const wire: WorkflowWire = { from, to };
       if (guard) wire.guard = sanitizeGuard(guard);
+      if (loop) wire.loop = loop;
+      if (loopBreak) wire.loopBreak = true;
+      if (loopFanoutMode) (wire as any).loopFanoutMode = loopFanoutMode;
+      if (stream) (wire as any).stream = stream;
       wf.wires.push(wire);
 
-      return `Connected ${from} → ${to}`;
+      const extras = [loop ? `loop:${loop.type || '?'}` : null, loopBreak ? 'loopBreak' : null, guard ? 'guard' : null].filter(Boolean);
+      return `Connected ${from} → ${to}${extras.length ? ` (${extras.join(', ')})` : ''}`;
+    }
+
+    // ==================================================================
+    // UPDATE_WIRE — set/clear wire properties (guard, loop, loopBreak,
+    // fanout, stream, label) on an existing wire IN PLACE. Upserts the
+    // wire if it doesn't exist yet (endpoints must be real). This is the
+    // reliable structured path for loops/guards — undefined leaves a prop
+    // untouched, null clears it.
+    // ==================================================================
+    case 'update_wire': {
+      const { from, to, guard, loop, loopBreak, loopFanoutMode, stream, label } = ctx;
+      if (!from || !to) throw new Error('from and to are required for update_wire');
+      addTouchedId(touchedIds, from);
+      addTouchedId(touchedIds, to);
+
+      let wire = wf.wires.find(w => w.from === from && w.to === to);
+      if (!wire) {
+        if (!elementExists(wf, from)) throw new Error(`Source not found: ${from}`);
+        if (!elementExists(wf, to)) throw new Error(`Target not found: ${to}`);
+        wire = { from, to };
+        wf.wires.push(wire);
+      }
+
+      const changed: string[] = [];
+      if (guard !== undefined) { if (guard === null) delete (wire as any).guard; else wire.guard = sanitizeGuard(guard); changed.push('guard'); }
+      if (loop !== undefined) { if (loop === null) delete (wire as any).loop; else wire.loop = loop; changed.push('loop'); }
+      if (loopBreak !== undefined) { if (loopBreak) wire.loopBreak = true; else delete (wire as any).loopBreak; changed.push('loopBreak'); }
+      if (loopFanoutMode !== undefined) { if (loopFanoutMode === null) delete (wire as any).loopFanoutMode; else (wire as any).loopFanoutMode = loopFanoutMode; changed.push('fanout'); }
+      if (stream !== undefined) { if (stream === null) delete (wire as any).stream; else (wire as any).stream = stream; changed.push('stream'); }
+      if (label !== undefined) { if (label === null || label === '') delete (wire as any).label; else (wire as any).label = label; changed.push('label'); }
+
+      if (changed.length === 0) throw new Error('update_wire needs at least one of: guard, loop, loopBreak, loopFanoutMode, stream, label');
+      return `Updated wire ${from} → ${to} (${changed.join(', ')})`;
     }
 
     // ==================================================================
@@ -1096,7 +1135,7 @@ function applyOp(
 // and each entry of the batch `ops` array.
 const OP_ENUM = z.enum([
   'add_node', 'update_node', 'edit_node_text', 'remove_node',
-  'add_wire', 'remove_wire',
+  'add_wire', 'update_wire', 'remove_wire',
   'set_path', 'add_variable', 'rename',
 ]);
 
@@ -1122,11 +1161,20 @@ const opItemShape = {
   // Wire operations
   from: z.string().optional().describe('Wire source ID'),
   to: z.string().optional().describe('Wire target ID'),
-  guard: z.any().optional().describe('Wire guard condition'),
+  // NB: these were z.any() — a bare z.any() emits a type-less property that
+  // Gemini rejects on the OpenRouter→Google path. geminiSafeJsonValue() accepts
+  // the same JSON shapes (object guard/loop/stream configs, "always" string,
+  // arbitrary set_path values) while staying Gemini-safe. .nullable() preserves
+  // "pass null to clear". See zod-utils / gemini-schema-safety.test.ts.
+  guard: geminiSafeJsonValue().nullable().optional().describe('Wire guard: { if: <jsonlogic|"expr"> } or "always". null clears (see WIRE PROPERTIES in the reference).'),
+  loop: geminiSafeJsonValue().nullable().optional().describe('Wire loop: forEach/repeat/while config. null clears (full shapes in the reference).'),
+  loopBreak: z.boolean().optional().describe('true on a wire OUT of a loop body = continue past the loop (plain wires re-enter). Usually with a guard.'),
+  loopFanoutMode: geminiSafeJsonValue().nullable().optional().describe('forEach fan-out (parallel) mode; null clears.'),
+  stream: geminiSafeJsonValue().nullable().optional().describe('Wire stream config (streaming source nodes); null clears.'),
 
   // Path operations
   path: z.string().optional().describe('JSON path for set_path; for edit_node_text, the string field inside the node (e.g. "args.component" — optional when old_string is unique across the node)'),
-  value: z.any().optional().describe('Value for set_path'),
+  value: geminiSafeJsonValue().nullable().optional().describe('Value for set_path'),
 
   // edit_node_text operations (find/replace inside a string arg)
   old_string: z.string().optional().describe('edit_node_text: exact text to find in the node\'s string field. Must match exactly (whitespace/escapes included).'),
@@ -1136,7 +1184,7 @@ const opItemShape = {
   // Variable operations
   varName: z.string().optional().describe('Variable name'),
   varType: z.string().optional().describe('Variable type: string, number, boolean, list, json'),
-  varDefault: z.any().optional().describe('Variable default value'),
+  varDefault: geminiSafeJsonValue().nullable().optional().describe('Variable default value'),
 
   // Rename
   name: z.string().optional().describe('New workflow name for rename'),
@@ -1144,62 +1192,19 @@ const opItemShape = {
 
 export const workflowModifyTool = createTool({
   id: 'modify_workflow',
-  description: `Modify the current workflow. The workflow is automatically loaded from session context.
+  description: `Modify the current workflow (auto-loaded — do NOT pass the full workflow JSON, just the op(s)). Triggers ARE steps (use their trig_* id). Full examples + pitfalls are in the inlined WORKFLOW REFERENCE.
 
-DO NOT pass the full workflow JSON - just pass the operation(s) and parameters.
+BATCH (preferred, cheaper): pass "ops":[...] to apply many changes in ONE call — they run in order, later ops see earlier ones; give a new node an "id" to wire to it in the same batch. A failed op is reported in "results" without aborting the rest. Single-op (top-level "op") is for one-offs.
 
-TRIGGERS ARE STEPS: use update_node/remove_node with the trigger id (e.g. "trig_0").
+OPS (? = optional):
+• add_node { tool, args, connectFrom?, id?, label? } — or a TRIGGER via { triggerType, triggerArgs }.
+• update_node { nodeId, …changes } — needs one of args | path+value | label | tool.
+• edit_node_text { nodeId, old_string, new_string, path?, replace_all? } — find/replace inside a LARGE string arg; PREFER over update_node for custom_ui/scripts/long prompts.
+• remove_node { nodeId } · add_wire / remove_wire { from, to, guard?, loop?, loopBreak? }.
+• update_wire — set/clear wire props IN PLACE (reliable for loops/guards; null clears). guard { if:… }; loop { type:"forEach"|"repeat"|"while", … }; loopBreak true to continue past a loop.
+• set_path { path, value } · add_variable { varName, varType, varDefault } · rename { name }.
 
-BATCH: pass an "ops" array to apply many changes in ONE call (preferred & far cheaper —
-ops run in order, later ops see earlier ones, give a freshly-added node an explicit "id"
-to wire to it within the same batch). Each op is reported in "results"; a failed op does
-not abort the rest. Use the single-op form (top-level "op") for one-off edits.
-
-  { ops: [ { op: "add_node", id: "save", tool: "sql_query", args: {...}, connectFrom: "trig_0" },
-           { op: "add_wire", from: "save", to: "confirm" } ] }
-
-OPERATIONS:
-
-ADD_NODE - Add a new step (or a trigger if triggerType is provided)
-  { op: "add_node", tool: "log", args: { message: "hi" }, connectFrom: "trig_0" }
-  { op: "add_node", id: "my_step", tool: "log", args: { message: "hi" } }  // explicit id
-  { op: "add_node", triggerType: "keystroke", triggerArgs: { sequence: "go" } }
-
-UPDATE_NODE - Update existing node or trigger (MUST provide changes!)
-  { op: "update_node", nodeId: "step_abc", args: { message: "new" } }
-  { op: "update_node", nodeId: "step_abc", path: "message", value: "new" }  // Single field
-  { op: "update_node", nodeId: "trig_0", triggerArgs: { sequence: "cats" } }
-  NOTE: You MUST provide args, path/value, label, or tool - otherwise it will fail!
-
-EDIT_NODE_TEXT - Find/replace inside a string arg WITHOUT re-sending the whole string.
-  ALWAYS prefer this over update_node for small changes to LARGE text fields
-  (custom_ui component, inline scripts, long prompts).
-  { op: "edit_node_text", nodeId: "ui", old_string: "<h1>Old</h1>", new_string: "<h1>New</h1>" }
-  { op: "edit_node_text", nodeId: "ui", path: "args.component", old_string: "...", new_string: "...", replace_all: true }
-  - old_string must match EXACTLY (whitespace/escapes) and be unique unless replace_all: true.
-  - path is optional when old_string appears in only one string field of the node.
-
-REMOVE_NODE - Delete a node or trigger (and its wires)
-  { op: "remove_node", nodeId: "step_abc" }
-
-ADD_WIRE - Connect two elements
-  { op: "add_wire", from: "trig_0", to: "step_abc" }
-
-REMOVE_WIRE - Disconnect
-  { op: "remove_wire", from: "trig_0", to: "step_abc" }
-
-SET_PATH - Direct JSON path edit
-  { op: "set_path", path: "triggers[0].args.sequence", value: "cats" }
-
-ADD_VARIABLE - Add workflow variable
-  { op: "add_variable", varName: "counter", varType: "number", varDefault: 0 }
-
-RENAME - Change workflow name
-  { op: "rename", name: "New Name" }
-
-Optional stuardFile targets a sub-workflow FILE in the workflow's workspace
-(e.g. "helpers/send-email.stuard"): the file is loaded, ops applied, and the
-file saved back — the main canvas workflow is untouched. Studio only.`,
+stuardFile targets a sub-workflow FILE in the workspace (loaded, ops applied, saved back; main canvas untouched). Studio only.`,
 
   inputSchema: z.object({
     // Single-op (flat) form: same fields as a batch op, but description-free so the
@@ -1221,8 +1226,10 @@ file saved back — the main canvas workflow is untouched. Studio only.`,
     // Target stuard file (defaults to main workflow)
     stuardFile: z.string().optional().describe('Optional: relative path to the .stuard file to modify (e.g. "helpers/send-email.stuard"). Defaults to the main workflow if not specified.'),
 
-    // workflow is OPTIONAL - will be loaded from session
-    workflow: z.any().optional().describe('Optional: workflow JSON. If not provided, uses the current session workflow.'),
+    // workflow is OPTIONAL - will be loaded from session. z.object({}).loose()
+    // (not z.any()) so it isn't a type-less property Gemini rejects on the
+    // OpenRouter→Google path (see zod-utils / gemini-schema-safety.test.ts).
+    workflow: z.object({}).loose().optional().describe('Optional: workflow JSON. If not provided, uses the current session workflow.'),
     workflowId: z.string().optional().describe('Optional: workflow ID to look up from memory'),
   }).partial(),  // all fields optional; op/ops requirement enforced in execute
 
@@ -1425,7 +1432,7 @@ file saved back — the main canvas workflow is untouched. Studio only.`,
       const diagram = generateWorkflowDiagram(wf);
       const structuralChange = rawOps.some((o: any) => {
         const opName = String(o?.op || '');
-        if (opName === 'add_node' || opName === 'remove_node' || opName === 'add_wire' || opName === 'remove_wire') return true;
+        if (opName === 'add_node' || opName === 'remove_node' || opName === 'add_wire' || opName === 'update_wire' || opName === 'remove_wire') return true;
         if (opName === 'set_path') return /^(nodes|wires|triggers)\b/.test(String(o?.path || ''));
         return false;
       });

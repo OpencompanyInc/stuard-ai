@@ -16,13 +16,14 @@ import { buildProviderModel, buildProviderModelForUser, type ModelSourcePreferen
 import { writeLog } from '../../utils/logger';
 
 // Core tools
-import { createSearchToolsTool, createSearchWorkflowNodesTool } from '../../tools/meta-tools';
+import { createSearchWorkflowNodesTool } from '../../tools/meta-tools';
 import { createWorkflowTool, retrieveToolFormat } from '../../tools/workflow-system';
 import { workflowModifyTool } from '../../tools/workflow';
 import { readWorkflow, editWorkflow } from '../../tools/workflow-dsl';
 import { stop_automation, write_file, create_directory, read_file, list_directory } from '../../tools/device-tools';
 import { file_edit } from '../../tools/agentic-file-tools';
 import { web_search } from '../../tools/perplexity-tools';
+import { scrape_url } from '../../tools/tavily-tools';
 import { getBridgeSecrets, getBridgeWs, runWithSecrets, withClientBridge } from '../../tools/bridge';
 import {
   clearActiveBridge,
@@ -31,10 +32,10 @@ import {
   setActiveBridge,
   withActiveBridgeContext,
 } from '../../tools/device/shared';
-import { executeStep, searchWorkflows, inspectWorkflow, loadWorkflow } from './tools';
+import { executeStep, searchWorkflows, loadWorkflow } from './tools';
 import { createSearchWorkflowDocsTool } from './docs';
 import { deployWorkflow } from './deploy';
-import { WORKFLOW_SYSTEM_PROMPT } from './system-prompt';
+import { WORKFLOW_SYSTEM_PROMPT, WORKFLOW_EDIT_SYSTEM_PROMPT, WORKFLOW_EDIT_TOOL_NAMES } from './system-prompt';
 import { normalizeToolInputForSchema, coerceToolInputSchema } from '../../tools/zod-utils';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '';
@@ -46,7 +47,7 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 // OpenRouter key satisfies the native-provider requirement (see buildProviderModel).
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
-export { WORKFLOW_SYSTEM_PROMPT };
+export { WORKFLOW_SYSTEM_PROMPT, WORKFLOW_EDIT_SYSTEM_PROMPT, WORKFLOW_EDIT_TOOL_NAMES };
 
 const DEFAULT_WORKFLOW_LOCAL_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -60,6 +61,15 @@ export interface WorkflowAgentOptions {
   name?: string;
   bridgeWs?: any;
   bridgeSecrets?: Record<string, any>;
+  /**
+   * EDIT MODE — an existing, non-empty workflow is loaded and the user is
+   * iterating on it. Uses the slim WORKFLOW_EDIT_SYSTEM_PROMPT (no inlined
+   * build docs) and limits the model-visible tool schemas to
+   * WORKFLOW_EDIT_TOOL_NAMES (the full universe is still built for execution),
+   * cutting the always-resent prefix from ~18k to ~6k. See
+   * project_workflow_token_blowup_levers.
+   */
+  editMode?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -164,57 +174,59 @@ function wrapWorkflowToolWithBridge(tool: any, bridgeWs: any, bridgeSecrets?: Re
 function buildWorkflowTools(options: WorkflowAgentOptions): Record<string, any> {
   const baseTools: Record<string, any> = {};
 
-  if (options.includeCreateWorkflow) {
+  // DELEGATE MODE (invoked from main chat) sets includeCreateWorkflow. The studio
+  // architect does not. Tools that only make sense when driving workflows FROM
+  // chat — bootstrapping/finding a flow (create/load/search_workflows) and
+  // running them (deploy/stop) — are delegate-only. The studio agent builds and
+  // tests on the canvas; deploy/stop/search live on the main-chat path.
+  const isDelegate = !!options.includeCreateWorkflow;
+  if (isDelegate) {
+    // Bootstrap + discover a flow to act on (studio loads via the UI instead).
     baseTools.create_workflow = createLoggedTool(createWorkflowTool, 'create_workflow');
+    baseTools.load_workflow = createLoggedTool(loadWorkflow, 'load_workflow');
+    baseTools.search_workflows = createLoggedTool(searchWorkflows, 'search_workflows');
+    // Run/stop saved automations — main-chat capability, not a studio concern.
+    baseTools.deploy_workflow = createLoggedTool(deployWorkflow, 'deploy_workflow');
+    baseTools.stop_automation = createLoggedTool(stop_automation, 'stop_automation');
   }
 
   Object.assign(baseTools, {
-    // (Docs are inlined in the system prompt — no search_workflow_docs tool.)
-    // 2. Search workflow nodes — fresh dedup set per session (won't repeat same node)
+    // Search workflow nodes — fresh dedup set per session (won't repeat same node)
     search_workflow_nodes: createLoggedTool(
       createSearchWorkflowNodesTool({ seen: new Set<string>() }),
       'search_workflow_nodes',
     ),
-    // 2b. Search workflow docs — fetch ON-DEMAND reference sections (custom_ui,
+    // Search workflow docs — fetch ON-DEMAND reference sections (custom_ui,
     // streams, agent_nodes, advanced variants). Core docs are inlined in the prompt.
     search_workflow_docs: createLoggedTool(
       createSearchWorkflowDocsTool({ seen: new Set<string>() }),
       'search_workflow_docs',
     ),
-    // 3. Search tools (workflow surface — sees workflow-only tools, hides chat-only like chat_ui)
-    search_tools: createLoggedTool(createSearchToolsTool('workflow'), 'search_tools'),
-    // 4. Get tool schema
+    // Get tool schema (exact args for a chosen node/tool)
     get_tool_schema: createLoggedTool(retrieveToolFormat, 'get_tool_schema'),
-    // 4b. Read workflow as compact DSL (outline | window | full) — the lean read path
+    // Read workflow as compact DSL (outline | window | full) — the lean read path.
+    // validate:true folds in the old inspect_workflow topology check + .stuard reads.
     read_workflow: createLoggedTool(readWorkflow, 'read_workflow'),
-    // 4c. Edit workflow via DSL find/replace — the lean edit path
+    // Edit workflow via DSL find/replace — the lean edit path
     edit_workflow: createLoggedTool(editWorkflow, 'edit_workflow'),
-    // 5. Inspect workflow topology (deep validation / topology only — prefer read_workflow)
-    inspect_workflow: createLoggedTool(inspectWorkflow, 'inspect_workflow'),
-    // 5b. Load an existing saved workflow into session for editing
-    load_workflow: createLoggedTool(loadWorkflow, 'load_workflow'),
-    // 6. Modify workflow
+    // Modify workflow (structured ops)
     modify_workflow: createLoggedTool(workflowModifyTool, 'modify_workflow'),
-    // 7. Execute step (sis execute)
+    // Execute step — ONE unified tester: { tool, args } runs one node;
+    // { steps:[...] } runs a sequence/path with shared context (see tools.ts).
     execute_step: createLoggedTool(executeStep, 'execute_step'),
-    // 8. Search workflows
-    search_workflows: createLoggedTool(searchWorkflows, 'search_workflows'),
-    // 9. Stop workflow (canonical name - matches the delegate pack)
-    stop_automation: createLoggedTool(stop_automation, 'stop_automation'),
-    // 10. Web search
+    // Web: find pages, then read a specific one's content.
     web_search: createLoggedTool(web_search, 'web_search'),
-    // 11. Create/write files in the workspace or on disk
+    scrape_url: createLoggedTool(scrape_url, 'scrape_url'),
+    // Create/write files in the workspace or on disk
     write_file: createLoggedTool(write_file, 'write_file'),
-    // 11b. Read files (workspace scripts/data/sub-workflows, or any path)
+    // Read files (workspace scripts/data/sub-workflows, or any path)
     read_file: createLoggedTool(read_file, 'read_file'),
-    // 11c. List directory contents (e.g. the workflow workspace)
+    // List directory contents (e.g. the workflow workspace)
     list_directory: createLoggedTool(list_directory, 'list_directory'),
-    // 12. Create directories
+    // Create directories
     create_directory: createLoggedTool(create_directory, 'create_directory'),
-    // 13. Edit non-stuard files (string-based find/replace)
+    // Edit non-stuard files (string-based find/replace)
     file_edit: createLoggedTool(file_edit, 'file_edit'),
-    // 14. Deploy workflow to desktop and/or VM targets
-    deploy_workflow: createLoggedTool(deployWorkflow, 'deploy_workflow'),
   });
 
   for (const [name, tool] of Object.entries(options.extraTools || {})) {
@@ -275,16 +287,52 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
 
   const tools = buildWorkflowTools(options);
   const toolNames = Object.keys(tools);
+  // EDIT MODE: slim prompt + only the lean edit tools are shown to the model.
+  // The full tool universe is still built (above) so execution never fails with
+  // "tool not found"; we only restrict the schemas the model SEES via activeTools.
+  const baseInstructions = options.editMode ? WORKFLOW_EDIT_SYSTEM_PROMPT : WORKFLOW_SYSTEM_PROMPT;
   const instructions = options.instructionsSuffix
-    ? `${WORKFLOW_SYSTEM_PROMPT}\n\n${options.instructionsSuffix}`
-    : WORKFLOW_SYSTEM_PROMPT;
+    ? `${baseInstructions}\n\n${options.instructionsSuffix}`
+    : baseInstructions;
+  // Only expose lean-set tools that actually exist on this agent (e.g. omit
+  // create_workflow which isn't built in studio mode).
+  const editActiveToolNames = WORKFLOW_EDIT_TOOL_NAMES.filter((n) => toolNames.includes(n));
+  const activeToolNames = options.editMode && editActiveToolNames.length > 0
+    ? editActiveToolNames
+    : toolNames;
 
   // Determine if we should use thinking mode. Keep thought text out of the
   // stream by default; exposing it can dominate workflow-agent token usage
   // without improving the edited workflow.
-  const useThinking = provider === 'google' && modelId.includes('gemini-3');
+  //
+  // CRITICAL token lever: this wrapper OVERRIDES whatever reasoning the caller
+  // passed. The studio UI defaults selectedReasoningLevel='high', which
+  // agent-runner otherwise translates into the MAX thinking budget/level +
+  // includeThoughts:true — verbose streamed reasoning that is the single
+  // biggest token sink for one build (see project_workflow_token_blowup_levers).
+  // The workflow architect does mechanical DSL edits, so cap it. We cover both
+  // Gemini 3 (thinkingLevel) and Gemini 2.5 (thinkingBudget) because the
+  // resolved model can be either — previously only gemini-3 was capped, so a
+  // gemini-2.5 fallback silently ran at full 'high' thinking + visible thoughts.
+  const isGoogle = provider === 'google';
+  const isGemini3 = isGoogle && modelId.includes('gemini-3');
+  const isGemini25 = isGoogle && modelId.includes('gemini-2.5');
+  const useThinking = isGemini3 || isGemini25;
   const includeThoughts = String(process.env.WORKFLOW_INCLUDE_THOUGHTS || '').toLowerCase() === 'true';
-  const thinkingLevel = process.env.WORKFLOW_THINKING_LEVEL || 'medium';
+  // Edit-mode tweaks are small/targeted — default to low thinking (the −15%
+  // lever) so simple edits don't pay a deep reasoning tax every step.
+  const thinkingLevel = options.editMode
+    ? (process.env.WORKFLOW_EDIT_THINKING_LEVEL || 'low')
+    : (process.env.WORKFLOW_THINKING_LEVEL || 'medium');
+  // Gemini 2.5 has no thinkingLevel — it takes an integer token budget. Keep it
+  // modest (well under agent-runner's 24576 'high' budget) so the fallback model
+  // doesn't blow the build budget. Edit gets less; build gets some headroom.
+  const thinkingBudget = options.editMode
+    ? Number(process.env.WORKFLOW_EDIT_THINKING_BUDGET || 2048)
+    : Number(process.env.WORKFLOW_THINKING_BUDGET || 8192);
+  const leanThinkingConfig: Record<string, any> = isGemini3
+    ? { includeThoughts, thinkingLevel }
+    : { includeThoughts, thinkingBudget };
 
   // Create agent with enhanced logging
   const agent = new Agent({
@@ -295,7 +343,8 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
     tools,
   });
 
-  (agent as any).__activeToolNames = toolNames;
+  (agent as any).__activeToolNames = activeToolNames;
+  (agent as any).__editMode = !!options.editMode;
   (agent as any).__modelSource = (model as any)?.__stuardResolvedSource;
   (agent as any).__billingExcluded = !!(model as any)?.__stuardBillingExcluded;
 
@@ -304,7 +353,8 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
   (agent as any).stream = async (input: any, options?: any) => {
     console.log('[workflow-agent] Input message:', compactForLog(input, 6000));
     
-    // Inject thinkingConfig at the stream call level for Gemini 3 models
+    // Inject the lean thinkingConfig at the stream call level for Gemini models,
+    // overriding any reasoning the caller (agent-runner) set from the UI level.
     const mergedOptions = useThinking
       ? {
           ...options,
@@ -312,10 +362,7 @@ export function getWorkflowAgent(modelIdOrOptions?: string | WorkflowAgentOption
             ...options?.providerOptions,
             google: {
               ...options?.providerOptions?.google,
-              thinkingConfig: {
-                includeThoughts,
-                thinkingLevel,
-              },
+              thinkingConfig: leanThinkingConfig,
             },
           },
         }

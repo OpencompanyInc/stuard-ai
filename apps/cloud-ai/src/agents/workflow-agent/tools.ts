@@ -73,49 +73,85 @@ function buildElementInspection(workflow: any, flowContext: any) {
 
 export const executeStep = createTool({
   id: 'execute_step',
-  description: 'Execute a single tool to test it before adding to a workflow. Returns the tool result.',
+  description:
+    'Test-run node(s) on the device. ONE node: { tool, args }. A PATH: { steps:[{ id, tool, args }], context?, ' +
+    'stopOnError? } runs them in order with shared context (reference a prior step as "{{priorStepId}}"). Give ' +
+    'tool OR steps, not both. Whole flow → deploy_workflow.',
+  // Free-form bags use z.object({}).loose() (NOT z.any(): a type-less property 400s
+  // Gemini on the OpenRouter→Google path); optional fields are nullable so the model
+  // can omit them. See project_gemini_tool_schema_no_any.
   inputSchema: z.object({
-    tool: z.string().describe('Tool name to execute'),
-    args: z.any().default({}).describe('Tool arguments'),
-    timeoutMs: z.number().int().min(1000).max(120000).default(30000).describe('Timeout in ms'),
+    tool: z.string().nullable().optional().describe('Single mode: node to run once.'),
+    args: z.object({}).loose().nullable().optional().describe('Single mode: its args.'),
+    steps: z.array(z.object({
+      id: z.string().describe('Step id (ref as "{{id}}").'),
+      tool: z.string().describe('Node to run.'),
+      args: z.object({}).loose().nullable().optional().describe('Args; prior output = "{{priorStepId}}".'),
+    })).nullable().optional().describe('Path mode: nodes in order, shared context.'),
+    context: z.object({}).loose().nullable().optional().describe('Path mode: initial context.'),
+    stopOnError: z.boolean().nullable().optional().describe('Path mode: stop on first failure (default true).'),
+    timeoutMs: z.number().int().min(1000).max(120000).nullable().optional().describe('Single mode: timeout ms (default 30000).'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
+    // single-node mode
     result: z.any().optional(),
     duration: z.number().optional(),
+    // sequence mode
+    steps: z.any().optional(),
+    finalContext: z.any().optional(),
+    totalDuration_ms: z.number().optional(),
     error: z.string().optional(),
   }),
   execute: async (inputData, { writer }) => {
-    const { tool, args, timeoutMs } = inputData as any;
+    const { tool, args, steps, context, stopOnError, timeoutMs } = inputData as any;
     const startTime = Date.now();
 
-    wfLog('execute_step', { tool });
+    // ── Sequence mode: run a path of nodes with shared context ──
+    if (Array.isArray(steps) && steps.length > 0) {
+      wfLog('execute_step_sequence', { count: steps.length });
+      try {
+        const result = await execLocalTool(
+          'test_run_steps',
+          { steps, context: context || {}, stopOnError: stopOnError !== false },
+          writer as any,
+          Math.max(Number(timeoutMs) || 60000, 60000),
+        );
+        wfLog('execute_step_sequence_done', { ok: result?.ok });
+        return {
+          ok: result?.ok !== false,
+          steps: result?.steps,
+          finalContext: result?.finalContext,
+          totalDuration_ms: result?.totalDuration_ms,
+          error: result?.error,
+        };
+      } catch (e: any) {
+        wfLog('execute_step_sequence_error', { error: e.message });
+        return { ok: false, totalDuration_ms: Date.now() - startTime, error: e.message || 'Sequence run failed' };
+      }
+    }
 
+    // ── Single-node mode ──
+    if (typeof tool !== 'string' || !tool.trim()) {
+      return { ok: false, error: 'Provide `tool` (+args) to test one node, or `steps` to test a sequence.' };
+    }
+
+    wfLog('execute_step', { tool });
     try {
       const result = await execLocalTool(
         tool,
         args && typeof args === 'object' && !Array.isArray(args)
           ? { ...args, __workflowToolCall: true }
-          : args,
+          : (args || {}),
         writer as any,
-        timeoutMs,
+        Number(timeoutMs) || 30000,
       );
       const duration = Date.now() - startTime;
-
       wfLog('execute_step_done', { tool, ok: result?.ok, duration });
-
-      return {
-        ok: result?.ok !== false,
-        result,
-        duration,
-      };
+      return { ok: result?.ok !== false, result, duration };
     } catch (e: any) {
       wfLog('execute_step_error', { tool, error: e.message });
-      return {
-        ok: false,
-        duration: Date.now() - startTime,
-        error: e.message || 'Execution failed',
-      };
+      return { ok: false, duration: Date.now() - startTime, error: e.message || 'Execution failed' };
     }
   },
 });
