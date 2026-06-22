@@ -135,8 +135,14 @@ describe('Capability Packs', () => {
     // fetched on demand, so the pack now DOES carry the doc-search tool.
     expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_docs');
     expect(WORKFLOW_PACK.toolNames).toContain('search_workflow_nodes');
-    expect(WORKFLOW_PACK.toolNames).toContain('search_tools');
     expect(WORKFLOW_PACK.toolNames).toContain('get_tool_schema');
+    // execute_step is the unified node/path tester; scrape_url joins web_search.
+    expect(WORKFLOW_PACK.toolNames).toContain('execute_step');
+    expect(WORKFLOW_PACK.toolNames).toContain('scrape_url');
+    // search_tools + inspect_workflow were removed (read_workflow validate/stuardFile
+    // replaces inspect; node discovery is search_workflow_nodes/get_tool_schema).
+    expect(WORKFLOW_PACK.toolNames).not.toContain('search_tools');
+    expect(WORKFLOW_PACK.toolNames).not.toContain('inspect_workflow');
     expect(WORKFLOW_PACK.maxSteps).toBe(60);
     expect(WORKFLOW_PACK.timeoutMs).toBeUndefined();
   });

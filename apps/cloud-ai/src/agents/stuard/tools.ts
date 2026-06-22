@@ -38,7 +38,7 @@ import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } fr
 import { research_search, research_read, research_note, research_status } from '../../tools/research-mode';
 import { searchWorkflowDocs } from '../workflow-agent/docs';
 import { deployWorkflow } from '../workflow-agent/deploy';
-import { executeStep, inspectWorkflow, searchWorkflows, loadWorkflow } from '../workflow-agent/tools';
+import { executeStep, searchWorkflows, loadWorkflow } from '../workflow-agent/tools';
 import { routeToWorkflowAgent } from '../../tools/workflow-subagent';
 import { hasClientBridge } from '../../tools/bridge';
 import { withToolInputCoercionMap } from '../../tools/zod-utils';
@@ -654,7 +654,8 @@ export function getExecutionTools(mcpTools: Record<string, any> = {}): Record<st
     modify_workflow: workflowModifyTool,
     read_workflow: readWorkflow,
     edit_workflow: editWorkflow,
-    inspect_workflow: inspectWorkflow,
+    // inspect_workflow folded into read_workflow (validate:true / stuardFile) to
+    // mirror the workflow agent — read_workflow is the single read/validate tool.
     execute_step: executeStep,
     search_workflows: searchWorkflows,
     deploy_workflow: deployWorkflow,
