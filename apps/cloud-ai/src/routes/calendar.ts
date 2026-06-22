@@ -248,6 +248,219 @@ export async function handleCalendarRoutes(req: IncomingMessage, res: ServerResp
     }
   }
 
+  // GET /v1/tasks/google — Google Tasks for the dashboard, mirrors /v1/calendar/events.
+  // Read-only listing across the user's task lists; the desktop merges these alongside
+  // local unified tasks (same way Google Calendar events merge with local blocks).
+  if (req.method === 'GET' && path === '/v1/tasks/google') {
+    try {
+      const auth = String(req.headers['authorization'] || '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const authUser = token ? await verifyToken(token) : null;
+      if (!authUser) {
+        const body = JSON.stringify({ ok: false, error: 'unauthorized' });
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(body);
+        return true;
+      }
+
+      const acc = await resolveGoogleAccountForRoute(authUser.userId);
+      if (!acc) {
+        const body = JSON.stringify({ ok: false, error: 'google_not_connected' });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(body);
+        return true;
+      }
+
+      const scopes = acc.scopes;
+      const needsScope = 'https://www.googleapis.com/auth/tasks';
+      if (!scopes.includes(needsScope) && !scopes.includes('https://www.googleapis.com/auth/tasks.readonly')) {
+        const body = JSON.stringify({ ok: false, error: 'missing_scopes', missing: [needsScope] });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(body);
+        return true;
+      }
+
+      const accessToken = acc.accessToken;
+      const showCompleted = (parsedUrl.searchParams.get('showCompleted') || 'false').toLowerCase() === 'true';
+      const perList = Math.min(100, Math.max(1, Number(parsedUrl.searchParams.get('maxResults') || 100)));
+
+      const gfetch = async (url: string) => {
+        const r = await fetch(url, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        });
+        const j: any = await (async () => { try { return await r.json(); } catch { return null; } })();
+        return { r, j };
+      };
+
+      const listsRes = await gfetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists?maxResults=100');
+      if (!listsRes.r.ok) {
+        const msg = (listsRes.j && (listsRes.j.error?.message || listsRes.j.error || listsRes.j.message)) || `${listsRes.r.status} ${listsRes.r.statusText}`;
+        const body = JSON.stringify({ ok: false, error: 'google_api_error', message: msg });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(body);
+        return true;
+      }
+
+      // Cap to the first 10 lists so a user with many lists can't fan out unbounded.
+      const lists = (Array.isArray(listsRes.j?.items) ? listsRes.j.items : []).slice(0, 10);
+      const perListItems = await Promise.all(lists.map(async (l: any) => {
+        const listId = String(l.id);
+        const listTitle = String(l.title || 'Tasks');
+        const params = new URLSearchParams();
+        params.set('maxResults', String(perList));
+        params.set('showCompleted', showCompleted ? 'true' : 'false');
+        if (showCompleted) params.set('showHidden', 'true');
+        const tr = await gfetch(`https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks?${params.toString()}`);
+        const tItems = Array.isArray(tr.j?.items) ? tr.j.items : [];
+        return tItems
+          .filter((t: any) => !t.deleted)
+          .map((t: any) => ({
+            id: String(t.id),
+            title: t.title || '(No title)',
+            notes: t.notes || '',
+            due: t.due || '',
+            status: t.status || 'needsAction',
+            completed: t.status === 'completed',
+            completedAt: t.completed || '',
+            updated: t.updated || '',
+            position: t.position || '',
+            parent: t.parent || '',
+            listId,
+            listTitle,
+            webLink: t.webViewLink || 'https://tasks.google.com/',
+            source: 'google',
+          }));
+      }));
+
+      const items = perListItems.flat();
+      const body = JSON.stringify({
+        ok: true,
+        items,
+        lists: lists.map((l: any) => ({ id: String(l.id), title: String(l.title || 'Tasks') })),
+      });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(body);
+      return true;
+    } catch (e) {
+      console.error(e);
+      const body = JSON.stringify({ ok: false, error: 'server_error' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    }
+  }
+
+  // PATCH /v1/tasks/google/:id — update a Google task (used to check it off from the
+  // dashboard). Requires the task list id in the body since Google scopes tasks per list.
+  if (req.method === 'PATCH' && path.startsWith('/v1/tasks/google/')) {
+    try {
+      const taskId = decodeURIComponent(path.split('/').pop() || '');
+      if (!taskId) throw new Error('missing_id');
+
+      const auth = String(req.headers['authorization'] || '');
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const authUser = token ? await verifyToken(token) : null;
+      if (!authUser) {
+        const body = JSON.stringify({ ok: false, error: 'unauthorized' });
+        res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const buffers = [];
+      for await (const chunk of req) buffers.push(chunk);
+      let updates: any = {};
+      try { updates = JSON.parse(Buffer.concat(buffers).toString() || '{}'); } catch {}
+
+      const listId = String(updates.listId || '');
+      if (!listId) {
+        const body = JSON.stringify({ ok: false, error: 'missing_list_id' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const acc = await resolveGoogleAccountForRoute(authUser.userId);
+      if (!acc) {
+        const body = JSON.stringify({ ok: false, error: 'google_not_connected' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      // Writing requires the full tasks scope (tasks.readonly can't mutate).
+      if (!acc.scopes.includes('https://www.googleapis.com/auth/tasks')) {
+        const body = JSON.stringify({ ok: false, error: 'missing_scopes', missing: ['https://www.googleapis.com/auth/tasks'] });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const patchBody: any = {};
+      if (typeof updates.completed === 'boolean') {
+        patchBody.status = updates.completed ? 'completed' : 'needsAction';
+        // Google keeps the old completion timestamp unless we explicitly clear it.
+        if (!updates.completed) patchBody.completed = null;
+      }
+      if (typeof updates.title === 'string') patchBody.title = updates.title;
+      if (typeof updates.notes === 'string') patchBody.notes = updates.notes;
+      if (typeof updates.due === 'string') patchBody.due = updates.due;
+
+      const url = `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`;
+      const apiRes = await fetch(url, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${acc.accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patchBody),
+      });
+      const data: any = await (async () => { try { return await apiRes.json(); } catch { return null; } })();
+
+      if (!apiRes.ok) {
+        const msg = (data && (data.error?.message || data.error || data.message)) || `${apiRes.status} ${apiRes.statusText}`;
+        const body = JSON.stringify({ ok: false, error: 'google_api_error', message: msg });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(body);
+        return true;
+      }
+
+      const body = JSON.stringify({ ok: true, task: data });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    } catch (e) {
+      console.error(e);
+      const body = JSON.stringify({ ok: false, error: 'server_error' });
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return true;
+    }
+  }
+
   // POST /v1/reminders/cloud — sync a reminder to cloud for SMS/WhatsApp delivery
   if (req.method === 'POST' && path === '/v1/reminders/cloud') {
     try {

@@ -13,6 +13,30 @@
 
 import { z } from 'zod';
 
+/**
+ * A Gemini-safe stand-in for `z.any()` on a free-form tool-input field.
+ *
+ * A bare `z.any()` emits a JSON-Schema property with no `type`. Gemini's
+ * GenerateContentRequest validator drops any named property (or array item) that
+ * has no `type` and then 400s ("...function_declarations[N].parameters.required[0]:
+ * property is not defined"). This bites specifically on the OpenRouter→Google
+ * path — the native @ai-sdk/google provider sanitizes type-less props, so the
+ * same tool can look fine on a BYOK/native Gemini call yet break on the
+ * Stuard-served (OpenRouter) one. A type-less `additionalProperties` wildcard on
+ * an otherwise-typed object IS tolerated; a type-less *named property/item* is not.
+ *
+ * This returns a union of concretely-typed branches (scalar | object | array of
+ * scalars/objects), which always emits a `type` per branch (anyOf) while still
+ * accepting any realistic JSON value. Use it instead of `z.any()` for any tool
+ * field that reaches an LLM. Guarded by gemini-schema-safety.test.ts.
+ */
+export function geminiSafeJsonValue(): z.ZodTypeAny {
+  const scalar = z.union([z.string(), z.number(), z.boolean()]);
+  const obj = z.object({}).loose(); // any object (nested values pass through)
+  const arr = z.array(z.union([scalar, obj]));
+  return z.union([scalar, obj, arr]);
+}
+
 const COERCED_TOOL_SCHEMA = Symbol.for('stuard.coercedToolInputSchema');
 const COERCED_TOOL = Symbol.for('stuard.coercedTool');
 

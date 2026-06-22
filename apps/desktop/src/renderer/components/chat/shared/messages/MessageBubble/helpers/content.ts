@@ -20,9 +20,44 @@ function getAttachmentType(src: string): 'image' | 'video' | 'audio' | 'file' {
   return 'file';
 }
 
+/**
+ * Ranges of the text that live inside fenced code blocks (``` … ```), including
+ * a block still streaming in without its closing fence, or inline code spans
+ * (`…`). URLs, media markers and file paths inside these must stay literal —
+ * turning a `curl -fsSL https://… | bash` install snippet's URL into a
+ * link-preview card shatters the surrounding code block.
+ */
+function findCodeRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  // Opening run of >=3 backticks, lazily up to a matching closing run or the end
+  // of the string (the unterminated case while a response is still streaming).
+  const fenceRe = /(`{3,})[\s\S]*?(?:\1|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(text)) !== null) {
+    ranges.push({ start: m.index, end: m.index + m[0].length });
+    if (fenceRe.lastIndex === m.index) fenceRe.lastIndex++; // never stall on an empty match
+  }
+  // Inline code spans, ignoring backticks that are already inside a fenced block.
+  const inlineRe = /`[^`\n]+`/g;
+  while ((m = inlineRe.exec(text)) !== null) {
+    const start = m.index;
+    const end = m.index + m[0].length;
+    if (!ranges.some((r) => start >= r.start && end <= r.end)) {
+      ranges.push({ start, end });
+    }
+  }
+  return ranges;
+}
+
 export function extractContentSegments(inputText: string): ContentSegment[] {
   if (!inputText) return [];
   const result: ContentSegment[] = [];
+
+  // Code-block / inline-code ranges whose contents must not be auto-promoted to
+  // link previews, embeds or media players (they'd break the code rendering).
+  const codeRanges = findCodeRanges(inputText);
+  const overlapsCode = (start: number, end: number) =>
+    codeRanges.some((r) => start < r.end && end > r.start);
 
   // Regex for genui code blocks: ```genui:component\n{json}\n```
   const genuiRegex = /```genui:(\w+)\s*\n([\s\S]*?)```/g;
@@ -164,7 +199,7 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
         (match!.index + src.length > m.start && match!.index + src.length <= m.end)
     );
 
-    if (!overlap) {
+    if (!overlap && !overlapsCode(match.index, match.index + src.length)) {
       allMatches.push({
         type: 'audio',
         start: match.index,
@@ -176,7 +211,7 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
 
   for (const yt of youtubeMatches) {
     const insideMedia = allMatches.some((m) => yt.start >= m.start && yt.end <= m.end);
-    if (!insideMedia) {
+    if (!insideMedia && !overlapsCode(yt.start, yt.end)) {
       allMatches.push({
         type: 'youtube',
         start: yt.start,
@@ -191,6 +226,9 @@ export function extractContentSegments(inputText: string): ContentSegment[] {
     if (!raw) continue;
     const urlStart = match.index + match[0].indexOf(raw);
     const urlEnd = urlStart + raw.length;
+    // A URL inside a code block / inline code (e.g. `curl -fsSL https://… | bash`)
+    // stays literal text instead of becoming a card that splits the block apart.
+    if (overlapsCode(urlStart, urlEnd)) continue;
     const overlap = allMatches.some(
       (m) =>
         (urlStart >= m.start && urlStart < m.end) ||

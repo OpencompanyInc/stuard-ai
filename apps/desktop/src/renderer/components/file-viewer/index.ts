@@ -10,5 +10,7 @@ export {
   type PreviewUrlBuilder,
   type FileViewerContextValue,
 } from './FileViewerContext';
-export { FileViewerPane } from './FileViewerPane';
+export { FileViewerPane, FileViewerContent } from './FileViewerPane';
 export { FileViewerTabs } from './FileViewerTabs';
+export { WorkspaceFilesBrowser } from './WorkspaceFilesBrowser';
+export { WorkspaceFilePreviewPane } from './WorkspaceFilePreviewPane';

@@ -243,6 +243,43 @@ const TIP_POOL: DiscoveryTip[] = [
     description: 'Type / to see all available commands. Quick access to workflows, settings, and more.',
     priority: 42,
   },
+  {
+    id: 'ux-hotkeys',
+    category: 'power-user',
+    title: 'Command palette',
+    description: 'Press Ctrl+K to jump anywhere — workflows, settings, attach files, and more.',
+    priority: 38,
+  },
+  {
+    id: 'ux-queue',
+    category: 'chat',
+    title: 'Queue while Stuard works',
+    description: 'Send your next message while Stuard is still responding. It lines up automatically.',
+    priority: 36,
+  },
+  {
+    id: 'ux-steer',
+    category: 'chat',
+    title: 'Steer mid-response',
+    description: 'Type while Stuard is answering and press Steer to nudge the current step.',
+    priority: 34,
+  },
+  {
+    id: 'ux-feedback',
+    category: 'chat',
+    title: 'Something feel off?',
+    description: 'Open Settings → Feedback to report bugs or share ideas. It helps us improve Stuard.',
+    actionLabel: 'Settings',
+    actionRoute: 'settings',
+    priority: 28,
+  },
+  {
+    id: 'ux-projects',
+    category: 'chat',
+    title: 'Project mode',
+    description: 'Pin a chat to a project so Stuard keeps context, files, and goals scoped to one effort.',
+    priority: 33,
+  },
 
   // --- PLANNER ---
   {

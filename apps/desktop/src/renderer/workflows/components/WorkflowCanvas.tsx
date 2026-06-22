@@ -12,7 +12,7 @@ import { useWorkflowGroupsContext } from "../WorkflowGroupsContext";
 import type { DesignerModel, DesignerWire } from "../types";
 import type { StepExecutionStatus } from "./WorkflowNodeCard";
 import type { AlignmentGuide } from "../utils/alignment";
-import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
+import { isBackEdge as isBackEdgeCycle, isContinueInLoopWire, WIRE_COLOR_LOOP_BACK, WIRE_COLOR_LOOP_CONFIG, WIRE_COLOR_LOOP_CONTINUE, WIRE_COLOR_LOOP_EXIT } from "../utils/graphUtils";
 import { guardToShortLabel, guardExtractComparison } from "../builder/guards";
 
 // Back edge (cycle) detection is in ../utils/graphUtils.ts
@@ -273,13 +273,16 @@ export function WorkflowCanvas({
                 <path d="M0,0 L6,2 L0,4" fill="#ef4444" />
               </marker>
               <marker id="ah-loop" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#f59e0b" />
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_BACK} />
               </marker>
               <marker id="ah-loop-config" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#a855f7" />
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_CONFIG} />
+              </marker>
+              <marker id="ah-loop-continue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_CONTINUE} />
               </marker>
               <marker id="ah-loop-break" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                <path d="M0,0 L6,2 L0,4" fill="#f97316" />
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_EXIT} />
               </marker>
               <marker id="ah-stream" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
                 <path d="M0,0 L6,2 L0,4" fill="#06b6d4" />
@@ -334,45 +337,9 @@ export function WorkflowCanvas({
                 }
               }
 
-              // Pre-compute set of nodes that are strictly on a loop cycle path.
-              // For each wire with .loop config (the back-edge wire), trace the
-              // forward path from its target back to its source — those nodes form
-              // the cycle body. Only wires whose BOTH endpoints are in this set
-              // should be styled as "inside loop".
-              const loopCycleNodes = new Set<string>();
-              for (const lw of safeWires) {
-                if (!(lw as any).loop) continue;
-                // lw goes from loopSource → loopTarget (the back-edge)
-                // The cycle body is: loopTarget → ... → loopSource
-                const loopTarget = lw.to;
-                const loopSource = lw.from;
-                // BFS forward from loopTarget, collecting nodes until we reach loopSource
-                const visited = new Set<string>();
-                const parentMap = new Map<string, string>();
-                const q: string[] = [loopTarget];
-                visited.add(loopTarget);
-                let found = false;
-                while (q.length > 0 && !found) {
-                  const cur = q.shift()!;
-                  for (const fw of safeWires) {
-                    if (fw.from !== cur) continue;
-                    if ((fw as any).loop) continue; // Skip other loop back-edges
-                    if (visited.has(fw.to)) continue;
-                    visited.add(fw.to);
-                    parentMap.set(fw.to, cur);
-                    if (fw.to === loopSource) { found = true; break; }
-                    q.push(fw.to);
-                  }
-                }
-                if (found) {
-                  // Trace path from loopSource back to loopTarget via parentMap
-                  let n: string | undefined = loopSource;
-                  while (n !== undefined) {
-                    loopCycleNodes.add(n);
-                    n = parentMap.get(n);
-                  }
-                }
-              }
+              // Loop scope detection uses upstream open-loop counting (see graphUtils).
+              // The old cycle-path BFS missed the common pattern where `.loop` sits on
+              // the entry wire and the true back-edge is a separate wire (e.g. c→b).
 
               return safeWires.map((w, i) => {
                 // Group-aware endpoints: hide wires fully internal to a collapsed
@@ -548,13 +515,8 @@ export function WorkflowCanvas({
                 // (downstream of a stream consumer that is currently receiving chunks)
                 const isInStreamPipeline = !isStreamWire && streamingPipelineNodes.has(w.from) && streamingPipelineNodes.has(w.to);
 
-                // Check if this wire is inside a loop (both endpoints on the cycle path)
-                const isInsideLoop = (() => {
-                  if (hasLoop || hasLoopBreak) return false; // The loop wire itself is already handled
-                  if (isBackEdge) return false; // Back edges without .loop are handled separately
-                  // Both from and to must be on the actual cycle path
-                  return loopCycleNodes.has(w.from) && loopCycleNodes.has(w.to);
-                })();
+                // Check if this wire continues inside an open loop scope
+                const isInsideLoop = isContinueInLoopWire(w, safeWires, isBackEdge);
 
                 // Compute guard label for conditional wires
                 const guardLabel = !isStreamWire && !isCallNodeWire
@@ -562,31 +524,33 @@ export function WorkflowCanvas({
                   : null;
 
                 // Special colors for back edges, loop wires, loop breaks, stream wires, and callNode wires
-                // Orange = continues in loop, Grey = exits loop (loopBreak), Cyan = stream wire, Teal = callNode wire
-                const wireColor = isReconnecting ? '#f59e0b' // Amber for reconnecting wire
+                // Rose = continues in loop, Amber = back-edge, Slate = loopBreak exit, Purple = loop entry
+                const wireColor = isReconnecting ? WIRE_COLOR_LOOP_BACK
                   : isSelected ? '#ef4444'
                     : isActiveWire ? '#6366f1'
                       : isCompletedWire ? '#10b981'
                         : isHovered ? 'var(--wf-wire-icon-border)'
-                          : isCallNodeWire ? '#14b8a6' // Teal for callNode wires
-                            : isStreamWire ? '#06b6d4' // Cyan for stream wires
-                              : isInStreamPipeline ? '#06b6d4' // Cyan for downstream pipeline wires
-                                : isInsideLoop ? '#f97316' // Orange for wires that continue in loop
-                                  : hasLoop ? '#a855f7' // Purple for configured loops (entry)
-                                    : isBackEdge ? '#f59e0b' // Amber for back edges
-                                      : 'var(--wf-wire-default)'; // Themed default for normal and loopBreak
+                          : isCallNodeWire ? '#14b8a6'
+                            : isStreamWire ? '#06b6d4'
+                              : isInStreamPipeline ? '#06b6d4'
+                                : isInsideLoop ? WIRE_COLOR_LOOP_CONTINUE
+                                  : hasLoop ? WIRE_COLOR_LOOP_CONFIG
+                                    : isBackEdge ? WIRE_COLOR_LOOP_BACK
+                                      : hasLoopBreak ? WIRE_COLOR_LOOP_EXIT
+                                        : 'var(--wf-wire-default)';
 
-                const markerEnd = isReconnecting ? 'url(#ah-loop)' // Amber marker for reconnecting
+                const markerEnd = isReconnecting ? 'url(#ah-loop)'
                   : isSelected ? 'url(#ah-selected)'
                     : isActiveWire ? 'url(#ah-active)'
                       : isCompletedWire ? 'url(#ah-completed)'
-                        : isCallNodeWire ? 'url(#ah-callnode)' // Teal marker for callNode wires
-                          : isStreamWire ? 'url(#ah-stream)' // Cyan marker for stream wires
-                            : isInStreamPipeline ? 'url(#ah-stream)' // Cyan marker for pipeline wires
-                              : isInsideLoop ? 'url(#ah-loop-break)' // Reuse orange marker
+                        : isCallNodeWire ? 'url(#ah-callnode)'
+                          : isStreamWire ? 'url(#ah-stream)'
+                            : isInStreamPipeline ? 'url(#ah-stream)'
+                              : isInsideLoop ? 'url(#ah-loop-continue)'
                                 : hasLoop ? 'url(#ah-loop-config)'
                                   : isBackEdge ? 'url(#ah-loop)'
-                                    : 'url(#ah)';
+                                    : hasLoopBreak ? 'url(#ah-loop-break)'
+                                      : 'url(#ah)';
 
                 return (
                   <g key={i}>
@@ -626,10 +590,10 @@ export function WorkflowCanvas({
                     {/* Loop indicator icon for configured loops */}
                     {hasLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#a855f7" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_CONFIG} strokeWidth="1.5" className="drop-shadow-sm" />
                         {loopType === 'forEach' && (
                           // List icon for forEach
-                          <g transform="translate(-5, -5)" stroke="#a855f7" strokeWidth="1.5" fill="none">
+                          <g transform="translate(-5, -5)" stroke={WIRE_COLOR_LOOP_CONFIG} strokeWidth="1.5" fill="none">
                             <line x1="2" y1="3" x2="8" y2="3" />
                             <line x1="2" y1="6" x2="8" y2="6" />
                             <line x1="2" y1="9" x2="8" y2="9" />
@@ -637,7 +601,7 @@ export function WorkflowCanvas({
                         )}
                         {loopType === 'repeat' && (
                           // Repeat icon
-                          <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#a855f7">
+                          <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="bold" fill={WIRE_COLOR_LOOP_CONFIG}>
                             {(w as any).loop?.count || 'N'}
                           </text>
                         )}
@@ -646,7 +610,7 @@ export function WorkflowCanvas({
                           <path
                             d="M-4 0 A4 4 0 1 1 4 0 M4 0 L2 -2 M4 0 L2 2"
                             fill="none"
-                            stroke="#a855f7"
+                            stroke={WIRE_COLOR_LOOP_CONFIG}
                             strokeWidth="1.5"
                             strokeLinecap="round"
                           />
@@ -654,32 +618,49 @@ export function WorkflowCanvas({
                       </g>
                     )}
 
+                    {/* Loop-break indicator: this wire EXITS the loop scope (runs once after all iterations) */}
+                    {hasLoopBreak && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_EXIT} strokeWidth="1.5" className="drop-shadow-sm" />
+                        {/* exit-loop glyph (LogOut-style: a box with an arrow leaving it) */}
+                        <g transform="translate(-5, -5)" stroke={WIRE_COLOR_LOOP_EXIT} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 1 H2 a1 1 0 0 0 -1 1 V8 a1 1 0 0 0 1 1 H4" />
+                          <path d="M6.5 5 H10.5" />
+                          <path d="M8.5 3 L10.5 5 L8.5 7" />
+                        </g>
+                      </g>
+                    )}
+
                     {/* Loop indicator icon for back edges (no explicit config) */}
                     {isBackEdge && !hasLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="8" fill="var(--wf-wire-icon-bg)" stroke="#f59e0b" strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle r="8" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" className="drop-shadow-sm" />
                         <path
                           d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
                           fill="none"
-                          stroke="#f59e0b"
+                          stroke={WIRE_COLOR_LOOP_BACK}
                           strokeWidth="1.5"
                           strokeLinecap="round"
                         />
                       </g>
                     )}
 
-                    {/* Continue in loop indicator icon (orange) */}
+                    {/* Continue in loop — forward chevrons inside a dashed orbit (distinct from back-edge arrow) */}
                     {isInsideLoop && !isSelected && !isHovered && (
                       <g transform={`translate(${midX}, ${midY})`}>
-                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#f97316" strokeWidth="1.5" className="drop-shadow-sm" />
-                        {/* Loop arrow icon */}
-                        <path
-                          d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_CONTINUE} strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle
+                          r="6.5"
                           fill="none"
-                          stroke="#f97316"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
+                          stroke={WIRE_COLOR_LOOP_CONTINUE}
+                          strokeWidth="1"
+                          strokeDasharray="2.5 2"
+                          opacity="0.55"
                         />
+                        <g fill={WIRE_COLOR_LOOP_CONTINUE} stroke="none">
+                          <path d="M-3.5 -2.5 L-0.5 0 L-3.5 2.5 Z" />
+                          <path d="M-0.5 -2.5 L2.5 0 L-0.5 2.5 Z" />
+                        </g>
                       </g>
                     )}
 
@@ -805,11 +786,11 @@ export function WorkflowCanvas({
                           <circle
                             r="10"
                             fill="var(--wf-wire-handle-bg)"
-                            stroke="#f59e0b"
+                            stroke={WIRE_COLOR_LOOP_BACK}
                             strokeWidth="2"
                             className="drop-shadow-md transition-all"
                           />
-                          <g stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" fill="none">
+                          <g stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" strokeLinecap="round" fill="none">
                             <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
                           </g>
                         </g>
@@ -829,11 +810,11 @@ export function WorkflowCanvas({
                           <circle
                             r="10"
                             fill="var(--wf-wire-handle-bg)"
-                            stroke="#f59e0b"
+                            stroke={WIRE_COLOR_LOOP_BACK}
                             strokeWidth="2"
                             className="drop-shadow-md transition-all"
                           />
-                          <g stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" fill="none">
+                          <g stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" strokeLinecap="round" fill="none">
                             <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
                           </g>
                         </g>

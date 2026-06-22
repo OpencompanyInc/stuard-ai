@@ -873,6 +873,14 @@ export function useBookmarks() {
     loadBookmarks();
   }, [loadBookmarks]);
 
+  // Reload when a shortcut is created elsewhere (e.g. the /bookmark slash
+  // command), so search/grid surfaces stay in sync without a remount.
+  useEffect(() => {
+    const onChanged = () => { loadBookmarks(); };
+    window.addEventListener('stuard:bookmarks-changed', onChanged);
+    return () => window.removeEventListener('stuard:bookmarks-changed', onChanged);
+  }, [loadBookmarks]);
+
   const saveBookmarks = useCallback(async (newBookmarks: Bookmark[]) => {
     try {
       await (window as any).desktopAPI?.bookmarksSave?.(newBookmarks);

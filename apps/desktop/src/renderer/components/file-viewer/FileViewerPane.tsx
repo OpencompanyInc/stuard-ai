@@ -1,9 +1,15 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { PanelRightClose, FileText, ExternalLink, Folder, Paperclip, Loader2, AlertCircle, Download, Globe } from 'lucide-react';
 import { useFileViewer, type FileTab } from './FileViewerContext';
 import { FileViewerTabs } from './FileViewerTabs';
 import { classifyByExt, mimeForExt, base64ToBlob, type RendererKind } from './renderers';
+import { SheetView } from './SheetView';
+import { processCustomMarkdown } from '../chat/shared/messages/MessageBubble/helpers/markdown';
 
 interface FileViewerPaneProps {
   translucentMode?: boolean;
@@ -133,12 +139,15 @@ interface FetchedContent {
   text?: string;
   blobUrl?: string;
   blob?: Blob;
+  /** Raw, undecoded content kept for the sheet/data renderer (CSV text or
+   *  base64 workbook), which parses it itself rather than rendering a blob. */
+  raw?: { content: string; encoding: 'utf-8' | 'base64' };
   size: number;
 }
 
 const MAX_TEXT_RENDER_BYTES = 2 * 1024 * 1024; // 2 MB
 
-const FileViewerContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
+export const FileViewerContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
   // Localhost preview tabs render directly from the URL minted upstream — no
   // fetch, no MIME logic. Different component so hooks don't conditionally run.
   if (tab.source === 'preview') {
@@ -176,16 +185,11 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
         return;
       }
 
-      if (tab.source === 'local') {
-        // For now the desktop chat doesn't mount this provider, so this branch
-        // is mostly a placeholder. Local files would resolve to local-file://.
-        setLoading(false);
-        return;
-      }
-
       // HTML preview goes through the serve endpoint instead of the fetcher
       // so that <link>/<script>/<img> with relative paths resolve naturally.
-      if (kind === 'html') {
+      // Only VM files have a serve endpoint; local HTML falls through to the
+      // fetcher and renders as text.
+      if (kind === 'html' && tab.source === 'vm') {
         if (!serveUrlBuilder) {
           setLoading(false);
           setError('No preview URL builder configured');
@@ -216,6 +220,13 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
         if (cancelled) return;
         if (!res) {
           setError('Could not read file');
+          setLoading(false);
+          return;
+        }
+        // Spreadsheets/CSV keep their raw content; SheetView parses + renders
+        // the table itself (and lazy-loads the xlsx parser for workbooks).
+        if (kind === 'sheet') {
+          setData({ raw: { content: res.content, encoding: res.encoding }, size: res.size });
           setLoading(false);
           return;
         }
@@ -387,8 +398,24 @@ const RendererSwitch: React.FC<{
     case 'pdf':
       return <PdfRenderer src={data!.blobUrl!} />;
     case 'html':
-      return <HtmlRenderer src={serveUrl!} />;
+      // VM html renders live via the serve endpoint; local html has no serve
+      // URL, so show its source as text.
+      return serveUrl
+        ? <HtmlRenderer src={serveUrl} />
+        : <TextRenderer text={data?.text ?? ''} ext={tab.ext} />;
+    case 'sheet':
+      return (
+        <SheetView
+          name={tab.name}
+          ext={tab.ext}
+          content={data!.raw!.content}
+          encoding={data!.raw!.encoding}
+        />
+      );
     case 'text':
+      if (isMarkdownExt(tab.ext)) {
+        return <MarkdownRenderer text={data!.text ?? ''} />;
+      }
       return <TextRenderer text={data!.text ?? ''} ext={tab.ext} />;
     case 'binary':
     default:
@@ -523,16 +550,96 @@ const PreviewTabContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
   );
 };
 
+const isMarkdownExt = (ext: string) => {
+  const e = (ext || '').toLowerCase();
+  return e === 'md' || e === 'markdown';
+};
+
+const FILE_MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  p: (props) => <p className="mb-3 leading-relaxed last:mb-0" {...props} />,
+  strong: (props) => <strong className="font-semibold" {...props} />,
+  em: (props) => <em className="italic" {...props} />,
+  del: (props) => <del className="line-through opacity-70" {...props} />,
+  ul: (props) => <ul className="mb-3 list-disc space-y-1 pl-5 last:mb-0" {...props} />,
+  ol: (props) => <ol className="mb-3 list-decimal space-y-1 pl-5 last:mb-0" {...props} />,
+  li: (props) => <li className="leading-relaxed" {...props} />,
+  h1: (props) => <h1 className="mb-3 mt-4 text-[18px] font-bold first:mt-0" {...props} />,
+  h2: (props) => <h2 className="mb-2.5 mt-4 text-[16px] font-bold first:mt-0" {...props} />,
+  h3: (props) => <h3 className="mb-2 mt-3 text-[14px] font-semibold first:mt-0" {...props} />,
+  h4: (props) => <h4 className="mb-2 mt-3 text-[13px] font-semibold first:mt-0" {...props} />,
+  h5: (props) => <h5 className="mb-1.5 mt-2 text-[13px] font-semibold first:mt-0" {...props} />,
+  h6: (props) => <h6 className="mb-1.5 mt-2 text-[12px] font-semibold first:mt-0" {...props} />,
+  hr: () => <hr className="my-4 border-theme/15" />,
+  blockquote: (props) => (
+    <blockquote className="my-3 border-l-2 border-theme/20 pl-3 italic text-theme-muted" {...props} />
+  ),
+  a: ({ href, children, ...props }) => (
+    <a
+      href={href}
+      className="text-primary underline underline-offset-2 hover:text-primary/80"
+      onClick={(e) => {
+        if (typeof href === 'string' && !/^(javascript|vbscript):/i.test(href)) {
+          e.preventDefault();
+          e.stopPropagation();
+          try { (window as any).desktopAPI?.openExternal?.(href); } catch {}
+        }
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+  pre: ({ children }) => <>{children}</>,
+  code: ({ className, children, ...props }) => {
+    const text = String(children ?? '');
+    const isBlock = /language-/.test(className || '') || text.includes('\n');
+    if (isBlock) {
+      return (
+        <pre className="my-3 overflow-x-auto rounded-lg border border-theme/10 bg-theme-bg/50 p-3 text-[12px] font-mono leading-relaxed">
+          <code {...props}>{text.replace(/\n$/, '')}</code>
+        </pre>
+      );
+    }
+    return (
+      <code className="rounded bg-theme-bg/60 px-1 py-0.5 font-mono text-[0.9em]" {...props}>
+        {children}
+      </code>
+    );
+  },
+  table: (props) => (
+    <div className="my-3 overflow-x-auto">
+      <table className="w-full border-collapse text-[12px]" {...props} />
+    </div>
+  ),
+  th: (props) => <th className="border border-theme/15 px-2 py-1 text-left font-semibold bg-theme-bg/40" {...props} />,
+  td: (props) => <td className="border border-theme/15 px-2 py-1 align-top" {...props} />,
+  img: ({ src, alt }) => (
+    <img src={src} alt={alt || ''} className="my-3 max-w-full rounded-md" />
+  ),
+};
+
+const MarkdownRenderer: React.FC<{ text: string }> = ({ text }) => {
+  const processed = React.useMemo(() => processCustomMarkdown(text), [text]);
+  return (
+    <div className="h-full w-full overflow-auto custom-scrollbar p-4 text-[13px] text-theme-fg bg-theme-bg/30">
+      <ReactMarkdown
+        remarkPlugins={[remarkMath, remarkGfm]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+        urlTransform={(url) => url}
+        components={FILE_MD_COMPONENTS}
+      >
+        {processed}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
 const TextRenderer: React.FC<{ text: string; ext: string }> = ({ text, ext }) => {
   // Lightweight text view — Monaco/syntax highlighting can plug in later.
-  // Markdown gets a slightly more readable line height; everything else is
-  // monospace.
-  const isMd = ext === 'md' || ext === 'markdown';
   return (
     <pre
       className={clsx(
-        'h-full w-full overflow-auto custom-scrollbar p-4 m-0 text-[12px] whitespace-pre-wrap break-words',
-        isMd ? 'font-sans leading-relaxed' : 'font-mono',
+        'h-full w-full overflow-auto custom-scrollbar p-4 m-0 text-[12px] whitespace-pre-wrap break-words font-mono',
         'text-theme-fg bg-theme-bg/30',
       )}
     >

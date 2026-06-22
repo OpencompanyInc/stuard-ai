@@ -396,6 +396,46 @@ export async function modelSupportsMultimodal(modelId: string): Promise<boolean>
   }
 }
 
+export interface ModelAttachmentSupport {
+  /** Model accepts inline images (vision). */
+  image: boolean;
+  /** Model accepts inline binary files / PDFs (document input). */
+  file: boolean;
+}
+
+/**
+ * Per-attachment-type input support for a model, read from the live registry's
+ * modalities (OpenRouter `input_modalities` / models.dev `modalities.input`).
+ *
+ * This is the gate that decides whether an attachment is embedded natively
+ * (model can read it) or downgraded to a hidden file-path reference (model
+ * can't — see buildAttachmentParts). It is deliberately conservative: an
+ * unknown model, an empty modality list, or any lookup error all resolve to
+ * "supported" so we never silently drop an attachment a model could actually
+ * have read.
+ */
+export async function getModelAttachmentSupport(modelId?: string | null): Promise<ModelAttachmentSupport> {
+  const SUPPORTED: ModelAttachmentSupport = { image: true, file: true };
+  const id = String(modelId || '').trim();
+  if (!id) return SUPPORTED;
+  try {
+    const registry = await fetchRegistry();
+    const model = registry.models.find(m => m.id === id);
+    if (!model) return SUPPORTED;
+    const input = Array.isArray(model.modalities?.input)
+      ? model.modalities.input.map((m) => String(m).toLowerCase())
+      : [];
+    // No modality info → don't downgrade (assume the model can read it).
+    if (input.length === 0) return SUPPORTED;
+    return {
+      image: input.includes('image'),
+      file: input.includes('file') || input.includes('pdf') || input.includes('document'),
+    };
+  } catch {
+    return SUPPORTED;
+  }
+}
+
 async function handleModelsRegistry(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
   const path = String(parsedUrl.pathname || '');
   if (req.method === 'GET' && path === '/v1/models') {

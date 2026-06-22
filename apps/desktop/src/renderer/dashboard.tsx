@@ -294,7 +294,7 @@ function DashboardApp() {
   const billingRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preferences
-  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, translucentMode, setTranslucentMode, wakewordEnabled, setWakewordEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
+  const { tone, setTone, customTone, setCustomTone, setOnboardingComplete, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, persona, setPersona, wakewordEnabled, setWakewordEnabled, browserEnabled, setBrowserEnabled, screenCaptureInvisible, setScreenCaptureInvisible, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
   const [personaDraft, setPersonaDraft] = useState<string>(persona || "");
   useEffect(() => { setPersonaDraft(persona || ""); }, [persona]);
 
@@ -1032,6 +1032,46 @@ function DashboardApp() {
         }
       }
 
+      // Load Google Tasks (due-dated) and surface them on the planner, the same way
+      // Google Calendar events are merged in alongside local blocks.
+      let googleTaskBlocks: any[] = [];
+      if (accessToken) {
+        try {
+          const resp = await fetch(`${CLOUD_AI_HTTP}/v1/tasks/google?showCompleted=false`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const j = await resp.json().catch(() => null) as any;
+          if (j && (j as any).ok === true && Array.isArray((j as any).items)) {
+            const range = cloudRange || computeMonthRange();
+            const rStart = new Date(range.start).getTime();
+            const rEnd = new Date(range.end).getTime();
+            googleTaskBlocks = (j as any).items
+              .filter((t: any) => t.due && !t.completed)
+              .map((t: any) => {
+                const due = String(t.due);
+                return {
+                  id: `gtask:${t.listId}:${t.id}`,
+                  source: 'google-task',
+                  type: 'task',
+                  title: String(t.title || '(task)'),
+                  description: t.notes || '',
+                  start: due,
+                  end: due,
+                  allDay: true,
+                  htmlLink: t.webLink,
+                  taskId: t.id,
+                  listId: t.listId,
+                  _dueMs: new Date(due).getTime(),
+                  original: t,
+                };
+              })
+              .filter((b: any) => Number.isFinite(b._dueMs) && b._dueMs >= rStart && b._dueMs < rEnd);
+          }
+        } catch {
+          // Planner still works without Google Tasks — ignore.
+        }
+      }
+
       // Load offline/local calendar events
       let offlineBlocks: any[] = [];
       try {
@@ -1044,8 +1084,8 @@ function DashboardApp() {
         console.warn('Failed to load offline calendar:', e);
       }
 
-      // Merge cloud + offline blocks
-      const allBlocks = [...cloudBlocks, ...offlineBlocks];
+      // Merge cloud + Google Tasks + offline blocks
+      const allBlocks = [...cloudBlocks, ...googleTaskBlocks, ...offlineBlocks];
       setCalendarBlocks(allBlocks);
 
       // Use cloud range if available, otherwise compute from current month
@@ -1539,11 +1579,11 @@ function DashboardApp() {
         <aside className="dashboard-sidebar shrink-0 h-full min-h-0 flex flex-col gap-3 relative z-20">
           <div className="dashboard-sidebar-brand shrink-0 select-none">
             <div className="dashboard-sidebar-brand-glow" aria-hidden="true" />
-            <div className="min-w-0 relative z-[1] flex flex-col gap-0.5">
-              <div className="text-[16px] font-medium text-theme-fg leading-5 tracking-tight">
+            <div className="min-w-0 relative z-[1] flex flex-col gap-1">
+              <div className="text-[18px] font-semibold text-theme-fg leading-6 tracking-tight">
                 Stuard Dashboard
               </div>
-              <div className="text-[11px] font-medium text-theme-muted leading-4">
+              <div className="text-[12px] font-medium text-theme-muted leading-4">
                 Beta V {appVersion}
               </div>
             </div>
@@ -1778,8 +1818,6 @@ function DashboardApp() {
                               setThemeLightShade={setThemeLightShade}
                               themeText={themeText as any}
                               setThemeText={setThemeText as any}
-                              translucentMode={translucentMode}
-                              setTranslucentMode={setTranslucentMode}
                               wakewordEnabled={wakewordEnabled}
                               setWakewordEnabled={setWakewordEnabled}
                               screenCaptureInvisible={screenCaptureInvisible}

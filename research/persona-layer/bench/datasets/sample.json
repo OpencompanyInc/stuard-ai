@@ -1,0 +1,43 @@
+{
+  "name": "brewline-coffee",
+  "corpus": "Owner profile: My name is John Avery. I founded Brewline Coffee in 2019, and we are based in Portland, Oregon. I started the company after roasting beans in my garage for years.\n\nReturns and refunds: We accept returns of unopened coffee within 30 days of purchase with a receipt for a full refund. Opened bags can be exchanged if there is a quality issue.\n\nStore hours: We are open Monday to Friday from 7 am to 6 pm. On weekends we are open Saturday and Sunday from 8 am to 4 pm.\n\nFlagship product: Our most popular coffee is a dark roast called Midnight Harbor. It is rich, smoky, and our best seller every year.\n\nShipping: We offer free shipping on all orders over $40. Standard delivery takes 2 to 4 business days within the United States.\n\nSupport contact: You can reach our support team at support@brewline.coffee or by phone at 503-555-0142 during store hours.\n\nLoyalty program: Our rewards program is called Brewline Beans. After you buy nine bags, your tenth bag is free.",
+  "fact_qs": [
+    { "q": "What is my name?", "expected": ["John"] },
+    { "q": "When was Brewline Coffee founded?", "expected": ["2019"] },
+    { "q": "What is the return window for unopened coffee?", "expected": ["30"] },
+    { "q": "What are the weekend store hours?", "expected": ["8 am", "8am", "8:00", "8 a.m"] },
+    { "q": "What is the name of our flagship coffee?", "expected": ["Midnight Harbor"] },
+    { "q": "What is the support email address?", "expected": ["support@brewline.coffee"] },
+    { "q": "What is the free shipping threshold?", "expected": ["$40", "40"] },
+    { "q": "How many bags do I buy before I get a free one?", "expected": ["nine", "9", "tenth", "10th"] },
+    { "q": "What is Brewline's parental leave policy?", "expected": [], "unanswerable": true },
+    { "q": "Do you sell espresso machines?", "expected": [], "unanswerable": true }
+  ],
+  "tone": {
+    "pos": [
+      "Hi there! Thanks so much for reaching out, I'd be glad to help you with that.",
+      "Absolutely, we've got you covered! Let me sort this out for you right away.",
+      "So sorry for the hassle, I completely understand, and I'll make this right for you.",
+      "Great question! Here's the quick answer, and just let me know if anything is unclear.",
+      "Thanks for your patience, you're all set! Reach out anytime you need us."
+    ],
+    "neg": [
+      "Your request has been received and will be processed in accordance with company policy.",
+      "Per our terms, refunds are subject to the conditions outlined in section 4.2.",
+      "This matter falls outside the scope of available support options.",
+      "Please consult the documentation for further information regarding your inquiry.",
+      "The aforementioned issue requires submission of a formal ticket for resolution."
+    ],
+    "probes": [
+      "Hi, my order arrived and one of the bags was damaged. What can I do?",
+      "Can I return a bag of coffee that I opened by accident?",
+      "What are your weekend hours?",
+      "Do you offer free shipping?"
+    ]
+  },
+  "abstain_markers": [
+    "don't know", "do not know", "not sure", "no information", "couldn't find",
+    "could not find", "don't have", "do not have", "isn't in", "is not in",
+    "unable to", "no record", "not mentioned", "not specified"
+  ]
+}

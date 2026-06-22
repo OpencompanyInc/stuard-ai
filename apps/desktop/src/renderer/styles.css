@@ -38,6 +38,7 @@
 
   --primary: #ff383c;
   /* Stuard brand red — single brand accent across every surface */
+  --primary-rgb: 255 56 60;
   --primary-foreground: #ffffff;
 
   /* Delegated-agent accent — a single purposeful indigo reserved ONLY for
@@ -56,6 +57,9 @@
   --destructive-foreground: #ffffff;
 
   --border: #e2e8f0;
+  --border-rgb: 226 232 240;
+  --card-border-rgb: 226 232 240;
+  --sidebar-border-rgb: 203 213 225;
 
   --radius-card: 1.5rem;
   --radius-button: 0.75rem;
@@ -108,6 +112,7 @@
 
   --primary: #ff4a4e;
   /* Stuard brand red — brighter calibration for dark surfaces (matches Studio) */
+  --primary-rgb: 255 74 78;
   --primary-foreground: #ffffff;
 
   /* Delegated-agent accent — indigo tuned for dark surfaces */
@@ -123,6 +128,9 @@
   --destructive-foreground: #ffffff;
 
   --border: #3e3e3e;
+  --border-rgb: 62 62 62;
+  --card-border-rgb: 62 62 62;
+  --sidebar-border-rgb: 43 43 43;
 
   --radius-card: 1.5rem;
   --radius-button: 0.75rem;
@@ -151,10 +159,12 @@
   --sidebar-item-hover: var(--compact-pill-hover);
   --sidebar-item-active: color-mix(in srgb, var(--compact-pill-hover) 80%, rgb(var(--compact-pill-fg)) 14%);
   --border: rgb(var(--compact-pill-fg) / 0.12);
+  --border-rgb: var(--compact-pill-fg);
   --foreground: rgb(var(--compact-pill-fg));
   --foreground-muted: rgb(var(--compact-pill-fg-muted));
   /* Compact mode's accent is the brand red, not the VS Code blue. */
   --primary: #ff383c;
+  --primary-rgb: 255 56 60;
   --primary-foreground: #ffffff;
   font-family: 'General Sans', 'Inter', 'Figtree', sans-serif;
   /* Window / sidebar launcher is a large floating panel — give it a layered,
@@ -409,6 +419,12 @@ mark.md-highlight {
   );
 }
 
+/* Main chat message list — Virtuoso scroller track stays inside the rounded panel */
+.chat-message-scroller {
+  overflow-x: clip !important;
+  border-radius: 12px;
+}
+
 .chat-floating-composer {
   pointer-events: none;
 }
@@ -444,7 +460,12 @@ mark.md-highlight {
   --input-bg: #2a2a2a;
   --sidebar-item-hover: #323232;
   --sidebar-item-active: #3a3a3a;
-  --border: rgba(255, 255, 255, 0.06);
+  --card-border: #3e3e3e;
+  --border: #3e3e3e;
+  --border-rgb: 62 62 62;
+  --card-border-rgb: 62 62 62;
+  --sidebar-border: #2b2b2b;
+  --sidebar-border-rgb: 43 43 43;
   /* Same contained reach (~15px) as light mode so it never clips, just deeper
      opacity because dark backdrops swallow soft shadows. */
   --launcher-panel-shadow:
@@ -456,13 +477,13 @@ mark.md-highlight {
 
 [data-theme='dark'] .launcher-compact-skin .launcher-input-surface {
   background: var(--input-bg) !important;
-  border-color: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
   box-shadow: none;
 }
 
 [data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip {
   background: #262626;
-  border-color: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
   box-shadow: none;
 }
 
@@ -481,6 +502,24 @@ mark.md-highlight {
 [data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
   background: #383838;
   border-color: transparent;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip__icon {
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
 }
 
 /* Launcher search — Applications block: no white hairline in dark mode */
@@ -624,6 +663,68 @@ button.input-status-float {
 
 button.input-status-float:not(:disabled) {
   cursor: pointer;
+}
+
+/* Discovery status — single tip slides in, holds, then clears */
+.discovery-status-ticker__viewport {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 4%,
+    #000 96%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 4%,
+    #000 96%,
+    transparent 100%
+  );
+}
+
+.discovery-status-ticker__tip {
+  opacity: 0;
+  transform: translateX(18px);
+}
+
+.discovery-status-ticker__tip--in {
+  animation: discoveryTipSlideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.discovery-status-ticker__segment--action {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.discovery-status-ticker__segment--action:hover {
+  opacity: 0.88;
+}
+
+@keyframes discoveryTipSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discovery-status-ticker__tip {
+    opacity: 1;
+    transform: none;
+  }
+
+  .discovery-status-ticker__tip--in {
+    animation: none;
+  }
 }
 
 /* Monochrome provider logos — invert to white on dark surfaces */
@@ -1187,6 +1288,68 @@ button.input-status-float:not(:disabled) {
   color: var(--foreground-muted);
 }
 
+.text-primary {
+  color: var(--primary);
+}
+
+.text-theme-bg {
+  color: var(--background);
+}
+
+.bg-theme-fg {
+  background-color: var(--foreground);
+}
+
+.border-theme-fg {
+  border-color: var(--foreground);
+}
+
+/* Opacity modifiers on manual theme utilities (bg-theme-hover/45 etc.) do not
+   compile — use these tints in dashboard / Connected Apps instead. */
+.bg-theme-bg-soft {
+  background-color: color-mix(in srgb, var(--background) 60%, transparent);
+}
+
+.bg-theme-hover-soft {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 45%, transparent);
+}
+
+.bg-theme-hover-medium {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 60%, transparent);
+}
+
+.bg-theme-hover-strong {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 70%, transparent);
+}
+
+.bg-theme-card-soft {
+  background-color: color-mix(in srgb, var(--card-bg) 40%, transparent);
+}
+
+.text-theme-muted-soft {
+  color: color-mix(in srgb, var(--foreground-muted) 60%, transparent);
+}
+
+.text-theme-muted-faint {
+  color: color-mix(in srgb, var(--foreground-muted) 70%, transparent);
+}
+
+.text-theme-fg-soft {
+  color: color-mix(in srgb, var(--foreground) 80%, transparent);
+}
+
+.text-theme-muted-half {
+  color: color-mix(in srgb, var(--foreground-muted) 50%, transparent);
+}
+
+.text-theme-muted-ghost {
+  color: color-mix(in srgb, var(--foreground-muted) 30%, transparent);
+}
+
+.bg-theme-muted-soft {
+  background-color: color-mix(in srgb, var(--foreground-muted) 40%, transparent);
+}
+
 .theme-surface-hover:hover {
   background-color: var(--sidebar-item-hover);
 }
@@ -1239,10 +1402,7 @@ button.input-status-float:not(:disabled) {
   border-color: var(--sidebar-border);
 }
 
-/* Chain-of-thought / trace UI borders.
-   `border-theme/10` never compiled (opacity modifiers don't apply to custom
-   `.border-theme`), so `border border-theme/10` fell back to Tailwind's default
-   gray-200 — a bright hairline in dark mode. These tokens track theme instead. */
+/* Chain-of-thought / trace UI borders — grey-scale tokens that track theme. */
 .border-cot-subtle {
   border-color: color-mix(in srgb, var(--foreground-muted) 16%, transparent);
 }
@@ -1261,15 +1421,15 @@ button.input-status-float:not(:disabled) {
 
 [data-theme='dark'] .border-cot-subtle,
 [data-theme='dark'] .border-cot-faint {
-  border-color: color-mix(in srgb, var(--border) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 85%, transparent);
 }
 
 [data-theme='dark'] .border-t-cot-faint {
-  border-top-color: color-mix(in srgb, var(--border) 55%, transparent);
+  border-top-color: color-mix(in srgb, var(--border) 85%, transparent);
 }
 
 [data-theme='dark'] .border-l-cot-rail {
-  border-left-color: color-mix(in srgb, var(--border) 70%, transparent);
+  border-left-color: var(--border);
 }
 
 .bg-primary {
@@ -1371,8 +1531,10 @@ button.input-status-float:not(:disabled) {
   color: #000000 !important;
 }
 
-/* Settings: dark-mode card borders use grey scale, not white-alpha hairlines */
-[data-theme='dark'] [data-onboarding='settings-view'] .dashboard-card {
+/* Settings + dashboard: dark-mode card borders use grey scale, not white-alpha hairlines */
+[data-theme='dark'] .dashboard-card,
+[data-theme='dark'] .dashboard-card-premium,
+[data-theme='dark'] .dashboard-card-accent {
   border-color: var(--border);
 }
 
@@ -1467,8 +1629,10 @@ button.input-status-float:not(:disabled) {
   isolation: isolate;
   overflow: hidden;
   box-sizing: border-box;
-  padding: 10px 10px 11px;
-  min-height: 54px;
+  display: flex;
+  align-items: flex-end;
+  padding: 16px 14px 18px;
+  min-height: 108px;
   border-radius: 20px;
   background:
     radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 42%, transparent) 0%, transparent 38%),
@@ -1480,10 +1644,10 @@ button.input-status-float:not(:disabled) {
 
 .dashboard-sidebar-brand-glow {
   position: absolute;
-  top: -48px;
-  left: -28px;
-  width: 140px;
-  height: 88px;
+  top: -36px;
+  left: -24px;
+  width: 160px;
+  height: 100px;
   opacity: 0.55;
   pointer-events: none;
   z-index: 0;
@@ -1516,7 +1680,7 @@ button.input-status-float:not(:disabled) {
   flex-direction: column;
   flex: 1 1 0%;
   min-height: 0;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 2px;
   padding: 10px 10px 8px;
 }
@@ -1524,10 +1688,8 @@ button.input-status-float:not(:disabled) {
 .dashboard-sidebar-nav-group {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0%;
-  justify-content: center;
+  flex: none;
   gap: 2px;
-  min-height: 0;
 }
 
 .dashboard-sidebar-divider {
@@ -1801,6 +1963,7 @@ button.input-status-float:not(:disabled) {
    and so the user's custom theme is never clobbered. */
 .dashboard-root {
   --primary: #ff1727;            /* brand red — accents, active states, CTAs */
+  --primary-rgb: 255 23 39;
   --primary-foreground: #ffffff;
 }
 
@@ -2058,6 +2221,9 @@ button.input-status-float:not(:disabled) {
   --background: var(--wf-bg);
   --card-bg: var(--wf-bg-elevated);
   --card-border: var(--wf-border);
+  --card-border-rgb: 15 23 42;
+  --border-rgb: 15 23 42;
+  --sidebar-border-rgb: 15 23 42;
   --dashboard-panel-border: var(--wf-border);
   --sidebar-item-hover: var(--wf-hover);
   --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
@@ -2071,7 +2237,9 @@ button.input-status-float:not(:disabled) {
      with a subtle brand-red accent — no cool VS Code blue. */
   --wf-bg:            #171717;
   --border:           #2b2b2b;
+  --border-rgb:       43 43 43;
   --sidebar-border:   #2b2b2b;
+  --sidebar-border-rgb: 43 43 43;
   --wf-bg-elevated:   #1e1e1e;
   --wf-bg-sunken:     #0f0f0f;
   --wf-bg-glass:      rgba(30,30,30,0.72);
@@ -2079,13 +2247,13 @@ button.input-status-float:not(:disabled) {
   --wf-fg:            #f5f5f5;
   --wf-fg-muted:      rgba(255,255,255,0.55);
   --wf-fg-faint:      rgba(255,255,255,0.32);
-  --wf-border:        rgba(255,255,255,0.07);
-  --wf-border-subtle: rgba(255,255,255,0.045);
+  --wf-border:        #3e3e3e;
+  --wf-border-subtle: #2b2b2b;
   --wf-hover:         rgba(255,255,255,0.06);
   --wf-canvas:        #0d0d0d;
   --wf-canvas-dot:    rgba(255,255,255,0.06);
   --wf-node-bg:       #141414;
-  --wf-node-border:   rgba(255,255,255,0.08);
+  --wf-node-border:   #3e3e3e;
   --wf-node-text:     #f1f5f9;
   --wf-node-sub:      rgba(255,255,255,0.50);
   --wf-node-handle:   #141414;
@@ -2093,11 +2261,11 @@ button.input-status-float:not(:disabled) {
   --wf-accent-soft:   rgba(255,74,78,0.12);
   --wf-glass-blur:    blur(24px);
   --wf-panel-bg:      rgba(28,28,28,0.78);
-  --wf-panel-border:  rgba(255,255,255,0.08);
+  --wf-panel-border:  #3e3e3e;
   --wf-input-bg:      #1e1e1e;
-  --wf-input-border:  rgba(255,255,255,0.08);
+  --wf-input-border:  #3e3e3e;
   --wf-chip-bg:       transparent;
-  --wf-chip-border:   rgba(255,255,255,0.08);
+  --wf-chip-border:   #3e3e3e;
   --wf-wire-default:  #6b7280;
   --wf-wire-icon-bg:  #141414;
   --wf-wire-icon-border: #4b5563;
@@ -2112,6 +2280,7 @@ button.input-status-float:not(:disabled) {
   --background: var(--wf-bg);
   --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 92%, #0d0d0f);
   --card-border: var(--wf-border);
+  --card-border-rgb: 62 62 62;
   --dashboard-panel-border: var(--wf-border);
   --sidebar-item-hover: var(--wf-hover);
   --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
@@ -2171,7 +2340,7 @@ button.input-status-float:not(:disabled) {
 }
 
 [data-theme='dark'] .stuard-notification-card:hover {
-  border-color: color-mix(in srgb, var(--foreground) 14%, var(--border));
+  border-color: var(--border);
   box-shadow:
     0 12px 36px rgba(0, 0, 0, 0.45),
     0 1px 0 rgba(255, 255, 255, 0.06) inset;
@@ -2698,6 +2867,102 @@ body {
    so drop it explicitly when the window is maximized and fills the screen. */
 [data-overlay-maximized='true'] .launcher-compact-skin {
   box-shadow: none !important;
+}
+
+/* ─── Workspace (app mode) ───────────────────────────────────────────────────
+   Reads as a real desktop application window: edge-to-edge surface with only a
+   slight corner rounding — no hairline frame or floating-card shadow. Flattens
+   when maximized. */
+.workspace-app-shell.launcher-compact-skin {
+  border-radius: 10px;
+  border: none;
+  overflow: hidden;
+  height: 100%;
+  min-height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+[data-theme='light'] .workspace-app-shell.launcher-compact-skin {
+  box-shadow: none;
+}
+
+[data-theme='dark'] .workspace-app-shell.launcher-compact-skin {
+  border: none;
+}
+
+[data-overlay-maximized='true'] .workspace-app-shell {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* App-chrome title bar: a slightly elevated tone over the body, with a crisp
+   bottom hairline and a 1px top highlight, like a native window caption. */
+.workspace-app-titlebar {
+  background: color-mix(in srgb, var(--card-bg) 58%, var(--background) 42%);
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+[data-theme='dark'] .workspace-app-titlebar {
+  background: color-mix(in srgb, var(--card-bg) 52%, var(--background) 48%);
+  border-bottom-color: var(--border);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.workspace-sidebar-surface {
+  background: color-mix(in srgb, var(--card-bg) 72%, var(--background) 28%);
+}
+
+[data-theme='light'] .workspace-sidebar-surface {
+  background: color-mix(in srgb, #ffffff 88%, rgb(var(--compact-pill-bg)) 12%);
+}
+
+[data-theme='dark'] .workspace-sidebar-surface {
+  background: color-mix(in srgb, var(--card-bg) 65%, var(--background) 35%);
+}
+
+.workspace-main-panel {
+  background: var(--background);
+}
+
+.workspace-files-column {
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--background) 20%);
+  border-left: 1px solid var(--border);
+}
+
+.workspace-resize-handle {
+  position: relative;
+  width: 5px;
+  margin: 0 -2px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.workspace-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: background-color 0.15s ease, width 0.15s ease;
+}
+
+.workspace-resize-handle:hover::before,
+.workspace-resize-handle:active::before {
+  width: 2px;
+  background: color-mix(in srgb, var(--primary) 55%, var(--border));
+}
+
+[data-workspace-app='true'] .launcher-compact-skin {
+  /* Inner chat panel: flat on the workspace canvas, not a nested floating card */
+  box-shadow: none;
+  border: none;
 }
 
 /* Window drag regions */
@@ -3557,11 +3822,14 @@ body {
   color: var(--foreground-muted);
   transition: color 140ms ease, background-color 140ms ease;
 }
+
 .cloud-runtime-tree-row:hover {
   color: var(--foreground);
   background: var(--dashboard-hover);
 }
+
 .cloud-runtime-tree-row-active {
   color: var(--foreground);
   background: var(--dashboard-sidebar-item-active);
 }
+

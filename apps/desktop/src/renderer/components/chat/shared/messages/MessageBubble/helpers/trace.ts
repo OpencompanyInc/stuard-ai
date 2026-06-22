@@ -1,8 +1,13 @@
-import { isRedundantStreamingUpdate, mergeStreamingText } from '../../../../../../utils/streamMerge';
+import { isRedundantStreamingUpdate, joinReasoningBlocks } from '../../../../../../utils/streamMerge';
 import type { ToolCall, StreamChunk } from '../../../../../../hooks/useAgent';
 import type { AssistantTraceStepData, TraceStatus } from '../types';
 import { isDelegationToolCall } from './delegation';
 import { truncatePreviewText } from './payload';
+
+/** True when the text has no letters/digits (e.g. a stray "." reasoning chunk). */
+export function isPunctuationOnly(content: string): boolean {
+  return !/[\p{L}\p{N}]/u.test(content);
+}
 
 export function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
   const plain = content
@@ -13,9 +18,17 @@ export function summarizeReasoningLabel(content: string, fallback: string = 'Pla
 
   if (!plain) return fallback;
 
-  const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
+  // Use the first sentence that actually has words — a chunk that begins with
+  // stray punctuation (". Click…") must not yield a ". Click" label — then trim
+  // any leading symbols so the label always starts on a real word.
+  const sentence = (
+    plain.split(/[.?!]/).map((s) => s.trim()).find((s) => /[\p{L}\p{N}]/u.test(s)) || plain
+  )
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .trim();
+
   const summary = truncatePreviewText(sentence, 72);
-  return summary.split(' ').length >= 2 ? summary : fallback;
+  return summary.split(' ').filter(Boolean).length >= 2 ? summary : fallback;
 }
 
 // Fallback label used when a nested subagent reply has no summarizable content
@@ -36,9 +49,12 @@ export function tryMergeStreamingStep(
   if (!step.content || !last.content) return null;
   if (Boolean(step.nested) !== Boolean(last.nested)) return null;
   if (step.subagentId !== last.subagentId) return null;
-  if (!isRedundantStreamingUpdate(last.content, step.content)) return null;
 
-  const mergedContent = mergeStreamingText(last.content, step.content);
+  // Consecutive reasoning/text steps (no visible step between them) are one
+  // thinking block — fold them together whether the provider streamed
+  // overlapping snapshots or non-overlapping increments. Anything that should
+  // stay separate (a tool, a different subagent) is already excluded above.
+  const mergedContent = joinReasoningBlocks(last.content, step.content);
   return {
     ...last,
     id: step.id,
@@ -62,6 +78,17 @@ export function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): Ass
         compacted[compacted.length - 1] = merged;
         continue;
       }
+    }
+
+    // Drop a standalone reasoning/text fragment that's pure punctuation (e.g. a
+    // lone "." chunk) when it couldn't be folded into a neighbour — on its own
+    // it renders as an empty, ugly step.
+    if (
+      (step.kind === 'reasoning' || step.kind === 'text')
+      && step.content
+      && isPunctuationOnly(step.content)
+    ) {
+      continue;
     }
 
     compacted.push(step);

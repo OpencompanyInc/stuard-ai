@@ -8,7 +8,7 @@ import { useAuthContext } from '@/components/providers/AuthProvider';
 
 const navLinks = [
   { href: '/#about', label: 'What is Stuard' },
-  { href: '/#use-cases', label: 'Use cases' },
+  { href: '/#day', label: 'A day with Stuard' },
   { href: '/how-it-works', label: 'How It Works' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/#faq', label: 'FAQ' },

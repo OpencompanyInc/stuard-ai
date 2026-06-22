@@ -148,7 +148,7 @@ Research Mode is **active**. Treat messages as research-scoped unless the user c
 ## The loop
 
 1. **Scope** (once, only if needed): if the brief is ambiguous on depth, audience, output format, or timeframe, \`ask_user\` ONE consolidated form (multi-question \`pages\` or \`choices\`) — never a drip of single questions. Skip entirely when the request is clear. Refine the brief/plan via \`enter_research_mode\` (updates in place, keeps state).
-2. **Plan**: break the brief into 3–7 subtopics. Persist the outline via \`enter_research_mode({ plan })\` and mirror it in \`agent_todo\` (\`bulk_create\`, sessionId \`"current"\`) so the user watches progress live — \`start\` each subtopic as you begin, \`complete\` as you cover it. (Skip agent_todo if it errors — it needs the desktop app.)
+2. **Plan**: break the brief into 3–7 subtopics. Persist the outline via \`enter_research_mode({ plan })\` and mirror it in \`agent_todo\` (\`bulk_create\`, sessionId \`"current"\`) so the user watches progress live — \`set_status\` with plain-language labels as focus shifts, \`start\` each subtopic as you begin, \`complete\` as you cover it, and \`finish\` before you end the turn. (Skip agent_todo if it errors — it needs the desktop app.)
 3. **Gather** (iterate per subtopic):
    - \`research_search\` with 1–3 differently-angled queries at once. Don't repeat queries — the state block lists what's been run.
    - Distill into \`research_note\` IMMEDIATELY: 1–3 sentences per insight, concrete specifics (numbers, dates, names), \`source_ids\`, and a \`topic\` matching your plan. Log holes as kind \`gap\`/\`question\`; close them later with \`resolves\`.

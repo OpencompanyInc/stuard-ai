@@ -6,6 +6,7 @@ export type RendererKind =
   | 'audio'
   | 'pdf'
   | 'html'
+  | 'sheet'
   | 'text'
   | 'binary';
 
@@ -14,8 +15,12 @@ const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'mkv', 'm4v', 'ogv']);
 const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus']);
 const PDF_EXTS = new Set(['pdf']);
 const HTML_EXTS = new Set(['html', 'htm']);
+// Tabular data → rendered as an interactive, sortable data table with summary
+// stats (the Workspace "data analysis" view). CSV/TSV are plain text on disk;
+// xlsx/xls are binary workbooks parsed client-side.
+const SHEET_EXTS = new Set(['csv', 'tsv', 'xlsx', 'xls', 'xlsm']);
 const TEXT_EXTS = new Set([
-  'txt', 'md', 'markdown', 'log', 'csv', 'tsv',
+  'txt', 'md', 'markdown', 'log',
   'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'env', 'cfg', 'conf',
   'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
   'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift',
@@ -36,8 +41,15 @@ export function classifyByExt(ext: string): RendererKind {
   if (AUDIO_EXTS.has(e)) return 'audio';
   if (PDF_EXTS.has(e)) return 'pdf';
   if (HTML_EXTS.has(e)) return 'html';
+  if (SHEET_EXTS.has(e)) return 'sheet';
   if (TEXT_EXTS.has(e)) return 'text';
   return 'binary';
+}
+
+/** True for binary spreadsheet workbooks (need a parser, not plain text). */
+export function isBinarySheetExt(ext: string): boolean {
+  const e = (ext || '').toLowerCase();
+  return e === 'xlsx' || e === 'xls' || e === 'xlsm';
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -48,6 +60,10 @@ const MIME_BY_EXT: Record<string, string> = {
   mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
   aac: 'audio/aac', flac: 'audio/flac', opus: 'audio/opus',
   pdf: 'application/pdf',
+  csv: 'text/csv', tsv: 'text/tab-separated-values',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
 };
 
 export function mimeForExt(ext: string): string {

@@ -26,7 +26,9 @@ import {
   ChainOfThoughtStep,
 } from '../../../../ai-elements/ChainOfThought';
 import type { ChatAttachment } from '../../../../../utils/attachments';
+import { useFilePathPreview } from '../../../../../hooks/useFilePathPreview';
 
+import { routeAgentTodoUpdate } from '../../sidebar/agentTodoStore';
 import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES, GENUI_COMPONENT_MAP, EMAIL_GENUI_TOOL_NAMES } from './constants';
 import { toMediaSrc, extractYouTubeVideoId, formatDuration } from './helpers/media';
 import { stripMarkdown, stripMarkdownFromArgs, normalizeMarkdownSpacing, processCustomMarkdown } from './helpers/markdown';
@@ -71,6 +73,33 @@ interface MessageBubbleProps {
   onRevertFiles?: (messageId: string) => boolean | void | Promise<boolean | void>;
   onRedoFiles?: (messageId: string) => boolean | void | Promise<boolean | void>;
 }
+
+/** A sent-message context reference. Image files render a thumbnail so a file
+ *  added as context looks the same as one attached inline. */
+const ContextPathChip: React.FC<{ ctx: ContextPath }> = ({ ctx }) => {
+  const preview = useFilePathPreview(ctx.path, !ctx.isDirectory);
+  const Icon = ctx.isDirectory ? Folder : FileText;
+  if (preview) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 p-0.5 pr-1.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
+        title={ctx.path}
+      >
+        <img src={preview} alt={ctx.name} className="w-4 h-4 rounded-[3px] object-cover shrink-0" />
+        <span className="truncate">{ctx.name}</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
+      title={ctx.path}
+    >
+      <Icon className="w-3 h-3 shrink-0" strokeWidth={2} />
+      <span className="truncate">{ctx.name}</span>
+    </span>
+  );
+};
 
 const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasoning, reasoningDuration, toolCalls, streamChunks, isStreaming, contextPaths, attachments, onSubmitToolOutput, onGenUIResponse, compact, messageId, onEditMessage, modifiedFiles, checkpointId, reverted, onRevertFiles, onRedoFiles }) => {
   const [genUIResults, setGenUIResults] = useState<Record<string, any>>({});
@@ -266,8 +295,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                       {chunkSegments.map((seg, segIdx) => {
                         if (seg.kind === 'genui') {
                           // Route agent_todo to sidebar instead of rendering inline
-                          if (seg.component === 'agent_todo' && seg.args?.items) {
-                            window.dispatchEvent(new CustomEvent('agent-todo-update', { detail: seg.args }));
+                          if (seg.component === 'agent_todo') {
+                            routeAgentTodoUpdate(seg.args);
                             return null;
                           }
                           const isCompleted = genUIResults[seg.id] !== undefined;
@@ -432,8 +461,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
                   segments.map((seg, idx) => {
                     if (seg.kind === 'genui') {
                       // Route agent_todo to sidebar instead of rendering inline
-                      if (seg.component === 'agent_todo' && seg.args?.items) {
-                        window.dispatchEvent(new CustomEvent('agent-todo-update', { detail: seg.args }));
+                      if (seg.component === 'agent_todo') {
+                        routeAgentTodoUpdate(seg.args);
                         return null;
                       }
                       const isCompleted = genUIResults[seg.id] !== undefined;
@@ -633,19 +662,9 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
         {role === 'user' && contextPaths && contextPaths.length > 0 && (
           <div className="flex justify-end w-full min-w-0 mt-1.5 pr-1">
             <div className="flex flex-wrap gap-1 justify-end max-w-[85%] min-w-0">
-              {contextPaths.map((ctx, i) => {
-                const Icon = ctx.isDirectory ? Folder : FileText;
-                return (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-theme-hover/60 text-theme-muted text-[10px] font-semibold border border-theme/10 max-w-[160px]"
-                    title={ctx.path}
-                  >
-                    <Icon className="w-3 h-3 shrink-0" strokeWidth={2} />
-                    <span className="truncate">{ctx.name}</span>
-                  </span>
-                );
-              })}
+              {contextPaths.map((ctx, i) => (
+                <ContextPathChip key={i} ctx={ctx} />
+              ))}
             </div>
           </div>
         )}
@@ -682,8 +701,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ role, text, reasonin
               ))}
           </div>
         )}
-        {role === 'assistant' && isStreaming && (
-          <span className="inline-block w-[3px] h-4 bg-primary ml-1 animate-[blink_1s_step-end_infinite] align-middle rounded-full shadow-sm shadow-primary/20" />
+        {role === 'assistant' && isStreaming && !text.trim() && (
+          <span className="inline-block w-1 h-1 ml-1 align-middle rounded-full bg-theme-muted/50" />
         )}
       </div>
     </div >

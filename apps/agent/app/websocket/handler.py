@@ -26,6 +26,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import permissions as vm_permissions
 from ..connections import manager
 from ..logging_config import get_logger
+from ..tools import agent_todo as agent_todo_store
 from ..tools import tasks as tasks_tools
 from ..tools.folder_limiter import FolderLimiter
 from .chat import handle_chat
@@ -364,6 +365,12 @@ async def _cleanup_on_disconnect(session: WebSocketSession) -> None:
         except Exception:
             pass
     session.folder_session_ids.clear()
+    # Drop the agent's session-scoped to-do plan + status so a reconnect starts
+    # clean and a stale checklist never resurfaces.
+    try:
+        agent_todo_store.clear_all()
+    except Exception:
+        pass
 
 
 async def ws_endpoint(ws: WebSocket) -> None:

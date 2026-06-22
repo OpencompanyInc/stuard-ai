@@ -1022,10 +1022,27 @@ class MemoryDB:
         owner_type: Optional[ConversationOwnerType] = None,
         owner_id: Optional[str] = None
     ) -> Optional[Conversation]:
-        """Update conversation."""
+        """Update conversation.
+
+        Upserts: if the conversation row doesn't exist yet, create a shell first.
+        For a brand-new chat the generated title is PATCHed almost immediately and
+        can race ahead of the conversation insert — without this, that early update
+        matches 0 rows, returns not_found (HTTP 400), and the title (which lives only
+        in this local DB, not Supabase) is silently lost. Mirrors create_conversation's
+        idempotent style.
+        """
+        if self.get_conversation(conversation_id) is None:
+            self.create_conversation(
+                conversation_id=conversation_id,
+                title=title,
+                source=source or 'stuard',
+                owner_type=owner_type,
+                owner_id=owner_id,
+            )
+
         updates = ["updated_at = ?"]
         values: List[Any] = [_now_iso()]
-        
+
         if title is not None:
             updates.append("title_enc = ?")
             values.append(_encrypt_content(title, self._crypto))

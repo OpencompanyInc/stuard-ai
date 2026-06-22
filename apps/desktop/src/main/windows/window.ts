@@ -46,8 +46,30 @@ let baseOuterHeight = 0;
 let resizingProgrammatically = false;
 let compactResizeAnchor: 'top' | 'bottom' = 'top';
 
-type OverlayMode = "compact" | "sidebar" | "window";
+// Mode-change choreography. BrowserWindow's `setBounds(..., animate)` flag is
+// macOS-only, so on Windows we interpolate the window's bounds ourselves: each
+// frame we ease position + size a step closer to the target and apply it with a
+// single setBounds (one native call per frame — multiple per frame is what
+// causes DWM flicker). The renderer swaps its layout up front and fills the
+// window, so the content reflows as the frame grows/shrinks and the whole shape
+// morphs in one smooth motion instead of snapping.
+const MODE_TRANSITION_MS = 220;
+let modeTweenTimer: ReturnType<typeof setInterval> | null = null;
+
+// "app" = the large "Workspace" application window. It shares window mode's
+// real-window chrome (taskbar entry, min/maximize, no always-on-top) but opens
+// much bigger and hosts the right-hand Files / preview pane. Kept as its own
+// mode (not a flavour of "window") so size prefs and the renderer layout switch
+// can treat the focused chat window and the full workspace independently.
+type OverlayMode = "compact" | "sidebar" | "window" | "app";
 let currentMode: OverlayMode = "compact";
+
+// Modes that present as a normal, non-overlay desktop window (taskbar entry,
+// minimize/maximize, not always-on-top). Everything else is the floating
+// overlay treatment.
+function isAppWindowMode(mode: OverlayMode): boolean {
+  return mode === "window" || mode === "app";
+}
 
 const APP_ICON_FILENAME = "icon2.png";
 
@@ -279,12 +301,16 @@ function updateLastActiveWindowHandle(source: string) {
 interface ModeSizePrefs {
   compact: { width: number; height: number };
   window: { width: number; height: number };
+  app: { width: number; height: number };
 }
 
 // Default sizes for each mode
 const DEFAULT_MODE_SIZES: ModeSizePrefs = {
   compact: { width: 520, height: 88 },  // 360x56 visible pill centered in a 520x88 transparent window — extra horizontal space lets the dropdown extend beyond the pill without resizing on type; extra vertical space lets the pill's drop shadow render without getting clipped at the window edge
   window: { width: 800, height: 600 },
+  // Workspace opens large enough to comfortably fit the chat plus the Files
+  // preview pane side-by-side without the user having to resize first.
+  app: { width: 1240, height: 820 },
 };
 
 // Min/max constraints per mode for user resizing
@@ -294,6 +320,9 @@ const MODE_SIZE_CONSTRAINTS = {
   // Window mode is unbounded so the user can maximize to fill the screen.
   // We still keep a sensible minimum to prevent collapsing the chrome.
   window: { minW: 500, maxW: 0, minH: 400, maxH: 0 },
+  // Workspace is also unbounded (maximize to fill screen) but needs a wider
+  // floor so the chat + Files pane both stay usable.
+  app: { minW: 760, maxW: 0, minH: 540, maxH: 0 },
 };
 
 // Track internal sidebar state for width management
@@ -312,7 +341,7 @@ let appliedChrome: {
 
 function applyOverlayChrome(mode: OverlayMode) {
   if (!win) return;
-  const desired = mode === 'window'
+  const desired = isAppWindowMode(mode)
     ? { alwaysOnTop: false, skipTaskbar: false, hasShadow: true, minimizable: true, maximizable: true }
     : { alwaysOnTop: true, skipTaskbar: true, hasShadow: false, minimizable: false, maximizable: false };
   try {
@@ -336,13 +365,18 @@ function applyOverlayChrome(mode: OverlayMode) {
       try { win.setMaximizable(desired.maximizable); } catch { }
     }
     appliedChrome = desired;
+    // Keep the native window transparent; the renderer paints the full surface
+    // (launcher-compact-skin in Workspace, floating card in Window, etc.).
+    if (mode === 'compact' || mode === 'sidebar' || mode === 'window' || mode === 'app') {
+      try { win.setBackgroundColor('#00000000'); } catch { }
+    }
   } catch { }
 }
 
 function notifyOverlayMaximizedChanged() {
   if (!win || win.isDestroyed()) return;
   try {
-    win.webContents.send('overlay:maximizedChanged', { maximized: win.isMaximized() });
+    win.webContents.send('overlay:maximizedChanged', { maximized: overlayIsMaximized() });
   } catch { }
 }
 
@@ -361,7 +395,7 @@ export function attachStandaloneWindowChrome(browserWindow: BrowserWindow) {
 function forceOverlayChrome() {
   if (!win) return;
   try {
-    if (currentMode === 'window') {
+    if (isAppWindowMode(currentMode)) {
       win.setAlwaysOnTop(false);
       win.setSkipTaskbar(false);
       win.setMinimizable(true);
@@ -415,17 +449,117 @@ function centerTopWithContentSize(target: BrowserWindow, contentWidth: number, c
   // pass and apply size + position together via setBounds. This avoids two
   // separate native calls (setContentSize + setPosition) which on Windows
   // can each trigger a DWM repaint and cause visible flicker.
-  const { workArea } = screen.getPrimaryDisplay();
-  const x = Math.round(workArea.x + (workArea.width - contentWidth) / 2);
-  const y = Math.round(workArea.y + workArea.height * 0.12);
+  const rect = placementRectForMode(currentMode, contentWidth, contentHeight);
   try {
-    target.setBounds({ x, y, width: contentWidth, height: contentHeight });
+    target.setBounds(rect);
   } catch {
     try {
-      target.setContentSize(contentWidth, contentHeight);
-      target.setPosition(x, y);
+      target.setContentSize(rect.width, rect.height);
+      target.setPosition(rect.x, rect.y);
     } catch { }
   }
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+// Where a top-centered mode (compact/window) lands — mirrors the placement
+// in centerTopWithContentSize so the transition's target bounds match exactly
+// what setOverlaySize(reposition=true) would have produced.
+function topCenteredRect(width: number, height: number): Rect {
+  const { workArea } = screen.getPrimaryDisplay();
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + workArea.height * 0.12),
+    width,
+    height,
+  };
+}
+
+// Workspace (app mode) is large enough that top-anchoring at 12% can push the
+// bottom off-screen after a window→workspace switch. Center it and clamp to
+// the display work area so the full shell is always visible.
+function centeredRect(width: number, height: number, padding = 8): Rect {
+  const { workArea } = screen.getPrimaryDisplay();
+  const w = Math.min(width, workArea.width - padding * 2);
+  const h = Math.min(height, workArea.height - padding * 2);
+  const x = Math.round(workArea.x + (workArea.width - w) / 2);
+  const y = Math.round(workArea.y + (workArea.height - h) / 2);
+  return {
+    x: Math.max(workArea.x + padding, Math.min(x, workArea.x + workArea.width - w - padding)),
+    y: Math.max(workArea.y + padding, Math.min(y, workArea.y + workArea.height - h - padding)),
+    width: w,
+    height: h,
+  };
+}
+
+function placementRectForMode(mode: OverlayMode, width: number, height: number): Rect {
+  return mode === 'app' ? centeredRect(width, height) : topCenteredRect(width, height);
+}
+
+// Smoothly interpolate the overlay window's bounds from where it is now to
+// `toRect` over `durationMs`, easing position and size together. Driven by a
+// ~60fps timer with one setBounds per frame. `resizingProgrammatically` is held
+// for the whole tween so the resize listeners (handleUserResize / assertOverlaySize)
+// don't fight the interpolated frames. `mode` is the mode this tween is settling
+// into; if a newer switch changes currentMode mid-flight we bail and let it win.
+function tweenOverlayBounds(toRect: Rect, durationMs: number, mode: OverlayMode) {
+  if (!win || win.isDestroyed()) return;
+  if (modeTweenTimer) { clearInterval(modeTweenTimer); modeTweenTimer = null; }
+
+  const fromRect = win.getBounds();
+  const dx = toRect.x - fromRect.x;
+  const dy = toRect.y - fromRect.y;
+  const dw = toRect.width - fromRect.width;
+  const dh = toRect.height - fromRect.height;
+
+  const finalize = () => {
+    if (modeTweenTimer) { clearInterval(modeTweenTimer); modeTweenTimer = null; }
+    if (!win || win.isDestroyed() || currentMode !== mode) { resizingProgrammatically = false; return; }
+    try { win.setBounds(toRect); } catch { }
+    baseContentWidth = toRect.width;
+    baseContentHeight = toRect.height;
+    const ob = win.getBounds();
+    baseOuterWidth = ob.width;
+    baseOuterHeight = ob.height;
+    resizingProgrammatically = false;
+  };
+
+  // Already there — nothing to animate.
+  if (dx === 0 && dy === 0 && dw === 0 && dh === 0) { finalize(); return; }
+
+  resizingProgrammatically = true;
+  const start = Date.now();
+  // ease-out cubic: leaps off the start (so it escapes the cramped first frame
+  // quickly) and glides into the target.
+  const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+
+  const step = () => {
+    if (!win || win.isDestroyed()) {
+      if (modeTweenTimer) { clearInterval(modeTweenTimer); modeTweenTimer = null; }
+      resizingProgrammatically = false;
+      return;
+    }
+    // Superseded by a newer switch — stop without touching the flag (the new
+    // tween owns it now).
+    if (currentMode !== mode) {
+      if (modeTweenTimer) { clearInterval(modeTweenTimer); modeTweenTimer = null; }
+      return;
+    }
+    const t = Math.min(1, (Date.now() - start) / durationMs);
+    const e = ease(t);
+    try {
+      win.setBounds({
+        x: Math.round(fromRect.x + dx * e),
+        y: Math.round(fromRect.y + dy * e),
+        width: Math.round(fromRect.width + dw * e),
+        height: Math.round(fromRect.height + dh * e),
+      });
+    } catch { }
+    if (t >= 1) finalize();
+  };
+
+  step();                                  // apply the first eased frame now
+  modeTweenTimer = setInterval(step, 16);  // ~60fps
 }
 
 function repositionTopCenter(target: BrowserWindow) {
@@ -443,6 +577,13 @@ function handleUserResize() {
   // Don't snapshot maximized dimensions as the user's "preferred" size — that
   // would wipe out their last manual resize and make unmaximize unhelpful.
   try { if (win.isMaximized()) return; } catch { /* ignore */ }
+  // A user-driven drag-resize means the window is no longer "maximized" in our
+  // manual sense — clear the flag so the chrome restores its rounded inset.
+  if (overlayManuallyMaximized) {
+    overlayManuallyMaximized = false;
+    preMaximizeBounds = null;
+    notifyOverlayMaximizedChanged();
+  }
 
   const now = Date.now();
   if (now - lastUserResizeTime < 100) return; // Debounce
@@ -657,7 +798,7 @@ export function createWindow() {
   // Keep overlay visible on focus changes; user controls visibility via hotkey or Escape.
   // In compact/sidebar, prevent minimize so Win+D / Show Desktop cannot hide the overlay.
   win.on("minimize", (e: Electron.Event) => {
-    if (currentMode === 'window') return;
+    if (isAppWindowMode(currentMode)) return;
     e.preventDefault();
     win?.restore();
     win?.show();
@@ -697,6 +838,13 @@ export function createWindow() {
     clearMoveTimer();
   });
   win.on('blur', () => {
+    // In the real-window modes (window / Workspace) the overlay behaves like an
+    // ordinary desktop app. Skip the pill-only bookkeeping that made alt-tab feel
+    // sluggish: capturing the foreground window is a *synchronous* PowerShell
+    // spawn (up to 2s, blocks the main process), and the global Ctrl+Arrow move
+    // shortcuts only nudge the floating pill. Doing either here stalled window
+    // switching, so they stay off for window/app.
+    if (isAppWindowMode(currentMode)) return;
     updateLastActiveWindowHandle('blur');
     registerMoveShortcuts();
   });
@@ -709,6 +857,7 @@ export function createWindow() {
     try { win?.webContents.send("overlay:hidden"); } catch { }
   });
   win.on('show', () => {
+    if (isAppWindowMode(currentMode)) { unregisterMoveShortcuts(); return; }
     if (win?.isFocused()) unregisterMoveShortcuts();
     else registerMoveShortcuts();
   });
@@ -1580,7 +1729,7 @@ export function setOverlaySize(width: number, height: number, reposition = false
 }
 
 export function overlayMinimize() {
-  if (!win || win.isDestroyed() || currentMode !== 'window') return;
+  if (!win || win.isDestroyed() || !isAppWindowMode(currentMode)) return;
   try { win.minimize(); } catch { }
 }
 
@@ -1589,45 +1738,78 @@ export function overlayMinimize() {
 // after chrome/size mutations (DWM repaint), so we snapshot ourselves to
 // guarantee restore behaves correctly.
 let preMaximizeBounds: { x: number; y: number; width: number; height: number } | null = null;
+// Native win.maximize() is unreliable on a transparent, frameless window: it can
+// fail to repaint/fill, and win.isMaximized() then reports the wrong value — so
+// the renderer never drops its inset padding and the window "doesn't fit". We
+// therefore maximize *manually* by snapping to the display work area and track
+// the state ourselves rather than trusting Electron's native maximize state.
+let overlayManuallyMaximized = false;
+
+function overlayWorkArea() {
+  // Maximize within the work area of whatever display the window is currently on
+  // (so it fills that monitor and leaves the taskbar visible).
+  try {
+    const b = win!.getBounds();
+    return screen.getDisplayMatching(b).workArea;
+  } catch {
+    return screen.getPrimaryDisplay().workArea;
+  }
+}
 
 export function overlayToggleMaximize() {
-  if (!win || win.isDestroyed() || currentMode !== 'window') return;
+  if (!win || win.isDestroyed() || !isAppWindowMode(currentMode)) return;
+  // Block resize-event side-effects (assertOverlaySize / handleUserResize) while
+  // we transition; they'd fight the programmatic setBounds.
+  resizingProgrammatically = true;
   try {
-    if (win.isMaximized()) {
+    if (overlayManuallyMaximized) {
       const target = preMaximizeBounds;
-      // Block any resize-event side-effects (assertOverlaySize / handleUserResize)
-      // from running while we transition out of maximized state.
-      resizingProgrammatically = true;
-      try { win.unmaximize(); } catch { }
+      overlayManuallyMaximized = false;
+      try { if (win.isMaximized()) win.unmaximize(); } catch { }
       if (target) {
         try { win.setBounds(target); } catch { }
         baseContentWidth = target.width;
         baseContentHeight = target.height;
         baseOuterWidth = target.width;
         baseOuterHeight = target.height;
-        userModeSizes.window = { width: target.width, height: target.height };
+        userModeSizes[currentMode === 'app' ? 'app' : 'window'] = { width: target.width, height: target.height };
       }
-      setImmediate(() => { resizingProgrammatically = false; });
       preMaximizeBounds = null;
     } else {
       try {
         const b = win.getBounds();
         preMaximizeBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
       } catch { preMaximizeBounds = null; }
-      try { win.maximize(); } catch { }
+      const wa = overlayWorkArea();
+      // Temporarily lift the min/max constraints so the snap can reach full size.
+      try { win.setMaximumSize(0, 0); } catch { }
+      try { win.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height }); } catch { }
+      overlayManuallyMaximized = true;
     }
   } catch { }
+  finally {
+    setImmediate(() => { resizingProgrammatically = false; });
+    notifyOverlayMaximizedChanged();
+  }
 }
 
 export function overlayIsMaximized(): boolean {
   if (!win || win.isDestroyed()) return false;
+  if (overlayManuallyMaximized) return true;
   try { return win.isMaximized(); } catch { return false; }
 }
 
 export function setOverlayMode(mode: OverlayMode) {
   const prevMode = currentMode;
-  if (prevMode === 'window' && mode !== 'window' && win && !win.isDestroyed()) {
+  // Leaving a real-window mode (window/app) for a floating overlay mode
+  // (compact/sidebar): drop maximize first so we don't try to shrink a
+  // maximized window down to the pill.
+  if (isAppWindowMode(prevMode) && !isAppWindowMode(mode) && win && !win.isDestroyed()) {
     try { if (win.isMaximized()) win.unmaximize(); } catch { }
+    // Clear our manual-maximize state too; the destination mode sets its own
+    // bounds below, so there's nothing to restore.
+    overlayManuallyMaximized = false;
+    preMaximizeBounds = null;
   }
   if (prevMode === mode && mode !== 'sidebar') {
     // No-op: mode didn't change and there is nothing special to redo for
@@ -1673,7 +1855,7 @@ export function setOverlayMode(mode: OverlayMode) {
 
     // Tell the renderer about the upcoming layout BEFORE we resize the
     // native window so its DOM can update in parallel with the resize.
-    try { win?.webContents.send('overlay:modeChanged', { mode, width: sidebarWidth, height: h, prevMode }); } catch { }
+    try { win?.webContents.send('overlay:modeChanged', { mode, width: sidebarWidth, height: h, prevMode, transitionMs: MODE_TRANSITION_MS }); } catch { }
 
     // Split-screen: use the last active window handle if available, otherwise capture.
     try {
@@ -1797,14 +1979,36 @@ if ($targetWindow -ne 0) {
   width = Math.max(constraints.minW, Math.min(maxW, width));
   height = Math.max(constraints.minH, Math.min(maxH, height));
 
-  // Notify the renderer FIRST so it can start swapping its DOM (compact
-  // <-> window) in parallel with the native bounds change. If we resize
-  // the BrowserWindow before the renderer has switched mode the user sees
-  // the wrong UI clipped to the new size for a frame, which reads as a
-  // glitch. Sending the IPC first lets both happen on the same frame.
-  try { win?.webContents.send('overlay:modeChanged', { mode, width, height, prevMode }); } catch { }
+  // Where this mode wants the window to land. Compact/window stay top-centered;
+  // workspace (app) centers on screen so a size jump from window mode can't
+  // clip the bottom edge.
+  const toRect = placementRectForMode(mode, width, height);
+  if (mode === 'compact') compactResizeAnchor = 'top';
 
-  setOverlaySize(width, height, true);
+  // Swap the renderer's layout now; it fills the window, so it reflows as the
+  // frame is tweened to the target size below.
+  const offscreen = !win || !win.isVisible();
+  try { win?.webContents.send('overlay:modeChanged', { mode, width, height, prevMode, transitionMs: offscreen ? 0 : MODE_TRANSITION_MS }); } catch { }
+
+  if (offscreen) {
+    // Nothing to animate when hidden — place it at the final bounds directly so
+    // the next show doesn't flash at an interpolated size.
+    if (win && !win.isDestroyed()) {
+      if (modeTweenTimer) { clearInterval(modeTweenTimer); modeTweenTimer = null; }
+      resizingProgrammatically = true;
+      try { win.setBounds(toRect); } catch { }
+      baseContentWidth = toRect.width;
+      baseContentHeight = toRect.height;
+      const ob = win.getBounds();
+      baseOuterWidth = ob.width;
+      baseOuterHeight = ob.height;
+      setImmediate(() => { resizingProgrammatically = false; });
+    }
+    return;
+  }
+
+  // Smoothly morph the window from its current bounds to the target.
+  tweenOverlayBounds(toRect, MODE_TRANSITION_MS, mode);
 }
 
 // Get current mode

@@ -52,8 +52,6 @@ interface SettingsViewProps {
   setThemeLightShade: (v: string) => void;
   themeText: "white" | "black";
   setThemeText: (v: "white" | "black") => void;
-  translucentMode: boolean;
-  setTranslucentMode: (v: boolean) => void;
   wakewordEnabled: boolean;
   setWakewordEnabled: (v: boolean) => void;
   screenCaptureInvisible: boolean;
@@ -1300,8 +1298,6 @@ const CloudSyncSettings: React.FC = () => {
 interface GeneralTabProps {
   themeMode: ThemeMode;
   setThemeMode: (v: ThemeMode) => void;
-  translucentMode: boolean;
-  setTranslucentMode: (v: boolean) => void;
   wakewordEnabled: boolean;
   setWakewordEnabled: (v: boolean) => void;
   screenCaptureInvisible: boolean;
@@ -1322,7 +1318,6 @@ interface GeneralTabProps {
 
 function GeneralTab({
   themeMode, setThemeMode,
-  translucentMode, setTranslucentMode,
   wakewordEnabled, setWakewordEnabled,
   screenCaptureInvisible, setScreenCaptureInvisible,
   handleSaveTheme,
@@ -1334,7 +1329,7 @@ function GeneralTab({
 
         {/* Appearance */}
         <div className="dashboard-card p-6">
-          <SectionHeader icon={<Palette className="w-4 h-4" />} eyebrow="Appearance" title="Theme & Overlay" description="Customize the look of your desktop overlay." />
+          <SectionHeader icon={<Palette className="w-4 h-4" />} eyebrow="Appearance" title="Theme" description="Customize the look of your desktop overlay." />
           <div className="space-y-5">
             <div>
               <label className="block text-[11px] font-semibold text-theme-muted tracking-tight mb-2">Color theme</label>
@@ -1347,14 +1342,6 @@ function GeneralTab({
                 onChange={(v) => setThemeMode(v as ThemeMode)}
               />
             </div>
-
-            <ToggleRow
-              icon={<Palette className="w-4 h-4" />}
-              title="Translucent Overlay"
-              description="Makes the compact bar semi-transparent with a blur effect."
-              checked={translucentMode}
-              onChange={setTranslucentMode}
-            />
           </div>
           <div className="mt-6 flex justify-end pt-4 border-t border-theme">
             <button

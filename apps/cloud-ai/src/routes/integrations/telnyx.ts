@@ -86,6 +86,31 @@ function normalizePhone(raw: string): string {
   return digits;
 }
 
+// Build downloadable media descriptors the desktop can persist to its media
+// library so the agent gets a real local file path, not just a transcript.
+// Images/documents already ride along in MediaResult.attachments (and the
+// desktop saves those), so this only carries the binary for kinds those don't
+// cover — chiefly inbound audio voice notes (transcript-only in attachments).
+function buildDownloadableMediaFiles(
+  items: any[],
+): Array<{ mediaType: string; mimeType: string; name?: string; data: string; transcript?: string }> {
+  const out: Array<{ mediaType: string; mimeType: string; name?: string; data: string; transcript?: string }> = [];
+  for (const it of items || []) {
+    if (it?.original?.mediaType !== 'audio') continue;
+    const buf: Buffer | undefined = it?.buffer;
+    if (!buf || !buf.length) continue;
+    const mime = String(it.mimeType || it.original?.mimeType || 'audio/mpeg');
+    out.push({
+      mediaType: 'audio',
+      mimeType: mime,
+      name: it.original?.filename,
+      data: `data:${mime};base64,${buf.toString('base64')}`,
+      transcript: it.transcript,
+    });
+  }
+  return out;
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -937,11 +962,13 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
           // Process media attachments if present (MMS sent to SMS webhook)
           let inboundText = rawText;
           let processedAttachments: any[] = [];
+          let incomingMediaFiles: any[] = [];
           if (hasMedia) {
             try {
               const inboundMedia = fromTelnyxMms(mediaItems, rawText || undefined);
               const mediaResult = await MediaProcessor.process(inboundMedia);
               processedAttachments = mediaResult.attachments || [];
+              incomingMediaFiles = buildDownloadableMediaFiles(mediaResult.items || []);
               // Build message text: original text + any transcriptions/descriptions
               inboundText = [rawText, mediaResult.supplementaryText].filter(Boolean).join('\n') || '[media received]';
             } catch (e: any) {
@@ -1030,6 +1057,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   memoryQuery: inboundText,
                   ...(queryEmbedding ? { queryEmbedding } : {}),
                   ...(processedAttachments.length > 0 ? { attachments: processedAttachments } : {}),
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
@@ -1086,6 +1114,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   eventType,
                   receivedAt: new Date().toISOString(),
                   ...(processedAttachments.length > 0 ? { processedAttachments } : {}),
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
                 },
               });
               if (!queued) {
@@ -1254,6 +1283,9 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                   memoryQuery: messageText,
                   ...(queryEmbedding ? { queryEmbedding } : {}),
                   attachments: mediaResult.attachments,
+                  ...(buildDownloadableMediaFiles(mediaResult.items || []).length > 0
+                    ? { incomingMediaFiles: buildDownloadableMediaFiles(mediaResult.items || []) }
+                    : {}),
                 }, 60_000);
 
                 if (vmResult.ok && vmResult.result?.text) {
@@ -1289,6 +1321,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
             // bridge + correct billing. Cloud serverless fallback removed.
             if (!handled) {
               const desktopOnline = hasDesktopConnection(userId);
+              const incomingMediaFiles = buildDownloadableMediaFiles(mediaResult.items || []);
               await enqueueSmsInboxItem({
                 userId,
                 provider: 'telnyx',
@@ -1299,6 +1332,7 @@ export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerRespon
                 conversationId: smsState.conversation_id,
                 metadata: {
                   processedAttachments: mediaResult.attachments,
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
                   receivedAt: new Date().toISOString(),
                 },
               });

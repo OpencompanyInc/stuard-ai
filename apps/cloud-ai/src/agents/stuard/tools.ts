@@ -35,6 +35,10 @@ import type { SIS as SISType } from 'sis-tools';
 import { searchToolsSemanticSupabase, isSupabaseSISEnabled } from '../../tools/sis-supabase';
 import { SIS_RUNTIME_TOOLS } from '../../tools/sis-runtime-tools';
 import { get_tool_schema, execute_tool, search_tools, search_workflow_nodes } from '../../tools/meta-tools';
+import { variablesTool } from '../../tools/chat-variables';
+import { deploy_integration, run_integration } from '../../tools/integration-builder-tools';
+import { save_skill } from '../../tools/skill-author-tools';
+import { modifySkillTool } from '../skill-agent';
 import { research_search, research_read, research_note, research_status } from '../../tools/research-mode';
 import { searchWorkflowDocs } from '../workflow-agent/docs';
 import { deployWorkflow } from '../workflow-agent/deploy';
@@ -298,6 +302,15 @@ const RAW_ALL_TOOLS = {
   sis_search_tools: SIS_RUNTIME_TOOLS.sis_search_tools,
   sis_execute_tool: SIS_RUNTIME_TOOLS.sis_execute_tool,
   sis_list_categories: SIS_RUNTIME_TOOLS.sis_list_categories,
+  // Chat variables — store-by-reference for large payloads (keeps base64/blobs
+  // out of context; pass values onward as "{{var:NAME}}" handles).
+  variables: variablesTool,
+  // Integration Builder — author/deploy/use custom HTTP integrations on the fly.
+  deploy_integration,
+  run_integration,
+  // Skills authoring — design + persist reusable skills (skills subagent).
+  modify_skill: modifySkillTool,
+  save_skill,
   // Meta-tools for lazy-loading (always in Tier 1)
   get_tool_schema,
   execute_tool,

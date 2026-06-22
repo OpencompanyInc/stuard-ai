@@ -98,7 +98,7 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900">Create Your Cloud Engine</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Create Your Cloud Computer</h1>
         <p className="text-gray-500 text-sm mt-2">
           Your personal AI computer in the cloud — always on, always ready.
         </p>
@@ -240,7 +240,7 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
           <div className="text-sm font-semibold text-amber-800">Memories will be out of sync</div>
           <p className="text-xs text-amber-700 mt-1">
             Deploying from the web cannot sync your local memories and knowledge to the VM.
-            Open the <span className="font-semibold">Cloud Engine dashboard in the Stuard desktop app</span> to sync your memories, conversations, and data onto the VM.
+            Open the <span className="font-semibold">Cloud Computer dashboard in the Stuard desktop app</span> to sync your memories, conversations, and data onto the VM.
           </p>
         </div>
       </div>
@@ -257,10 +257,10 @@ export function ProvisionFlow({ onProvisioned }: ProvisionFlowProps) {
               <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />
               <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
             </svg>
-            Setting up your cloud engine...
+            Setting up your cloud computer...
           </>
         ) : (
-          '✨ Create My Cloud Engine'
+          '✨ Create My Cloud Computer'
         )}
       </button>
       <p className="text-center text-xs text-gray-400 mt-3">

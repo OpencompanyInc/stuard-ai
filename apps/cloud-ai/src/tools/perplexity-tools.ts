@@ -98,21 +98,9 @@ export const web_search = createTool({
     [
       'Search the web for up-to-date information. Returns concise results with title, URL, and snippet.',
       '',
-      'Modes:',
-      '- mode="web" (default): general web search via Perplexity.',
-      '- mode="x": search X/Twitter posts via Grok x_search.',
+      'Modes: mode="web" (default, Perplexity) | mode="x" (X/Twitter posts via Grok x_search).',
       '',
-      'CRITICAL — query string must be natural language only. The backend does NOT parse Google-style operators:',
-      '- Do NOT write site:, -site:, intitle:, inurl:, OR, AND, quotes for phrase-match. They are treated as literal text and degrade results.',
-      '- Use the structured parameters instead (search_domain_filter, search_recency_filter, search_after_date_filter, etc.).',
-      '',
-      'Domain filtering (search_domain_filter):',
-      '- Pass bare hostnames: ["linkedin.com", "github.com"]. Subdomains work ("blog.example.com"). PATHS DO NOT WORK — "linkedin.com/in" is invalid.',
-      '- Prefix with "-" to exclude: ["-pinterest.com", "-reddit.com"].',
-      '- Max 20 entries. A root domain (example.com) matches all subdomains.',
-      '- LinkedIn, X/Twitter, and other login-gated sites have very sparse coverage; filtering to them often returns zero. Prefer a broad query.',
-      '',
-      'Date filtering: use search_recency_filter for relative ranges, or the absolute MM/DD/YYYY filters for precise windows.',
+      'CRITICAL — query must be natural language only; the backend does NOT parse Google-style operators (site:, -site:, intitle:, inurl:, OR, AND, phrase quotes) — they become literal text and degrade results. Use the structured parameters instead (search_domain_filter for hostnames, search_recency_filter / MM-DD-YYYY date filters for time windows). Login-gated sites (LinkedIn, X) have very sparse coverage — prefer a broad query over filtering to them.',
     ].join('\n'),
   inputSchema: z.object({
     query: z

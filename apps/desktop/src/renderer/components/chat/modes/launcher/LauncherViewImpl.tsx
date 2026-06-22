@@ -27,13 +27,9 @@ import {
   Workflow,
   Zap,
   MessageCircle,
-  MessageSquare,
-  FolderSearch,
-  ExternalLink,
   ListTodo,
   CheckCircle,
   CornerDownLeft,
-  LayoutDashboard,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { VoiceOrb, type VoiceState } from "../../../voice/VoiceOrb";
@@ -76,8 +72,29 @@ import {
   attachmentOverlayInset,
 } from "../../../AttachmentPreview";
 import { IntegrationSuggestionChip } from "../../shared/input/suggestions/IntegrationSuggestionChip";
+import { useSlashCommands } from "../../shared/input/slash/useSlashCommands";
+import { SlashCommandMenu } from "../../shared/input/slash/SlashCommandMenu";
+import { SlashCommandComposer } from "../../shared/input/slash/SlashCommandComposer";
+import { SlashCommandForm, slashSessionNeedsPanel } from "../../shared/input/slash/SlashCommandForm";
 import { HighlightMatch } from "../../shared/input/HighlightMatch";
 import { getFileKindConfig } from "../../shared/input/fileKind";
+import { FIGMA_KBD, FIGMA_ROW_BASE } from "../../shared/input/styles";
+import { InputStatusLine, isMeaningfulInputStatus } from "../../shared/input/InputStatusLine";
+import { DiscoveryStatusTicker } from "../../shared/input/DiscoveryStatusTicker";
+import type { DiscoveryTip } from "../../../onboarding/DiscoveryEngine";
+
+const LAUNCHER_SEARCH_SECTION_LABEL: React.CSSProperties = {
+  fontSize: 10,
+  lineHeight: "14px",
+  color: "rgb(var(--compact-pill-fg))",
+  fontWeight: 400,
+};
+
+const LAUNCHER_SEARCH_ROW: React.CSSProperties = {
+  ...FIGMA_ROW_BASE,
+  padding: "6px 8px 6px 6px",
+  gap: 6,
+};
 import {
   filterFileSearchResults,
   mergeHybridAndQuickFileResults,
@@ -90,6 +107,10 @@ interface LauncherViewProps {
   onSend: () => void;
   commands: CommandItem[];
   statusText?: string;
+  statusPresentation?: 'system' | 'activity' | 'planner' | 'discovery';
+  statusDiscoveryTip?: DiscoveryTip | null;
+  statusDiscoveryVisible?: boolean;
+  onStatusDiscoveryAction?: (tip: DiscoveryTip) => void;
   connectionStatus?: "connected" | "connecting" | "disconnected" | "error";
   onMicClick?: () => void;
   isRecording?: boolean;
@@ -100,7 +121,7 @@ interface LauncherViewProps {
   onAttachImages?: () => void;
   onRemoveAttachment?: (index: number) => void;
   accessToken?: string | null;
-  overlayMode?: "compact" | "sidebar" | "window";
+  overlayMode?: "compact" | "sidebar" | "window" | "app";
 
   // History Props
   chatMenuOpen: boolean;
@@ -169,7 +190,7 @@ interface LauncherViewProps {
   onAddCredits?: () => void;
 }
 
-import { NextUpIcon, getNextUpBgColor, getNextUpTextColor } from './NextUp';
+import { NextUpIcon, getNextUpBgColor } from './NextUp';
 import { LauncherGreeting } from './LauncherGreeting';
 import { normalizeLauncherSearchText, shouldRunLauncherSemanticSearch } from './search';
 import { quickActions } from './quickActions';
@@ -181,6 +202,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
   onSend,
   commands,
   statusText,
+  statusPresentation = 'system',
+  statusDiscoveryTip = null,
+  statusDiscoveryVisible = false,
+  onStatusDiscoveryAction,
   connectionStatus = "connected",
   onMicClick,
   isRecording,
@@ -255,6 +280,10 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     handleCloseFileNav,
     handleOpenFileNav,
   } = useFileNavigator({ query, setQuery, onAddContext });
+
+  const slash = useSlashCommands({ query, setQuery, enabled: !showFileNav && !voiceActive });
+  const slashNeedsPanel = !!slash.session && slashSessionNeedsPanel(slash.session);
+  const slashFormOpen = slashNeedsPanel && (slash.phase === 'editing' || slash.phase === 'error');
 
   const dragCounterRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -858,72 +887,126 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
     ? voiceStatusText
     : nextUp
       ? `${nextUp.title} ${nextUp.timeLabel}`
-      : statusText || "Ready";
+      : (statusText?.trim() || '');
+
+  const showLauncherStatus =
+    !!nextUp
+    || voiceActive
+    || connectionStatus !== 'connected'
+    || (statusDiscoveryVisible && !!statusDiscoveryTip)
+    || isMeaningfulInputStatus(displayStatus);
 
   const hasQuery = String(query || "").trim().length >= 2;
   const showResults =
     hasQuery &&
+    !slash.active &&
     (stuardCommands.length > 0 ||
       filteredCommands.length > 0 ||
       fileResults.length > 0 ||
       appResults.length > 0);
 
   const isCompact = overlayMode === "compact";
+  const isWorkspaceApp = overlayMode === "app";
   const isWindowMode = overlayMode === "window";
 
-  // Shared input pieces — reused by the compact single-row and the window/sidebar
-  // two-row layouts so the textarea (and its keydown wiring) lives in one place.
-  const inputTextarea = (
-    <TextareaAutosize
-      ref={textareaRef}
-      className={clsx(
-        "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/70 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
-        isCompact
-          ? "text-[14px] font-normal leading-5 py-1.5 px-1"
-          : "text-[14px] font-normal leading-5 py-1 px-1",
+  const slashVariant = isCompact ? 'compact' : 'panel';
+
+  const handleQueryKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.nativeEvent as any)?.isComposing) return;
+    if (slash.handleKeyDown(e)) return;
+    if (showFileNav && fileNavRef.current) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        fileNavRef.current.moveSelection(1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        fileNavRef.current.moveSelection(-1);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        fileNavRef.current.selectCurrent();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCloseFileNav();
+        return;
+      }
+      if (e.key === " ") {
+        const added = fileNavRef.current.addCurrent();
+        if (added) e.preventDefault();
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  const queryInput = (
+    <>
+      {slash.menuOpen && (
+        <div className="absolute bottom-full left-0 right-0 mb-3 z-[10004]">
+          <SlashCommandMenu
+            variant={slashVariant}
+            items={slash.menuItems}
+            selectedIndex={slash.selectedIndex}
+            onHoverIndex={slash.setSelectedIndex}
+            maxHeight={isCompact ? 280 : 320}
+          />
+        </div>
       )}
-      placeholder="Just ask Stuard"
-      value={query}
-      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
-      onPaste={onPaste}
-      onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if ((e.nativeEvent as any)?.isComposing) return;
-        if (showFileNav && fileNavRef.current) {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            fileNavRef.current.moveSelection(1);
-            return;
-          }
-          if (e.key === "ArrowUp") {
-            e.preventDefault();
-            fileNavRef.current.moveSelection(-1);
-            return;
-          }
-          if (e.key === "Enter" || e.key === "Tab") {
-            e.preventDefault();
-            fileNavRef.current.selectCurrent();
-            return;
-          }
-          if (e.key === "Escape") {
-            e.preventDefault();
-            handleCloseFileNav();
-            return;
-          }
-          if (e.key === " ") {
-            const added = fileNavRef.current.addCurrent();
-            if (added) e.preventDefault();
-            return;
-          }
-        }
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          onSend();
-        }
-      }}
-      minRows={1}
-      maxRows={isCompact ? 2 : 4}
-      autoFocus
-    />
+      {slashFormOpen && slash.session && (
+        <div className="absolute bottom-full left-0 right-0 mb-3 z-[10004]">
+          <SlashCommandForm
+            variant={slashVariant}
+            session={slash.session}
+            values={slash.values}
+            phase={slash.phase}
+            statusMsg={slash.statusMsg}
+            onChange={slash.setValue}
+            onSubmit={slash.submit}
+            onCancel={slash.cancel}
+            maxHeight={isCompact ? 320 : 360}
+          />
+        </div>
+      )}
+      {slash.session ? (
+        <SlashCommandComposer
+          variant={slashVariant}
+          session={slash.session}
+          values={slash.values}
+          phase={slash.phase}
+          statusMsg={slash.statusMsg}
+          onChange={slash.setValue}
+          onSubmit={slash.submit}
+          onCancel={slash.cancel}
+          summary={slashNeedsPanel}
+        />
+      ) : (
+        <TextareaAutosize
+          ref={textareaRef}
+          className={clsx(
+            "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/80 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
+            isCompact
+              ? "text-[14px] font-normal leading-5 py-1 px-1"
+              : "text-[14px] font-normal leading-5 py-1 px-2",
+          )}
+          placeholder="Just ask Stuard"
+          value={query}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setQuery(e.target.value)}
+          onPaste={onPaste}
+          onKeyDown={handleQueryKeyDown}
+          minRows={1}
+          maxRows={isCompact ? 2 : 3}
+          autoFocus
+        />
+      )}
+    </>
   );
 
   const attachMenu = (
@@ -1014,23 +1097,28 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
 
       <div
         className={clsx(
-          "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme overflow-hidden",
-          !isCompact && "launcher-compact-skin",
-          isCompact ? "p-1.5" : "p-4",
-          sidebarOpen
-            ? (isCompact
-                ? "rounded-r-2xl rounded-l-none border-l-0"
-                : "rounded-r-[32px] rounded-l-none border-l-0")
-            : (isCompact ? "rounded-2xl" : "rounded-[32px]"),
-          translucentMode
-            ? "bg-theme-bg backdrop-blur-2xl"
-            : "bg-theme-bg",
+          "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 overflow-hidden",
+          isWorkspaceApp
+            ? "flex-1 min-h-0 overflow-hidden"
+            : [
+                "border border-theme",
+                !isCompact && "launcher-compact-skin",
+                isCompact ? "p-1.5" : "p-4",
+                sidebarOpen
+                  ? (isCompact
+                      ? "rounded-r-2xl rounded-l-none border-l-0"
+                      : "rounded-r-[32px] rounded-l-none border-l-0")
+                  : (isCompact ? "rounded-2xl" : "rounded-[32px]"),
+                translucentMode
+                  ? "bg-theme-bg backdrop-blur-2xl"
+                  : "bg-theme-bg",
+              ],
         )}
         style={{
-          background: translucentMode
+          background: !isWorkspaceApp && translucentMode
             ? "color-mix(in srgb, var(--background) 76%, transparent)"
             : undefined,
-          boxShadow: isCompact ? "0 8px 24px rgba(15, 23, 42, 0.10)" : undefined,
+          boxShadow: !isWorkspaceApp && isCompact ? "0 8px 24px rgba(15, 23, 42, 0.10)" : undefined,
         }}
       >
         <div
@@ -1049,7 +1137,8 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               : undefined,
           }}
         >
-          {/* Top Header */}
+          {/* Top Header — hidden in Workspace; shell provides vertical tabs + toolbar */}
+          {!isWorkspaceApp && (
           <div
             className={clsx(
               "flex items-center justify-between w-full min-w-0 shrink-0",
@@ -1095,9 +1184,11 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 onToggleSidebar={onToggleSidebar}
                 sidebarOpen={sidebarOpen}
                 onCollapse={onCollapse}
+                overlayMode={overlayMode}
               />
             )}
           </div>
+          )}
 
           {/* Main Content Area â€” hidden in compact mode (no vertical room) */}
           {!isCompact && (
@@ -1111,237 +1202,311 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 />
               </div>
             ) : showResults ? (
-                  <div className="flex-1 overflow-y-auto scrollbar-minimal pr-1 space-y-2 min-h-0">
-                    <button
-                      onClick={onSend}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[14px] hover:bg-theme-active transition-colors group border border-theme bg-theme-card text-left"
-                    >
-                      <div
-                        className="w-7 h-7 rounded-[10px] flex items-center justify-center shrink-0"
-                        style={{ background: "color-mix(in srgb, var(--primary) 14%, transparent)" }}
+                  <div
+                    className="flex-1 overflow-y-auto scrollbar-minimal pr-1 min-h-0 flex flex-col"
+                    style={{ gap: 12 }}
+                  >
+                    <div className="flex flex-col" style={{ gap: 8 }}>
+                      <div style={LAUNCHER_SEARCH_SECTION_LABEL}>Quick Actions</div>
+                      <button
+                        onClick={onSend}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "var(--compact-pill-hover)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "transparent";
+                        }}
+                        className="w-full flex items-center text-left"
+                        style={{ ...FIGMA_ROW_BASE, gap: 10 }}
                       >
-                        <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                        <div className="text-[13px] font-semibold text-theme-fg truncate">
-                          &ldquo;{query.trim()}&rdquo;
+                        <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
+                          <div
+                            className="truncate"
+                            style={{
+                              fontSize: 12,
+                              lineHeight: "16px",
+                              color: "rgb(var(--compact-pill-fg))",
+                            }}
+                          >
+                            &ldquo;{query.trim()}&rdquo;
+                          </div>
+                          <div
+                            className="truncate"
+                            style={{
+                              fontSize: 10,
+                              lineHeight: "14px",
+                              color: "rgb(var(--compact-pill-fg-muted))",
+                            }}
+                          >
+                            Ask Stuard
+                          </div>
                         </div>
-                        <div className="text-[11px] text-theme-muted truncate">
-                          Ask Stuard
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-semibold text-theme-muted bg-theme-active px-2 py-1 rounded-md shrink-0">
-                        Enter
-                      </span>
-                    </button>
+                        <span
+                          className="shrink-0"
+                          style={{ ...FIGMA_KBD, fontSize: 10, lineHeight: "14px" }}
+                        >
+                          Enter
+                        </span>
+                      </button>
+                    </div>
 
                     {stuardCommands.length > 0 && (
-                      <div className="rounded-2xl p-4 bg-theme-bg/30 border border-theme/20 shadow-sm">
-                        <div className="flex items-center gap-2 mb-3">
-                          <LayoutDashboard className="w-4 h-4 text-theme-muted" />
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
-                            Stuard
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          {stuardCommands.map((c, idx) => {
-                            const Icon = c.icon;
-                            const prevGroup =
-                              idx > 0 ? stuardCommands[idx - 1]?.group : undefined;
-                            const showGroupLabel =
-                              c.group && c.group !== prevGroup;
-                            return (
-                              <React.Fragment key={c.id}>
-                                {showGroupLabel && (
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted px-2 pt-1">
-                                    {c.group === "dashboard" ? "Dashboard" : "Studio"}
-                                  </div>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    c.run();
-                                    setQuery("");
+                      <div className="flex flex-col" style={{ gap: 8 }}>
+                        <div style={LAUNCHER_SEARCH_SECTION_LABEL}>Stuard</div>
+                        {stuardCommands.map((c, idx) => {
+                          const Icon = c.icon;
+                          const prevGroup =
+                            idx > 0 ? stuardCommands[idx - 1]?.group : undefined;
+                          const showGroupLabel = c.group && c.group !== prevGroup;
+                          return (
+                            <React.Fragment key={c.id}>
+                              {showGroupLabel && (
+                                <div
+                                  style={{
+                                    fontSize: 9,
+                                    lineHeight: "12px",
+                                    color: "rgb(var(--compact-pill-fg-muted))",
+                                    paddingLeft: 8,
+                                    paddingTop: idx === 0 ? 0 : 2,
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.06em",
                                   }}
-                                  className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
                                 >
+                                  {c.group === "dashboard" ? "Dashboard" : "Studio"}
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  c.run();
+                                  setQuery("");
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = "var(--compact-pill-hover)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = "transparent";
+                                }}
+                                className="w-full flex items-center text-left"
+                                style={LAUNCHER_SEARCH_ROW}
+                              >
+                                <div
+                                  className="flex items-center justify-center shrink-0"
+                                  style={{
+                                    width: 30,
+                                    height: 30,
+                                    borderRadius: 9,
+                                    background: "rgb(var(--compact-pill-fg) / 0.06)",
+                                    color: "rgb(var(--compact-pill-fg-muted))",
+                                  }}
+                                >
+                                  <Icon className="w-[15px] h-[15px]" strokeWidth={1.75} />
+                                </div>
+                                <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
                                   <div
-                                    className="flex items-center justify-center shrink-0"
+                                    className="truncate"
                                     style={{
-                                      width: 36,
-                                      height: 36,
-                                      borderRadius: 10,
-                                      background: `${c.tile}22`,
-                                      color: c.tile,
+                                      fontSize: 12,
+                                      lineHeight: "16px",
+                                      color: "rgb(var(--compact-pill-fg))",
                                     }}
                                   >
-                                    <Icon className="w-4 h-4" strokeWidth={1.75} />
+                                    <HighlightMatch text={c.title} query={query} />
                                   </div>
-                                  <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                    <div className="text-[13px] font-semibold text-theme-fg truncate">
-                                      <HighlightMatch text={c.title} query={query} />
-                                    </div>
-                                    <div className="text-[11px] text-theme-muted truncate">
-                                      {c.subtitle}
-                                    </div>
+                                  <div
+                                    className="truncate"
+                                    style={{
+                                      fontSize: 10,
+                                      lineHeight: "14px",
+                                      color: "rgb(var(--compact-pill-fg-muted))",
+                                    }}
+                                  >
+                                    {c.subtitle}
                                   </div>
-                                </button>
-                              </React.Fragment>
-                            );
-                          })}
-                        </div>
+                                </div>
+                              </button>
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
                     )}
 
                     {appResults.length > 0 && (
-                      <div className="launcher-apps-panel bg-theme-bg/30 rounded-2xl border border-theme/20 p-4 shadow-sm">
-                        <div className="flex items-center gap-2 mb-3">
-                          <AppWindow className="w-4 h-4 text-theme-muted" />
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
-                            Applications
-                          </span>
+                      <div className="flex flex-col" style={{ gap: 8 }}>
+                        <div style={LAUNCHER_SEARCH_SECTION_LABEL}>
+                          Applications
                           {fileLoading && (
-                            <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />
+                            <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />
                           )}
                         </div>
-                        <div className="space-y-1">
-                          {appResults.map((a: any, idx: number) => {
-                            const iconUrl =
-                              a?.iconDataUrl ||
-                              (a?.path
-                                ? fileIconDataUrls[String(a.path)]
-                                : undefined);
-                            const name = String(a.display_name || a.name || "");
-                            return (
-                              <button
-                                key={`app-${a.path || idx}`}
-                                onClick={() =>
-                                  handleLaunchApp(a.launchTarget || a.path)
-                                }
-                                className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
+                        {appResults.map((a: any, idx: number) => {
+                          const iconUrl =
+                            a?.iconDataUrl ||
+                            (a?.path ? fileIconDataUrls[String(a.path)] : undefined);
+                          const name = String(a.display_name || a.name || "");
+                          return (
+                            <button
+                              key={`app-${a.path || idx}`}
+                              onClick={() => handleLaunchApp(a.launchTarget || a.path)}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "var(--compact-pill-hover)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "transparent";
+                              }}
+                              className="w-full flex items-center text-left"
+                              style={LAUNCHER_SEARCH_ROW}
+                            >
+                              <div
+                                className="flex items-center justify-center shrink-0 overflow-hidden"
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 4,
+                                  background: iconUrl ? "rgba(64, 64, 64, 0.5)" : "#3B82F6",
+                                }}
                               >
+                                {iconUrl ? (
+                                  <img
+                                    src={iconUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    className="w-7 h-7 object-contain"
+                                  />
+                                ) : (
+                                  <AppWindow className="w-4 h-4 text-white" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
                                 <div
-                                  className="flex items-center justify-center shrink-0 overflow-hidden"
+                                  className="truncate"
                                   style={{
-                                    width: 36,
-                                    height: 36,
-                                    borderRadius: 4,
-                                    background: iconUrl
-                                      ? "rgba(64, 64, 64, 0.5)"
-                                      : "#6b7280",
+                                    fontSize: 12,
+                                    lineHeight: "16px",
+                                    color: "rgb(var(--compact-pill-fg))",
                                   }}
                                 >
-                                  {iconUrl ? (
-                                    <img
-                                      src={iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      className="w-7 h-7 object-contain"
-                                    />
-                                  ) : (
-                                    <AppWindow className="w-4 h-4 text-white" />
-                                  )}
+                                  <HighlightMatch text={name} query={query} />
                                 </div>
-                                <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                  <div className="text-[13px] font-semibold text-theme-fg truncate">
-                                    <HighlightMatch text={name} query={query} />
-                                  </div>
-                                  <div className="text-[11px] text-theme-muted truncate">
-                                    open {name}
-                                  </div>
+                                <div
+                                  className="truncate"
+                                  style={{
+                                    fontSize: 10,
+                                    lineHeight: "14px",
+                                    color: "rgb(var(--compact-pill-fg-muted))",
+                                  }}
+                                >
+                                  open {name}
                                 </div>
-                              </button>
-                            );
-                          })}
-                        </div>
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
 
                     {fileResults.length > 0 && (
-                      <div className="rounded-2xl p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <FolderSearch className="w-4 h-4 text-theme-muted" />
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">
-                            Files
-                          </span>
+                      <div className="flex flex-col" style={{ gap: 8 }}>
+                        <div style={LAUNCHER_SEARCH_SECTION_LABEL}>
+                          Files
                           {fileSemanticLoading && (
-                            <Loader2 className="w-3 h-3 text-theme-muted animate-spin" />
+                            <Loader2 className="inline-block ml-2 w-3 h-3 align-middle text-theme-muted animate-spin" />
                           )}
                         </div>
-                        <div className="space-y-1">
-                          {fileResults.map((f: any, idx: number) => {
-                            const kind = String(f.kind || "other").toLowerCase();
-                            const cfg = getFileKindConfig(kind);
-                            const iconUrl = f?.path
-                              ? fileIconDataUrls[String(f.path)]
-                              : undefined;
-                            const isThumbnail =
-                              String(f.preview_kind || "icon") === "thumbnail";
-                            const fileName =
-                              String(f.display_name || f.filename || f.name || "").trim() ||
-                              String(f.path || "")
-                                .split(/[/\\]/)
-                                .pop() ||
-                              "Untitled";
-                            const fullPath = String(f.path || f.target_path || "");
-                            const showThumbnail = iconUrl && isThumbnail;
-                            return (
-                              <button
-                                key={String(f.id || f.path || idx)}
-                                onClick={() => handleOpenIndexedFile(f.path)}
-                                className="w-full flex items-center gap-2 px-2 py-2 rounded-xl hover:bg-theme-hover transition-all text-left outline-none"
+                        {fileResults.map((f: any, idx: number) => {
+                          const kind = String(f.kind || "other").toLowerCase();
+                          const cfg = getFileKindConfig(kind);
+                          const iconUrl = f?.path
+                            ? fileIconDataUrls[String(f.path)]
+                            : undefined;
+                          const isThumbnail =
+                            String(f.preview_kind || "icon") === "thumbnail";
+                          const fileName =
+                            String(f.display_name || f.filename || f.name || "").trim() ||
+                            String(f.path || "")
+                              .split(/[/\\]/)
+                              .pop() ||
+                            "Untitled";
+                          const fullPath = String(f.path || f.target_path || "");
+                          const showThumbnail = iconUrl && isThumbnail;
+                          return (
+                            <button
+                              key={String(f.id || f.path || idx)}
+                              onClick={() => handleOpenIndexedFile(f.path)}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "var(--compact-pill-hover)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "transparent";
+                              }}
+                              className="w-full flex items-center text-left"
+                              style={LAUNCHER_SEARCH_ROW}
+                            >
+                              <div
+                                className="flex items-center justify-center shrink-0 overflow-hidden"
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 4,
+                                  background: showThumbnail
+                                    ? "rgba(64, 64, 64, 0.5)"
+                                    : cfg.tile,
+                                }}
                               >
+                                {showThumbnail ? (
+                                  <img
+                                    src={iconUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : iconUrl ? (
+                                  <img
+                                    src={iconUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    className="w-7 h-7 object-contain"
+                                  />
+                                ) : kind === "folder" ? (
+                                  <Folder className="w-5 h-5 text-white" />
+                                ) : (
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      lineHeight: "14px",
+                                      color: "rgb(var(--compact-pill-fg))",
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {cfg.label}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 6 }}>
                                 <div
-                                  className="flex items-center justify-center shrink-0 overflow-hidden"
+                                  className="truncate"
                                   style={{
-                                    width: 36,
-                                    height: 36,
-                                    borderRadius: 4,
-                                    background: showThumbnail
-                                      ? "rgba(64, 64, 64, 0.5)"
-                                      : cfg.tile,
+                                    fontSize: 12,
+                                    lineHeight: "16px",
+                                    color: "rgb(var(--compact-pill-fg))",
                                   }}
                                 >
-                                  {showThumbnail ? (
-                                    <img
-                                      src={iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      className="w-full h-full object-cover"
-                                    />
-                                  ) : iconUrl ? (
-                                    <img
-                                      src={iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      className="w-7 h-7 object-contain"
-                                    />
-                                  ) : kind === "folder" ? (
-                                    <Folder className="w-5 h-5 text-white" />
-                                  ) : (
-                                    <span className="text-[10px] font-semibold text-white">
-                                      {cfg.label}
-                                    </span>
-                                  )}
+                                  <HighlightMatch text={fileName} query={query} />
                                 </div>
-                                <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                  <div className="text-[13px] font-semibold text-theme-fg truncate">
-                                    <HighlightMatch text={fileName} query={query} />
-                                  </div>
-                                  <div className="text-[10px] text-theme-muted truncate">
-                                    {fullPath}
-                                  </div>
-                                </div>
-                                <span
-                                  className="shrink-0 text-theme-muted p-1"
-                                  title="Open file"
+                                <div
+                                  className="truncate"
+                                  style={{
+                                    fontSize: 10,
+                                    lineHeight: "14px",
+                                    color: "rgb(var(--compact-pill-fg-muted))",
+                                  }}
                                 >
-                                  <ExternalLink className="w-4 h-4" strokeWidth={1.75} />
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                                  {fullPath}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1361,12 +1526,23 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               isCompact ? "px-1.5 pb-1" : "w-full",
             )}
           >
+            {showLauncherStatus && (
+            statusDiscoveryVisible && statusDiscoveryTip && !nextUp && !voiceActive ? (
+              <div className="input-status-float text-left justify-start">
+                <DiscoveryStatusTicker
+                  tip={statusDiscoveryTip}
+                  onTipAction={onStatusDiscoveryAction}
+                  className="min-w-0"
+                />
+              </div>
+            ) : (
             <button
               type="button"
-              onClick={() =>
-                nextUp &&
-                window.desktopAPI?.openDashboard?.({ tab: "planner" })
-              }
+              onClick={() => {
+                if (nextUp) {
+                  window.desktopAPI?.openDashboard?.({ tab: "planner" });
+                }
+              }}
               className={clsx(
                 "input-status-float text-left justify-start",
                 nextUp &&
@@ -1374,55 +1550,38 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
               )}
               title={nextUp ? "View in Planner" : undefined}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                {nextUp ? (
-                  <div
-                    className={clsx(
-                      "rounded-full flex items-center justify-center shrink-0",
-                      isCompact ? "w-3.5 h-3.5" : "w-5 h-5",
-                      getNextUpBgColor(nextUp),
-                    )}
-                  >
-                    <NextUpIcon type={nextUp.icon} />
-                  </div>
-                ) : connectionStatus === "connecting" ? (
-                  <div className="w-3 h-3 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
-                ) : connectionStatus === "error" ? (
-                  <span
-                    className={clsx(
-                      "rounded-full shrink-0 bg-red-500",
-                      isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
-                    )}
-                  />
-                ) : voiceActive ? (
-                  <span
-                    className={clsx(
-                      "rounded-full shrink-0 bg-[#ff383c] animate-pulse",
-                      isCompact ? "w-1.5 h-1.5" : "w-2 h-2",
-                    )}
-                  />
-                ) : null}
-                <span
-                  className={clsx(
-                    "truncate",
-                    isCompact
-                      ? "text-[10px] font-medium tracking-wide"
-                      : "text-[11px] font-bold uppercase tracking-widest",
-                    nextUp
-                      ? getNextUpTextColor(nextUp)
-                      : connectionStatus === "connected"
-                        ? "text-theme-muted"
-                        : connectionStatus === "connecting"
-                          ? "text-amber-700 dark:text-amber-500"
-                          : connectionStatus === "error"
-                            ? "text-red-600"
-                            : "text-theme-muted",
-                  )}
-                >
-                  {displayStatus}
-                </span>
-              </div>
+              <InputStatusLine
+                text={displayStatus}
+                variant={
+                  nextUp ? 'planner'
+                    : voiceActive ? 'activity'
+                      : 'system'
+                }
+                activityState="working"
+                connectionStatus={connectionStatus}
+                leading={
+                  nextUp ? (
+                    <div
+                      className={clsx(
+                        'rounded-full flex items-center justify-center shrink-0',
+                        isCompact ? 'w-3.5 h-3.5' : 'w-5 h-5',
+                        getNextUpBgColor(nextUp),
+                      )}
+                    >
+                      <NextUpIcon type={nextUp.icon} />
+                    </div>
+                  ) : voiceActive ? (
+                    <span
+                      className={clsx(
+                        'rounded-full shrink-0 bg-[#ff383c] animate-pulse',
+                        isCompact ? 'w-1.5 h-1.5' : 'w-2 h-2',
+                      )}
+                    />
+                  ) : undefined
+                }
+              />
             </button>
+            ))}
 
             <div
               className={clsx(
@@ -1660,7 +1819,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                 <IntegrationSuggestionChip
                   query={query}
                   accessToken={accessToken}
-                  enabled={!showFileNav}
+                  enabled={!showFileNav && !slash.active}
                   compact={isCompact}
                 />
                 <div
@@ -1685,60 +1844,7 @@ export const LauncherView: React.FC<LauncherViewProps> = ({
                         onRemove={onRemoveAttachment}
                       />
                     )}
-                    <TextareaAutosize
-                      ref={textareaRef}
-                      className={clsx(
-                        "w-full bg-transparent outline-none text-theme-fg placeholder:text-theme-muted/80 min-w-0 resize-none overflow-y-auto scrollbar-minimal",
-                        isCompact
-                          ? "text-[14px] font-normal leading-5 py-1 px-1"
-                          : "text-[14px] font-normal leading-5 py-1 px-2",
-                      )}
-                      placeholder="Just ask Stuard"
-                      value={query}
-                      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                        setQuery(e.target.value)
-                      }
-                      onPaste={onPaste}
-                      onKeyDown={(
-                        e: React.KeyboardEvent<HTMLTextAreaElement>,
-                      ) => {
-                        if ((e.nativeEvent as any)?.isComposing) return;
-                        if (showFileNav && fileNavRef.current) {
-                          if (e.key === "ArrowDown") {
-                            e.preventDefault();
-                            fileNavRef.current.moveSelection(1);
-                            return;
-                          }
-                          if (e.key === "ArrowUp") {
-                            e.preventDefault();
-                            fileNavRef.current.moveSelection(-1);
-                            return;
-                          }
-                          if (e.key === "Enter" || e.key === "Tab") {
-                            e.preventDefault();
-                            fileNavRef.current.selectCurrent();
-                            return;
-                          }
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            handleCloseFileNav();
-                            return;
-                          }
-                          if (e.key === " ") {
-                            const added = fileNavRef.current.addCurrent();
-                            if (added) e.preventDefault();
-                            return;
-                          }
-                        }
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          onSend();
-                        }
-                      }}
-                      minRows={1}
-                      maxRows={isCompact ? 2 : 3}
-                      autoFocus
-                    />
+                    {queryInput}
                   </div>
 
                   <div className="flex items-center gap-2 w-full min-w-0">

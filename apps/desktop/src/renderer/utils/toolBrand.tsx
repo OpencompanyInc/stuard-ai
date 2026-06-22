@@ -23,12 +23,14 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   MapPin,
+  MessageSquare,
   Monitor,
   MousePointer,
   Network,
   Search,
   Sparkles,
   Terminal,
+  Video,
   Volume2,
   Webhook,
   Workflow,
@@ -104,6 +106,10 @@ const BRANDS: Record<string, ToolBrand> = {
   ollama: { key: 'ollama', label: getIntegrationBranding('ollama')?.shortLabel ?? 'Local AI', logo: ollamaLogo },
   supabase: { key: 'supabase', label: 'Supabase', logo: supabaseLogo },
   elevenlabs: { key: 'elevenlabs', label: 'Voice', logo: elevenLabsLogo },
+  // No bundled vector — use the live favicon (slack.com / meet.google.com),
+  // exactly like Notion/Maps. MessageSquare/Video are the offline fallbacks.
+  slack: { key: 'slack', label: 'Slack', useRemote: true, icon: MessageSquare, color: '#E01E5A' },
+  meet: { key: 'meet', label: 'Meet', useRemote: true, icon: Video, color: '#00897B' },
 
   // ── System / capability categories (lucide icons) ──────────────────────────
   browser: { key: 'browser', label: 'Browser', icon: Globe, color: '#60A5FA' },

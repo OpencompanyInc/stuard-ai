@@ -3,7 +3,6 @@ import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight } from 'lucide-react';
 import { ChainOfThoughtStep } from '../../../../../ai-elements/ChainOfThought';
-import { Shimmer } from '../../../../../ai-elements/Shimmer';
 import { getGroupLabel } from '../helpers/toolGroups';
 import type { AssistantTraceStepData, TraceStatus } from '../types';
 import { ToolTraceContent } from './ToolTraceContent';
@@ -40,7 +39,7 @@ export const CollapsibleToolGroup: React.FC<CollapsibleToolGroupProps> = ({ tool
               style={{ color: 'color-mix(in srgb, var(--foreground-muted) 50%, transparent)' }}
             />
             {groupStatus === 'active' ? (
-              <Shimmer as="span" duration={2} spread={3}>{label}</Shimmer>
+              <span className="text-theme-muted/80">{label}</span>
             ) : (
               <span>{label}</span>
             )}
@@ -62,7 +61,7 @@ export const CollapsibleToolGroup: React.FC<CollapsibleToolGroupProps> = ({ tool
                 status={step.status}
                 isLast={idx === totalSteps - 1}
                 label={step.status === 'active' ? (
-                  <Shimmer as="span" duration={2} spread={3}>{step.label}</Shimmer>
+                  <span className="text-theme-muted/80">{step.label}</span>
                 ) : step.label}
               >
                 {step.kind === 'tool' && step.tool ? (

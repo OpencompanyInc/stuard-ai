@@ -10,13 +10,13 @@ import {
   CreditCard,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Globe,
   Bot,
   MessageSquare,
   HardDrive,
   Cpu,
   Shield,
-  TrendingUp,
   Phone,
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -25,18 +25,19 @@ import { getApiEndpoint } from "../utils/apiEndpoint";
 import { openExternalUrl } from "../utils/billing";
 import {
   aggregateComputeBillingEvents,
+  buildUsageActivityBreakdown,
   categorizeModelForUsage,
   getUsageSourceCategory,
   getUsageSourceLabel,
   isNonBillableUsageEvent,
   mergeUsageBreakdowns,
-  rollupUsageBreakdownForDisplay,
   normalizeComputeBillingLogEntry,
   normalizeUsageLogEntry,
-  creditUsageBarPercent,
-  creditUsagePercent,
   isCreditExhausted,
   type ComputeBillingEventRow,
+  type UsageActivityKey,
+  type UsageActivityProvider,
+  type UsageActivityRow,
   type UsageLogEntry,
 } from "./BillingSettings.utils";
 import { displayConversationTitle } from "../utils/conversationTitle";
@@ -191,6 +192,35 @@ function getCategoryConfig(category: string): { label: string; color: string; he
   return { label: category, color: "bg-gray-400", hex: "#9ca3af", icon: Zap };
 }
 
+/**
+ * Top-level "what did you spend credits on" activities. These map to things a
+ * user actually recognizes (chatting, delegating to agents, calls, storage)
+ * rather than which model vendor happened to serve a request.
+ */
+const ACTIVITY_CONFIG: Record<
+  UsageActivityKey,
+  { label: string; description: string; hex: string; icon: React.ElementType }
+> = {
+  ai: { label: "Chat & AI models", description: "Assistant replies, tool calls, and reasoning", hex: "#d9573f", icon: Bot },
+  subagent: { label: "Delegated agents", description: "Background agents working on your behalf", hex: "#a855f7", icon: Globe },
+  compute: { label: "Cloud computer", description: "Your always-on VM runtime", hex: "#f59e0b", icon: Cpu },
+  storage: { label: "Storage", description: "Files and memory kept in the cloud", hex: "#14b8a6", icon: HardDrive },
+  messaging: { label: "Messaging", description: "SMS, WhatsApp, and Discord delivery", hex: "#3b82f6", icon: MessageSquare },
+  voice: { label: "Voice calls", description: "Inbound and outbound phone calls", hex: "#ec4899", icon: Phone },
+  other: { label: "Other", description: "Uncategorized usage", hex: "#9ca3af", icon: Zap },
+};
+
+const formatCreditsValue = (credits: number): string =>
+  credits >= 100 ? Math.round(credits).toLocaleString() : credits.toFixed(1);
+
+const formatSharePercent = (credits: number, total: number): string => {
+  if (total <= 0 || credits <= 0) return "0%";
+  const pct = (credits / total) * 100;
+  if (pct < 0.1) return "<0.1%";
+  if (pct < 10) return `${pct.toFixed(1)}%`;
+  return `${Math.round(pct)}%`;
+};
+
 const BillingSectionHeader = ({ title, description }: { title: string; description?: string }) => (
   <div className="mb-5 border-b border-theme-sidebar pb-4">
     <h3 className="text-[18px] font-semibold font-stuard text-theme-fg tracking-tight">{title}</h3>
@@ -246,42 +276,111 @@ const BillingField = ({
 const billingInputClass =
   "w-full px-3 py-2.5 rounded-xl border border-theme bg-theme-card text-theme-fg text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all shadow-sm placeholder:text-theme-muted disabled:opacity-50";
 
-function UsageBarRow({
-  label,
-  credits,
-  total,
-  count,
-  hex,
-  icon: Icon,
-}: {
-  label: string;
-  credits: number;
-  total: number;
-  count: number;
-  hex: string;
-  icon: React.ElementType;
-}) {
-  const pct = total > 0 ? Math.min(100, (credits / total) * 100) : 0;
+/** Single stacked bar that shows the whole period's spend composition at a glance. */
+function UsageCompositionBar({ rows, total }: { rows: UsageActivityRow[]; total: number }) {
+  if (total <= 0) return null;
+  const segments = rows.filter((row) => row.credits > 0);
   return (
-    <div className="rounded-xl border border-theme bg-theme-hover/40 px-4 py-3">
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-theme bg-theme-card shrink-0">
-            <Icon className="w-3.5 h-3.5 text-theme-muted" />
-          </span>
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-theme-fg tracking-tight truncate">{label}</div>
-            <div className="text-[11px] text-theme-muted">{count.toLocaleString()} {count === 1 ? "event" : "events"}</div>
+    <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-theme-hover ring-1 ring-inset ring-theme/60">
+      {segments.map((row, idx) => {
+        const cfg = ACTIVITY_CONFIG[row.key];
+        const pct = (row.credits / total) * 100;
+        return (
+          <div
+            key={row.key}
+            className="h-full"
+            style={{
+              width: `${pct}%`,
+              backgroundColor: cfg.hex,
+              boxShadow: idx > 0 ? "inset 1.5px 0 0 var(--card-bg, rgba(0,0,0,0.25))" : undefined,
+            }}
+            title={`${cfg.label} · ${formatCreditsValue(row.credits)} credits`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function ActivityProviderRow({ provider, total }: { provider: UsageActivityProvider; total: number }) {
+  const config = getCategoryConfig(provider.category);
+  return (
+    <div className="flex items-center justify-between gap-3 pl-[2.75rem] pr-4 py-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: config.hex }} />
+        <span className="text-[12px] text-theme-muted font-medium truncate">{config.label}</span>
+      </div>
+      <div className="flex items-center gap-3 shrink-0 tabular-nums">
+        <span className="text-[12px] text-theme-muted font-medium">{formatSharePercent(provider.credits, total)}</span>
+        <span className="text-[12px] text-theme-fg font-semibold w-12 text-right">{formatCreditsValue(provider.credits)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** One calm, scannable list row per activity, with an optional AI-model drill-down. */
+function UsageActivityRowItem({
+  row,
+  total,
+  expanded,
+  onToggle,
+}: {
+  row: UsageActivityRow;
+  total: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const cfg = ACTIVITY_CONFIG[row.key];
+  const Icon = cfg.icon;
+  const providers = row.providers?.filter((p) => p.credits > 0) ?? [];
+  const expandable = row.key === "ai" && providers.length > 1;
+
+  const headerInner = (
+    <>
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-theme bg-theme-card shrink-0">
+          <Icon className="w-4 h-4" style={{ color: cfg.hex }} />
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[13px] font-semibold text-theme-fg tracking-tight truncate">{cfg.label}</span>
+            {expandable && (
+              <ChevronDown
+                className={clsx("w-3.5 h-3.5 text-theme-muted transition-transform", expanded ? "rotate-180" : "")}
+              />
+            )}
           </div>
-        </div>
-        <div className="text-right shrink-0">
-          <div className="text-[13px] font-semibold text-theme-fg tabular-nums">{credits.toFixed(1)}</div>
-          <div className="text-[11px] text-theme-muted tabular-nums">{pct.toFixed(1)}%</div>
+          <div className="text-[11px] text-theme-muted truncate">{cfg.description}</div>
         </div>
       </div>
-      <div className="h-1.5 rounded-full bg-theme-hover overflow-hidden">
-        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: hex }} />
+      <div className="flex items-center gap-3 shrink-0 tabular-nums">
+        <span className="text-[12px] text-theme-muted font-medium w-12 text-right">{formatSharePercent(row.credits, total)}</span>
+        <span className="text-[14px] font-semibold text-theme-fg w-14 text-right">{formatCreditsValue(row.credits)}</span>
       </div>
+    </>
+  );
+
+  return (
+    <div>
+      {expandable ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--sidebar-item-hover)_55%,transparent)]"
+        >
+          {headerInner}
+        </button>
+      ) : (
+        <div className="flex items-center justify-between gap-3 px-4 py-3">{headerInner}</div>
+      )}
+      {expandable && expanded && (
+        <div className="pb-1.5 bg-[color-mix(in_srgb,var(--sidebar-item-hover)_45%,transparent)]">
+          {providers.map((provider) => (
+            <ActivityProviderRow key={provider.category} provider={provider} total={total} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -465,6 +564,7 @@ export const BillingSettings: React.FC = () => {
   const [usageLoading, setUsageLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsLoaded, setLogsLoaded] = useState(false);
+  const [expandedActivity, setExpandedActivity] = useState<UsageActivityKey | null>(null);
 
   const LOGS_PER_PAGE = 20;
   const mountedRef = useRef(true);
@@ -793,15 +893,11 @@ export const BillingSettings: React.FC = () => {
     };
   }, [userId, logsLoaded, logsPage, loadCredits, loadUsageBreakdown, loadLogs]);
 
-  const displayBreakdown = useMemo(
-    () => rollupUsageBreakdownForDisplay(usageBreakdown, { maxItems: 8 }),
+  const activityBreakdown = useMemo(
+    () => buildUsageActivityBreakdown(usageBreakdown),
     [usageBreakdown],
   );
-  const displayTotal = displayBreakdown.reduce((sum, item) => sum + item.credits, 0);
-  const inferenceModelCount = useMemo(
-    () => usageBreakdown.filter((item) => item.category.startsWith("inference:")).length,
-    [usageBreakdown],
-  );
+  const displayTotal = activityBreakdown.reduce((sum, item) => sum + item.credits, 0);
 
   const currentPlan = (() => {
     const raw = String(creditSummary?.plan || "free").trim().toLowerCase();
@@ -878,9 +974,36 @@ export const BillingSettings: React.FC = () => {
     return () => clearInterval(timer);
   }, [userId, billingPrefs?.autoRefillEnabled, hasBillingAccount, pollAutoRefillPending]);
 
-  const usagePercent = creditUsagePercent(creditSummary);
-  const usageBarPercent = creditUsageBarPercent(creditSummary);
+  const remainingCredits = Math.max(0, Number(creditSummary?.remaining || 0));
+  const usedCredits = Math.max(0, Number(creditSummary?.used || 0));
+  // The profile's `limit` can be a stale/nominal monthly cap that doesn't match
+  // the active grants (used + remaining) — surfacing it alongside them made the
+  // bar and caption disagree. Derive the period pool from what's actually
+  // accounted for so every figure in this card reconciles.
+  const accountedTotal =
+    usedCredits + remainingCredits > 0
+      ? usedCredits + remainingCredits
+      : Math.max(0, Number(creditSummary?.limit || 0));
+  const usagePercent =
+    accountedTotal > 0 ? Math.min(100, Math.round((usedCredits / accountedTotal) * 100)) : 0;
+  const usageBarPercent =
+    accountedTotal <= 0
+      ? 0
+      : remainingCredits > 0
+        ? Math.min(99.5, (usedCredits / accountedTotal) * 100)
+        : 100;
   const creditExhausted = isCreditExhausted(creditSummary);
+
+  const periodResetLabel = (() => {
+    const end = creditSummary?.currentPeriodEnd ? Date.parse(creditSummary.currentPeriodEnd) : NaN;
+    if (!Number.isFinite(end)) return null;
+    const days = Math.ceil((end - Date.now()) / 86_400_000);
+    if (days < 0) return null;
+    if (days === 0) return "Resets today";
+    if (days === 1) return "Resets tomorrow";
+    if (days <= 31) return `Resets in ${days} days`;
+    return `Resets ${new Date(end).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  })();
 
   const totalLogsPages = Math.ceil(logsTotal / LOGS_PER_PAGE);
 
@@ -1018,110 +1141,108 @@ export const BillingSettings: React.FC = () => {
         )}
 
         {creditSummary && (
-          <div className="mb-6">
-            <div className="rounded-xl border border-theme bg-theme-hover/40 p-4 md:p-5">
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-theme bg-theme-card">
-                    <CreditCard className="w-4 h-4 text-primary" />
+          <div className="space-y-3">
+            {/* Hero balance — one source of truth for the period */}
+            <div className="rounded-2xl border border-theme bg-[color-mix(in_srgb,var(--sidebar-item-hover)_35%,transparent)] p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-theme bg-theme-card shrink-0">
+                    <CreditCard className="w-[18px] h-[18px] text-primary" />
                   </span>
-                  <div>
-                    <div className="text-[13px] font-semibold text-theme-fg">{currentPlan} plan</div>
-                    <div className="text-[11px] text-theme-muted">Current billing period</div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[14px] font-semibold text-theme-fg tracking-tight">{currentPlan} plan</span>
+                      {periodResetLabel && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-theme bg-theme-card text-theme-muted">
+                          {periodResetLabel}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-theme-muted mt-0.5">Current billing period</div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-semibold text-theme-fg tabular-nums">
-                    {creditSummary.unlimited ? "Unlimited" : Number(creditSummary.remaining || 0).toLocaleString()}
+                <div className="text-right shrink-0">
+                  <div className="text-[28px] leading-none font-semibold text-theme-fg tabular-nums">
+                    {creditSummary.unlimited ? "Unlimited" : remainingCredits.toLocaleString()}
                   </div>
                   {!creditSummary.unlimited && (
-                    <div className="text-[11px] text-theme-muted">credits remaining</div>
+                    <div className="text-[11px] text-theme-muted mt-1.5">credits remaining</div>
                   )}
                 </div>
               </div>
 
-              {!creditSummary.unlimited && creditSummary.limit && creditSummary.limit > 0 && (
-                <div className="mb-4">
-                  <div className="w-full bg-theme-card rounded-full h-2 overflow-hidden border border-theme">
+              {!creditSummary.unlimited && accountedTotal > 0 && (
+                <div className="mt-5">
+                  <div className="w-full bg-theme-card rounded-full h-2.5 overflow-hidden border border-theme">
                     <div
                       className={clsx(
-                        "h-2 rounded-full transition-all",
+                        "h-full rounded-full transition-all",
                         usagePercent >= 90 ? "bg-red-500" : usagePercent >= 70 ? "bg-amber-500" : "bg-primary",
                       )}
                       style={{ width: `${usageBarPercent}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-[11px] text-theme-muted mt-1.5">
-                    <span>{Number(creditSummary.used || 0).toLocaleString()} used</span>
-                    <span>{Number(creditSummary.limit).toLocaleString()} total</span>
+                  <div className="flex items-center justify-between mt-2 text-[11px] text-theme-muted">
+                    <span>
+                      <span className="font-semibold text-theme-fg tabular-nums">{usedCredits.toLocaleString()}</span> used
+                    </span>
+                    <span>
+                      <span className="font-semibold text-theme-fg tabular-nums">{remainingCredits.toLocaleString()}</span> remaining
+                    </span>
                   </div>
                 </div>
               )}
+            </div>
 
+            {/* Where the remaining balance comes from */}
+            {!creditSummary.unlimited && (
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3">
-                  <p className="text-[11px] font-semibold text-theme-muted">Subscription</p>
-                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
+                <div className="rounded-xl border border-theme bg-theme-card px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Shield className="w-4 h-4 text-primary shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-theme-fg leading-tight">Subscription</p>
+                      <p className="text-[10px] text-theme-muted">credits left</p>
+                    </div>
+                  </div>
+                  <p className="text-[17px] font-semibold text-theme-fg tabular-nums shrink-0">
                     {Number(creditSummary.includedRemaining || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3">
-                  <p className="text-[11px] font-semibold text-theme-muted">Add-ons</p>
-                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
+                <div className="rounded-xl border border-theme bg-theme-card px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Coins className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-theme-fg leading-tight">Add-ons</p>
+                      <p className="text-[10px] text-theme-muted">credits left</p>
+                    </div>
+                  </div>
+                  <p className="text-[17px] font-semibold text-theme-fg tabular-nums shrink-0">
                     {Number(creditSummary.addonRemaining || 0).toLocaleString()}
                   </p>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {creditSummary && !creditSummary.unlimited && (
-          <div className="mb-2">
-            <div className="rounded-xl border border-theme bg-theme-hover/40 p-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
-                  <Shield className="w-4 h-4 text-primary mx-auto mb-1.5" />
-                  <p className="text-[11px] font-semibold text-theme-muted">Period limit</p>
-                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
-                    {Number(creditSummary.limit || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
-                  <TrendingUp className="w-4 h-4 text-amber-500 mx-auto mb-1.5" />
-                  <p className="text-[11px] font-semibold text-theme-muted">Used</p>
-                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
-                    {Number(creditSummary.used || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-theme bg-theme-card px-3 py-3 text-center">
-                  <Coins className="w-4 h-4 text-emerald-500 mx-auto mb-1.5" />
-                  <p className="text-[11px] font-semibold text-theme-muted">Remaining</p>
-                  <p className="mt-1 text-[15px] font-semibold text-theme-fg tabular-nums">
-                    {Number(creditSummary.remaining || 0).toLocaleString()}
-                  </p>
-                </div>
+            {/* Low-balance nudge */}
+            {!creditSummary.unlimited && usagePercent >= 90 && (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                <span className="text-[12px] text-red-500 font-medium leading-snug min-w-0">
+                  {creditExhausted
+                    ? "You're out of credits. Add a top-up below or upgrade your plan to keep going."
+                    : `Almost out — ${remainingCredits.toLocaleString()} credits left this period. Top up below to avoid interruptions.`}
+                </span>
               </div>
-
-              {usagePercent >= 90 && (
-                <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-[12px] text-red-500 font-medium leading-snug min-w-0">
-                    {creditExhausted
-                      ? "Credit limit reached. Purchase add-ons or upgrade your plan."
-                      : `You've used over 90% of your credits this period (${Number(creditSummary?.remaining || 0).toLocaleString()} remaining).`}
-                  </span>
-                </div>
-              )}
-              {usagePercent >= 70 && usagePercent < 90 && (
-                <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-[12px] text-amber-600 font-medium leading-snug min-w-0">
-                    You've used {usagePercent}% of your credits this period.
-                  </span>
-                </div>
-              )}
-            </div>
+            )}
+            {!creditSummary.unlimited && usagePercent >= 70 && usagePercent < 90 && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <span className="text-[12px] text-amber-600 font-medium leading-snug min-w-0">
+                  You've used {usagePercent}% of your credits this period.
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1130,42 +1251,42 @@ export const BillingSettings: React.FC = () => {
       {(usageLoading || usageBreakdown.length > 0) && (
         <div className="dashboard-card p-6">
           <BillingSectionHeader
-            title="Usage breakdown"
-            description={
-              inferenceModelCount > 4
-                ? `Grouped ${inferenceModelCount} model entries by provider for a simpler view.`
-                : "Where your credits went this billing period."
-            }
+            title="Where your credits went"
+            description="Grouped by what you used this billing period — expand Chat & AI models to see the split by model."
           />
 
           {usageLoading ? (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
             </div>
-          ) : usageBreakdown.length === 0 ? (
+          ) : activityBreakdown.length === 0 || displayTotal <= 0 ? (
             <div className="text-center py-8 rounded-xl border border-theme bg-theme-hover/30">
               <Zap className="w-5 h-5 text-theme-muted mx-auto mb-2" />
               <p className="text-[13px] text-theme-muted font-medium">No usage yet this period.</p>
             </div>
           ) : (
-            <div className="space-y-2.5">
-              {displayBreakdown.map((item) => {
-                const config = getCategoryConfig(item.category);
-                return (
-                  <UsageBarRow
-                    key={item.category}
-                    label={config.label}
-                    credits={item.credits}
+            <div className="space-y-4">
+              <UsageCompositionBar rows={activityBreakdown} total={displayTotal} />
+
+              <div className="rounded-xl border border-theme bg-[color-mix(in_srgb,var(--sidebar-item-hover)_30%,transparent)] divide-y divide-theme-sidebar overflow-hidden">
+                {activityBreakdown.map((row) => (
+                  <UsageActivityRowItem
+                    key={row.key}
+                    row={row}
                     total={displayTotal}
-                    count={item.count}
-                    hex={config.hex}
-                    icon={config.icon}
+                    expanded={expandedActivity === row.key}
+                    onToggle={() =>
+                      setExpandedActivity((prev) => (prev === row.key ? null : row.key))
+                    }
                   />
-                );
-              })}
-              <div className="flex items-center justify-between rounded-xl border border-theme bg-theme-card px-4 py-3">
+                ))}
+              </div>
+
+              <div className="flex items-baseline justify-between px-1">
                 <span className="text-[12px] font-semibold text-theme-muted">Total this period</span>
-                <span className="text-[14px] font-semibold text-theme-fg tabular-nums">{displayTotal.toFixed(1)} credits</span>
+                <span className="text-[15px] font-semibold text-theme-fg tabular-nums">
+                  {displayTotal.toFixed(1)} <span className="text-[12px] font-medium text-theme-muted">credits</span>
+                </span>
               </div>
             </div>
           )}

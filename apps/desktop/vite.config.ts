@@ -46,6 +46,19 @@ workflows: resolve(__dirname, "src/renderer/workflows.html"),
       },
     },
   },
+  // Workspace packages are linked source — pre-bundling caches stale exports
+  // (e.g. joinReasoningBlocks added to streamMerge but missing from .vite/deps).
+  optimizeDeps: {
+    exclude: [
+      "@stuardai/chat-ui",
+      "@stuardai/vm-chat",
+      "@stuardai/bots-ui",
+      "@stuardai/bots-core",
+      "@stuardai/cloud-client",
+      "@stuardai/cloud-runtime-ui",
+      "@stuardai/workflow-core",
+    ],
+  },
   resolve: {
     // Only for the npm-based CI desktop build (release matrix), set via
     // STUARD_DESKTOP_NPM_BUILD. There the @stuardai/* workspace packages are

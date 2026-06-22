@@ -26,7 +26,7 @@ export const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) =>
   const openFile = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (fileViewer) {
-      fileViewer.openFile({ path: filePath, source: 'vm', name: fileName });
+      fileViewer.openFile({ path: filePath, source: fileViewer.defaultSource, name: fileName });
       return;
     }
     // The preload exposes the OS open as `mediaOpenPath` (media:openPath →

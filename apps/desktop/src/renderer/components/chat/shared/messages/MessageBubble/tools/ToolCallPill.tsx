@@ -116,29 +116,26 @@ export const ToolCallPill: React.FC<{ tool: ToolCall }> = ({ tool: rawTool }) =>
   return (
     <div className="flex flex-col gap-1.5 my-1 group/tool">
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className={clsx(
-          "flex items-center gap-2.5 text-[12px] font-semibold tracking-tight w-fit py-0.5 px-0.5 rounded-md",
-          status === 'running' && "tool-glow-bar"
-        )}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="flex items-center gap-2.5 text-[12px] font-semibold tracking-tight w-fit py-0.5 px-0.5 rounded-md"
       >
         {/* Status indicator — small colored dot instead of icons */}
         <div className="flex items-center justify-center w-2 h-2">
           <span className={clsx(
-            "block rounded-full transition-all duration-300",
-            isCompleted ? "w-2 h-2 bg-emerald-500 tool-complete-fade" :
-            isError ? "w-2 h-2 bg-red-500 tool-complete-fade" :
-            "w-1.5 h-1.5 bg-primary animate-pulse"
+            "block rounded-full transition-colors duration-300",
+            isCompleted ? "w-2 h-2 bg-emerald-500" :
+            isError ? "w-2 h-2 bg-red-500" :
+            "w-1.5 h-1.5 bg-primary/80"
           )} />
         </div>
 
         <div className="flex items-center gap-1.5">
           <span className={clsx(
-            "transition-all duration-300",
-            status === 'running' ? "tool-glow-sweep font-semibold" :
+            "transition-colors duration-300",
             isError ? "text-red-500" :
-            "text-theme-fg tool-complete-fade"
+            status === 'running' ? "text-theme-muted" :
+            "text-theme-fg"
           )}>
             {displayText}
           </span>

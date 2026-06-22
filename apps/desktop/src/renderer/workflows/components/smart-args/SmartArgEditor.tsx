@@ -609,7 +609,7 @@ export function SmartArgEditor({ toolName, argKey, value, onChange, upstreamNode
                   console.error('Failed to pick path:', e);
                 }
               }}
-              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-slate-600 hover:text-slate-800 transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
+              className="px-3 py-2 wf-bg-overlay hover:wf-hover-bg border wf-border-subtle rounded-xl wf-fg-muted hover:wf-fg transition-all flex items-center gap-1.5 text-sm font-medium shrink-0"
               title="Browse..."
             >
               Browse
@@ -795,7 +795,7 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* React Component Editor - Primary mode */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated" open>
           <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 bg-gradient-to-r from-blue-500/10 to-sky-500/10 hover:from-blue-500/15 hover:to-sky-500/15 transition-colors">
             <Code2 className="w-4 h-4 text-blue-400" />
             <span className="text-blue-400">Component (React)</span>
@@ -970,7 +970,7 @@ export function ToolArgsEditor({
         </div>
 
         {/* Window Configuration - Collapsible */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated">
           <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <Settings className="w-4 h-4" />
             Window Settings
@@ -991,7 +991,7 @@ export function ToolArgsEditor({
         </details>
 
         {/* Pages System - Collapsible */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open={hasPages}>
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated" open={hasPages}>
           <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <LayoutGrid className="w-4 h-4" />
             Pages (Multi-page SPA)
@@ -1158,7 +1158,7 @@ export function ToolArgsEditor({
 
         {/* Pages Navigation - if pages exist */}
         {hasPages && (
-          <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden" open>
+          <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated" open>
             <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
               <LayoutGrid className="w-4 h-4" />
               Pages
@@ -1188,7 +1188,7 @@ export function ToolArgsEditor({
         )}
 
         {/* Raw Code Editing */}
-        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden">
+        <details className="text-sm border wf-border-subtle rounded-xl overflow-hidden wf-bg-elevated">
           <summary className="cursor-pointer wf-fg-muted wf-hover-fg font-medium p-3 flex items-center gap-2 wf-bg-overlay wf-hover-bg transition-colors">
             <Code2 className="w-4 h-4" />
             Edit HTML/CSS/JS
@@ -1296,15 +1296,15 @@ export function ToolArgsEditor({
     return (
       <div className="space-y-5">
         {/* Input Source */}
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
-          <div className="flex items-center gap-1 p-1.5 bg-slate-50">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden">
+          <div className="flex items-center gap-1 p-1.5 wf-bg-overlay">
             <button
               type="button"
               onClick={() => setInputMode('file')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 inputMode === 'file'
-                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
-                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                  ? 'wf-bg-elevated wf-fg shadow-sm border wf-border-subtle'
+                  : 'wf-fg-muted hover:wf-fg wf-hover-bg'
               }`}
             >
               📁 Image File
@@ -1314,14 +1314,14 @@ export function ToolArgsEditor({
               onClick={() => setInputMode('base64')}
               className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 inputMode === 'base64'
-                  ? 'bg-white text-lime-700 shadow-sm border border-lime-200'
-                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                  ? 'wf-bg-elevated wf-fg shadow-sm border wf-border-subtle'
+                  : 'wf-fg-muted hover:wf-fg wf-hover-bg'
               }`}
             >
               🔗 Base64 / Data URL
             </button>
           </div>
-          <div className="p-3 bg-white">
+          <div className="p-3 wf-bg-elevated">
             {inputMode === 'file' ? (
               <SmartArgEditor
                 toolName={toolName}
@@ -1388,17 +1388,17 @@ export function ToolArgsEditor({
           const advKeys = Object.keys(schema.args).filter(k => schema.args[k]?.advanced && !['outputPath'].includes(k));
           if (advKeys.length === 0) return null;
           return (
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="border wf-border-subtle rounded-xl overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowAdvancedArgs(v => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
+                className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-hover-bg transition-colors text-xs font-semibold wf-fg-muted"
               >
                 <span>Advanced Settings</span>
-                <span className="text-[10px] text-slate-400">{advKeys.length} option(s)</span>
+                <span className="text-[10px] wf-fg-faint">{advKeys.length} option(s)</span>
               </button>
               {showAdvancedArgs && (
-                <div className="p-4 space-y-4 bg-white border-t border-slate-200">
+                <div className="p-4 space-y-4 wf-bg-elevated border-t wf-border-subtle">
                   {advKeys.map(key => (
                     <SmartArgEditor
                       key={key}
@@ -1459,9 +1459,9 @@ export function ToolArgsEditor({
   return (
     <div className="space-y-6">
       {allBaseKeys.length === 0 && !showAddArg && advancedSchemaKeys.length === 0 ? (
-        <div className="py-8 px-4 text-center rounded-xl bg-slate-50 border border-dashed border-slate-200">
-          <p className="text-sm text-slate-500 font-medium">No configuration needed</p>
-          <p className="text-xs text-slate-400 mt-1">This step doesn't require any settings.</p>
+        <div className="py-8 px-4 text-center rounded-xl wf-bg-overlay border border-dashed wf-border-subtle">
+          <p className="text-sm wf-fg-muted font-medium">No configuration needed</p>
+          <p className="text-xs wf-fg-faint mt-1">This step doesn't require any settings.</p>
         </div>
       ) : (
         allBaseKeys.map(key => {
@@ -1481,7 +1481,7 @@ export function ToolArgsEditor({
               {(isExtra || !argSchema?.required) && (
                 <button
                   onClick={() => deleteArg(key)}
-                  className="absolute right-0 top-0 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
+                  className="absolute right-0 top-0 p-1.5 wf-fg-faint hover:text-red-400 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
                   title="Remove argument"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -1493,17 +1493,17 @@ export function ToolArgsEditor({
       )}
 
       {advancedSchemaKeys.length > 0 && (
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
+        <div className="border wf-border-subtle rounded-xl overflow-hidden">
           <button
             type="button"
             onClick={() => setShowAdvancedArgs((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
+            className="w-full flex items-center justify-between px-3 py-2 wf-bg-overlay hover:wf-hover-bg transition-colors text-xs font-semibold wf-fg-muted"
           >
             <span>Advanced Settings</span>
-            <span className="text-[10px] text-slate-400">{advancedSchemaKeys.length} option(s)</span>
+            <span className="text-[10px] wf-fg-faint">{advancedSchemaKeys.length} option(s)</span>
           </button>
           {showAdvancedArgs && (
-            <div className="p-4 space-y-4 bg-white border-t border-slate-200">
+            <div className="p-4 space-y-4 wf-bg-elevated border-t wf-border-subtle">
               {advancedSchemaKeys.map((key) => (
                 <SmartArgEditor
                   key={key}
@@ -1538,7 +1538,7 @@ export function ToolArgsEditor({
           </button>
           <button
             onClick={() => { setShowAddArg(false); setNewArgKey(''); }}
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg transition-colors"
+            className="p-2 wf-fg-faint hover:wf-fg-muted wf-hover-bg rounded-lg transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1546,9 +1546,9 @@ export function ToolArgsEditor({
       ) : (
         <button
           onClick={() => setShowAddArg(true)}
-          className="w-full py-3 border border-dashed border-slate-200 rounded-xl text-xs font-semibold text-slate-400 hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] wf-accent-soft-bg/30 transition-all flex items-center justify-center gap-2 group"
+          className="w-full py-3 border border-dashed wf-border-subtle rounded-xl text-xs font-semibold wf-fg-faint hover:wf-accent-fg hover:border-[color:color-mix(in_srgb,var(--wf-accent)_40%,transparent)] wf-accent-soft-bg/30 transition-all flex items-center justify-center gap-2 group"
         >
-          <div className="w-6 h-6 rounded-full bg-slate-50 group-wf-accent-soft-bg flex items-center justify-center transition-colors">
+          <div className="w-6 h-6 rounded-full wf-bg-overlay group-wf-accent-soft-bg flex items-center justify-center transition-colors">
             <Plus className="w-3.5 h-3.5" />
           </div>
           Add Custom Property

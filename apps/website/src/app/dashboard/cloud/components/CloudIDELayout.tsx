@@ -52,7 +52,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
 
   const handleDelete = useCallback(async () => {
     if (typeof window === 'undefined') return;
-    if (!window.confirm('Permanently delete your cloud engine and all its data? This cannot be undone.')) return;
+    if (!window.confirm('Permanently delete your cloud computer and all its data? This cannot be undone.')) return;
     setDeleteLoading(true);
     try {
       await deleteCloudEngine();
@@ -68,7 +68,7 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
     <div className="custom-scrollbar h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl space-y-5">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Engine overview</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Cloud computer overview</h2>
           <p className="mt-1 text-sm text-theme-muted">Live status, machine specs, and connectivity.</p>
         </div>
 
@@ -109,13 +109,13 @@ export function CloudIDELayout({ engine, onRefresh }: CloudIDELayoutProps) {
                 detail={engine?.external_ip || 'Assigning...'}
               />
               <StatusPillSmall
-                label="Engine"
+                label="Machine"
                 connected={engine?.status === 'running'}
                 detail={engine?.status || 'unknown'}
               />
             </div>
             <div className="mt-5 rounded-xl border border-theme/60 bg-theme-hover/20 p-3 text-[11px] text-theme-muted">
-              Manage your engine from the top bar. Use the activity bar on the left to switch between chat,
+              Manage your cloud computer from the top bar. Use the activity bar on the left to switch between chat,
               files, automations, and more. Automations are set up from the Stuard desktop app and run here
               around the clock.
             </div>

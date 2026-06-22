@@ -13,9 +13,20 @@ export interface AgentTodoItem {
   errorMessage?: string;
 }
 
+/** The live, plain-language "what's happening now" headline. */
+export interface AgentTodoStatus {
+  label: string;
+  detail?: string | null;
+  state: 'working' | 'done' | 'blocked' | 'idle';
+}
+
 export interface AgentTodoListProps {
   items: AgentTodoItem[];
   title?: string;
+  /** Live status headline shown as a banner above the steps. */
+  status?: AgentTodoStatus | null;
+  /** Whether the agent is actively working right now (calms the spinner when false). */
+  active?: boolean;
   progress?: {
     total: number;
     completed: number;
@@ -70,16 +81,19 @@ const STATUS_ORDER: Record<AgentTodoItem['status'], number> = {
   failed: 4,
 };
 
-const TodoRow: React.FC<{ item: AgentTodoItem; idx: number; compact: boolean }> = ({
+const TodoRow: React.FC<{ item: AgentTodoItem; idx: number; compact: boolean; active: boolean }> = ({
   item,
   idx,
   compact,
+  active,
 }) => {
   const config = statusConfig[item.status] ?? statusConfig.pending;
   const Icon = config.icon;
   const isCompleted = item.status === 'completed';
   const isFailed = item.status === 'failed';
   const isInProgress = item.status === 'in_progress';
+  // Only the genuinely-active step spins — a paused step shouldn't look "stuck".
+  const spin = !!config.spin && active;
 
   return (
     <motion.div
@@ -101,7 +115,7 @@ const TodoRow: React.FC<{ item: AgentTodoItem; idx: number; compact: boolean }> 
       )}
 
       <span className={clsx('mt-px shrink-0', config.color)}>
-        <Icon className={clsx('h-[15px] w-[15px]', config.spin && 'animate-spin')} strokeWidth={2} />
+        <Icon className={clsx('h-[15px] w-[15px]', spin && 'animate-spin')} strokeWidth={2} />
       </span>
 
       <div className="min-w-0 flex-1">
@@ -159,24 +173,77 @@ const TodoRow: React.FC<{ item: AgentTodoItem; idx: number; compact: boolean }> 
 export const AgentTodoList: React.FC<AgentTodoListProps> = ({
   items,
   title = 'Agent Plan',
+  status = null,
+  active = true,
   progress,
   compact = false,
   variant = 'inline',
 }) => {
-  if (!items || items.length === 0) {
-    return null;
-  }
+  const hasItems = !!items && items.length > 0;
 
-  const sortedItems = [...items].sort(
-    (a, b) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5),
-  );
+  const sortedItems = hasItems
+    ? [...items].sort((a, b) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5))
+    : [];
 
   const isSidebar = variant === 'sidebar';
   const pct = progress?.percentage ?? 0;
 
-  // The single step the agent is on right now — surfaced so the user can always
-  // see what it's working on, even when the list is long and scrolled.
+  // The live "what's happening now" line: an explicit status wins, otherwise we
+  // fall back to the step the agent is currently on so the user always sees it.
   const currentItem = sortedItems.find((i) => i.status === 'in_progress') ?? null;
+  const liveStatus: AgentTodoStatus | null =
+    status && status.label
+      ? status
+      : currentItem
+        ? { label: currentItem.title, detail: currentItem.description ?? null, state: 'working' }
+        : null;
+
+  // Nothing to show at all.
+  if (!hasItems && !liveStatus) return null;
+
+  const isWorking = liveStatus?.state === 'working';
+  const isDone = liveStatus?.state === 'done';
+  const isBlocked = liveStatus?.state === 'blocked';
+  const StatusIcon = isDone ? Check : isBlocked ? Ban : isWorking ? Loader2 : Circle;
+  const statusIconColor = isDone
+    ? 'text-emerald-500'
+    : isBlocked
+      ? 'text-amber-500'
+      : isWorking
+        ? PRIMARY_FG
+        : 'text-theme-muted';
+  const statusSpin = isWorking && active;
+
+  // Mirror the checklist row styling — same typography and calm neutral surface.
+  const statusBanner = liveStatus && (
+    <div
+      className={clsx(
+        'relative mt-2 flex items-start gap-2.5 rounded-[14px] px-3 py-2.5 transition-colors',
+        isWorking && active ? SURFACE_ACTIVE : SURFACE_NEUTRAL,
+        isDone && 'opacity-70',
+      )}
+    >
+      {isWorking && active && (
+        <span className={clsx('absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full', PRIMARY_BG)} />
+      )}
+      <span className={clsx('mt-px shrink-0', statusIconColor)}>
+        <StatusIcon
+          className={clsx('h-[15px] w-[15px]', statusSpin && 'animate-spin')}
+          strokeWidth={2}
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium leading-snug break-words text-theme-fg">
+          {liveStatus.label}
+        </div>
+        {liveStatus.detail && (
+          <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-theme-muted">
+            {liveStatus.detail}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   const header = (
     <div className={clsx(isSidebar ? 'px-3 pt-3 pb-2.5' : 'mb-2.5')}>
@@ -205,21 +272,15 @@ export const AgentTodoList: React.FC<AgentTodoListProps> = ({
         )}
       </div>
 
-      {isSidebar && currentItem && (
-        <div className={clsx('mt-2 flex items-center gap-2 rounded-[10px] px-2.5 py-1.5', SURFACE_ACTIVE)}>
-          <Loader2 className={clsx('h-3 w-3 shrink-0 animate-spin', PRIMARY_FG)} strokeWidth={2.5} />
-          <span className={clsx('text-[9.5px] font-bold uppercase tracking-wide', PRIMARY_FG)}>Now</span>
-          <span className="truncate text-[11.5px] font-medium text-theme-fg">{currentItem.title}</span>
-        </div>
-      )}
+      {statusBanner}
     </div>
   );
 
-  const list = (
+  const list = hasItems && (
     <div className={clsx('flex flex-col gap-1.5', isSidebar && 'px-2.5 pb-3')}>
       <AnimatePresence mode="popLayout" initial={false}>
         {sortedItems.map((item, idx) => (
-          <TodoRow key={item.id} item={item} idx={idx} compact={compact} />
+          <TodoRow key={item.id} item={item} idx={idx} compact={compact} active={active} />
         ))}
       </AnimatePresence>
     </div>

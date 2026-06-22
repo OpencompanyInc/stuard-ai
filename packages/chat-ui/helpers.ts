@@ -60,17 +60,22 @@ export function formatSec(s: number): string {
  * its args, and its result — not the generic "Execute Tool" shell. Non-wrapper
  * calls (and wrapper calls whose name hasn't streamed in yet) pass through.
  */
+const WRAPPER_TOOL_NAMES = new Set(['execute_tool', 'vm_execute_tool', 'sis_execute_tool']);
+
 export function unwrapExecuteTool(tool: ToolCall): ToolCall {
-  if (!tool || tool.tool !== 'execute_tool') return tool;
+  if (!tool || !WRAPPER_TOOL_NAMES.has(tool.tool)) return tool;
 
   const wrapperArgs = (tool.args || {}) as Record<string, any>;
+  // execute_tool/sis → tool_name; vm_execute_tool → tool.
   const realName =
     typeof wrapperArgs.tool_name === 'string' && wrapperArgs.tool_name.trim()
       ? wrapperArgs.tool_name.trim()
       : typeof wrapperArgs.tool === 'string' && wrapperArgs.tool.trim()
         ? wrapperArgs.tool.trim()
-        : '';
-  if (!realName || realName === 'execute_tool') return tool;
+        : typeof wrapperArgs.toolName === 'string' && wrapperArgs.toolName.trim()
+          ? wrapperArgs.toolName.trim()
+          : '';
+  if (!realName || WRAPPER_TOOL_NAMES.has(realName)) return tool;
 
   const realArgs =
     wrapperArgs.args && typeof wrapperArgs.args === 'object' && !Array.isArray(wrapperArgs.args)
@@ -81,13 +86,16 @@ export function unwrapExecuteTool(tool: ToolCall): ToolCall {
   let error = tool.error;
   let status = tool.status;
   const env = tool.result as any;
-  if (env && typeof env === 'object' && ('success' in env || 'result' in env || 'error' in env)) {
-    if (env.success === false || (env.error && env.success !== true)) {
+  // execute_tool → { success, tool, result|error }; vm_execute_tool → { ok, tool, result|error }.
+  if (env && typeof env === 'object' && !Array.isArray(env)
+    && ('success' in env || 'result' in env || ('ok' in env && 'tool' in env) || 'error' in env)) {
+    const failed = env.success === false || env.ok === false || (env.error && env.success !== true && env.ok !== true);
+    if (failed) {
       error = typeof env.error === 'string' ? env.error : (error ?? JSON.stringify(env.error));
       result = undefined;
       if (status === 'completed') status = 'error';
-    } else {
-      result = 'result' in env ? env.result : env;
+    } else if ('result' in env) {
+      result = env.result;
     }
   }
 

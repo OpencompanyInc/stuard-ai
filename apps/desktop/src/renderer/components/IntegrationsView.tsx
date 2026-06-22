@@ -152,6 +152,24 @@ function getCategoryIcon(category: string, size = "w-4 h-4") {
   }
 }
 
+const subtleConnectedChip =
+  "inline-flex items-center gap-1.5 rounded-full border border-theme bg-theme-card px-2 py-0.5 text-[10px] font-medium text-theme-muted";
+
+const subtleConnectedDot = "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500";
+
+/** Status copy on neutral panel surfaces — never pair with a same-hue tinted bg. */
+const statusOkText = "text-emerald-800 dark:text-emerald-300";
+
+const updateNoticeBox =
+  "flex items-center gap-2 rounded-md border border-theme bg-theme-card p-2";
+
+const updateNoticeText = "flex-1 min-w-0 text-[10px] font-semibold text-theme-fg";
+
+const updateNoticeIcon = "text-amber-600 dark:text-amber-400";
+
+const updateNoticeButton =
+  "h-6 shrink-0 px-2 rounded-md border border-amber-800/15 bg-amber-600 text-[10px] font-bold text-white hover:bg-amber-500 transition-all active:scale-95 dark:border-amber-500/30 dark:bg-amber-500 dark:hover:bg-amber-400";
+
 function productLabel(slug: string): string {
   switch (slug) {
     case 'google-drive': return 'Drive';
@@ -273,8 +291,8 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold text-[15px] text-theme-fg tracking-tight leading-none">Google</h3>
                 {anyConnected && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/20">
-                    <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className={clsx(subtleConnectedChip, "gap-1 px-1.5")}>
+                    <span className={subtleConnectedDot} />
                     {connectedProducts.length}/{totalProducts}
                   </span>
                 )}
@@ -317,8 +335,8 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                 className={clsx(
                   "relative flex flex-col items-center justify-center gap-1.5 py-3 px-1 rounded-lg border transition-all duration-200 group/product",
                   isActive
-                    ? clsx("border-transparent ring-1", accent.bg, accent.ring, "cursor-default")
-                    : "bg-theme-bg/60 border-theme/60 hover:border-primary/40 hover:bg-primary/5 hover:-translate-y-0.5 cursor-pointer active:translate-y-0 active:scale-95",
+                    ? clsx("cursor-default border-2 bg-white shadow-sm dark:bg-theme-card", accent.text, "border-current")
+                    : "bg-theme-bg-soft border-theme/60 hover:border-primary/40 hover:bg-primary/5 hover:-translate-y-0.5 cursor-pointer active:translate-y-0 active:scale-95",
                   isConnecting && "opacity-60"
                 )}
               >
@@ -334,7 +352,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                 </div>
                 <span className={clsx(
                   "text-[10px] font-semibold leading-none tracking-tight text-center",
-                  isActive ? accent.text : "text-theme-fg/80 group-hover/product:text-theme-fg"
+                  isActive ? accent.text : "text-theme-fg-soft group-hover/product:text-theme-fg"
                 )}>
                   {productLabel(product.slug)}
                 </span>
@@ -358,7 +376,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                 key={p.profile_label || 'default'}
                 className={clsx(
                   "flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-[11px] transition-all",
-                  p.is_default ? "bg-primary/5 border-primary/20" : "bg-theme-bg border-theme/60 hover:border-theme"
+                  p.is_default ? "bg-white dark:bg-theme-card border-primary text-primary" : "bg-theme-bg border-theme/60 hover:border-theme"
                 )}
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -419,7 +437,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
               </button>
             </div>
           ) : addingProfile ? (
-            <div className="rounded-lg border border-dashed border-primary/30 bg-primary/5 p-2.5">
+            <div className="rounded-lg border border-dashed border-primary/40 bg-theme-card p-2.5">
               <div className="text-[10px] font-semibold text-theme-muted mb-2 tracking-tight">Label for the new account</div>
               <div className="flex gap-2">
                 <input
@@ -431,7 +449,7 @@ const GoogleAccountCard: React.FC<GoogleAccountCardProps> = ({
                     if (e.key === 'Escape') { setAddingProfile(false); setNewProfileName(""); }
                   }}
                   placeholder='e.g. "Work", "Personal"'
-                  className="flex-1 px-2.5 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-theme-muted/70 transition-all"
+                  className="flex-1 px-2.5 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-theme-muted-faint transition-all"
                 />
                 <button
                   onClick={confirmAddProfile}
@@ -680,7 +698,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
             autoComplete="tel-national"
             autoFocus={!editingCountry}
             className={clsx(
-              "flex-1 px-3 py-2.5 rounded-lg bg-theme-bg border text-[13px] text-theme-fg placeholder:text-theme-muted/40 focus:outline-none transition-colors",
+              "flex-1 px-3 py-2.5 rounded-lg bg-theme-bg border text-[13px] text-theme-fg placeholder:text-theme-muted-half focus:outline-none transition-colors",
               localRaw.length > 0 && phoneValid ? "border-emerald-500/50 focus:border-emerald-500" :
               localRaw.length > 0 && !phoneValid ? "border-red-500/40 focus:border-red-500/60" :
               "border-theme focus:border-primary/50"
@@ -689,7 +707,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
         </div>
         {/* Preview */}
         {phoneValid && (
-          <p className="text-[11px] text-emerald-400 mt-1.5 flex items-center gap-1">
+          <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1.5 flex items-center gap-1">
             <span className="opacity-60">Sending to:</span>
             <span className="font-mono font-medium">{e164}</span>
           </p>
@@ -706,7 +724,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
         )}
       </div>
       {error && (
-        <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+        <div className="px-3 py-2 rounded-md bg-theme-card border border-red-400/50 text-red-700 dark:text-red-300">
           <p className="text-[11px] text-red-400">{error}</p>
         </div>
       )}
@@ -735,7 +753,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="text-[11px] text-theme-muted font-medium">Verification Code</label>
-          <span className="text-[10px] text-emerald-400 font-mono">{e164}</span>
+          <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-mono">{e164}</span>
         </div>
         <input
           type="text"
@@ -746,14 +764,14 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
           placeholder="&#183; &#183; &#183; &#183; &#183; &#183;"
           maxLength={6}
           autoFocus
-          className="w-full px-3 py-3 rounded-lg bg-theme-bg border border-theme text-[18px] text-theme-fg text-center tracking-[0.5em] font-mono placeholder:text-theme-muted/30 focus:outline-none focus:border-primary/50 transition-colors"
+          className="w-full px-3 py-3 rounded-lg bg-theme-bg border border-theme text-[18px] text-theme-fg text-center tracking-[0.5em] font-mono placeholder:text-theme-muted-ghost focus:outline-none focus:border-primary/50 transition-colors"
         />
         <p className="text-[10px] text-theme-muted mt-1.5 text-center">
           Check your texts — code expires in 10 min
         </p>
       </div>
       {error && (
-        <div className="px-3 py-2 rounded-md bg-red-900/20 border border-red-900/30">
+        <div className="px-3 py-2 rounded-md bg-theme-card border border-red-400/50 text-red-700 dark:text-red-300">
           <p className="text-[11px] text-red-400">{error}</p>
         </div>
       )}
@@ -784,29 +802,23 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
       isConnected && "border-primary/30"
     )}>
       <div className="p-5">
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start mb-4">
           <div className="flex items-center gap-3">
-            <div className={clsx(
-              "w-10 h-10 rounded-lg border shadow-sm flex items-center justify-center",
-              isConnected ? "bg-emerald-900/20 border-emerald-900/30" : "bg-theme-hover border-theme"
-            )}>
-              <Phone className={clsx("w-5 h-5", isConnected ? "text-emerald-400" : "text-theme-muted")} />
+            <div className="w-10 h-10 rounded-lg border border-theme bg-white shadow-sm flex items-center justify-center">
+              <Phone className="w-5 h-5 text-slate-700 dark:text-slate-200" strokeWidth={1.75} />
             </div>
             <div>
               <h3 className="font-semibold text-[14px] text-theme-fg tracking-tight">Phone (SMS / Call)</h3>
               {isConnected && primaryPhone ? (
-                <span className="text-[11px] text-emerald-400 font-medium">{phones.length} phone{phones.length !== 1 ? 's' : ''} verified</span>
+                <span className="flex items-center gap-1 text-[11px] text-theme-muted font-medium">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" strokeWidth={2} />
+                  {phones.length} phone{phones.length !== 1 ? 's' : ''} connected
+                </span>
               ) : (
                 <span className="text-[11px] text-theme-muted">Verify your phone number</span>
               )}
             </div>
           </div>
-          {isConnected && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-900/20 text-emerald-400 text-[10px] font-bold border border-emerald-900/30 uppercase">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Verified
-            </span>
-          )}
         </div>
 
         <p className="text-[12px] text-theme-muted mb-4 leading-relaxed">
@@ -819,13 +831,13 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
             {phones.map((p) => (
               <div key={p.slot} className="flex items-center gap-2">
                 <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-theme-bg border border-theme text-[12px]">
-                  <MessageSquare className="w-4 h-4 text-emerald-400" />
+                  <MessageSquare className={clsx("w-4 h-4", statusOkText)} />
                   <span className="text-theme-fg font-medium">{p.phone}</span>
                   {p.slot === 0 && <span className="text-[9px] text-theme-muted uppercase">Primary</span>}
                 </div>
                 <button
                   onClick={() => p.slot === 0 ? handleDisconnect() : removePhone(p.slot)}
-                  className="px-2 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+                  className="px-2 py-2 rounded-md bg-theme-card text-red-700 dark:text-red-300 text-[11px] font-bold border border-red-400/50 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors"
                   title={p.slot === 0 ? 'Remove all phones' : 'Remove this phone'}
                 >
                   <X className="w-3.5 h-3.5" />
@@ -864,7 +876,7 @@ const TelnyxPhoneCard: React.FC<TelnyxPhoneCardProps> = ({
                     className={clsx(
                       "flex-1 px-2 py-2 rounded-md text-[11px] font-bold border transition-colors text-center",
                       smsTarget === opt.value
-                        ? "bg-primary/20 border-primary/40 text-primary"
+                        ? "bg-white dark:bg-theme-card border-primary text-primary"
                         : "bg-theme-hover border-theme text-theme-muted hover:border-theme-hover hover:text-theme-fg",
                       opt.value === 'vm' && !vmAvailable && "opacity-60"
                     )}
@@ -973,8 +985,8 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
             </div>
           </div>
           {isConnected && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#25D366]/10 text-[#25D366] text-[10px] font-bold border border-[#25D366]/25 uppercase">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse" />
+            <span className={subtleConnectedChip}>
+              <span className={subtleConnectedDot} />
               Linked
             </span>
           )}
@@ -993,7 +1005,7 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
             </div>
             <button
               onClick={handleDisconnect}
-              className="px-3 py-2 rounded-md bg-red-900/20 text-red-400 text-[11px] font-bold border border-red-900/30 hover:bg-red-900/30 transition-colors"
+              className="px-3 py-2 rounded-md bg-theme-card text-red-700 dark:text-red-300 text-[11px] font-bold border border-red-400/50 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors"
             >
               Remove
             </button>
@@ -1056,7 +1068,7 @@ const WhatsAppCard: React.FC<WhatsAppCardProps> = ({
                 onChange={(e) => setPhoneInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && phoneInput.trim()) handleConnect(); }}
                 placeholder="+1 (555) 123-4567"
-                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg placeholder:text-theme-muted/50 focus:outline-none focus:border-[#25D366]/50 transition-colors"
+                className="w-full px-3 py-2.5 rounded-lg bg-theme-bg border border-theme text-[13px] text-theme-fg placeholder:text-theme-muted-half focus:outline-none focus:border-[#25D366]/50 transition-colors"
                 autoFocus
               />
               <p className="text-[10px] text-theme-muted mt-1.5">Include country code. We'll send a WhatsApp message to confirm.</p>
@@ -1208,12 +1220,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
       <div className="flex justify-between items-start mb-4">
         <div className="flex items-center gap-3">
           <div className={clsx(
-            "w-10 h-10 rounded-md border shadow-sm flex items-center justify-center text-[18px] font-bold group-hover:scale-105 transition-transform duration-300",
-            hasBrandLogo(i.slug)
-              ? "bg-white border-theme p-1.5"
-              : isConnected
-                ? "bg-primary/10 border-primary/20 text-primary"
-                : "bg-theme-hover border-theme text-theme-fg"
+            "w-10 h-10 rounded-md border border-theme bg-white shadow-sm flex items-center justify-center group-hover:scale-105 transition-transform duration-300",
+            hasBrandLogo(i.slug) ? "p-1.5" : "text-slate-700 dark:text-slate-200"
           )}>
             {getIntegrationIcon(i.slug)}
           </div>
@@ -1229,8 +1237,8 @@ const StandardCard: React.FC<StandardCardProps> = ({
           </div>
         </div>
         {isConnected && (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-900/20 text-emerald-400 text-[10px] font-bold border border-emerald-900/30 tracking-wide uppercase">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className={subtleConnectedChip}>
+            <span className={subtleConnectedDot} />
             Active
           </span>
         )}
@@ -1245,7 +1253,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
         {i.description}
       </p>
       {'technicalDetail' in i && i.technicalDetail ? (
-        <p className="text-[10px] text-theme-muted/80 leading-relaxed -mt-3 mb-4 font-medium">
+        <p className="text-[10px] text-theme-muted-faint leading-relaxed -mt-3 mb-4 font-medium">
           {i.technicalDetail}
         </p>
       ) : null}
@@ -1307,7 +1315,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 );
               })}
               {addingProfile ? (
-                <div className="mt-1.5 p-2 bg-theme-hover/30 rounded-md border border-dashed border-theme">
+                <div className="mt-1.5 p-2 theme-surface-muted rounded-md border border-dashed border-theme">
                   <div className="flex gap-2">
                     <input
                       autoFocus
@@ -1318,7 +1326,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                         if (e.key === 'Escape') { setAddingProfile(false); setNewProfileName(""); }
                       }}
                       placeholder='e.g. "Work"'
-                      className="flex-1 px-2 py-1 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted/70"
+                      className="flex-1 px-2 py-1 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted-faint"
                     />
                     <button onClick={confirmAddProfile} disabled={!newProfileName.trim()} className="px-2.5 py-1 rounded-md bg-primary text-primary-fg text-[10px] font-bold hover:opacity-90 disabled:opacity-50 transition-all active:scale-95">Add</button>
                     <button onClick={() => { setAddingProfile(false); setNewProfileName(""); }} className="p-1 rounded text-theme-muted hover:text-theme-fg transition-all"><X className="w-3.5 h-3.5" /></button>
@@ -1350,7 +1358,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             ) : pyStatus.available ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-400">Ready</span>
+                <span className={clsx("font-semibold", statusOkText)}>Ready</span>
                 {pyStatus.version && (
                   <span className="text-theme-muted ml-auto font-mono text-[10px]">{pyStatus.version}</span>
                 )}
@@ -1429,7 +1437,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </button>
 
               {showPyPackages && (
-                <div className="max-h-28 overflow-y-auto rounded-md border border-theme/60 bg-theme-card/40">
+                <div className="max-h-28 overflow-y-auto rounded-md border border-theme/60 bg-theme-card-soft">
                   {(pyPackagesList?.length ?? 0) > 0 ? (
                     <div className="divide-y divide-theme/40">
                       {pyPackagesList!.slice(0, 40).map((pkg) => (
@@ -1450,7 +1458,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   value={pyPackages || ''}
                   onChange={(e) => setPyPackages?.(e.target.value)}
                   placeholder="Add packages (e.g. requests pandas>=2.0)"
-                  className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted/70"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-theme bg-theme-card text-theme-fg text-[11px] focus:outline-none focus:border-primary transition-all placeholder:text-theme-muted-faint"
                 />
                 <button
                   type="button"
@@ -1482,7 +1490,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             ) : ffAvailable ? (
               <>
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-400">Ready</span>
+                <span className={clsx("font-semibold", statusOkText)}>Ready</span>
               </>
             ) : (
               <>
@@ -1523,12 +1531,12 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   ) : running ? (
                     <>
                       <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="font-semibold text-emerald-400">Running</span>
+                      <span className={clsx("font-semibold", statusOkText)}>Running</span>
                       {(mpStatus as any)?.version && <span className="text-theme-muted ml-auto font-mono text-[10px]">v{String((mpStatus as any).version)}</span>}
                     </>
                   ) : installed ? (
                     <>
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <CheckCircle className={clsx("w-3.5 h-3.5", statusOkText)} />
                       <span className="font-semibold text-theme-fg">Installed</span>
                       <span className="text-theme-muted text-[10px] ml-auto">Not running</span>
                     </>
@@ -1546,12 +1554,12 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   </div>
                 )}
                 {!mpUpdating && updateAvailable && (
-                  <div className="flex items-center gap-2 p-2 bg-amber-500/5 border border-amber-500/30 rounded-md">
-                    <ArrowUpCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0 text-[10px] text-amber-300 font-semibold">A newer build is available on the update channel.</div>
+                  <div className={updateNoticeBox}>
+                    <ArrowUpCircle className={clsx("w-3.5 h-3.5 flex-shrink-0", updateNoticeIcon)} />
+                    <div className={updateNoticeText}>A newer build is available on the update channel.</div>
                     <button
                       onClick={updateMediapipe}
-                      className="h-6 px-2 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/40 transition-all active:scale-95"
+                      className={updateNoticeButton}
                     >
                       Update
                     </button>
@@ -1575,13 +1583,13 @@ const StandardCard: React.FC<StandardCardProps> = ({
             <>
               <div className="flex items-center gap-2 text-[11px]">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-400">Running</span>
+                <span className={clsx("font-semibold", statusOkText)}>Running</span>
                 <span className="text-theme-muted ml-auto">{ollamaModels.length} model{ollamaModels.length !== 1 ? 's' : ''}</span>
               </div>
               {ollamaModels.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {ollamaModels.slice(0, 6).map((m: any) => (
-                    <span key={m.name} className="px-1.5 py-0.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded text-[9px] font-mono font-bold">
+                    <span key={m.name} className="px-1.5 py-0.5 bg-theme-card text-violet-800 dark:text-violet-300 border border-violet-400/45 rounded text-[9px] font-mono font-bold">
                       {m.name}
                     </span>
                   ))}
@@ -1659,7 +1667,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
             <>
               <div className="flex items-center gap-2 text-[11px]">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-400">Running</span>
+                <span className={clsx("font-semibold", statusOkText)}>Running</span>
                 <span className="text-theme-muted ml-auto text-[10px]">{browserUseStatus.mode || 'headed'}</span>
               </div>
               {browserUseStatus.currentUrl && browserUseStatus.currentUrl !== 'about:blank' && (
@@ -1695,7 +1703,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
           ) : browserUseStatus?.installed ? (
             <div className="space-y-2.5">
               <div className="flex items-center gap-2 text-[11px]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCircle2 className={clsx("w-3.5 h-3.5", statusOkText)} />
                 <span className="font-semibold text-theme-fg">Installed</span>
                 <span className="text-theme-muted ml-auto text-[10px]">Auto-start on use</span>
               </div>
@@ -1794,12 +1802,12 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   </div>
                 )}
                 {updateAvailable && (
-                  <div className="flex items-center gap-2 p-2 bg-amber-500/5 border border-amber-500/30 rounded-md">
-                    <ArrowUpCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0 text-[10px] text-amber-300 font-semibold">A newer build is available on the update channel.</div>
+                  <div className={updateNoticeBox}>
+                    <ArrowUpCircle className={clsx("w-3.5 h-3.5 flex-shrink-0", updateNoticeIcon)} />
+                    <div className={updateNoticeText}>A newer build is available on the update channel.</div>
                     <button
                       onClick={updateBrowserUse}
-                      className="h-6 px-2 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/40 transition-all active:scale-95"
+                      className={updateNoticeButton}
                     >
                       Update
                     </button>
@@ -1827,9 +1835,9 @@ const StandardCard: React.FC<StandardCardProps> = ({
                   {provider.available ? (
                     <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
                   ) : (
-                    <div className="w-2 h-2 rounded-full bg-theme-muted/40 flex-shrink-0" />
+                    <div className="w-2 h-2 rounded-full bg-theme-muted-soft flex-shrink-0" />
                   )}
-                  <span className={clsx("font-semibold truncate", provider.available ? "text-emerald-400" : "text-theme-fg")}>
+                  <span className={clsx("font-semibold truncate", provider.available ? statusOkText : "text-theme-fg")}>
                     {provider.label || provider.id}
                   </span>
                   <span className="text-theme-muted ml-auto text-[10px] truncate">
@@ -1866,7 +1874,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
               </div>
             ) : browserUseStatus?.installed ? (
               <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCircle2 className={clsx("w-3.5 h-3.5", statusOkText)} />
                 Installed
               </div>
             ) : (
@@ -2050,7 +2058,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
         ) : (
           <button
             disabled
-            className="flex-1 h-8 rounded-md border border-theme bg-theme-hover/50 text-[11px] font-bold text-theme-muted cursor-not-allowed opacity-70"
+            className="flex-1 h-8 rounded-md border border-theme bg-theme-hover-soft text-[11px] font-bold text-theme-muted cursor-not-allowed opacity-70"
           >
             Unavailable
           </button>
@@ -2237,12 +2245,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {connectedCount > 0 && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  </span>
-                  {connectedCount} Active
+                <span className={clsx(subtleConnectedChip, "px-2.5 py-1 text-[11px]")}>
+                  <span className={subtleConnectedDot} />
+                  {connectedCount} active
                 </span>
               )}
               <span className="dashboard-pill px-2.5 py-1 text-[11px] font-semibold text-theme-muted">
@@ -2380,22 +2385,21 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
           )}
         </div>
 
-        <aside className="space-y-3 xl:sticky xl:top-5">
-          <div className="dashboard-card p-1.5">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 text-theme-muted" />
+        <aside className="xl:sticky xl:top-5">
+          <div className="dashboard-card overflow-hidden">
+            <div className="relative px-3 py-2.5">
+              <Search className="pointer-events-none absolute left-5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-theme-muted" />
               <input
                 value={intQuery}
                 onChange={(e) => setIntQuery(e.target.value)}
-                placeholder="Search"
-                className="h-7 w-full rounded-[12px] border border-transparent bg-theme-hover/45 pl-7 pr-2.5 text-[11px] font-medium text-theme-fg placeholder:text-theme-muted/60 focus:border-primary/30 focus:outline-none"
+                placeholder="Search apps…"
+                className="h-8 w-full rounded-xl border-[1.5px] border-theme/70 bg-transparent pl-9 pr-3 text-[12px] font-medium text-theme-fg placeholder:text-theme-muted-soft focus:border-[1.5px] focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/15"
               />
             </div>
-          </div>
 
-          <div className="dashboard-card p-3">
-            <div className="space-y-1">
-              {intCategories.map((category) => {
+            <div className="border-t border-theme/40 p-2">
+              <div className="space-y-0.5">
+                {intCategories.map((category) => {
                 const isActive = intCategory === category;
                 const count = categoryCounts[category] ?? 0;
 
@@ -2407,14 +2411,14 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     className={clsx(
                       "flex w-full items-center justify-between rounded-[16px] px-2.5 py-2 text-left transition-all",
                       isActive
-                        ? "bg-theme-hover/70 text-theme-fg shadow-sm"
-                        : "text-theme-muted hover:bg-theme-hover/50 hover:text-theme-fg"
+                        ? "bg-theme-hover-strong text-theme-fg shadow-sm"
+                        : "text-theme-muted hover:bg-theme-hover-soft hover:text-theme-fg"
                     )}
                   >
                     <span className="flex items-center gap-2 text-[12px] font-medium">
                       <span className={clsx(
                         "flex h-6.5 w-6.5 items-center justify-center rounded-full",
-                        isActive ? "bg-primary/15 text-primary" : "bg-theme-hover/45 text-theme-muted"
+                        isActive ? "bg-primary/15 text-primary" : "bg-theme-hover-soft text-theme-muted"
                       )}>
                         {getCategoryIcon(category, "h-3 w-3")}
                       </span>
@@ -2422,13 +2426,14 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     </span>
                     <span className={clsx(
                       "inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold",
-                      isActive ? "bg-primary/15 text-primary" : "bg-theme-hover/60 text-theme-muted"
+                      isActive ? "bg-primary/15 text-primary" : "bg-theme-hover-medium text-theme-muted"
                     )}>
                       {count}
                     </span>
                   </button>
                 );
-              })}
+                })}
+              </div>
             </div>
           </div>
         </aside>

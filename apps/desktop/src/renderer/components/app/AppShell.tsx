@@ -1,6 +1,9 @@
 import { clsx } from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, LogIn, Download } from 'lucide-react';
+import { type FileFetcher } from '../file-viewer';
+import { WorkspaceShell } from '../workspace';
+import { ChatHeaderMenu } from '../chat/modes/window/parts/ChatHeaderMenu';
 import CommandPalette from '../CommandPalette';
 import HotkeysHelp from '../HotkeysHelp';
 import { PermissionDialog } from '../PermissionDialog';
@@ -121,6 +124,11 @@ export function AppShell(props: any) {
     conversationTitle,
     inputStatusText,
     inputStatusIcon,
+    inputStatusPresentation,
+    inputStatusActivityState,
+    statusDiscoveryTip,
+    statusDiscoveryVisible,
+    handleStatusDiscoveryAction,
     inputStatusUrgency,
     inputStatusMinutesUntil,
     inputStatusItems,
@@ -138,6 +146,7 @@ export function AppShell(props: any) {
     showTour,
     setTourComplete,
     handleShowWindow,
+    handleShowApp,
     updateState,
     miniOutputText,
     miniOutputHasContent,
@@ -155,7 +164,7 @@ export function AppShell(props: any) {
   // floating card with a gap to the screen edges.
   const [overlayMaximized, setOverlayMaximized] = useState(false);
   useEffect(() => {
-    if (overlayMode !== 'window') {
+    if (overlayMode !== 'window' && overlayMode !== 'app') {
       setOverlayMaximized(false);
       return;
     }
@@ -176,7 +185,209 @@ export function AppShell(props: any) {
     };
   }, [overlayMode]);
 
-  const isMaximizedWindow = overlayMode === 'window' && overlayMaximized;
+  const isFloatingWindow = overlayMode === 'window';
+  const isAppWindow = isFloatingWindow || overlayMode === 'app';
+  const isMaximizedWindow = isAppWindow && overlayMaximized;
+
+  // Local file fetcher for the Workspace preview pane — reads bytes/text on
+  // demand from the main process. Only used while the FileViewerProvider is
+  // mounted (app mode).
+  const localFileFetcher = useMemo<FileFetcher>(
+    () => async (path: string) => {
+      try {
+        const res = await (window as any).desktopAPI?.previewReadFile?.(path);
+        if (!res || res.error || res.content == null) return null;
+        return { content: res.content, encoding: res.encoding || 'utf-8', size: res.size || 0 };
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const mainPanelView = hasMessages ? (
+    <ChatView
+      messages={messages}
+      currentResponse={currentResponse}
+      currentReasoning={currentReasoning}
+      currentToolCalls={currentToolCalls}
+      currentStreamChunks={currentStreamChunks}
+      thinkingStartTime={thinkingStartTime}
+      contextPaths={contextPaths}
+      onRemoveContext={handleRemoveContext}
+      onCollapse={handleShowCompact}
+      onOpenDashboard={handleOpenDashboard}
+      onNewChat={handleNewChat}
+      voiceActive={false}
+      onToggleVoice={handleToggleVoice}
+      voiceState={voice.state}
+      voiceAudioLevel={voice.audioLevel}
+      voiceMuted={voice.muted}
+      onVoiceMuteToggle={voice.toggleMute}
+      voiceTranscripts={voice.transcripts}
+      voiceActiveTools={voice.activeTools}
+      chatMenuOpen={chatMenuOpen}
+      onChatMenuOpenChange={setChatMenuOpen}
+      conversations={convList}
+      loadingConversations={loadingConvs}
+      onSelectConversation={handleSelectConversation}
+      statusText={chatStatusText}
+      statusPresentation={inputStatusPresentation}
+      statusActivityState={inputStatusActivityState}
+      statusDiscoveryTip={statusDiscoveryTip}
+      statusDiscoveryVisible={statusDiscoveryVisible}
+      onStatusDiscoveryAction={handleStatusDiscoveryAction}
+      connectionStatus={connectionStatus}
+      chatMode={chatMode}
+      onChatModeChange={handleChatModeChange as any}
+      chatModels={chatModels}
+      onChatModelsChange={handleChatModelsChange as any}
+      modelSource={modelSource}
+      onModelSourceChange={setModelSource}
+      reasoningLevel={reasoningLevel}
+      onReasoningLevelChange={setReasoningLevel}
+      overlayMode={overlayMode}
+      tabs={tabs}
+      activeTabId={activeTabId}
+      onSwitchTab={switchTab}
+      onCloseTab={closeTab}
+      onAddTab={addTab}
+      translucentMode={translucentMode}
+      onSubmitToolOutput={submitToolOutput}
+      onGenUIResponse={handleGenUIResponse}
+      onEditMessage={handleEditMessage}
+      onRevertFiles={revertFiles}
+      onRedoFiles={redoFiles}
+      pendingMemories={pendingMemories}
+      onConfirmPendingMemory={confirmPendingMemory}
+      onRejectPendingMemory={rejectPendingMemory}
+      onAddContext={handleAddContext}
+      attachments={attachments}
+      onRemoveAttachment={handleRemoveAttachment}
+      onAttachFiles={handleAttachFiles}
+      onAttachImages={handleAttachImages}
+      onDrop={handleDrop}
+      queueDepth={queueDepth}
+      queuedMessages={queuedMessages}
+      onCancelQueuedMessage={cancelQueuedMessage}
+      query={query}
+      setQuery={setQuery}
+      onSend={handleSend}
+      onSteer={handleSteer}
+      onStop={stopGeneration}
+      isStreaming={isStreaming}
+      activeSubagents={activeSubagentsForTab}
+      steerTarget={steerTarget}
+      onSteerTargetChange={setSteerTarget}
+      internalSidebarOpen={internalSidebarOpen}
+      internalSidebarWidth={internalSidebarWidth}
+      activeSidebarTab={activeSidebarTab}
+      onToggleInternalSidebar={handleToggleInternalSidebar}
+      onCloseInternalSidebar={handleCloseInternalSidebar}
+      onSwitchSidebarTab={handleSwitchSidebarTab}
+      onInternalSidebarResize={handleInternalSidebarResize}
+      activeProject={activeProject}
+      activeConversationId={conversationId}
+      onExitProjectMode={handleExitProjectMode}
+      onOpenProjectHome={handleOpenProjectHome}
+      showCreditsLimitNotice={showCreditsLimitNotice}
+      onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+      onAddCredits={onAddCredits}
+      askUserPrompts={askUserPrompt ? [{ id: askUserPrompt.id, tool: 'ask_user', args: askUserPrompt.args, status: 'pending' }] : []}
+      onAskUserRespond={(id, result) => {
+        (window as any).desktopAPI?.respondToAskUser?.(id, result);
+        setAskUserPrompt(null);
+      }}
+    />
+  ) : (
+    <LauncherView
+      query={query}
+      setQuery={setQuery}
+      onSend={handleSend}
+      contextPaths={contextPaths}
+      onAddContext={handleAddContext}
+      onRemoveContext={handleRemoveContext}
+      attachments={attachments}
+      onAttachFiles={handleAttachFiles}
+      onAttachImages={handleAttachImages}
+      onRemoveAttachment={handleRemoveAttachment}
+      onPaste={handlePaste}
+      onDrop={handleDrop}
+      commands={commands}
+      statusText={inputStatusText}
+      statusPresentation={inputStatusPresentation}
+      statusDiscoveryTip={statusDiscoveryTip}
+      statusDiscoveryVisible={statusDiscoveryVisible}
+      onStatusDiscoveryAction={handleStatusDiscoveryAction}
+      connectionStatus={connectionStatus}
+      onMicClick={handleMicClick}
+      isRecording={isRecording}
+      accessToken={accessToken}
+      overlayMode={overlayMode}
+      tabs={tabs}
+      activeTabId={activeTabId}
+      onSwitchTab={switchTab}
+      onCloseTab={closeTab}
+      onAddTab={addTab}
+      onCollapse={handleShowCompact}
+      voiceActive={false}
+      onToggleVoice={handleToggleVoice}
+      voiceState={voice.state}
+      voiceAudioLevel={voice.audioLevel}
+      voiceMuted={voice.muted}
+      onVoiceMuteToggle={voice.toggleMute}
+      voiceTranscripts={voice.transcripts}
+      voiceActiveTool={voice.activeTool}
+      voiceActiveTools={voice.activeTools}
+      voiceLastTool={voice.lastTool}
+      chatMenuOpen={chatMenuOpen}
+      onChatMenuOpenChange={setChatMenuOpen}
+      onNewChat={handleNewChat}
+      conversations={convList}
+      loadingConversations={loadingConvs}
+      activeConversationId={conversationId}
+      onSelectConversation={handleSelectConversation}
+      onOpenDashboard={handleOpenDashboard}
+      onToggleExpand={handleShowWindow}
+      onToggleSidebar={handleToggleInternalSidebar}
+      sidebarOpen={internalSidebarOpen}
+      plannerData={plannerData}
+      translucentMode={translucentMode}
+      chatMode={chatMode}
+      onChatModeChange={handleChatModeChange as any}
+      chatModels={chatModels}
+      onChatModelsChange={handleChatModelsChange as any}
+      modelSource={modelSource}
+      onModelSourceChange={setModelSource}
+      reasoningLevel={reasoningLevel}
+      onReasoningLevelChange={setReasoningLevel}
+      activeSidebarTab={activeSidebarTab}
+      internalSidebarWidth={internalSidebarWidth}
+      onCloseInternalSidebar={handleCloseInternalSidebar}
+      onSwitchSidebarTab={handleSwitchSidebarTab}
+      onInternalSidebarResize={handleInternalSidebarResize}
+      showCreditsLimitNotice={showCreditsLimitNotice}
+      onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
+      onAddCredits={onAddCredits}
+    />
+  );
+
+  const workspaceToolbar = (
+    <ChatHeaderMenu
+      onToggleSidebar={handleToggleInternalSidebar}
+      sidebarOpen={internalSidebarOpen}
+      onOpenDashboard={handleOpenDashboard}
+      onCollapse={handleShowCompact}
+      overlayMode="app"
+      chatMenuOpen={chatMenuOpen}
+      onChatMenuOpenChange={setChatMenuOpen}
+      conversations={convList}
+      loadingConversations={loadingConvs}
+      activeConversationId={conversationId}
+      onSelectConversation={handleSelectConversation}
+      onNewChat={handleNewChat}
+    />
+  );
 
   return (
     <NotificationProvider>
@@ -192,9 +403,9 @@ export function AppShell(props: any) {
         {/* Resize handles for user-resizable window - invisible but draggable edges */}
         {showResizeGrips && (
           <>
-            {overlayMode === 'window' ? (
+            {isAppWindow ? (
               <>
-                {/* Window mode: corner grips only so edge strips do not block the input bar */}
+                {/* Window/app mode: corner grips only so edge strips do not block the input bar */}
                 <div className="absolute top-0 left-0 w-4 h-4 cursor-nwse-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
                 <div className="absolute top-0 right-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
                 <div className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
@@ -215,14 +426,54 @@ export function AppShell(props: any) {
           </>
         )}
         <div className="w-full h-full overflow-hidden bg-transparent flex flex-col">
-          {overlayMode === 'sidebar' || overlayMode === 'window' ? (
+          {overlayMode === 'app' ? (
             <div
               className={clsx(
                 'relative h-full w-full overflow-hidden mode-transition overlay-responsive flex flex-col min-h-0',
-                // Window mode floats free, so give the panel a little extra breathing
-                // room (20px) for the drop shadow to fade into; the docked sidebar
-                // stays at 16px, which the ~15px shadow still fits inside.
-                isMaximizedWindow ? 'p-0' : overlayMode === 'window' ? 'p-5' : 'p-4',
+                // Fill the window edge-to-edge like a real desktop app — no inset
+                // margin. The shell keeps a slight corner rounding (flattened when
+                // maximized via data-overlay-maximized).
+                'p-0',
+              )}
+              data-overlay-maximized={isMaximizedWindow ? 'true' : 'false'}
+            >
+              {showResizeGrips && (
+                <>
+                  <div className="absolute top-0 left-0 w-4 h-4 cursor-nwse-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                  <div className="absolute top-0 right-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                  <div className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                  <div className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-[50]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+                </>
+              )}
+              {!isMaximizedWindow && showResizeGrips && (
+                <div className="resize-indicator" title="Drag corner to resize" />
+              )}
+              <WorkspaceShell
+                onClose={handleShowCompact}
+                localFileFetcher={localFileFetcher}
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSwitchTab={switchTab}
+                onCloseTab={closeTab}
+                onAddTab={addTab}
+                onNewChat={handleNewChat}
+                conversations={convList}
+                loadingConversations={loadingConvs}
+                activeConversationId={conversationId}
+                onSelectConversation={handleSelectConversation}
+                onAddContext={handleAddContext}
+                contextPaths={contextPaths}
+                accessToken={accessToken}
+                toolbar={workspaceToolbar}
+              >
+                {mainPanelView}
+              </WorkspaceShell>
+            </div>
+          ) : overlayMode === 'sidebar' || overlayMode === 'window' ? (
+            <div
+              className={clsx(
+                'relative h-full w-full overflow-hidden mode-transition overlay-responsive flex flex-col min-h-0',
+                isMaximizedWindow ? 'p-0' : isFloatingWindow ? 'p-5' : 'p-4',
               )}
               data-overlay-maximized={isMaximizedWindow ? 'true' : 'false'}
             >
@@ -231,7 +482,7 @@ export function AppShell(props: any) {
               )}
               {/* Main Content - Full Width (above resize grips; interactive, not drag region) */}
               <div
-                className="flex flex-col flex-1 min-h-0 w-full relative smooth-resize z-[60]"
+                className="flex flex-1 min-h-0 w-full relative smooth-resize z-[60] flex-col"
                 style={{ WebkitAppRegion: 'no-drag' } as any}
               >
                 {/* Permission Approval Overlay â€” shows the first queued approval; next auto-appears on dismiss */}
@@ -295,166 +546,7 @@ export function AppShell(props: any) {
                   </div>
                 )}
 
-                {/* View Switcher */}
-                {hasMessages ? (
-                  <ChatView
-                    messages={messages}
-                    currentResponse={currentResponse}
-                    currentReasoning={currentReasoning}
-                    currentToolCalls={currentToolCalls}
-                    currentStreamChunks={currentStreamChunks}
-                    thinkingStartTime={thinkingStartTime}
-                    contextPaths={contextPaths}
-                    onRemoveContext={handleRemoveContext}
-                    onCollapse={handleShowCompact}
-                    onOpenDashboard={handleOpenDashboard}
-                    onNewChat={handleNewChat}
-                    voiceActive={false}
-                    onToggleVoice={handleToggleVoice}
-                    voiceState={voice.state}
-                    voiceAudioLevel={voice.audioLevel}
-                    voiceMuted={voice.muted}
-                    onVoiceMuteToggle={voice.toggleMute}
-                    voiceTranscripts={voice.transcripts}
-                    voiceActiveTools={voice.activeTools}
-                    chatMenuOpen={chatMenuOpen}
-                    onChatMenuOpenChange={setChatMenuOpen}
-                    conversations={convList}
-                    loadingConversations={loadingConvs}
-                    onSelectConversation={handleSelectConversation}
-                    statusText={chatStatusText}
-                    connectionStatus={connectionStatus}
-                    chatMode={chatMode}
-                    onChatModeChange={handleChatModeChange as any}
-                    chatModels={chatModels}
-                    onChatModelsChange={handleChatModelsChange as any}
-                    modelSource={modelSource}
-                    onModelSourceChange={setModelSource}
-                    reasoningLevel={reasoningLevel}
-                    onReasoningLevelChange={setReasoningLevel}
-                    overlayMode={overlayMode}
-                    tabs={tabs}
-                    activeTabId={activeTabId}
-                    onSwitchTab={switchTab}
-                    onCloseTab={closeTab}
-                    onAddTab={addTab}
-                    translucentMode={translucentMode}
-                    onSubmitToolOutput={submitToolOutput}
-                    onGenUIResponse={handleGenUIResponse}
-                    onEditMessage={handleEditMessage}
-                    onRevertFiles={revertFiles}
-                    onRedoFiles={redoFiles}
-                    pendingMemories={pendingMemories}
-                    onConfirmPendingMemory={confirmPendingMemory}
-                    onRejectPendingMemory={rejectPendingMemory}
-                    onAddContext={handleAddContext}
-                    attachments={attachments}
-                    onRemoveAttachment={handleRemoveAttachment}
-                    onAttachFiles={handleAttachFiles}
-                    onAttachImages={handleAttachImages}
-                    onDrop={handleDrop}
-                    queueDepth={queueDepth}
-                    queuedMessages={queuedMessages}
-                    onCancelQueuedMessage={cancelQueuedMessage}
-                    query={query}
-                    setQuery={setQuery}
-                    onSend={handleSend}
-                    onSteer={handleSteer}
-                    onStop={stopGeneration}
-                    isStreaming={isStreaming}
-                    activeSubagents={activeSubagentsForTab}
-                    steerTarget={steerTarget}
-                    onSteerTargetChange={setSteerTarget}
-                    internalSidebarOpen={internalSidebarOpen}
-                    internalSidebarWidth={internalSidebarWidth}
-                    activeSidebarTab={activeSidebarTab}
-                    onToggleInternalSidebar={handleToggleInternalSidebar}
-                    onCloseInternalSidebar={handleCloseInternalSidebar}
-                    onSwitchSidebarTab={handleSwitchSidebarTab}
-                    onInternalSidebarResize={handleInternalSidebarResize}
-                    activeProject={activeProject}
-                    activeConversationId={conversationId}
-                    onExitProjectMode={handleExitProjectMode}
-                    onOpenProjectHome={handleOpenProjectHome}
-                    showCreditsLimitNotice={showCreditsLimitNotice}
-                    onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
-                    onAddCredits={onAddCredits}
-                    askUserPrompts={askUserPrompt ? [{ id: askUserPrompt.id, tool: 'ask_user', args: askUserPrompt.args, status: 'pending' }] : []}
-                    onAskUserRespond={(id, result) => {
-                      (window as any).desktopAPI?.respondToAskUser?.(id, result);
-                      setAskUserPrompt(null);
-                    }}
-                  />
-                ) : (
-                  <LauncherView
-                    query={query}
-                    setQuery={setQuery}
-                    onSend={handleSend}
-                    contextPaths={contextPaths}
-                    onAddContext={handleAddContext}
-                    onRemoveContext={handleRemoveContext}
-                    attachments={attachments}
-                    onAttachFiles={handleAttachFiles}
-                    onAttachImages={handleAttachImages}
-                    onRemoveAttachment={handleRemoveAttachment}
-                    onPaste={handlePaste}
-                    onDrop={handleDrop}
-                    commands={commands}
-                    statusText={inputStatusText}
-                    connectionStatus={connectionStatus}
-                    onMicClick={handleMicClick}
-                    isRecording={isRecording}
-                    accessToken={accessToken}
-                    overlayMode={overlayMode}
-                    tabs={tabs}
-                    activeTabId={activeTabId}
-                    onSwitchTab={switchTab}
-                    onCloseTab={closeTab}
-                    onAddTab={addTab}
-                    onCollapse={handleShowCompact}
-                    voiceActive={false}
-                    onToggleVoice={handleToggleVoice}
-                    voiceState={voice.state}
-                    voiceAudioLevel={voice.audioLevel}
-                    voiceMuted={voice.muted}
-                    onVoiceMuteToggle={voice.toggleMute}
-                    voiceTranscripts={voice.transcripts}
-                    voiceActiveTool={voice.activeTool}
-                    voiceActiveTools={voice.activeTools}
-                    voiceLastTool={voice.lastTool}
-                    chatMenuOpen={chatMenuOpen}
-                    onChatMenuOpenChange={setChatMenuOpen}
-                    onNewChat={handleNewChat}
-                    conversations={convList}
-                    loadingConversations={loadingConvs}
-                    activeConversationId={conversationId}
-                    onSelectConversation={handleSelectConversation}
-                    onOpenDashboard={handleOpenDashboard}
-                    onToggleExpand={handleShowWindow}
-                    onToggleSidebar={handleToggleInternalSidebar}
-                    sidebarOpen={internalSidebarOpen}
-                    plannerData={plannerData}
-                    translucentMode={translucentMode}
-                    chatMode={chatMode}
-                    onChatModeChange={handleChatModeChange as any}
-                    chatModels={chatModels}
-                    onChatModelsChange={handleChatModelsChange as any}
-                    modelSource={modelSource}
-                    onModelSourceChange={setModelSource}
-                    reasoningLevel={reasoningLevel}
-                    onReasoningLevelChange={setReasoningLevel}
-
-                    // Internal Sidebar
-                    activeSidebarTab={activeSidebarTab}
-                    internalSidebarWidth={internalSidebarWidth}
-                    onCloseInternalSidebar={handleCloseInternalSidebar}
-                    onSwitchSidebarTab={handleSwitchSidebarTab}
-                    onInternalSidebarResize={handleInternalSidebarResize}
-                    showCreditsLimitNotice={showCreditsLimitNotice}
-                    onDismissCreditsLimitNotice={onDismissCreditsLimitNotice}
-                    onAddCredits={onAddCredits}
-                  />
-                )}
+                {mainPanelView}
               </div>
             </div>
           ) : (

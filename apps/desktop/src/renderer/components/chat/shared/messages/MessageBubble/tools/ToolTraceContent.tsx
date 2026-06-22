@@ -9,6 +9,11 @@ import { MediaResultPreview } from '../previews/MediaResultPreview';
 import { MediaAudioPreview } from '../previews/MediaAudioPreview';
 import { ScrapeResultPreview } from '../previews/ScrapeResultPreview';
 import {
+  DistanceMatrixPreview,
+  PlacesSearchPreview,
+  PlaceDetailsPreview,
+} from '../previews/MapsResultPreview';
+import {
   ResearchSearchPreview,
   ResearchReadPreview,
   ResearchNotePreview,
@@ -29,6 +34,7 @@ import {
 import { LIVE_OUTPUT_TOOL_NAMES, LiveOutputPanel } from './LiveOutputPanel';
 import { TerminalOutputPanel } from './TerminalOutputPanel';
 import { ToolPayloadPreview } from './ToolPayloadPreview';
+import { getActionResultPreview, getActionErrorCard } from '../previews/ActionResultPreview';
 
 // Image-generation tools may return an extensionless blob URL, so for these we
 // relax detection (`assumeImage`) and treat any returned URL as an image.
@@ -55,6 +61,12 @@ const AUDIO_RESULT_TOOL_NAMES = new Set([
 
 export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) => {
   if (tool.status === 'error') {
+    // Branded action tools (email, calendar, Slack, …) get a friendly failure
+    // card that names the action and explains the cause; everything else keeps
+    // the raw error text so nothing is hidden.
+    const actionError = getActionErrorCard(tool);
+    if (actionError) return <>{actionError}</>;
+
     const errorText =
       typeof tool.error === 'string'
         ? tool.error
@@ -84,6 +96,14 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
 
   if (tool.status === 'completed') {
     const args = (tool.args || {}) as Record<string, any>;
+
+    // A tool that completed but returned `{ ok:false }` / `{ success:false }`
+    // is a soft failure — route it through the friendly failure card too.
+    const res = tool.result as any;
+    if (res && typeof res === 'object' && (res.ok === false || res.success === false)) {
+      const softError = getActionErrorCard({ ...tool, status: 'error', error: tool.error ?? res.error });
+      if (softError) return <>{softError}</>;
+    }
 
     if (tool.tool === 'file_edit') {
       return (
@@ -138,6 +158,20 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
       if (results && results.length > 0) {
         return <ScrapeResultPreview results={results} />;
       }
+    }
+
+    // Google Maps tools — route/distance cards, place lists, and a rich
+    // single-place card instead of the raw "Origin Addresses: 1 item" envelope.
+    const maps = tool.result as any;
+    if (tool.tool === 'maps_distance_matrix' && Array.isArray(maps?.rows) && maps.rows.length > 0) {
+      const mode = typeof args.mode === 'string' ? args.mode : 'driving';
+      return <DistanceMatrixPreview result={maps} mode={mode} />;
+    }
+    if (tool.tool === 'maps_search_places' && Array.isArray(maps?.places) && maps.places.length > 0) {
+      return <PlacesSearchPreview places={maps.places} />;
+    }
+    if (tool.tool === 'maps_place_details' && maps?.place && typeof maps.place === 'object') {
+      return <PlaceDetailsPreview place={maps.place} />;
     }
 
     // Research Mode tools — bespoke renderers (source cards, distilled notes,
@@ -202,6 +236,12 @@ export const ToolTraceContent: React.FC<{ tool: ToolCall }> = memo(({ tool }) =>
     if (audioSrcs.length > 0) {
       return <MediaAudioPreview srcs={audioSrcs} />;
     }
+
+    // Bespoke "what happened" cards for action/integration tools (email,
+    // calendar, Slack, X, Notion, GitHub, …). Falls through to the generic
+    // key-value preview for tools we don't have a template for.
+    const actionCard = getActionResultPreview(tool);
+    if (actionCard) return <>{actionCard}</>;
 
     return (
       <ToolPayloadPreview

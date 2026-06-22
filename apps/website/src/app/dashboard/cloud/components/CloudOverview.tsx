@@ -10,7 +10,7 @@ interface CloudOverviewProps {
 
 const STATUS_BANNERS: Record<string, { message: string; detail: string; color: string; dotColor: string }> = {
   provisioning: {
-    message: 'Setting up your cloud engine...',
+    message: 'Setting up your cloud computer...',
     detail: 'Creating VM, installing dependencies, and syncing your data. This usually takes 1\u20132 minutes.',
     color: 'bg-blue-500/10 border-blue-500/30 text-blue-300',
     dotColor: 'bg-blue-500',

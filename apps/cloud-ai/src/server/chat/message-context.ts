@@ -1,10 +1,12 @@
 import * as memoryService from '../../memory/conversations';
 import { buildKnowledgeContext, computeCompositeScore, hasTemporalIntent, mmrRerank } from '../../knowledge/retrieval';
-import { buildAttachmentParts } from '../../utils/messages';
+import { buildAttachmentParts, type AttachmentModalitySupport } from '../../utils/messages';
+import { getModelAttachmentSupport } from '../../routes/models';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import type { AgentType } from './types';
 import type { MemoryOwnerScope } from '../../memory/conversations';
 import { isQuickChatRequest } from './quick-request';
+import { zodToJsonSchema } from '../../tools/zod-utils';
 
 interface BuildInputMessagesArgs {
   msg: any;
@@ -21,6 +23,12 @@ interface BuildInputMessagesArgs {
    */
   conversationId?: string | null;
   memoryOwner?: MemoryOwnerScope;
+  /**
+   * Concrete model id the turn will run on (e.g. `openrouter/deepseek/deepseek-chat`).
+   * Used to gate attachment transport: a model without image/file input gets a
+   * hidden file-path reference instead of a binary part it would reject.
+   */
+  modelId?: string | null;
 }
 
 export async function buildInputMessages({
@@ -33,16 +41,24 @@ export async function buildInputMessages({
   agent,
   conversationId,
   memoryOwner,
+  modelId,
 }: BuildInputMessagesArgs) {
   const recentHistory = history.slice(-50) as any[];
   let inputMessages: any[] = providedMessages && providedMessages.length > 0
     ? [...providedMessages]
     : [...recentHistory, { role: 'user', content: prompt }];
 
-  inputMessages = expandProvidedMessageAttachments(inputMessages);
-  appendAttachmentParts(msg, inputMessages, prompt);
+  // Resolve what the bound model can read inline — but only pay the registry
+  // lookup when something is actually attached (the common no-attachment turn
+  // skips it entirely). buildAttachmentParts downgrades unsupported kinds to a
+  // hidden file-path reference; see getModelAttachmentSupport.
+  const attachmentSupport = await resolveAttachmentSupport(msg, inputMessages, modelId);
+
+  inputMessages = expandProvidedMessageAttachments(inputMessages, attachmentSupport);
+  appendAttachmentParts(msg, inputMessages, prompt, attachmentSupport);
   prependCompactContextMessage(msg, inputMessages, enabledIntegrations);
   prependHiddenContext(msg, inputMessages);
+  prependWorkflowDslContext(agent, agentType, inputMessages);
 
   if (agentType !== 'workflow' && agentType !== 'skill' && !isQuickChatRequest(msg)) {
     inputMessages = await appendKnowledgeContext(prompt, inputMessages, conversationId, memoryOwner);
@@ -52,12 +68,30 @@ export async function buildInputMessages({
   return inputMessages;
 }
 
-function expandProvidedMessageAttachments(inputMessages: any[]) {
+/**
+ * Decide whether the bound model can read attached images/files inline. The
+ * registry lookup is skipped (and full support assumed) when nothing is
+ * attached, so the common turn pays nothing.
+ */
+async function resolveAttachmentSupport(
+  msg: any,
+  inputMessages: any[],
+  modelId?: string | null,
+): Promise<AttachmentModalitySupport> {
+  const hasAttachments =
+    (Array.isArray(msg?.attachments) && msg.attachments.length > 0)
+    || (Array.isArray(msg?.images) && msg.images.length > 0)
+    || inputMessages.some((m) => Array.isArray(m?.attachments) && m.attachments.length > 0);
+  if (!hasAttachments) return { image: true, file: true };
+  return getModelAttachmentSupport(modelId);
+}
+
+function expandProvidedMessageAttachments(inputMessages: any[], support: AttachmentModalitySupport) {
   return inputMessages.map((message) => {
     const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
     if (attachments.length === 0) return message;
 
-    const attachmentParts = buildAttachmentParts(attachments);
+    const attachmentParts = buildAttachmentParts(attachments, support);
     if (attachmentParts.length === 0) return message;
 
     const existingContent = message?.content;
@@ -76,7 +110,7 @@ function expandProvidedMessageAttachments(inputMessages: any[]) {
   });
 }
 
-function appendAttachmentParts(msg: any, inputMessages: any[], prompt: string) {
+function appendAttachmentParts(msg: any, inputMessages: any[], prompt: string, support: AttachmentModalitySupport) {
   const attachments = Array.isArray(msg?.attachments) ? msg.attachments : [];
   const images = Array.isArray(msg?.images) ? msg.images : [];
   const imageAttachments = images.map((image: any) => ({
@@ -84,9 +118,10 @@ function appendAttachmentParts(msg: any, inputMessages: any[], prompt: string) {
     name: image?.name,
     mimeType: image?.mimeType || 'image/png',
     data: image?.data,
+    path: image?.path,
   }));
 
-  const attachmentParts = buildAttachmentParts([...attachments, ...imageAttachments]);
+  const attachmentParts = buildAttachmentParts([...attachments, ...imageAttachments], support);
   if (attachmentParts.length === 0) return;
 
   let userMessageIndex = -1;
@@ -190,6 +225,30 @@ function prependHiddenContext(msg: any, inputMessages: any[]) {
     if (hiddenContext && hiddenContext.trim()) {
       inputMessages.unshift({ role: 'system', content: hiddenContext });
     }
+  } catch { }
+}
+
+/**
+ * EDIT-MODE DSL CONTEXT: when the workflow agent is editing an existing flow,
+ * resolveWorkflowAgent stashes a compact DSL projection on `agent.__workflowDsl`.
+ * Showing it to the model up front means a targeted edit needs no read_workflow
+ * round-trip — the single biggest step-count saving for simple edits. The big
+ * stable system prompt lives in `agent.instructions` (cacheable); this volatile
+ * flow text rides as a separate system message so it doesn't break that cache.
+ */
+function prependWorkflowDslContext(agent: any, agentType: AgentType, inputMessages: any[]) {
+  try {
+    if (agentType !== 'workflow') return;
+    const dsl = typeof agent?.__workflowDsl === 'string' ? agent.__workflowDsl : '';
+    if (!dsl.trim()) return;
+    inputMessages.unshift({
+      role: 'system',
+      content:
+        'CURRENT WORKFLOW (live DSL — this IS the flow on the canvas). Edit it directly with '
+        + 'edit_workflow / modify_workflow; do NOT call read_workflow first for a targeted change, '
+        + 'and never re-read the whole flow just to confirm. Read a window only for exact arg text '
+        + 'shown as `…(Nc)…`.\n\n' + dsl,
+    });
   } catch { }
 }
 
@@ -461,7 +520,18 @@ function logTokenBreakdown(inputMessages: any[], agent: any) {
     for (const [name, tool] of Object.entries(agentTools)) {
       try {
         const descriptionChars = String((tool as any)?.description || '').length;
-        const parameterChars = JSON.stringify((tool as any)?.parameters || (tool as any)?.inputSchema || {}).length;
+        // Measure the ACTUAL JSON schema sent on the wire, not the raw Zod
+        // inputSchema. JSON.stringify on a Zod v4 schema dumps its internal
+        // `_zod._def` guts (~2× bigger than the real schema) and badly inflated
+        // this estimate; zodToJsonSchema matches what the provider receives.
+        let parameterChars = 0;
+        try {
+          const params = (tool as any)?.parameters
+            ?? zodToJsonSchema((tool as any)?.inputSchema);
+          parameterChars = JSON.stringify(params ?? {}).length;
+        } catch {
+          parameterChars = JSON.stringify((tool as any)?.inputSchema ?? {}).length;
+        }
         toolSchemaChars += descriptionChars + parameterChars + name.length + 20;
       } catch {
         toolSchemaChars += 200;
@@ -482,13 +552,13 @@ function logTokenBreakdown(inputMessages: any[], agent: any) {
 
     console.log('[cloud-ai] ═══ TOKEN BREAKDOWN (estimated) ═══');
     console.log(`[cloud-ai]   Agent instructions:  ~${Math.round(agentInstructionChars / 4)} tok (${agentInstructionChars} chars)`);
-    console.log(`[cloud-ai]   Tool definitions:    ~${Math.round(toolSchemaChars / 3)} tok (${toolNames.length} tools, ${toolSchemaChars} chars)`);
+    console.log(`[cloud-ai]   Tool definitions:    ~${Math.round(toolSchemaChars / 4)} tok (${toolNames.length} tools, ${toolSchemaChars} chars)`);
     console.log(`[cloud-ai]   System messages:     ~${Math.round(systemChars / 4)} tok (${systemMessages.length} msgs, ${systemChars} chars)`);
     console.log(`[cloud-ai]   User messages:       ~${Math.round(userChars / 4)} tok (${userMessages.length} msgs, ${userChars} chars)`);
     console.log(`[cloud-ai]   Assistant messages:   ~${Math.round(assistantChars / 4)} tok (${assistantMessages.length} msgs, ${assistantChars} chars)`);
     console.log(`[cloud-ai]   Tool result messages: ~${Math.round(toolChars / 4)} tok (${toolMessages.length} msgs, ${toolChars} chars)`);
     console.log('[cloud-ai]   ─────────────────────────────────');
-    console.log(`[cloud-ai]   TOTAL est:           ~${Math.round(agentInstructionChars / 4 + toolSchemaChars / 3 + totalMessageChars / 4)} tok`);
+    console.log(`[cloud-ai]   TOTAL est:           ~${Math.round(agentInstructionChars / 4 + toolSchemaChars / 4 + totalMessageChars / 4)} tok`);
     console.log(`[cloud-ai]   Tool names: ${toolNames.slice(0, 10).join(', ')}${toolNames.length > 10 ? ` ...+${toolNames.length - 10} more` : ''}`);
     console.log('[cloud-ai] ═══════════════════════════════════');
   } catch (error) {

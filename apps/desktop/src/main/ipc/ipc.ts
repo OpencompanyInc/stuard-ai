@@ -1,7 +1,7 @@
 
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
-import { selectFiles, selectImages, listDirectory, selectFolder } from "../utils/files";
+import { selectFiles, selectImages, listDirectory, selectFolder, readFileForPreview, pickFilesForPreview } from "../utils/files";
 import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, captureScreenExcludingStuard, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow, isAnyAppWindowFocused } from "../windows";
 import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_listVersions, workflows_revertToVersion, workflows_deleteVersion, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
@@ -548,6 +548,10 @@ export function setupIpc() {
       return { ok: false, error: String(e?.message || 'failed') };
     }
   });
+  // Workspace file-preview pane: read a local file's raw content on demand.
+  ipcMain.handle("preview:readFile", (_e, filePath: string) => readFileForPreview(filePath));
+  // Workspace "Open file" button — native picker that returns paths only.
+  ipcMain.handle("preview:pickFiles", () => pickFilesForPreview());
   ipcMain.handle("media:list", async () => {
     try {
       await migrateLegacyCaptureFiles();

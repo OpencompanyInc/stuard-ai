@@ -172,6 +172,7 @@ export const CompactStatusPill: React.FC<CompactStatusPillProps> = ({
                     lineHeight: '16px',
                     fontFamily: "'General Sans', 'Inter', 'Figtree', sans-serif",
                     fontWeight: 400,
+                    opacity: 0.82,
                   }}
                 >
                   {item.text}

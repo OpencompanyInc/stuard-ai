@@ -7,7 +7,7 @@ import HotkeysHelp from './components/HotkeysHelp';
 import { PermissionDialog } from './components/PermissionDialog';
 import { AskUserPrompt } from '@stuardai/chat-ui/AskUserPrompt';
 import InputArea from './components/chat/shared/input/InputArea';
-import { clearTodoSnapshot } from './components/chat/shared/sidebar/agentTodoStore';
+import { clearTodoSnapshot, useAgentTodoStatus, notifyTurnActive, notifyTurnEnded } from './components/chat/shared/sidebar/agentTodoStore';
 import type { ContextItem } from './components/FileNavigator';
 import { usePreferences } from './hooks/usePreferences';
 import { useModelRegistry } from './hooks/useModelRegistry';
@@ -38,6 +38,11 @@ import { ChatView } from './components/chat/modes/window/ChatView';
 import { ToolBrandStack } from './components/chat/shared/input/ToolBrandStack';
 import type { StatusItem } from './hooks/useStatusCarousel';
 import { useActiveProject } from './hooks/useActiveProject';
+import {
+  useStatusDiscoveryTipCycle,
+} from './hooks/useStatusDiscoveryTip';
+import { navigateDiscoveryRoute } from './utils/discoveryNavigation';
+import type { DiscoveryTip } from './components/onboarding/DiscoveryEngine';
 import {
   INTERNAL_SIDEBAR_WIDTH_MAX,
   INTERNAL_SIDEBAR_WIDTH_MIN,
@@ -221,7 +226,11 @@ export function useAppController() {
   }, [paletteQuery, showPalette, accessToken]);
 
   // UI State
-  const [overlayMode, setOverlayMode] = useState<'compact' | 'sidebar' | 'window'>('compact');
+  const [overlayMode, setOverlayMode] = useState<'compact' | 'sidebar' | 'window' | 'app'>('compact');
+  // Duration (ms) the renderer should cross-fade the layout swap over. Main
+  // owns the timing and sends it on overlay:modeChanged; 0 means "no animation"
+  // (e.g. the window is offscreen). Default mirrors MODE_TRANSITION_MS in main.
+  const [modeTransitionMs, setModeTransitionMs] = useState(240);
   const [windowSize, setWindowSize] = useState({ width: 520, height: 130 });
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [conversationTitle, setConversationTitle] = useState<string | null>(null);
@@ -273,9 +282,9 @@ export function useAppController() {
 
   const [showMiniOutput, setShowMiniOutput] = useState(false);
 
-  const overlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
-  const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window'>(overlayMode);
-  const modeBeforeDockRef = useRef<'compact' | 'sidebar' | 'window'>('compact');
+  const overlayModeRef = useRef<'compact' | 'sidebar' | 'window' | 'app'>(overlayMode);
+  const prevOverlayModeRef = useRef<'compact' | 'sidebar' | 'window' | 'app'>(overlayMode);
+  const modeBeforeDockRef = useRef<'compact' | 'sidebar' | 'window' | 'app'>('compact');
 
   useEffect(() => {
     overlayModeRef.current = overlayMode;
@@ -283,7 +292,8 @@ export function useAppController() {
 
   useEffect(() => {
     const prev = prevOverlayModeRef.current;
-    if ((overlayMode === 'sidebar' || overlayMode === 'window') && prev !== 'sidebar' && prev !== 'window') {
+    const isPanel = (m: typeof overlayMode) => m === 'sidebar' || m === 'window' || m === 'app';
+    if (isPanel(overlayMode) && !isPanel(prev)) {
       modeBeforeDockRef.current = prev;
     }
     prevOverlayModeRef.current = overlayMode;
@@ -531,14 +541,15 @@ export function useAppController() {
       setWindowSize({ width: data.width, height: data.height });
     });
     const unsubModeChanged = window.desktopAPI?.onModeChanged?.((data) => {
+      if (typeof data.transitionMs === 'number') setModeTransitionMs(data.transitionMs);
       setOverlayMode(data.mode as any);
       setWindowSize({ width: data.width, height: data.height });
       // Close internal sidebar when switching to compact mode
       if (data.mode === 'compact') {
         setInternalSidebarOpen(false);
       }
-      // Window/sidebar modes are fully interactive (not click-through overlay)
-      if (data.mode === 'window' || data.mode === 'sidebar') {
+      // Window/sidebar/app modes are fully interactive (not click-through overlay)
+      if (data.mode === 'window' || data.mode === 'sidebar' || data.mode === 'app') {
         try { window.desktopAPI?.setIgnoreMouseEvents?.(false); } catch { }
       }
     });
@@ -672,7 +683,7 @@ export function useAppController() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         const mode = overlayModeRef.current;
-        if (mode === 'sidebar' || mode === 'window') {
+        if (mode === 'sidebar' || mode === 'window' || mode === 'app') {
           setShowMiniOutput(false);
           setOverlayMode('compact');
           try { window.desktopAPI.setMode('compact'); } catch { }
@@ -801,6 +812,28 @@ export function useAppController() {
     });
     return () => { try { unsub?.(); } catch { } };
   }, [subscribeProgress, handleWakewordDetected, onboardingComplete]);
+
+  // Reminder toasts. The desktop reminder-scheduler (main process) is the single
+  // authority that fires reminders — recurring included — and emits a native OS
+  // notification plus this 'reminder-triggered' IPC. Mirror it as an in-app toast
+  // so a focused user sees the reminder inside the app too.
+  useEffect(() => {
+    const api: any = (window as any).desktopAPI;
+    if (typeof api?.onReminderTriggered !== 'function') return;
+    const off = api.onReminderTriggered((data: any) => {
+      try {
+        api.notify?.({
+          title: data?.title || 'Reminder',
+          message: data?.body || data?.message || '',
+          variant: 'neutral',
+          sound: true,
+          duration: 0,
+          className: 'stuard-notification',
+        });
+      } catch { }
+    });
+    return () => { try { off?.(); } catch { } };
+  }, []);
 
   // Wakeword service lifecycle
   useEffect(() => {
@@ -1334,6 +1367,15 @@ export function useAppController() {
     file: File,
     source: ChatAttachment['source'] = 'clipboard-file',
   ): Promise<ChatAttachment> => {
+    // Capture the on-disk path for dropped/picked local files (Electron 30
+    // removed File.path → use the preload webUtils bridge). The backend uses it
+    // to reference the file by path when the chosen model can't read the binary
+    // inline (see buildAttachmentParts); clipboard items have no path.
+    let path: string | undefined;
+    try {
+      const resolved = (window as any).desktopAPI?.getPathForFile?.(file);
+      if (typeof resolved === 'string' && resolved.trim()) path = resolved;
+    } catch { }
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -1358,6 +1400,7 @@ export function useAppController() {
             data: base64,
             mimeType: mimeType || 'application/octet-stream',
             source,
+            path,
           }));
         } catch (e) { reject(e); }
       };
@@ -1574,7 +1617,7 @@ export function useAppController() {
     const nextState = !internalSidebarOpen;
 
     // Only expand/contract window in sidebar/window modes
-    if (overlayMode === 'sidebar' || overlayMode === 'window') {
+    if (overlayMode === 'sidebar' || overlayMode === 'window' || overlayMode === 'app') {
       // Let the main process handle window width expansion/contraction
       try {
         const result = await (window.desktopAPI as any).toggleInternalSidebar?.(nextState, internalSidebarWidthRef.current);
@@ -1596,7 +1639,7 @@ export function useAppController() {
 
   const handleCloseInternalSidebar = useCallback(async () => {
     // Contract window width when closing sidebar
-    if (overlayMode === 'sidebar' || overlayMode === 'window') {
+    if (overlayMode === 'sidebar' || overlayMode === 'window' || overlayMode === 'app') {
       try {
         const result = await (window.desktopAPI as any).toggleInternalSidebar?.(false, internalSidebarWidthRef.current);
         if (result) {
@@ -1619,7 +1662,7 @@ export function useAppController() {
 
     setInternalSidebarWidth(next);
 
-    if (internalSidebarOpen && (overlayMode === 'sidebar' || overlayMode === 'window')) {
+    if (internalSidebarOpen && (overlayMode === 'sidebar' || overlayMode === 'window' || overlayMode === 'app')) {
       void (window.desktopAPI as any).resizeInternalSidebar?.(next);
     }
   }, [internalSidebarOpen, overlayMode, setInternalSidebarWidth]);
@@ -1628,7 +1671,7 @@ export function useAppController() {
   // Auto-open sidebar when an agent opens an interactive terminal session, starts
   // a headed CLI session, or creates a to-do list — not for run_command / scripts.
   useEffect(() => {
-    if (overlayMode !== 'window' && overlayMode !== 'sidebar') return;
+    if (overlayMode !== 'window' && overlayMode !== 'sidebar' && overlayMode !== 'app') return;
 
     const openSidebarToTab = async (tab: 'terminal' | 'todo') => {
       // Only claim the tab when we actually open the panel. Once it's open the
@@ -1668,15 +1711,34 @@ export function useAppController() {
   const handleClosePalette = useCallback(() => setShowPalette(false), []);
   const handleCloseHotkeys = useCallback(() => setShowHotkeys(false), []);
 
+  // The agent's live plain-language status ("what's happening now") — surfaced
+  // in the always-visible status pill and used as the safety net's done-signal.
+  const agentStatus = useAgentTodoStatus();
+
   const statusLabel = useMemo(() => {
     const p = (ai?.phase || '').toString();
     if (p === 'routing') {
-      // Window/sidebar launcher views don't show model-routing status.
-      if (overlayMode === 'window' || overlayMode === 'sidebar') {
+      // Window/sidebar/app launcher views don't show model-routing status.
+      if (overlayMode === 'window' || overlayMode === 'sidebar' || overlayMode === 'app') {
         return '';
       }
       const m = (ai as any)?.model;
       return m ? `Routing (${m})` : 'Routing...';
+    }
+    // Prefer the agent's own plain-language status ("Sending your email") over
+    // the technical phase label ("Running Tool…") so a non-technical user can
+    // always read what's happening. Set live via agent_todo `set_status`.
+    const friendly = agentStatus?.label?.trim();
+    const friendlyState = agentStatus?.state;
+    if (friendly) {
+      if (p === 'tool' || p === 'responding') return friendly;
+      // Brief done/blocked headline after the turn ends, until the store collapses.
+      if (
+        (friendlyState === 'done' || friendlyState === 'blocked')
+        && (!p || p === 'ready' || p === 'idle')
+      ) {
+        return friendly;
+      }
     }
     if (p === 'responding') return 'Responding...';
     if (p === 'tool') {
@@ -1691,8 +1753,11 @@ export function useAppController() {
       }
       return 'Running tool...';
     }
-    return ai?.statusText || 'Ready';
-  }, [ai, overlayMode]);
+    return (() => {
+      const raw = ai?.statusText || '';
+      return raw.toLowerCase() === 'ready' ? '' : raw;
+    })();
+  }, [ai, overlayMode, agentStatus]);
 
   // Determine if AI is currently streaming (for stop button)
   const isStreaming = useMemo(() => {
@@ -1728,6 +1793,56 @@ export function useAppController() {
     } catch { /* ignore */ }
   }, []);
 
+  // AI is "working" only for actual inference phases — NOT connection setup.
+  // Connecting/starting/disconnected/error should not surface the video icon.
+  const isAiWorking = useMemo(() => {
+    const p = (ai?.phase || '').toString();
+    return p === 'routing' || p === 'responding' || p === 'tool';
+  }, [ai?.phase]);
+
+  const [aiWorkElapsedMs, setAiWorkElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!isAiWorking) {
+      setAiWorkElapsedMs(0);
+      return;
+    }
+    const started = Date.now();
+    setAiWorkElapsedMs(0);
+    const tick = window.setInterval(() => {
+      setAiWorkElapsedMs(Date.now() - started);
+    }, 400);
+    return () => window.clearInterval(tick);
+  }, [isAiWorking]);
+
+  /** Tips appear while a turn is taking a while — not when idle. */
+  const isLongRunningForDiscovery = useMemo(() => {
+    if (!isAiWorking || aiWorkElapsedMs < 3000) return false;
+    if (isRecording || queueDepth > 0) return false;
+    if (state?.connecting || !state?.connected) return false;
+    return true;
+  }, [
+    isAiWorking,
+    aiWorkElapsedMs,
+    isRecording,
+    queueDepth,
+    state?.connecting,
+    state?.connected,
+  ]);
+
+  const {
+    tip: statusDiscoveryTip,
+    visible: statusDiscoveryVisible,
+  } = useStatusDiscoveryTipCycle({
+    enabled: isLongRunningForDiscovery,
+    currentArea: 'chat',
+    isEmptyState: messages.length === 0,
+  });
+
+  const handleStatusDiscoveryAction = useCallback((tip: DiscoveryTip) => {
+    if (!tip.actionRoute) return;
+    navigateDiscoveryRoute(tip.actionRoute);
+  }, []);
+
   const inputStatusText = useMemo(() => {
     const attachmentStatus = typeof updateState.info?.attachmentStatus === 'string'
       ? updateState.info.attachmentStatus
@@ -1740,25 +1855,25 @@ export function useAppController() {
       if (state?.status === 'error') return 'Connection error';
       return 'Starting\u2026';
     }
-    // Check if AI is actively doing something (not idle states)
     const idleStates = ['ready', 'idle', 'connected', ''];
     const isIdle = idleStates.includes(statusLabel.toLowerCase());
-    // Show AI status if active, otherwise show planner next up
     if (!isIdle) return statusLabel;
-    // Show next upcoming event/task/reminder when idle
     if (plannerData?.nextUp) {
       return `${plannerData.nextUp.title} ${plannerData.nextUp.timeLabel}`;
     }
-    if (messages.length > 0) return '';
-    return 'Ready';
-  }, [isRecording, queueDepth, updateState.info, statusLabel, plannerData?.nextUp, messages.length]);
+    return '';
+  }, [isRecording, queueDepth, updateState.info, statusLabel, plannerData?.nextUp, state?.connecting, state?.connected, state?.status]);
 
-  // AI is "working" only for actual inference phases — NOT connection setup.
-  // Connecting/starting/disconnected/error should not surface the video icon.
-  const isAiWorking = useMemo(() => {
-    const p = (ai?.phase || '').toString();
-    return p === 'routing' || p === 'responding' || p === 'tool';
-  }, [ai?.phase]);
+  // Safety net for the agent's live plan: when a turn ends, tell the store so a
+  // finished plan can auto-collapse (and never linger looking stuck) even if the
+  // model forgot to `finish`/`clear` it; when work resumes, cancel that collapse.
+  const prevWorkingRef = useRef(false);
+  useEffect(() => {
+    if (isAiWorking === prevWorkingRef.current) return;
+    prevWorkingRef.current = isAiWorking;
+    if (isAiWorking) notifyTurnActive();
+    else notifyTurnEnded();
+  }, [isAiWorking]);
 
   const WORKING_PHASES = useMemo(() => new Set(['routing', 'responding', 'tool']), []);
 
@@ -1804,6 +1919,26 @@ export function useAppController() {
     });
   }, [tabs, activeTabId, WORKING_PHASES]);
 
+  // Agent progress uses sentence-case labels; planner items get a touch more weight.
+  const inputStatusPresentation = useMemo((): 'system' | 'activity' | 'planner' | 'discovery' => {
+    if (isRecording || queueDepth > 0) return 'activity';
+    if (state?.connecting || !state?.connected) return 'system';
+    const friendly = agentStatus?.label?.trim();
+    const p = (ai?.phase || '').toString();
+    if (
+      friendly
+      && (p === 'tool' || p === 'responding' || agentStatus?.state === 'done' || agentStatus?.state === 'blocked')
+    ) {
+      return 'activity';
+    }
+    if (p === 'tool' || p === 'responding') return 'activity';
+    if (plannerData?.nextUp && !isAiWorking) return 'planner';
+    if (statusDiscoveryVisible && statusDiscoveryTip) return 'discovery';
+    return 'system';
+  }, [isRecording, queueDepth, state?.connecting, state?.connected, agentStatus, ai?.phase, plannerData?.nextUp, isAiWorking, statusDiscoveryVisible, statusDiscoveryTip]);
+
+  const inputStatusActivityState = agentStatus?.state ?? 'working';
+
   // Compute status icon based on current state
   const inputStatusIcon = useMemo((): 'video' | 'calendar' | 'bell' | 'task' | 'ai' | 'mic' | 'queue' | undefined => {
     if (isRecording) return 'mic';
@@ -1846,6 +1981,22 @@ export function useAppController() {
         pin: true,
         ariaLabel: statusLabel,
       });
+    } else if (isAiWorking && statusLabel.trim()) {
+      items.push({
+        id: 'agent-activity',
+        text: statusLabel,
+        icon: 'custom',
+        iconNode: (
+          <Loader2
+            className="w-4 h-4 animate-spin"
+            strokeWidth={1.75}
+            style={{ color: 'rgb(var(--compact-pill-fg-muted))' }}
+          />
+        ),
+        priority: 200,
+        pin: true,
+        ariaLabel: statusLabel,
+      });
     }
     // New-version notice: joins the idle status carousel (rotating with the
     // planner next-up) while an update is waiting; click → Settings → Updates.
@@ -1881,13 +2032,13 @@ export function useAppController() {
     }
     if (connectionStatus === 'disconnected') return 'Offline';
     if (connectionStatus === 'error') return 'Connection error';
-    const label = statusLabel;
-    if (messages.length > 0) {
-      const idle = ['ready', 'idle'];
-      if (idle.includes(label.toLowerCase())) return '';
+    const label = statusLabel.trim();
+    if (label && !['ready', 'idle'].includes(label.toLowerCase())) return label;
+    if (plannerData?.nextUp && !isAiWorking) {
+      return `${plannerData.nextUp.title} ${plannerData.nextUp.timeLabel}`;
     }
-    return label;
-  }, [connectionStatus, statusLabel, ai?.statusText, messages.length]);
+    return '';
+  }, [connectionStatus, statusLabel, ai?.statusText, plannerData?.nextUp, isAiWorking]);
 
   const handleShowSidebar = useCallback(() => {
     setOverlayMode('sidebar');
@@ -1900,14 +2051,21 @@ export function useAppController() {
     try { window.desktopAPI?.setIgnoreMouseEvents?.(false); } catch { }
   }, []);
 
+  const handleShowApp = useCallback(() => {
+    setOverlayMode('app');
+    window.desktopAPI.setMode('app');
+    try { window.desktopAPI?.setIgnoreMouseEvents?.(false); } catch { }
+  }, []);
+
   const commands = useMemo<CommandItem[]>(() => {
     const q = (paletteQuery || '').toLowerCase().trim();
     const staticItems: CommandItem[] = [
       { id: 'new-chat', title: 'New chat', description: 'Start a fresh conversation', icon: <Plus className="w-5 h-5" />, run: handleNewChat },
       { id: 'open-dashboard', title: 'Open dashboard', description: 'View full dashboard', icon: <Layout className="w-5 h-5" />, shortcut: 'Dash', run: () => window.desktopAPI.openDashboard() },
-      { id: 'toggle-compact', title: 'Compact layout', description: 'Switch to compact layout', icon: <Minimize2 className="w-5 h-5" />, run: handleShowCompact },
-      { id: 'toggle-sidebar', title: 'Sidebar layout', description: 'Switch to sidebar layout', icon: <Layout className="w-5 h-5" />, run: handleShowSidebar },
-      { id: 'toggle-window', title: 'Window layout', description: 'Switch to window layout', icon: <Layout className="w-5 h-5" />, run: handleShowWindow },
+      { id: 'toggle-app', title: 'Open Workspace', description: 'Large window with a Files preview panel — images, PDFs, spreadsheets', icon: <Layout className="w-5 h-5" />, group: 'Layout', run: handleShowApp },
+      { id: 'toggle-window', title: 'Window layout', description: 'Floating chat window', icon: <Layout className="w-5 h-5" />, group: 'Layout', run: handleShowWindow },
+      { id: 'toggle-sidebar', title: 'Split layout', description: 'Dock beside your other apps', icon: <Layout className="w-5 h-5" />, group: 'Layout', run: handleShowSidebar },
+      { id: 'toggle-compact', title: 'Compact layout', description: 'Shrink to the small bar', icon: <Minimize2 className="w-5 h-5" />, group: 'Layout', run: handleShowCompact },
 
       { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
       { id: 'attach-images', title: 'Attach images', description: 'Upload images', icon: <Image className="w-5 h-5" />, run: handleAttachImages },
@@ -1994,10 +2152,10 @@ export function useAppController() {
     }
 
     return items;
-  }, [signedIn, setOnboardingComplete, setTourComplete, setTone, localWorkflows, marketplaceResults, query, handleShowCompact, handleShowSidebar, handleShowWindow, handleNewChat, handleAttachFiles, handleAttachImages]);
+  }, [signedIn, setOnboardingComplete, setTourComplete, setTone, localWorkflows, marketplaceResults, query, handleShowCompact, handleShowSidebar, handleShowWindow, handleShowApp, handleNewChat, handleAttachFiles, handleAttachImages]);
 
   const hasMessages = messages.length > 0;
-  const showResizeGrips = overlayMode === 'sidebar' || overlayMode === 'window';
+  const showResizeGrips = overlayMode === 'sidebar' || overlayMode === 'window' || overlayMode === 'app';
 
   const lastAssistantMessage = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -2109,6 +2267,7 @@ export function useAppController() {
     overlayVisible,
     showResizeGrips,
     overlayMode,
+    modeTransitionMs,
     approvalQueue,
     respondToApproval,
     setApprovalQueue,
@@ -2202,6 +2361,11 @@ export function useAppController() {
     handleDeleteConversation,
     inputStatusText,
     inputStatusIcon,
+    inputStatusPresentation,
+    inputStatusActivityState,
+    statusDiscoveryTip,
+    statusDiscoveryVisible,
+    handleStatusDiscoveryAction,
     inputStatusUrgency,
     inputStatusMinutesUntil,
     inputStatusItems,
@@ -2219,6 +2383,7 @@ export function useAppController() {
     showTour,
     setTourComplete,
     handleShowWindow,
+    handleShowApp,
     updateState,
     miniOutputText,
     miniOutputHasContent,

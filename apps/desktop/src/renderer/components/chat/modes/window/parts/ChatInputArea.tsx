@@ -16,6 +16,9 @@ import { describeTool, friendlyVoiceState } from '../../../../voice/voiceLabels'
 import type { TranscriptLine, VoiceModeState, VoiceToolEvent } from '../../../../../hooks/useVoiceMode';
 import { CreditsLimitNotice } from '../../../shared/CreditsLimitNotice';
 import { ToolRunningIndicator } from '../../../shared/input/ToolRunningIndicator';
+import { InputStatusLine, isMeaningfulInputStatus } from '../../../shared/input/InputStatusLine';
+import { DiscoveryStatusTicker } from '../../../shared/input/DiscoveryStatusTicker';
+import type { DiscoveryTip } from '../../../../onboarding/DiscoveryEngine';
 import { AttachmentPreviewOverlay, attachmentOverlayInset } from '../../../../AttachmentPreview';
 import type { ChatAttachment } from '../../../../../utils/attachments';
 import { hasInFlightToolCalls, type ToolCallLike } from '../../../../../utils/toolBrand';
@@ -138,6 +141,12 @@ interface ChatInputAreaProps {
   queuedMessages?: any[];
   onCancelQueuedMessage?: (id: string) => void;
   statusText?: string;
+  /** When `activity`, status reads as plain-language progress (sentence case). */
+  statusPresentation?: 'system' | 'activity' | 'planner' | 'discovery';
+  statusActivityState?: 'working' | 'done' | 'blocked' | 'idle';
+  statusDiscoveryTip?: DiscoveryTip | null;
+  statusDiscoveryVisible?: boolean;
+  onStatusDiscoveryAction?: (tip: DiscoveryTip) => void;
   connectionStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
   contextMetrics?: ContextUsageMetrics | null;
   translucentMode?: boolean;
@@ -195,6 +204,11 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   queuedMessages = [],
   onCancelQueuedMessage,
   statusText = 'Online',
+  statusPresentation = 'system',
+  statusActivityState = 'working',
+  statusDiscoveryTip = null,
+  statusDiscoveryVisible = false,
+  onStatusDiscoveryAction,
   connectionStatus = 'connected',
   contextMetrics,
   translucentMode = false,
@@ -485,48 +499,60 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   }, [onDrop]);
 
   const statusLabelText = statusText?.trim() || '';
-  const showStatusLabel =
-    hasInFlightToolCalls(currentToolCalls)
-    || connectionStatus !== 'connected'
-    || statusLabelText.length > 0;
+  const showToolStatus = hasInFlightToolCalls(currentToolCalls);
+  const showConnectionStatus = connectionStatus !== 'connected';
+  const showPlannerStatus =
+    statusPresentation === 'planner' && isMeaningfulInputStatus(statusLabelText);
+  const showDiscoveryStatus =
+    statusPresentation === 'discovery'
+    && statusDiscoveryVisible
+    && !!statusDiscoveryTip;
+  const showActivityStatus =
+    statusPresentation === 'activity' && isMeaningfulInputStatus(statusLabelText);
+  const showSystemStatus =
+    statusPresentation === 'system' && isMeaningfulInputStatus(statusLabelText);
+  const showStatusRow =
+    showToolStatus
+    || showConnectionStatus
+    || showPlannerStatus
+    || showDiscoveryStatus
+    || showActivityStatus
+    || showSystemStatus
+    || !!contextMetrics;
 
   return (
     <div className="flex flex-col shrink-0 gap-2">
+      {showStatusRow && (
       <div className="input-status-float">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {hasInFlightToolCalls(currentToolCalls) ? (
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          {showToolStatus ? (
             <ToolRunningIndicator toolCalls={currentToolCalls} className="min-w-0" />
-          ) : showStatusLabel ? (
-            <>
-              {connectionStatus !== 'connected' && (
-                <div className={clsx(
-                  "w-2.5 h-2.5 rounded-full shrink-0",
-                  connectionStatus === 'connecting' ? 'bg-amber-500' :
-                    connectionStatus === 'error' ? 'bg-red-500' :
-                      'bg-theme-muted/50'
-                )} />
-              )}
-              {connectionStatus === 'connecting' ? (
-                <div className="w-3.5 h-3.5 border-2 border-theme-muted/70 border-t-transparent rounded-full animate-spin shrink-0" />
-              ) : null}
-              {statusLabelText ? (
-                <span className={clsx(
-                  "truncate text-[11px] font-bold uppercase tracking-widest",
-                  connectionStatus === 'connected' ? 'text-theme-muted' :
-                    connectionStatus === 'connecting' ? 'text-amber-700 dark:text-amber-500' :
-                      connectionStatus === 'error' ? 'text-red-600' :
-                        'text-theme-muted'
-                )}>
-                  {statusLabelText}
-                </span>
-              ) : null}
-            </>
+          ) : null}
+          {showDiscoveryStatus && statusDiscoveryTip ? (
+            <DiscoveryStatusTicker
+              tip={statusDiscoveryTip}
+              onTipAction={onStatusDiscoveryAction}
+              className="min-w-0"
+            />
+          ) : null}
+          {!showDiscoveryStatus && (showPlannerStatus || showActivityStatus || showSystemStatus || showConnectionStatus) ? (
+            <InputStatusLine
+              text={statusLabelText}
+              variant={
+                showPlannerStatus ? 'planner'
+                  : showActivityStatus ? 'activity'
+                    : 'system'
+              }
+              activityState={statusActivityState}
+              connectionStatus={connectionStatus}
+            />
           ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <ContextUsageIndicator metrics={contextMetrics} compact />
         </div>
       </div>
+      )}
 
       <div
       className={clsx(

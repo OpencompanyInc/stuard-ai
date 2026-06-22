@@ -500,6 +500,47 @@ async function loadLocalConversationHistory(
   }
 }
 
+const INCOMING_MEDIA_DIR = `${process.env.AGENT_DATA_DIR || '/home/stuard/agent-data'}/message-media`;
+
+/**
+ * Persist inbound message media (images/docs in `attachments`, plus voice-note
+ * audio in `incomingMediaFiles`) to the VM filesystem and return a context note
+ * listing the local paths. Handed to the cloud orchestrator as hiddenContext so
+ * the agent can re-open the real file (read_file / analyze_media) or send it
+ * back via telnyx_send_mms { path } — extra reference beyond the transcript.
+ */
+function saveIncomingVMMedia(attachments: any[], incomingMediaFiles: any[]): string {
+  const all = [...(attachments || []), ...(incomingMediaFiles || [])];
+  if (all.length === 0) return '';
+  const lines: string[] = [];
+  try { fs.mkdirSync(INCOMING_MEDIA_DIR, { recursive: true }); } catch {}
+  for (const m of all) {
+    try {
+      const dataField = String(m?.data || '').trim();
+      if (!dataField.startsWith('data:')) continue;
+      const commaIdx = dataField.indexOf(',');
+      if (commaIdx === -1) continue;
+      const headerMime = dataField.slice(5, commaIdx).replace(/;base64$/i, '');
+      const mime = String(m?.mimeType || headerMime || 'application/octet-stream');
+      const ext = (mime.split('/')[1] || 'bin').split(';')[0].replace('jpeg', 'jpg');
+      const kind = mime.startsWith('image/') ? 'image'
+        : mime.startsWith('audio/') ? 'audio'
+        : mime.startsWith('video/') ? 'video'
+        : 'file';
+      const filePath = `${INCOMING_MEDIA_DIR}/${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
+      fs.writeFileSync(filePath, Buffer.from(dataField.slice(commaIdx + 1), 'base64'));
+      lines.push(`- ${kind} (${mime}): ${filePath}`);
+    } catch (e: any) {
+      console.warn('[vm-agent] failed to save incoming media:', e?.message);
+    }
+  }
+  if (lines.length === 0) return '';
+  return [
+    'ATTACHED MEDIA (saved on this VM): the file(s) the user sent were downloaded locally. Re-open them with read_file / analyze_media if you need the raw file. Local path(s):',
+    ...lines,
+  ].join('\n');
+}
+
 async function handleAgentChat(args: any): Promise<any> {
   const message = String(args.message || '').trim();
   if (!message) return { ok: false, error: 'empty_message' };
@@ -535,6 +576,14 @@ async function handleAgentChat(args: any): Promise<any> {
       { role: 'user' as const, content: message },
     ];
 
+    // Forward inbound media so the cloud orchestrator can see images (vision)
+    // and save every file (incl. voice-note audio) locally so the agent gets a
+    // real path, not just the transcript. The path note rides as hiddenContext
+    // (the Python proxy folds memoryContext into it before cloud-ai injects it).
+    const attachments = Array.isArray(args.attachments) ? args.attachments : undefined;
+    const incomingMediaFiles = Array.isArray(args.incomingMediaFiles) ? args.incomingMediaFiles : undefined;
+    const localMediaContext = saveIncomingVMMedia(attachments || [], incomingMediaFiles || []);
+
     const result = await sendToAgent({
       type: 'chat',
       message,
@@ -547,6 +596,8 @@ async function handleAgentChat(args: any): Promise<any> {
         ...(args.context || {}),
       },
       memoryContext,
+      ...(attachments ? { attachments } : {}),
+      ...(localMediaContext ? { hiddenContext: localMediaContext } : {}),
       ...(vmAuth ? { auth: vmAuth } : {}),
     }, 180_000); // 3 min timeout for chat
 
@@ -665,6 +716,10 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
 
     // Stream chat to Python agent — onEvent fires for every WS message
     const attachments = Array.isArray(args.attachments) ? args.attachments : undefined;
+    const incomingMediaFiles = Array.isArray(args.incomingMediaFiles) ? args.incomingMediaFiles : undefined;
+    // Save inbound media to the VM disk so the agent gets a real file path (not
+    // just the transcript); surfaced to the cloud orchestrator as hiddenContext.
+    const localMediaContext = saveIncomingVMMedia(attachments || [], incomingMediaFiles || []);
     const messagesForCloud = [
       ...priorHistory,
       { role: 'user' as const, content: message },
@@ -683,6 +738,7 @@ async function handleAgentChatStream(args: any, res: import('http').ServerRespon
         context: { isVM: true, userId: USER_ID, ...(args.context || {}) },
         memoryContext,
         ...(attachments ? { attachments } : {}),
+        ...(localMediaContext ? { hiddenContext: localMediaContext } : {}),
         ...(vmAuth ? { auth: vmAuth } : {}),
       },
       (event) => {

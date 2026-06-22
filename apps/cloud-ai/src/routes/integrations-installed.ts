@@ -54,7 +54,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return null; }
 }
 
-function validateManifestShape(m: any): string | null {
+export function validateManifestShape(m: any): string | null {
   if (!m || typeof m !== 'object') return 'manifest must be an object';
   if (typeof m.slug !== 'string' || !m.slug) return 'manifest.slug is required';
   if (typeof m.version !== 'string' || !m.version) return 'manifest.version is required';
@@ -68,7 +68,7 @@ function validateManifestShape(m: any): string | null {
   return null;
 }
 
-function sanitizeSecrets(s: any, fields: any[]): Record<string, string> {
+export function sanitizeSecrets(s: any, fields: any[]): Record<string, string> {
   const allowed = new Set<string>();
   for (const f of fields) if (f && typeof f.name === 'string') allowed.add(f.name);
   const out: Record<string, string> = {};

@@ -12,7 +12,7 @@ import {
   getMainSupabaseClient,
   onMainAuthSessionChange,
 } from './auth-session';
-import { registerIncomingMessagingMedia } from './media-library';
+import { registerIncomingMessagingMedia, type MediaLibraryItem } from './media-library';
 import { WHATSAPP_INTEGRATION_ENABLED } from '../../../../../shared/integration-flags';
 
 type SmsMode = 'agent' | 'proactive';
@@ -429,6 +429,24 @@ function buildSmsHiddenContext(mode: SmsMode, proactiveMessage?: string | null):
   return lines.join('\n');
 }
 
+/**
+ * Build a context note listing the local paths of media the user just sent
+ * (already downloaded into the media library). Handed to the agent alongside
+ * the transcript/summary so it can re-open the real file (read_file /
+ * analyze_media) or send it back via telnyx_send_mms { path } — extra reference
+ * beyond just the meaning.
+ */
+function buildLocalMediaContext(items: MediaLibraryItem[]): string {
+  const lines = (items || [])
+    .filter((it) => it && it.localPath)
+    .map((it) => `- ${it.kind || 'file'} (${it.mimeType || 'unknown'}): ${it.localPath}`);
+  if (lines.length === 0) return '';
+  return [
+    'ATTACHED MEDIA (saved on this device): the file(s) the user sent were downloaded locally. Re-open them with read_file / analyze_media, or send one back with telnyx_send_mms { path }. Local path(s):',
+    ...lines,
+  ].join('\n');
+}
+
 async function submitSmsReply(input: {
   queueItemId: string;
   replyText: string;
@@ -650,6 +668,9 @@ async function runSmsTurn(input: {
   proactiveMessage?: string | null;
   provider?: string | null;
   attachments?: any[];
+  /** Local file paths of media the user sent (already downloaded), surfaced to
+   *  the agent as extra reference beyond the transcript/summary. */
+  localMediaContext?: string;
 }): Promise<{ replyText: string; fullReplyText: string; conversationId: string | null; alreadyDelivered: boolean; segmentsSent: number }> {
   const session = getMainAuthSession();
   const token = session?.access_token;
@@ -741,7 +762,10 @@ async function runSmsTurn(input: {
           text: input.text,
           model: input.preferredModel,
           conversationId: input.conversationId || undefined,
-          hiddenContext: buildSmsHiddenContext(input.mode, input.proactiveMessage),
+          hiddenContext: [
+            buildSmsHiddenContext(input.mode, input.proactiveMessage),
+            input.localMediaContext,
+          ].filter(Boolean).join('\n\n'),
           auth: { accessToken: token },
           // Signal to cloud WS that this is a mobile-originated message:
           // - forcePersist: bypass sync_conversations pref (SMS convos must always save)
@@ -959,16 +983,31 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
   // ── Agent turn (direct cloud WS with full tool bridge) ───────────────────
   const replyToPhone = String(item.reply_to_phone || effectiveState.last_reply_to_phone || '');
 
-  // Extract processed media attachments from queue metadata (populated by cloud-ai MediaProcessor)
+  // Extract processed media from queue metadata (populated by cloud-ai MediaProcessor).
+  // - processedAttachments: images/documents the model sees directly (vision).
+  // - incomingMediaFiles: extra binaries (e.g. voice-note audio) NOT sent to the
+  //   model inline, persisted only so the agent gets a real local file path.
   const processedAttachments = Array.isArray(item.metadata?.processedAttachments)
     ? item.metadata.processedAttachments
     : [];
+  const incomingMediaFiles = Array.isArray(item.metadata?.incomingMediaFiles)
+    ? item.metadata.incomingMediaFiles
+    : [];
 
-  if (processedAttachments.length > 0) {
-    void registerIncomingMessagingMedia(String(itemProvider || 'telnyx'), processedAttachments).catch((error) => {
+  // Save every inbound media file locally and capture the resulting paths so we
+  // can hand them to the agent for extra reference (re-open / analyze / send
+  // back) — not just the transcript/summary. Awaited (not fire-and-forget) so
+  // the paths are ready for this turn; failures degrade gracefully.
+  let savedMedia: MediaLibraryItem[] = [];
+  const mediaToSave = [...processedAttachments, ...incomingMediaFiles];
+  if (mediaToSave.length > 0) {
+    try {
+      savedMedia = await registerIncomingMessagingMedia(String(itemProvider || 'telnyx'), mediaToSave);
+    } catch (error) {
       logger.warn('[sms-inbox] Failed to ingest message media:', error);
-    });
+    }
   }
+  const localMediaContext = buildLocalMediaContext(savedMedia);
 
   // Resolve the device-owned conversation id. A brand-new thread gets its UUID
   // generated here so the id is stable across turns (no Supabase round-trip) and
@@ -992,6 +1031,7 @@ async function processSmsItem(item: SmsQueueItem): Promise<void> {
     proactiveMessage: effectiveState.proactive_message,
     provider: itemProvider,
     attachments: processedAttachments.length > 0 ? processedAttachments : undefined,
+    localMediaContext: localMediaContext || undefined,
   });
   if (!turn.replyText && !turn.alreadyDelivered) throw new Error('sms_empty_agent_reply');
 

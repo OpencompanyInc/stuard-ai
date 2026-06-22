@@ -6,7 +6,6 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from '../../../../../ai-elements/ChainOfThought';
-import { Shimmer } from '../../../../../ai-elements/Shimmer';
 import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../../utils/text';
 import type { ToolCall, StreamChunk } from '../../../../../../hooks/useAgent';
 import { GENUI_TOOL_NAMES, HIDDEN_TOOL_NAMES } from '../constants';
@@ -406,7 +405,7 @@ export const AssistantTracePanel: React.FC<AssistantTracePanelProps> = ({
                 isLast={idx === traceSteps.length - 1}
                 label={
                   step.status === 'active' ? (
-                    <Shimmer as="span" duration={2} spread={3}>{statusLabelNode || step.label}</Shimmer>
+                    <span className="text-theme-muted/80">{statusLabelNode || step.label}</span>
                   ) : (statusLabelNode || step.label)
                 }
               >

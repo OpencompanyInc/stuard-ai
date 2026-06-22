@@ -75,8 +75,29 @@ const VirtuosoList = React.forwardRef<
   );
 });
 
+/** Virtuoso scrolls on this node — keep the track inset inside the rounded chat shell. */
+const VirtuosoScroller = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(function VirtuosoScroller({ style, children, className, ...props }, ref) {
+  return (
+    <div
+      ref={ref}
+      {...props}
+      className={clsx(
+        className,
+        'chat-message-scroller scrollbar-invisible no-drag min-w-0 max-w-full box-border overflow-x-clip',
+      )}
+      style={style}
+    >
+      {children}
+    </div>
+  );
+});
+
 const virtuosoComponents: Components<VirtuosoItem> = {
   List: VirtuosoList,
+  Scroller: VirtuosoScroller,
 };
 
 interface VirtuosoItem {
@@ -310,10 +331,10 @@ const MessageList: React.FC<MessageListProps> = ({
     Footer: ScrollFooter,
   }), [ScrollFooter]);
 
-  const scrollerClass = `${className || 'h-full no-drag custom-scrollbar py-2 select-text'} min-w-0 max-w-full box-border overflow-x-clip`;
+  const scrollerClass = `${className || 'h-full py-2 select-text'} min-w-0 max-w-full box-border overflow-x-clip`;
 
   return (
-    <div className="relative h-full min-w-0 max-w-full overflow-x-clip">
+    <div className="relative h-full min-w-0 max-w-full overflow-hidden pe-3 box-border">
       <Virtuoso
         ref={virtuosoRef}
         data={items}

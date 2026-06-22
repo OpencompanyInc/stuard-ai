@@ -29,7 +29,9 @@ interface CloudReminder {
   status: string;
   attempts: number;
   max_attempts: number;
-  metadata: Record<string, any>;
+  // Stable id linking every occurrence of a recurring series (= the local
+  // Unified Tasks assignment id). Used to cancel a whole series at once.
+  series_id: string | null;
 }
 
 interface RecurrenceRule {
@@ -190,7 +192,9 @@ async function processDueReminders(): Promise<void> {
             recurrence: reminder.recurrence,
             recurrence_count: reminder.recurrence_count + 1,
             delivery_method: reminder.delivery_method,
-            metadata: reminder.metadata,
+            // Carry the series handle forward so the whole series stays
+            // cancelable via (user_id, series_id).
+            series_id: reminder.series_id,
           });
         }
       }

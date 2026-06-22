@@ -5,13 +5,13 @@ import {
   ChevronDown,
   Home,
   LayoutGrid,
-  Minimize2,
   PanelLeftClose,
   Plus,
 } from 'lucide-react';
 import type { ConversationHistoryItem } from '../../../shared/TabHistoryMenu';
 import { displayConversationTitle } from '../../../../../utils/conversationTitle';
 import { UpdateChip } from '../../../../UpdateChip';
+import { LayoutSwitcher } from './LayoutSwitcher';
 
 interface ChatHeaderMenuProps {
   chatMenuOpen: boolean;
@@ -25,6 +25,7 @@ interface ChatHeaderMenuProps {
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
   onCollapse?: () => void;
+  overlayMode?: 'compact' | 'sidebar' | 'window' | 'app';
 }
 
 /** Launcher-style top-right menu — grid icon + dropdown. */
@@ -40,16 +41,25 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
   onToggleSidebar,
   sidebarOpen = false,
   onCollapse,
+  overlayMode,
 }) => {
+  const showLayoutSwitcher = overlayMode === 'window' || overlayMode === 'sidebar';
+
   return (
     <div className="flex items-center gap-1.5 shrink-0">
       {/* New-version pill — only renders while an update is actionable */}
       <UpdateChip variant="header" />
+      {showLayoutSwitcher && (
+        <LayoutSwitcher
+          overlayMode={overlayMode}
+          onCollapse={onCollapse}
+        />
+      )}
     <DropdownMenu.Root open={chatMenuOpen} onOpenChange={onChatMenuOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="flex items-center gap-1 px-1.5 h-[34px] rounded-[10px] text-theme-muted hover:text-theme-fg hover:bg-theme-card transition-colors shrink-0"
+          className="flex items-center gap-1 px-1.5 h-[34px] text-theme-muted hover:text-theme-fg hover:bg-theme-card transition-colors shrink-0"
           title="Menu"
         >
           <LayoutGrid className="w-[18px] h-[18px]" strokeWidth={1.75} />
@@ -58,7 +68,7 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="DropdownContent z-[10005] min-w-[220px] bg-pill-bg rounded-xl border border-pill-fg/10 p-1 shadow-[var(--compact-pill-shadow)]"
+          className="DropdownContent z-[10005] min-w-[220px] max-h-[min(70vh,400px)] overflow-y-auto custom-scrollbar bg-pill-bg rounded-xl border border-pill-fg/10 p-1 shadow-[var(--compact-pill-shadow)]"
           sideOffset={8}
           align="end"
           collisionPadding={10}
@@ -116,16 +126,7 @@ export const ChatHeaderMenu: React.FC<ChatHeaderMenuProps> = ({
               className="group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2 rounded-lg outline-none transition-colors hover:bg-pill-fg/10 cursor-pointer"
             >
               <PanelLeftClose className="w-4 h-4 opacity-70" strokeWidth={1.75} />
-              <span className="flex-1">{sidebarOpen ? 'Hide' : 'Show'} sidebar</span>
-            </DropdownMenu.Item>
-          )}
-          {onCollapse && (
-            <DropdownMenu.Item
-              onSelect={() => onCollapse()}
-              className="group text-[13px] text-pill-fg/90 flex items-center gap-2 px-3 py-2 rounded-lg outline-none transition-colors hover:bg-pill-fg/10 cursor-pointer"
-            >
-              <Minimize2 className="w-4 h-4 opacity-70" strokeWidth={1.75} />
-              <span className="flex-1">Compact mode</span>
+              <span className="flex-1">{sidebarOpen ? 'Hide' : 'Show'} panel</span>
             </DropdownMenu.Item>
           )}
         </DropdownMenu.Content>

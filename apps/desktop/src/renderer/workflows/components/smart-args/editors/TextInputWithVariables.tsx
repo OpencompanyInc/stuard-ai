@@ -15,6 +15,12 @@ export interface UpstreamNode {
   hasStream?: boolean;
   mediaKind?: string;
   inputParams?: Array<{ name: string; type?: string; description?: string }>;
+  /** Custom item variable name when this node represents loop context */
+  loopItemVar?: string;
+  /** Custom index variable name when this node represents loop context */
+  loopIndexVar?: string;
+  /** Loop type — repeat loops only expose index, not item */
+  loopType?: 'forEach' | 'repeat' | 'while';
 }
 
 interface TextInputWithVariablesProps {
@@ -28,6 +34,15 @@ interface TextInputWithVariablesProps {
 }
 
 function getSuggestionFields(node: UpstreamNode, suggestFrom?: string[]): string[] {
+  if (node.tool === '__loop__') {
+    const fields: string[] = [];
+    if (node.loopType !== 'repeat') {
+      fields.push(node.loopItemVar || 'item');
+    }
+    fields.push(node.loopIndexVar || 'index');
+    return fields;
+  }
+
   const toolOutputs = node.tool ? getToolOutputs(node.tool) : ['ok', 'result'];
   const showAllFields = !suggestFrom || suggestFrom.includes('*.*') || suggestFrom.includes('*');
   const relevantOutputs = showAllFields
@@ -112,17 +127,20 @@ export function TextInputWithVariables({
     if (!upstreamNodes?.length) return results.slice(0, 12);
 
     for (const node of upstreamNodes) {
-      // For triggers, use trigger.data.X; for steps, use nodeId.X
+      const isLoopContext = node.tool === '__loop__';
+      // For triggers, use trigger.data.X; for steps, use nodeId.X; loop vars use loop.X
       const varPrefix = node.isTrigger ? 'trigger.data' : node.id;
       const varBaseSuggestion = node.isTrigger ? '{{trigger.data}}' : `{{${node.id}}}`;
 
-      // Add the base suggestion (trigger.data or node id)
-      if (!search || varPrefix.toLowerCase().includes(search) || node.label.toLowerCase().includes(search)) {
-        results.push({
-          text: varBaseSuggestion,
-          label: varPrefix,
-          description: node.isTrigger ? 'Trigger data (Gmail, webhook, etc.)' : node.label,
-        });
+      // Add the base suggestion (trigger.data or node id) — skip bare {{loop}}
+      if (!isLoopContext) {
+        if (!search || varPrefix.toLowerCase().includes(search) || node.label.toLowerCase().includes(search)) {
+          results.push({
+            text: varBaseSuggestion,
+            label: varPrefix,
+            description: node.isTrigger ? 'Trigger data (Gmail, webhook, etc.)' : node.label,
+          });
+        }
       }
 
       const relevantOutputs = getSuggestionFields(node, suggestFrom);
@@ -133,7 +151,12 @@ export function TextInputWithVariables({
           results.push({
             text: `{{${fullPath}}}`,
             label: fullPath,
-            description: node.isTrigger ? `Trigger → ${field}` : `${node.label} → ${field}`,
+            description: isLoopContext
+              ? `Loop → ${field}`
+              : node.isTrigger
+                ? `Trigger → ${field}`
+                : `${node.label} → ${field}`,
+            category: isLoopContext ? 'Loop Variables' : undefined,
           });
         }
       }

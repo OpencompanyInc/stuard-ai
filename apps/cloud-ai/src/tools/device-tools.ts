@@ -425,21 +425,23 @@ export {
 export const agent_todo = createTool({
   id: 'agent_todo',
   description: [
-    'Track multi-step tasks for the current session.',
-    'Actions: list, create, bulk_create, update, start, complete, fail, block, delete, clear, progress, get_current, get_next.',
+    "Track what you're doing for the user this session — a live, plain-language status line plus an optional step checklist. The user watches both update in real time.",
+    'Actions: set_status, list, create, bulk_create, update, start, complete, fail, block, delete, finish, clear, progress, get_current, get_next.',
     '`data` MUST be an object (not a JSON string). Shape per action:',
+    "  • set_status: { label: string, detail?: string, state?: 'working'|'done'|'blocked'|'idle' } — the one-line \"what's happening now\" headline; pass label:'' to clear it",
     '  • create: { title: string, description?: string, priority?: number, tags?: string[] }',
     '  • bulk_create: { items: Array<{ title: string, description?: string, priority?: number, tags?: string[] }> }',
     '  • start | complete | fail | block | delete: { id: string, note?: string, reason?: string }',
     '  • update: { id: string, title?, description?, status?, priority?, tags?, metadata? }',
     '  • list: { includeCompleted?: boolean }',
+    "  • finish: { summary?: string } — mark every remaining step done + set a 'done' status (call this to wrap up before you end)",
     '  • clear: { keepInProgress?: boolean }',
     '  • progress | get_current | get_next: omit data',
   ].join(' '),
   inputSchema: z.object({
     action: z.enum([
-      'list', 'create', 'bulk_create', 'update', 'start', 'complete',
-      'fail', 'block', 'delete', 'clear', 'progress', 'get_current', 'get_next',
+      'set_status', 'list', 'create', 'bulk_create', 'update', 'start', 'complete',
+      'fail', 'block', 'delete', 'finish', 'clear', 'progress', 'get_current', 'get_next',
     ]).describe('The action to perform'),
     sessionId: z.string().describe('The conversation/thread ID'),
     data: z.record(z.string(), z.any()).optional().describe(

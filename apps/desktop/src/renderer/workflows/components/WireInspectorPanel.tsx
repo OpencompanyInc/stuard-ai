@@ -8,7 +8,7 @@ import { getToolOutputs } from "../constants/tool-schemas";
 import type { DesignerModel, DesignerWire, WorkflowVariable } from "../types";
 import { parseGuard, guardToString } from "../builder/guards";
 import { STREAM_CAPABLE_TOOLS } from "./WorkflowNodeCard";
-import { isBackEdge as isBackEdgeCycle } from "../utils/graphUtils";
+import { isBackEdge as isBackEdgeCycle, isNodeInsideOpenLoop } from "../utils/graphUtils";
 
 // Back edge (cycle) detection is in ../utils/graphUtils.ts
 
@@ -170,7 +170,7 @@ function getUpstreamNodes(model: DesignerModel, nodeId: string): UpstreamNode[] 
     if (visited.has(id)) return;
     visited.add(id);
 
-    const incomingWires = model.wires?.filter(w => w.to === id) || [];
+    const incomingWires = (Array.isArray(model.wires) ? model.wires : []).filter(w => w.to === id);
     for (const wire of incomingWires) {
       const sourceId = wire.from;
       const trigger = model.triggers.find(t => t.id === sourceId);
@@ -328,7 +328,7 @@ export function WireInspectorPanel({ model, wireIndex, onUpdate, onDelete, onClo
         <LoopBreakSection
           wire={wire}
           onUpdate={updateWire}
-          model={model}
+          wires={safeWires}
         />
 
         {/* Stream Wire Configuration — only shown when source can stream */}
@@ -384,26 +384,30 @@ function WireLoopSection({
 
   // Check if there's a sibling wire from the same source that has a loop
   const hasOutgoingLoopFromSameNode = React.useMemo(() => {
-    const wires = model.wires || [];
+    const wires = Array.isArray(model.wires) ? model.wires : [];
     return wires.some(w => w.from === wire.from && w.to !== wire.to && (w as any).loop && (w as any).loop.type);
   }, [model.wires, wire.from, wire.to]);
 
   const fanoutMode = ((wire as any).loopFanoutMode === 'parallel' ? 'parallel' : 'wait') as 'wait' | 'parallel';
 
-  // Auto-configure loop for back edges that don't have a loop yet
+  // Auto-configure loop once for back edges that don't have a loop yet
+  const autoLoopConfiguredRef = React.useRef(false);
   React.useEffect(() => {
-    if (isBackEdge && !hasLoop) {
-      // Auto-set to repeat loop with default 5 iterations
-      onUpdate({ 
-        loop: { 
-          type: 'repeat', 
-          count: 5, 
-          maxIterations: 100, 
-          delayMs: 0 
-        } 
-      } as any);
+    if (!isBackEdge) {
+      autoLoopConfiguredRef.current = false;
+      return;
     }
-  }, [isBackEdge, hasLoop]);
+    if (hasLoop || autoLoopConfiguredRef.current) return;
+    autoLoopConfiguredRef.current = true;
+    onUpdate({
+      loop: {
+        type: 'repeat',
+        count: 5,
+        maxIterations: 100,
+        delayMs: 0,
+      },
+    } as any);
+  }, [isBackEdge, hasLoop, onUpdate]);
 
   const handleLoopTypeChange = (newType: string) => {
     if (newType === 'none') {
@@ -1059,48 +1063,16 @@ function WireConditionSection({
 function LoopBreakSection({
   wire,
   onUpdate,
-  model
+  wires,
 }: {
   wire: DesignerWire;
   onUpdate: (updates: Partial<DesignerWire>) => void;
-  model: DesignerModel;
+  wires: DesignerWire[];
 }) {
-  // Check if source node is inside an OPEN loop scope
-  // A loop scope is "open" if there's an upstream loop wire that hasn't been closed by a loopBreak
-  const isInsideLoop = useMemo(() => {
-    const wires = model.wires || [];
-    
-    // Walk upstream from nodeId, tracking open loop depth
-    // Returns the number of unclosed loop scopes at this node
-    function countOpenLoops(nodeId: string, visited: Set<string>): number {
-      if (visited.has(nodeId)) return 0;
-      visited.add(nodeId);
-      
-      const incomingWires = wires.filter(w => w.to === nodeId);
-      let maxOpenLoops = 0;
-      
-      for (const w of incomingWires) {
-        // Get open loops from further upstream
-        let openLoops = countOpenLoops(w.from, new Set(visited));
-        
-        // If this wire STARTS a loop, increment
-        if ((w as any).loop) {
-          openLoops++;
-        }
-        
-        // If this wire BREAKS a loop, decrement (but not below 0)
-        if ((w as any).loopBreak && openLoops > 0) {
-          openLoops--;
-        }
-        
-        maxOpenLoops = Math.max(maxOpenLoops, openLoops);
-      }
-      
-      return maxOpenLoops;
-    }
-    
-    return countOpenLoops(wire.from, new Set()) > 0;
-  }, [model, wire.from]);
+  const isInsideLoop = useMemo(
+    () => isNodeInsideOpenLoop(wire.from, wires),
+    [wires, wire.from],
+  );
 
   const hasLoopBreak = !!(wire as any).loopBreak;
 

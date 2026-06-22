@@ -2,7 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { calendar_list_events } from '../google-tools';
 import { execLocalTool, hasClientBridge, makeLocalTool, getBridgeSecrets, anyJsonObject } from './shared';
-import { syncReminderToCloud, getCloudReminders } from '../cloud-reminder-tools';
+import { syncReminderToCloud, getCloudReminders, cancelCloudReminderSeries } from '../cloud-reminder-tools';
 
 export const calendar_crud = makeLocalTool(
   'calendar_crud',
@@ -110,18 +110,20 @@ const recurrenceSchema = z.object({
 const _task_reminders_base = makeLocalTool(
   'task_reminders',
   'Schedule, update, cancel/delete, list, and resume reminders. Supports one-time and recurring reminders. ' +
+  'To STOP a recurring reminder, list to find its id then cancel/delete it (this also stops its offline SMS/WhatsApp delivery); ' +
+  'or update with recurrence:null to keep it as a one-time reminder. ' +
   'Set cloud_notify=true to also auto-send an SMS or WhatsApp message at the scheduled time (works even when desktop is offline). ' +
   'For list action, use limit (default 20) and offset (default 0) to paginate results.',
   z.object({
     action: z.enum(['schedule', 'update', 'cancel', 'delete', 'list', 'resume']).describe(
-      'schedule: create a new reminder | update: modify an existing reminder | cancel/delete: remove a reminder | list: list all pending reminders | resume: restart pending reminders after agent restart'
+      'schedule: create a new reminder | update: modify an existing reminder (incl. recurrence:null to stop repeating) | cancel/delete: stop & remove a reminder, including recurring ones | list: list all pending reminders | resume: no-op (the desktop scheduler persists reminders across restarts)'
     ),
     when: z.string().optional().describe('When to fire: ISO 8601 datetime or relative seconds (e.g. "300" = 5 min from now). Required for schedule.'),
     scheduledAt: z.string().optional().describe('Explicit ISO 8601 datetime. Alternative to "when", primarily used in update.'),
     message: z.string().optional().describe('Reminder message text. Required for schedule.'),
     taskId: z.string().optional().describe('Optional task ID to associate with this reminder.'),
     id: z.string().optional().describe('Reminder ID. Required for update, cancel, and delete.'),
-    recurrence: recurrenceSchema.optional().describe('Make this reminder repeat. Omit for one-time. Pass null/undefined in update to remove recurrence.'),
+    recurrence: recurrenceSchema.nullish().describe('Make this reminder repeat. Omit for one-time. Pass null in update to remove recurrence (turn a recurring reminder into one-time).'),
     cloud_notify: z.boolean().optional().describe('When true, also sends an SMS/WhatsApp at the scheduled time via the cloud. Requires a connected Telnyx or WhatsApp number.'),
     cloud_notify_method: z.enum(['sms', 'whatsapp', 'both']).optional().describe('Delivery method for cloud notification. Default: "sms".'),
     limit: z.number().int().min(1).max(100).default(20).optional().describe('Max items for list action (default 20).'),
@@ -241,21 +243,49 @@ export const task_reminders = createTool({
       result.hasMore = offset + limit < total;
     }
 
-    // Auto-sync to cloud when cloud_notify is set
+    // Auto-sync to cloud when cloud_notify is set. Pass the freshly-created
+    // assignment id as the series handle so the offline (SMS/WhatsApp) copy can
+    // be cancelled later via the same id the agent uses to cancel locally.
     if (inp.action === 'schedule' && inp.cloud_notify && inp.message && (inp.when || inp.scheduledAt)) {
       try {
         const secrets = getBridgeSecrets();
         const userId = secrets?.userId || (context as any)?.userId || (context as any)?.resourceId;
         if (userId) {
+          const seriesId = (result as any)?.assignment?.id;
           await syncReminderToCloud(userId, {
             when: inp.when || inp.scheduledAt,
             message: inp.message,
             recurrence: inp.recurrence,
             cloud_notify_method: inp.cloud_notify_method,
+            seriesId: seriesId ? String(seriesId) : undefined,
           });
         }
       } catch (e: any) {
         console.error('[task_reminders] Cloud sync failed (non-blocking):', e?.message);
+      }
+    }
+
+    // Stopping a reminder locally must also stop its offline cloud delivery.
+    // Cancel/delete kills the whole series; an update that removes recurrence
+    // stops future occurrences too (the cloud row still carries the old rule).
+    const removesRecurrence =
+      inp.action === 'update' &&
+      Object.prototype.hasOwnProperty.call(inp, 'recurrence') &&
+      (inp.recurrence === null || inp.recurrence === undefined || inp.recurrence === 'none');
+    if (
+      (inp.action === 'cancel' || inp.action === 'delete' || removesRecurrence) &&
+      inp.id &&
+      (result as any)?.ok !== false
+    ) {
+      try {
+        const secrets = getBridgeSecrets();
+        const userId = secrets?.userId || (context as any)?.userId || (context as any)?.resourceId;
+        if (userId) {
+          const cancelled = await cancelCloudReminderSeries(userId, String(inp.id));
+          if (cancelled > 0) (result as any).cloudRemindersCancelled = cancelled;
+        }
+      } catch (e: any) {
+        console.error('[task_reminders] Cloud cancel failed (non-blocking):', e?.message);
       }
     }
 

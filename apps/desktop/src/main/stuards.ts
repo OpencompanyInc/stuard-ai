@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import WebSocket from "ws";
 
-import { unifiedTasksService, waitForAgentReady } from "./services";
+import { unifiedTasksService, waitForAgentReady, clearFiredReminder } from "./services";
 let nodeCron: any = null;
 try { nodeCron = require('node-cron'); } catch { }
 
@@ -129,6 +129,14 @@ function attachUnifiedTasksListener(ws: WebSocket) {
           result = unifiedTasksService.addAgentAssignment(data?.taskId, data?.assignment);
         } else if (event === 'unified_tasks_update_agent_assignment') {
           result = unifiedTasksService.updateAgentAssignment(data?.taskId, data?.assignmentId, data?.updates);
+          // If the reminder was re-armed (rescheduled to a new time / back to
+          // pending), clear the scheduler's in-memory fired-dedupe so the next
+          // occurrence isn't suppressed by the short grace window.
+          try {
+            const upd = data?.updates || {};
+            const reArmed = upd.status === 'pending' || upd.scheduledAt != null;
+            if (data?.assignmentId && reArmed) clearFiredReminder(String(data.assignmentId));
+          } catch { /* non-fatal */ }
         } else if (event === 'unified_tasks_delete_agent_assignment') {
           result = unifiedTasksService.deleteAgentAssignment(data?.taskId, data?.assignmentId);
         }

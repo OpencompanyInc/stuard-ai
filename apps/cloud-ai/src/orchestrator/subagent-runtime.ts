@@ -16,6 +16,7 @@ import { getModel, getModelForUser } from '../agents/stuard/models';
 import type { ModelSourcePreference } from '../utils/models';
 import { writeLog } from '../utils/logger';
 import { execLocalTool, getBridgeWs, getBridgeSecrets, withClientBridge, runWithSecrets } from '../tools/bridge';
+import { wrapToolWithVariables, conversationKeyFromSecrets } from '../tools/chat-variables';
 import { mirrorToDesktop } from '../services/vm-stream-mirror';
 import { recordNestedSubagentEvent } from '../server/chat/nested-chunk-recorder';
 import {
@@ -655,14 +656,21 @@ async function buildSubagent(
   // Build tool set: capability pack tools from the full universe + control tools
   const tools: Record<string, any> = {};
   const missingTools: string[] = [];
+  // Conversation key for the variable store — captured here while ALS is intact
+  // so the var layer resolves the right per-conversation bucket downstream.
+  const subagentConvKey = conversationKeyFromSecrets(bridgeSecrets);
   for (const name of pack.toolNames) {
     if (executionTools[name]) {
       // Wrap with bridge context so tools work inside agent.generate().
       // Also wrap when bridgeSecrets exists without a WS — the wrapper's
       // runWithSecrets fallback ensures getBridgeSecrets() returns userId.
-      tools[name] = (bridgeWs || bridgeSecrets)
+      const bridged = (bridgeWs || bridgeSecrets)
         ? wrapToolWithBridge(executionTools[name], bridgeWs, bridgeSecrets)
         : executionTools[name];
+      // Var layer is OUTERMOST so a delegated subagent's screenshots / file
+      // reads / fat API dumps are captured to handles too (the documented
+      // subagent context-blowup), and {{var:…}} handles in its args rehydrate.
+      tools[name] = wrapToolWithVariables(bridged, subagentConvKey);
     } else {
       missingTools.push(name);
     }

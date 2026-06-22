@@ -48,7 +48,7 @@ export function IntegrationSearchEmptyState({
       >
         <Plug
           className={clsx(
-            isCompact ? 'h-5 w-5 wf-fg-muted' : 'h-6 w-6 text-theme-muted/70',
+            isCompact ? 'h-5 w-5 wf-fg-muted' : 'h-6 w-6 text-theme-muted-soft',
           )}
         />
       </div>

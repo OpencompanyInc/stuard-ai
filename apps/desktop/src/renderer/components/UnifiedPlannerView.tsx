@@ -183,6 +183,13 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
         chipClass: 'bg-emerald-500/12 text-emerald-400 border border-emerald-500/20',
       };
     }
+    if (block?.source === 'google-task') {
+      return {
+        label: 'Google Task',
+        dotClass: 'bg-sky-500',
+        chipClass: 'bg-sky-500/12 text-sky-400 border border-sky-500/20',
+      };
+    }
     if (block?.source === 'local') {
       return {
         label: 'Local',
@@ -811,10 +818,11 @@ export const UnifiedPlannerView: React.FC<UnifiedPlannerViewProps> = ({
                     const isMicro = blockHeight < 30;
 
                     const sourcePalette: Record<string, { tint: string; rail: string; hoverRing: string }> = {
-                      reminder: { tint: 'bg-amber-500/12',   rail: 'bg-amber-500',   hoverRing: 'hover:ring-amber-500/55' },
-                      task:     { tint: 'bg-emerald-500/12', rail: 'bg-emerald-500', hoverRing: 'hover:ring-emerald-500/55' },
-                      local:    { tint: 'bg-violet-500/12',  rail: 'bg-violet-500',  hoverRing: 'hover:ring-violet-500/55' },
-                      event:    { tint: 'bg-orange-500/12',  rail: 'bg-orange-500',  hoverRing: 'hover:ring-orange-500/55' },
+                      reminder:      { tint: 'bg-amber-500/12',   rail: 'bg-amber-500',   hoverRing: 'hover:ring-amber-500/55' },
+                      task:          { tint: 'bg-emerald-500/12', rail: 'bg-emerald-500', hoverRing: 'hover:ring-emerald-500/55' },
+                      'google-task': { tint: 'bg-sky-500/12',     rail: 'bg-sky-500',     hoverRing: 'hover:ring-sky-500/55' },
+                      local:         { tint: 'bg-violet-500/12',  rail: 'bg-violet-500',  hoverRing: 'hover:ring-violet-500/55' },
+                      event:         { tint: 'bg-orange-500/12',  rail: 'bg-orange-500',  hoverRing: 'hover:ring-orange-500/55' },
                     };
                     const srcKey = b.source && sourcePalette[b.source as string] ? (b.source as string) : 'event';
                     const palette = sourcePalette[srcKey];

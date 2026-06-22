@@ -55,7 +55,7 @@ export function CloudBilling() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Compute billing</h2>
-        <p className="mt-1 text-sm text-theme-muted">Credits used by your cloud engine this billing period.</p>
+        <p className="mt-1 text-sm text-theme-muted">Credits used by your cloud computer this billing period.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

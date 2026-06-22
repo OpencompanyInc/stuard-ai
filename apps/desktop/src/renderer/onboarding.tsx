@@ -5,6 +5,7 @@ import "./styles.css";
 import { OnboardingProvider } from "./components/onboarding";
 import { ConversationalOnboarding } from "./components/onboarding/ConversationalOnboarding";
 import { CoachingTour } from "./components/onboarding/CoachingTour";
+import { FeaturedWorkflows } from "./components/onboarding/FeaturedWorkflows";
 import { StudioIntro } from "./components/onboarding/StudioIntro";
 import { usePreferences } from "./hooks/usePreferences";
 
@@ -51,15 +52,19 @@ function OnboardingApp() {
   const { setOnboardingComplete, setTourComplete } = usePreferences();
   useClickThroughTracker();
 
-  // Three phases inside this overlay: the welcome scenes, the coaching demo
-  // (which replaces the old in-app InteractiveTour), then a Studio hand-off.
-  const [phase, setPhase] = useState<'welcome' | 'coaching' | 'studio'>('welcome');
+  // Phases inside this overlay: the welcome scenes, the coaching demo (which
+  // replaces the old in-app InteractiveTour), a featured-workflows gallery to
+  // get a running start, then a Studio hand-off.
+  const [phase, setPhase] = useState<'welcome' | 'coaching' | 'gallery' | 'studio'>('welcome');
 
   // Welcome "Open Stuard" hands off into the coaching demo — don't close yet.
   const handleWelcomeDone = () => setPhase('coaching');
 
-  // The coaching tour's last step now leads into the Studio intro, not the exit.
-  const handleCoachingDone = () => setPhase('studio');
+  // The coaching tour's last step leads into the featured-workflows gallery.
+  const handleCoachingDone = () => setPhase('gallery');
+
+  // The gallery (install ready-made workflows) hands off to the Studio intro.
+  const handleGalleryDone = () => setPhase('studio');
 
   // Finish everything → mark complete, reveal + focus the real pill. Coaching IS
   // the tour, so mark tourComplete too and the legacy InteractiveTour won't run.
@@ -96,6 +101,8 @@ function OnboardingApp() {
           />
         ) : phase === 'coaching' ? (
           <CoachingTour onComplete={handleCoachingDone} onSkip={finish} lastLabel="Next" />
+        ) : phase === 'gallery' ? (
+          <FeaturedWorkflows onComplete={handleGalleryDone} onSkip={finish} />
         ) : (
           <StudioIntro onComplete={finish} onSkip={finish} />
         )}

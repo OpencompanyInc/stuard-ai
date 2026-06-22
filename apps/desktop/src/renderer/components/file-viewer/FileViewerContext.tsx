@@ -62,6 +62,10 @@ export interface FileViewerContextValue {
   previewUrlBuilder: PreviewUrlBuilder | null;
   /** Convenience: opens a tab for a localhost dev-server port in the VM. */
   openPreview: (port: number) => Promise<string | null>;
+  /** Source assumed when a caller opens a file without specifying one (e.g. a
+   *  file path clicked in a chat message). The cloud VM workspace uses 'vm';
+   *  the desktop Workspace pane sets this to 'local'. */
+  defaultSource: FileTabSource;
 }
 
 const FileViewerContext = createContext<FileViewerContextValue | null>(null);
@@ -100,6 +104,7 @@ interface FileViewerProviderProps {
   fetcher?: FileFetcher | null;
   serveUrlBuilder?: ServeUrlBuilder | null;
   previewUrlBuilder?: PreviewUrlBuilder | null;
+  defaultSource?: FileTabSource;
 }
 
 export const FileViewerProvider: React.FC<FileViewerProviderProps> = ({
@@ -108,6 +113,7 @@ export const FileViewerProvider: React.FC<FileViewerProviderProps> = ({
   fetcher = null,
   serveUrlBuilder = null,
   previewUrlBuilder = null,
+  defaultSource = 'vm',
 }) => {
   const [tabs, setTabs] = useState<FileTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -198,8 +204,9 @@ export const FileViewerProvider: React.FC<FileViewerProviderProps> = ({
       serveUrlBuilder,
       previewUrlBuilder,
       openPreview,
+      defaultSource,
     }),
-    [tabs, activeTabId, isOpen, openFile, closeTab, closeAll, switchTab, setOpen, toggle, fetcher, serveUrlBuilder, previewUrlBuilder, openPreview],
+    [tabs, activeTabId, isOpen, openFile, closeTab, closeAll, switchTab, setOpen, toggle, fetcher, serveUrlBuilder, previewUrlBuilder, openPreview, defaultSource],
   );
 
   // Expose openFile globally so non-provider-aware callers (e.g., the cloud

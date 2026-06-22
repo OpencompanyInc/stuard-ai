@@ -495,12 +495,6 @@ const TaskDetail: React.FC<{ task: SubAgentTask }> = ({ task }) => {
       </div>
 
       {task.status === 'running' && (
-        <div className="h-[2px] bg-theme-border overflow-hidden relative rounded-full mx-1">
-          <div className="absolute top-0 bottom-0 w-1/3 bg-blue-500/60 animate-[shimmer_2s_infinite_linear]" />
-        </div>
-      )}
-
-      {task.status === 'running' && (
         <SteerInput
           taskId={task.id}
           pendingCount={task.pending_steers?.length ?? 0}

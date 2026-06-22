@@ -40,7 +40,7 @@ export const ToolRunningIndicator: React.FC<ToolRunningIndicatorProps> = ({
       />
       <span
         className={clsx(
-          'truncate text-theme-muted font-medium',
+          'truncate text-[12px] font-normal leading-4 text-theme-muted/75',
           compact ? 'text-[11px]' : 'text-[12px]',
         )}
       >

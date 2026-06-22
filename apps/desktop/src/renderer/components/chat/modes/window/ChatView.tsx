@@ -21,6 +21,7 @@ import { ChatTabs } from "./parts/ChatTabs";
 import { ChatHeaderActions } from "./parts/ChatHeaderActions";
 import { ChatHeaderMenu } from "./parts/ChatHeaderMenu";
 import { ChatInputArea } from "./parts/ChatInputArea";
+import type { DiscoveryTip } from "../../../onboarding/DiscoveryEngine";
 import { FileNavigatorOverlay } from "./parts/FileNavigatorOverlay";
 import { SidebarTabsPanel } from "../../shared/sidebar/SidebarTabsPanel";
 import { TasksView, TaskSubTab } from "../../../TasksView";
@@ -107,6 +108,11 @@ interface ChatViewProps {
 
   // Status/Model
   statusText?: string;
+  statusPresentation?: 'system' | 'activity' | 'planner' | 'discovery';
+  statusActivityState?: 'working' | 'done' | 'blocked' | 'idle';
+  statusDiscoveryTip?: DiscoveryTip | null;
+  statusDiscoveryVisible?: boolean;
+  onStatusDiscoveryAction?: (tip: DiscoveryTip) => void;
   contextUsage?: Record<string, any>;
   contextModelId?: string;
   connectionStatus?: "connected" | "connecting" | "disconnected" | "error";
@@ -121,7 +127,7 @@ interface ChatViewProps {
   onReasoningLevelChange?: (level: ReasoningLevel) => void;
 
   // Layout mode for responsive styling
-  overlayMode?: "compact" | "sidebar" | "window";
+  overlayMode?: "compact" | "sidebar" | "window" | "app";
 
   // Tabs
   tabs?: any[];
@@ -224,6 +230,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   loadingConversations = false,
   onSelectConversation = () => {},
   statusText = "Online",
+  statusPresentation = 'system',
+  statusActivityState = 'working',
+  statusDiscoveryTip = null,
+  statusDiscoveryVisible = false,
+  onStatusDiscoveryAction,
   contextUsage,
   contextModelId,
   connectionStatus = "connected",
@@ -462,7 +473,8 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
   const researchActive = !!research;
 
   const isLauncherChatLayout =
-    overlayMode === "window" || overlayMode === "sidebar";
+    overlayMode === "window" || overlayMode === "sidebar" || overlayMode === "app";
+  const isWorkspaceApp = overlayMode === "app";
   const floatingComposerRef = useRef<HTMLDivElement>(null);
   const [composerInset, setComposerInset] = useState(152);
   const pendingAskUserPrompts = askUserPrompts.filter(
@@ -519,6 +531,11 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
       queuedMessages={queuedMessages}
       onCancelQueuedMessage={onCancelQueuedMessage}
       statusText={statusText}
+      statusPresentation={statusPresentation}
+      statusActivityState={statusActivityState}
+      statusDiscoveryTip={statusDiscoveryTip}
+      statusDiscoveryVisible={statusDiscoveryVisible}
+      onStatusDiscoveryAction={onStatusDiscoveryAction}
       connectionStatus={connectionStatus}
       contextMetrics={contextMetrics}
       translucentMode={translucentMode}
@@ -575,37 +592,47 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
           researchStreaming={!!isStreaming}
         />
 
-        {overlayMode === "window" || overlayMode === "sidebar" ? (
+        {overlayMode === "window" || overlayMode === "sidebar" || overlayMode === "app" ? (
           <div
             className={clsx(
-              "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 border border-theme overflow-hidden launcher-compact-skin",
-              "p-4 gap-3",
-              internalSidebarOpen
-                ? "rounded-r-[32px] rounded-l-none border-l-0"
-                : "rounded-[32px]",
-              translucentMode
-                ? "bg-theme-bg backdrop-blur-2xl"
-                : "bg-theme-bg",
-              researchActive && "research-active-border",
-              researchActive && isStreaming && "research-streaming",
+              "flex-1 min-w-0 min-h-0 flex flex-col transition-all duration-300 overflow-hidden",
+              isWorkspaceApp
+                ? "flex-1 min-h-0 overflow-hidden"
+                : [
+                    "border border-theme launcher-compact-skin",
+                    "p-4 gap-3",
+                    internalSidebarOpen
+                      ? "rounded-r-[32px] rounded-l-none border-l-0"
+                      : "rounded-[32px]",
+                    translucentMode
+                      ? "bg-theme-bg backdrop-blur-2xl"
+                      : "bg-theme-bg",
+                  ],
+              !isWorkspaceApp && researchActive && "research-active-border",
+              !isWorkspaceApp && researchActive && isStreaming && "research-streaming",
             )}
             style={{
-              ...(translucentMode
-                ? {
-                    background:
-                      "color-mix(in srgb, var(--background) 76%, transparent)",
-                  }
-                : {}),
-              ...(researchActive
-                ? { borderColor: `${RESEARCH_ACCENT}33` }
-                : activeProject
-                  ? { borderColor: `${activeProject.color}22` }
+              ...(isWorkspaceApp
+                ? {}
+                : translucentMode
+                  ? {
+                      background:
+                        "color-mix(in srgb, var(--background) 76%, transparent)",
+                    }
                   : {}),
+              ...(isWorkspaceApp
+                ? {}
+                : researchActive
+                  ? { borderColor: `${RESEARCH_ACCENT}33` }
+                  : activeProject
+                    ? { borderColor: `${activeProject.color}22` }
+                    : {}),
             }}
           >
             {/* Header & Messages — single launcher surface, no nested card */}
             <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden relative gap-3">
-              {/* Top Header */}
+              {/* Top Header — hidden in Workspace; shell provides vertical tabs + toolbar */}
+              {!isWorkspaceApp && (
               <div className="flex items-center justify-between px-0.5 shrink-0 w-full min-w-0">
                 <div className="flex-1 w-0 min-w-0 overflow-hidden mr-2">
                   <ChatTabs
@@ -621,6 +648,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   sidebarOpen={internalSidebarOpen}
                   onOpenDashboard={onOpenDashboard}
                   onCollapse={onCollapse}
+                  overlayMode={overlayMode}
                   chatMenuOpen={chatMenuOpen}
                   onChatMenuOpenChange={onChatMenuOpenChange}
                   conversations={conversations}
@@ -630,6 +658,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                   onNewChat={onNewChat}
                 />
               </div>
+              )}
 
               {/* Pending memories (overlay-only; compact UI) */}
               {viewMode === "chat" &&
@@ -737,7 +766,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                           currentToolCalls={currentToolCalls}
                           currentStreamChunks={currentStreamChunks}
                           thinkingStartTime={thinkingStartTime}
-                          className="h-full py-3 scrollbar-hidden min-w-0"
+                          className="h-full py-3 min-w-0"
                           scrollInsetBottom={composerInset}
                           onSubmitToolOutput={onSubmitToolOutput}
                           onGenUIResponse={onGenUIResponse}
@@ -915,7 +944,7 @@ const ChatViewInner: React.FC<ChatViewProps> = ({
                       currentToolCalls={currentToolCalls}
                       currentStreamChunks={currentStreamChunks}
                       thinkingStartTime={thinkingStartTime}
-                      className="h-full px-5 py-4 scrollbar-hidden overflow-x-hidden"
+                      className="h-full px-5 py-4 overflow-x-hidden"
                       onSubmitToolOutput={onSubmitToolOutput}
                       onGenUIResponse={onGenUIResponse}
                       onEditMessage={onEditMessage}

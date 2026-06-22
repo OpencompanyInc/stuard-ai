@@ -15,7 +15,7 @@ export interface PlannerTask {
   priority: 'low' | 'normal' | 'high' | 'urgent';
   completed: boolean;
   tags?: string[];
-  source?: 'agent' | 'unified'; // Where the task came from
+  source?: 'agent' | 'unified' | 'google'; // Where the task came from
   description?: string;
   subTodosTotal?: number;
   subTodosCompleted?: number;
@@ -173,13 +173,17 @@ export function usePlannerData(
   const cloudCacheRef = useRef<{
     reminders: PlannerReminder[];
     events: CalendarEvent[];
+    googleTasks: PlannerTask[];
     remindersFetchedAt: number;
     eventsFetchedAt: number;
+    googleTasksFetchedAt: number;
   }>({
     reminders: [],
     events: [],
+    googleTasks: [],
     remindersFetchedAt: 0,
     eventsFetchedAt: 0,
+    googleTasksFetchedAt: 0,
   });
 
   useEffect(() => {
@@ -200,8 +204,10 @@ export function usePlannerData(
     cloudCacheRef.current = {
       reminders: [],
       events: [],
+      googleTasks: [],
       remindersFetchedAt: 0,
       eventsFetchedAt: 0,
+      googleTasksFetchedAt: 0,
     };
   }, [accessToken]);
 
@@ -296,6 +302,41 @@ export function usePlannerData(
       }
     } catch {}
     return cloudCacheRef.current.reminders;
+  };
+
+  const fetchGoogleTasks = async (): Promise<PlannerTask[]> => {
+    if (!accessToken) return [];
+
+    const now = Date.now();
+    if (now - cloudCacheRef.current.googleTasksFetchedAt < cloudPollMs) {
+      return cloudCacheRef.current.googleTasks;
+    }
+
+    try {
+      const res = await fetch(`${CLOUD_AI_HTTP}/v1/tasks/google?showCompleted=false`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (j?.ok && Array.isArray(j.items)) {
+          const items: PlannerTask[] = j.items
+            .filter((t: any) => !t.completed)
+            .map((t: any) => ({
+              id: `google:${t.listId}:${t.id}`,
+              title: t.title || '(task)',
+              due: t.due || undefined,
+              priority: 'normal' as const,
+              completed: false,
+              source: 'google' as const,
+              description: t.notes || undefined,
+            }));
+          cloudCacheRef.current.googleTasks = items;
+          cloudCacheRef.current.googleTasksFetchedAt = now;
+          return items;
+        }
+      }
+    } catch {}
+    return cloudCacheRef.current.googleTasks;
   };
 
   const fetchCalendarEvents = async (): Promise<CalendarEvent[]> => {
@@ -403,6 +444,7 @@ export function usePlannerData(
         const eventsPromise = fetchCalendarEvents();
         const unifiedTasksPromise = fetchUnifiedTasks();
         const cloudRemindersPromise = fetchCloudReminders();
+        const googleTasksPromise = fetchGoogleTasks();
 
         let ok = agentOnlineRef.current;
         let baseUrl = agentHttpRef.current;
@@ -421,20 +463,22 @@ export function usePlannerData(
           setAgentOnline(ok);
         }
 
-        const [agentTasks, r, e, unifiedTasks, cloudR] = await Promise.all([
+        const [agentTasks, r, e, unifiedTasks, cloudR, googleTasks] = await Promise.all([
           ok ? fetchTasks(baseUrl) : Promise.resolve(null),
           ok ? fetchReminders(baseUrl) : Promise.resolve(null),
           eventsPromise,
           unifiedTasksPromise,
           cloudRemindersPromise,
+          googleTasksPromise,
         ]);
 
-        // Merge agent tasks with unified tasks
+        // Merge agent tasks with unified + Google tasks
         const mergedTasks: PlannerTask[] = [];
         if (agentTasks !== null) {
           mergedTasks.push(...agentTasks.map((t: any) => ({ ...t, source: 'agent' as const })));
         }
         mergedTasks.push(...unifiedTasks);
+        mergedTasks.push(...googleTasks);
         setTasks(mergedTasks);
 
         // Merge local + cloud reminders

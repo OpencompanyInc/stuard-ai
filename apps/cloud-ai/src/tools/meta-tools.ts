@@ -44,6 +44,13 @@ import { getSupabaseService } from '../supabase';
 import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory, isToolDiscoverableForSurface, type ToolSurface } from './tool-registry';
 import { execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
+import { variablesTool, conversationKeyFromSecrets, resolveVarRefs, captureLargeOutputs } from './chat-variables';
+import { deploy_integration, run_integration } from './integration-builder-tools';
+// NOTE: modify_skill / save_skill are deliberately NOT imported here. skill-agent
+// imports search_tools from this module, so importing its tools back would form a
+// load-time cycle (TDZ on modifySkillTool during registerTool). The `skills`
+// subagent gets them from the execution universe (agents/stuard/tools.ts) and
+// calls them by name in its pack, so registry discovery isn't needed.
 
 // ─── Deployed custom-integration tools (request-scoped) ────────────────────
 // Compiled in prepare-chat-request.loadIntegrations() and stashed on the
@@ -427,86 +434,47 @@ const logTool = createTool({
 
 export const chatUiTool = createTool({
     id: 'chat_ui',
-    description: `Render a custom interactive React component inline in the chat conversation.
-Unlike custom_ui (which opens a separate window), chat_ui embeds the UI directly in the chat bubble.
+    description: `Render a custom interactive React component inline in the chat bubble (custom_ui opens a separate window instead).
 
-COMPONENT FIELD:
-  Define a function App() using JSX syntax. JSX is auto-transformed at render time.
+COMPONENT: define a function App() in JSX (auto-transformed at render).
+  - Standard React + hooks (useState, useEffect, useRef, useMemo, useCallback).
+  - Tailwind utilities for layout/spacing/typography (flex, grid, gap-*, p-*, text-sm/lg/xl, font-*, rounded-*, etc.).
+  - stuard.submit(data) submits back to the agent (resolves a blocking UI); stuard.close() dismisses; stuard.openExternal(url) opens an http(s) URL in the user's browser for pages that can't safely run inside chat_ui.
 
-  - Standard React JSX: <div className="p-4">{expr}</div>
-  - Hooks: useState, useEffect, useRef, useMemo, useCallback
-  - Tailwind utility classes for layout/spacing/typography are available (flex, grid, gap-*, p-*, text-sm/lg/xl, font-*, rounded-*, etc.)
-  - stuard.submit(data) — submit data back to the agent (resolves blocking)
-  - stuard.close() — dismiss the UI without data
-  - stuard.openExternal(url) — open an http(s) URL in the user's browser for pages that cannot safely run inside chat_ui
+THEME — DO NOT HARDCODE COLORS. The app theme can be light, dark, OR custom and switches freely, so literal color utilities (bg-white, text-black, bg-slate-900, bg-gray-100) and dark: variants break. Style everything with these live theme tokens:
+    Backgrounds: bg-theme-bg  bg-theme-card  bg-theme-input  bg-theme-hover  bg-theme-active  bg-theme-muted  bg-theme-primary
+    Text:        text-theme-fg  text-theme-muted  text-theme-primary  text-theme-primary-fg
+    Borders:     border-theme  border-theme-primary  (with Tailwind's \`border\`)
+    Radius:      rounded-theme-card  rounded-theme-button
+    Hover:       hover:bg-theme-hover  hover:bg-theme-active  hover:border-theme  hover:text-theme-fg
+    Prebuilt:    theme-card (padded surface w/ border+radius)  theme-btn-primary  theme-btn-secondary  divide-theme
+  Inputs/textareas/selects auto-style to the theme — leave them unstyled unless you need layout (w-full, etc.).
+  For anything else, read the CSS vars directly via style: --chat-ui-background/-foreground/-card/-card-foreground/-primary/-primary-foreground/-muted/-muted-foreground/-border/-input/-hover/-active
+    e.g. style={{ background: 'color-mix(in srgb, var(--chat-ui-primary) 12%, transparent)' }}  // subtle primary tint
+  Semantic accents (danger/success/warning): mid-tone text that reads on any bg — text-red-500, text-amber-500, text-emerald-500. For a fill use the color-mix trick; never solid light fills like bg-red-100.
+  Also global: designScheme.mode ('dark'|'light'), designScheme.colors { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input, hover, active }, designScheme.radius { card, button }.
 
-THEME — CRITICAL: DO NOT HARDCODE COLORS.
-  The user's app theme can be light, dark, OR a custom color, and they switch freely. A fixed color (bg-white, text-black, bg-slate-900, bg-gray-100) looks broken under the wrong theme, and "dark:" variants only cover two fixed palettes — they still break on custom themes. So never use literal color utilities or dark: variants for surfaces, text, or borders.
-
-  Instead style EVERYTHING with these theme tokens. They are injected live and automatically follow the user's current theme:
-    Backgrounds:  bg-theme-bg  bg-theme-card  bg-theme-input  bg-theme-hover  bg-theme-active  bg-theme-muted  bg-theme-primary
-    Text:         text-theme-fg  text-theme-muted  text-theme-primary  text-theme-primary-fg
-    Borders:      border-theme  border-theme-primary   (combine with Tailwind's \`border\`)
-    Radius:       rounded-theme-card  rounded-theme-button
-    Hover:        hover:bg-theme-hover  hover:bg-theme-active  hover:border-theme  hover:text-theme-fg
-    Prebuilt:     theme-card (padded surface w/ border+radius)  theme-btn-primary  theme-btn-secondary  divide-theme
-
-  Text inputs, textareas, and selects are auto-styled to the theme — leave them unstyled unless you need layout (w-full, etc.).
-
-  For anything not covered by a class, read the CSS variables directly via style:
-    --chat-ui-background  --chat-ui-foreground  --chat-ui-card  --chat-ui-card-foreground
-    --chat-ui-primary  --chat-ui-primary-foreground  --chat-ui-muted  --chat-ui-muted-foreground
-    --chat-ui-border  --chat-ui-input  --chat-ui-hover  --chat-ui-active
-    e.g. style={{ boxShadow: '0 0 0 1px var(--chat-ui-border)' }}
-         style={{ background: 'color-mix(in srgb, var(--chat-ui-primary) 12%, transparent)' }}  // subtle primary tint
-
-  Semantic accents (danger/success/warning): use mid-tone text colors that read on any background — text-red-500, text-amber-500, text-emerald-500. For a tinted fill use the color-mix style trick above; do NOT use solid light fills like bg-red-100.
-
-  Also available for programmatic use: a global \`designScheme\` object —
-    designScheme.mode   — 'dark' | 'light'
-    designScheme.colors — { background, foreground, card, cardForeground, primary, primaryForeground, muted, mutedForeground, border, input, hover, active }
-    designScheme.radius — { card, button }
-
-BLOCKING vs NON-BLOCKING:
-  - blocking: true  → Agent pauses until the user interacts (submit/close). Use for forms, confirmations, selections.
-  - blocking: false → Agent continues immediately. UI stays rendered in chat as display-only. Use for dashboards, status displays, rich content.
+BLOCKING: blocking:true pauses the agent until the user submits/closes (forms, confirmations, selections); blocking:false renders display-only and the agent continues (dashboards, status, rich content).
 
 RULES:
-  1. EVERY action button MUST have onClick. Use onClick={() => stuard.submit(data)} for submit buttons.
+  1. EVERY action button MUST have onClick (submit: onClick={() => stuard.submit(data)}).
   2. initialData is available globally, seeded from the data arg.
   3. Use JSX style objects: style={{ color: 'var(--chat-ui-primary)' }} NOT style="color: red".
-  4. The component renders in a sandboxed iframe — no access to parent window or Node.js APIs.
-  5. Standard iframe embeds are allowed for display-only external content such as maps and videos, but the embedded page stays isolated.
-  6. Do not try to embed full third-party web apps that require login, cookies, localStorage, or origin-sensitive script loading. Show a button that calls stuard.openExternal(url) instead.
+  4. Renders in a sandboxed iframe — no parent window or Node.js APIs.
+  5. Display-only iframe embeds (maps, videos) are fine but stay isolated.
+  6. Don't embed full third-party apps needing login/cookies/localStorage — show a button that calls stuard.openExternal(url).
 
 EXAMPLE (blocking form):
-  component: \`
-    function App() {
-      const [name, setName] = useState(initialData.name || '');
-      return (
-        <div className="theme-card p-4 space-y-3">
-          <h2 className="text-lg font-semibold text-theme-fg">What's your name?</h2>
-          <input className="w-full" value={name}
-            onChange={e => setName(e.target.value)} placeholder="Enter name" />
-          <button className="theme-btn-primary" onClick={() => stuard.submit({ name })}>
-            Submit
-          </button>
-        </div>
-      );
-    }
-  \`
-
-EXAMPLE (non-blocking display):
-  component: \`
-    function App() {
-      return (
-        <div className="theme-card p-4">
-          <div className="text-sm text-theme-muted">Status</div>
-          <div className="text-2xl font-bold text-theme-fg">{initialData.status}</div>
-        </div>
-      );
-    }
-  \``,
+  function App() {
+    const [name, setName] = useState(initialData.name || '');
+    return (
+      <div className="theme-card p-4 space-y-3">
+        <h2 className="text-lg font-semibold text-theme-fg">What's your name?</h2>
+        <input className="w-full" value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
+        <button className="theme-btn-primary" onClick={() => stuard.submit({ name })}>Submit</button>
+      </div>
+    );
+  }`,
     inputSchema: z.object({
         component: z.string().describe('React function component using JSX. Must define function App().'),
         blocking: z.boolean().optional().default(false).describe('If true, agent waits for user interaction before continuing.'),
@@ -531,6 +499,13 @@ registerTool(uiPackagesRemoveTool, 'GUI');
 registerTool(chatUiTool, 'GUI');
 registerTool(notifyTool, 'System');
 registerTool(logTool, 'Core');
+// Chat variables — store-by-reference for large payloads. Registered under
+// 'Core' (NOT the workflow-only 'Variables' category) so it's discoverable on
+// the chat surface and resolvable via execute_tool.
+registerTool(variablesTool, 'Core');
+// Integration Builder — author/deploy/use custom HTTP integrations.
+registerTool(deploy_integration, 'Integrations');
+registerTool(run_integration, 'Integrations');
 
 // Device Tools
 Object.values(deviceTools).forEach(t => {
@@ -873,6 +848,28 @@ export async function runToolSearch(args: {
     }
 }
 
+// Compact INPUT signature for a tool so search_tools can inline it — letting the
+// model build execute_tool args directly and skip the separate get_tool_schema
+// round-trip (each hop re-sends the full ~13k orchestrator prefix). Registry +
+// custom-integration tools only (both carry a zod inputSchema in memory); rare
+// bridge-only locals return undefined and fall back to get_tool_schema. The
+// output schema is intentionally omitted — it isn't needed to make the call.
+// compactSchemaSignature is a hoisted declaration defined below; safe to call
+// from this async execute at runtime.
+function compactInputSignatureForTool(name: string): any {
+    try {
+        const tool = getToolRegistry().get(name);
+        if (tool?.inputSchema) {
+            return compactSchemaSignature(zodToJsonSchema(tool.inputSchema));
+        }
+        const customTool = getCustomTools()[name];
+        if (customTool?.inputSchema) {
+            return compactSchemaSignature(zodToJsonSchema(customTool.inputSchema));
+        }
+    } catch {}
+    return undefined;
+}
+
 // Surface-bound factory: the orchestrator gets the chat instance (default),
 // the workflow agent gets a 'workflow' instance so it still sees workflow-only
 // tools (variables/workspace/etc.) while chat does not. Both hide the other
@@ -880,7 +877,7 @@ export async function runToolSearch(args: {
 export function createSearchToolsTool(surface: ToolSurface = 'chat') {
     return createTool({
         id: 'search_tools',
-        description: 'Search for available tools with a required free-text query. Optionally narrow by category or kind. Returns up to 8 compact results.',
+        description: 'Search for available tools with a required free-text query. Optionally narrow by category or kind. Returns up to 8 compact results, each with an inputSchema signature (arg name → type/required/enum) — usually enough to call execute_tool directly WITHOUT a separate get_tool_schema call.',
         inputSchema: z.object({
             query: z.string().min(1).describe('Required free-text query for semantic tool search.'),
             category: z.string().optional().describe('Filter results to a specific tool category.'),
@@ -891,11 +888,20 @@ export function createSearchToolsTool(surface: ToolSurface = 'chat') {
                 name: z.string(),
                 description: z.string(),
                 category: z.string(),
+                inputSchema: z.any().optional(),
             })),
         }),
         execute: async (inputData) => {
             const { query, category, kind } = inputData as { query?: string; category?: string; kind?: string };
-            return runToolSearch({ query, category, kind, surface });
+            const result = await runToolSearch({ query, category, kind, surface });
+            // Inline each hit's compact input signature so the model can wire
+            // execute_tool args in one shot, skipping the get_tool_schema hop.
+            // Mirrors search_workflow_nodes (which already returns signatures).
+            const tools = result.tools.map((t) => {
+                const inputSchema = compactInputSignatureForTool(t.name);
+                return inputSchema !== undefined ? { ...t, inputSchema } : t;
+            });
+            return { tools };
         },
     });
 }
@@ -1196,7 +1202,7 @@ export const get_tool_schema = createTool({
                     }
                 } catch {}
             }
-            throw new Error(`Tool '${tool_name}' not found. Use search_tools to find available tools.`);
+            throw new Error(toolNotFoundError(tool_name));
         }
 
         return {
@@ -1215,11 +1221,66 @@ export const get_tool_schema = createTool({
  * apparent success. Detect that shape and report it as a clean failure so the model
  * can self-correct, otherwise wrap the result as a success.
  */
-function finalizeToolResult(toolName: string, result: any) {
+/**
+ * Tool-name "did you mean": models routinely call a plausible-but-wrong name
+ * (e.g. `run_terminal_command` for the registered `run_command`, a generic name
+ * baked into training data). Rather than dead-end with a bare "not found", score
+ * every known tool name by shared underscore-tokens (+ substring bonus) and
+ * suggest the closest matches so the model self-corrects in one step instead of
+ * bouncing off the error. Pure string match — no embedding call, synchronous.
+ */
+function suggestToolNames(badName: string, limit = 3): string[] {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const tokensOf = (s: string) => new Set(norm(s).split('_').filter((t) => t.length >= 2));
+    const target = norm(badName);
+    const targetTokens = tokensOf(badName);
+    if (targetTokens.size === 0) return [];
+
+    const candidates = new Set<string>([
+        ...getToolRegistry().keys(),
+        ...Object.keys(getCustomTools()),
+    ]);
+
+    const scored: Array<{ name: string; score: number }> = [];
+    for (const name of candidates) {
+        const nameTokens = tokensOf(name);
+        let shared = 0;
+        for (const t of targetTokens) if (nameTokens.has(t)) shared += 1;
+        if (shared === 0) continue;
+        // Normalize by the smaller token set so a short name fully contained in
+        // the bad name (run_command ⊂ run_terminal_command) scores high.
+        let score = shared / Math.min(targetTokens.size, nameTokens.size);
+        const nName = norm(name);
+        if (nName.includes(target) || target.includes(nName)) score += 0.5;
+        scored.push({ name, score });
+    }
+
+    return scored
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map((s) => s.name);
+}
+
+function toolNotFoundError(toolName: string): string {
+    const suggestions = suggestToolNames(toolName);
+    const didYouMean = suggestions.length
+        ? ` Did you mean: ${suggestions.join(', ')}?`
+        : '';
+    return `Tool '${toolName}' not found.${didYouMean} Use search_tools to find available tools.`;
+}
+
+function finalizeToolResult(toolName: string, result: any, convKey?: string) {
     if (result && typeof result === 'object' && (result as any).error === true && typeof (result as any).message === 'string') {
         return { success: false, tool: toolName, error: (result as any).message };
     }
-    return { success: true, tool: toolName, result: sanitizeToolResultForModel(result) };
+    // captureLargeOutputs is the non-lossy successor to sanitizeToolResultForModel:
+    // oversized base64/data-URL payloads are stored under a reusable {{var:…}}
+    // handle (so the agent can pass them onward to image-gen / send-media) instead
+    // of being redacted away. Falls back to plain sanitize when we can't resolve a
+    // conversation key (no bridge secrets in context).
+    const key = convKey ?? conversationKeyFromSecrets();
+    const processed = key ? captureLargeOutputs(key, result) : sanitizeToolResultForModel(result);
+    return { success: true, tool: toolName, result: processed };
 }
 
 export const execute_tool = createTool({
@@ -1236,7 +1297,13 @@ export const execute_tool = createTool({
         error: z.string().optional(),
     }),
     execute: async (inputData, runCtx) => {
-        const { tool_name, args: toolArgs = {} } = inputData;
+        const { tool_name, args: rawArgs = {} } = inputData;
+        // Rehydrate any {{var:NAME}} handles the model passed (e.g. a base64 image
+        // it stashed earlier) before the underlying tool runs, and stash this
+        // turn's conversation key so the result's large payloads are captured to
+        // handles instead of dumped into context.
+        const convKey = conversationKeyFromSecrets();
+        const toolArgs = resolveVarRefs(convKey, rawArgs);
         const tool = getToolRegistry().get(tool_name);
 
         if (tool) {
@@ -1245,7 +1312,7 @@ export const execute_tool = createTool({
             }
             try {
                 const result = await tool.execute(toolArgs, runCtx);
-                return finalizeToolResult(tool_name, result);
+                return finalizeToolResult(tool_name, result, convKey);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
@@ -1256,7 +1323,7 @@ export const execute_tool = createTool({
         if (customTool && typeof customTool.execute === 'function') {
             try {
                 const result = await customTool.execute(toolArgs, runCtx);
-                return finalizeToolResult(tool_name, result);
+                return finalizeToolResult(tool_name, result, convKey);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
@@ -1267,14 +1334,14 @@ export const execute_tool = createTool({
             try {
                 const result = await execLocalTool(tool_name, toolArgs);
                 if (result && typeof result === 'object' && (result as any).error === 'unknown_tool') {
-                    return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
+                    return { success: false, error: toolNotFoundError(tool_name) };
                 }
-                return finalizeToolResult(tool_name, result);
+                return finalizeToolResult(tool_name, result, convKey);
             } catch (err: any) {
                 return { success: false, tool: tool_name, error: err.message || String(err) };
             }
         }
 
-        return { success: false, error: `Tool '${tool_name}' not found. Use search_tools to find available tools.` };
+        return { success: false, error: toolNotFoundError(tool_name) };
     },
 });

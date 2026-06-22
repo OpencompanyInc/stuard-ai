@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
 import clsx from 'clsx';
-import { Copy } from 'lucide-react';
 import { AudioPlayer } from '../../../../../AudioPlayer';
 import { toMediaSrc } from '../helpers/media';
+import { CodeCopyButton } from '../inline/CodeCopyButton';
 import { InlineImage } from '../inline/InlineImage';
 import { InlineVideo } from '../inline/InlineVideo';
 import { isHighlightHref, MarkdownHighlight } from '../inline/MarkdownHighlight';
@@ -87,22 +87,18 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
 
       const className = childProps.className || '';
       const language = className.replace('language-', '') || 'code';
+      // Flatten children to a plain string — react-markdown may hand back a
+      // single string or an array of text nodes, so String() alone can mangle it.
+      const codeText = React.Children.toArray(codeContent)
+        .map((c) => (typeof c === 'string' ? c : ''))
+        .join('')
+        .replace(/\n$/, '');
       return (
         <div className="my-4 rounded-xl overflow-hidden bg-theme-card border border-theme shadow-sm w-full max-w-full group/codeblock flex flex-col">
           <div className="bg-theme-hover px-4 py-2 border-b border-theme flex items-center justify-between select-none">
             <span className="text-xs text-theme-muted font-mono font-bold uppercase tracking-wider">{language}</span>
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => {
-                  const code = String(codeContent).replace(/\n$/, '');
-                  navigator.clipboard.writeText(code);
-                }}
-                className="flex items-center gap-1.5 px-2 py-1 hover:bg-theme-active rounded-md transition-colors text-theme-muted hover:text-theme-fg text-[10px] font-medium uppercase tracking-wider"
-                title="Copy code"
-              >
-                <Copy className="w-3 h-3" />
-                Copy
-              </button>
+              <CodeCopyButton code={codeText} />
             </div>
           </div>
           <div className="relative w-full overflow-hidden">

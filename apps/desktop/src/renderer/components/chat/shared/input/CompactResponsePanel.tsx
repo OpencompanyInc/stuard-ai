@@ -25,6 +25,7 @@ import {
 } from './compact/CompactMedia';
 import { CompactThinkingBlock } from './compact/CompactThinkingBlock';
 import { CompactUserAttachments } from './compact/CompactUserAttachments';
+import { routeAgentTodoUpdate } from '../sidebar/agentTodoStore';
 import { isHighlightHref, MarkdownHighlight } from '../messages/MessageBubble/inline/MarkdownHighlight';
 import { isUnderlineHref, MarkdownUnderline } from '../messages/MessageBubble/inline/MarkdownUnderline';
 
@@ -506,6 +507,10 @@ function renderCompactSegment(
   onExpand?: () => void,
 ) {
   if (seg.kind === 'genui' || seg.kind === 'genui_loading') {
+    if (seg.component === 'agent_todo') {
+      if (seg.kind === 'genui') routeAgentTodoUpdate(seg.args);
+      return null;
+    }
     return (
       <CompactRichContentPlaceholder
         key={`compact-rich-${idx}`}

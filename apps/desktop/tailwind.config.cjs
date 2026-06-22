@@ -38,11 +38,22 @@ module.exports = {
         ],
       },
       colors: {
+        primary: {
+          DEFAULT: "rgb(var(--primary-rgb) / <alpha-value>)",
+          fg: "var(--primary-foreground)",
+        },
         surface: "rgba(20,20,20,0.6)",
         accent: "#0ea5e9", // sky-500
         "pill-bg": "rgb(var(--compact-pill-bg) / <alpha-value>)",
         "pill-fg": "rgb(var(--compact-pill-fg) / <alpha-value>)",
         "pill-muted": "rgb(var(--compact-pill-fg-muted) / <alpha-value>)",
+        /* Theme border tokens — enables border-theme/10, divide-theme/10, ring-theme/10, etc.
+           Manual `.border-theme` in styles.css does not support `/opacity` modifiers. */
+        theme: {
+          DEFAULT: "rgb(var(--border-rgb) / <alpha-value>)",
+          card: "rgb(var(--card-border-rgb) / <alpha-value>)",
+          sidebar: "rgb(var(--sidebar-border-rgb) / <alpha-value>)",
+        },
       },
       boxShadow: {
         soft: "0 10px 24px rgba(0,0,0,0.18)",

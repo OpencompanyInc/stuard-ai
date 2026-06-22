@@ -107,6 +107,7 @@ export const GenUIContainer: React.FC<GenUIProps> = ({
           <AgentTodoList
             items={safeArgs.items || []}
             title={safeArgs.title}
+            status={safeArgs.status}
             progress={safeArgs.progress}
             compact={safeArgs.compact}
           />

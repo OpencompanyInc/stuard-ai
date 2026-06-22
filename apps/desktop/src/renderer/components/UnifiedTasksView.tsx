@@ -19,9 +19,24 @@ import {
   Pencil,
   Cloud,
   MessageSquare,
+  ExternalLink,
 } from 'lucide-react';
 import type { UnifiedTask, TaskPriority, AgentAssignment } from '../types/tasks';
 import { supabase } from '../lib/supabaseClient';
+
+const CLOUD_AI_HTTP = (window as any).__CLOUD_AI_HTTP__ || (import.meta as any).env?.VITE_CLOUD_AI_URL || ((import.meta as any).env?.DEV ? 'http://127.0.0.1:8082' : 'https://cloud.stuard.ai');
+
+export interface GoogleTask {
+  id: string;
+  title: string;
+  notes?: string;
+  due?: string;
+  status?: string;
+  completed: boolean;
+  listId: string;
+  listTitle?: string;
+  webLink?: string;
+}
 
 async function syncReminderToCloudSMS(opts: { message: string; scheduledAt: string; deliveryMethod?: string }) {
   try {
@@ -356,6 +371,104 @@ function UpcomingRemindersSection({
   );
 }
 
+function GoogleTaskBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/15 text-[9px] font-bold uppercase tracking-wide">
+      Google
+    </span>
+  );
+}
+
+function GoogleTasksSection({
+  tasks,
+  compact,
+  onToggle,
+  onOpen,
+}: {
+  tasks: GoogleTask[];
+  compact?: boolean;
+  onToggle: (task: GoogleTask) => void;
+  onOpen: (task: GoogleTask) => void;
+}) {
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className={clsx(compact ? 'mt-1' : 'mt-2')}>
+      <div className={clsx('flex items-center gap-2', compact ? 'mb-1.5 px-0.5 pt-1' : 'mb-2.5 px-1 pt-2')}>
+        <span className="w-2 h-2 rounded-full bg-sky-500" />
+        <span className="text-[11px] font-bold uppercase tracking-wider text-theme-muted">Google Tasks</span>
+        <span className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-sky-500/10 text-sky-400 text-[10px] font-bold px-1">
+          {tasks.length}
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {tasks.map((task) => {
+          const isCompleted = task.completed;
+          const dueDate = task.due ? new Date(task.due) : null;
+          const dueValid = dueDate && !Number.isNaN(dueDate.getTime());
+          const isOverdue = Boolean(dueValid && !isCompleted && dueDate && dueDate.getTime() < Date.now());
+          return (
+            <div
+              key={`${task.listId}:${task.id}`}
+              className="group relative flex items-start gap-3 rounded-xl border border-transparent hover:border-[color:var(--dashboard-panel-border)] hover:bg-[color:var(--dashboard-hover)] transition-all p-3"
+            >
+              <button
+                onClick={() => onToggle(task)}
+                className={clsx(
+                  'mt-0.5 w-5 h-5 rounded-full border-[1.5px] flex items-center justify-center transition-all flex-shrink-0',
+                  isCompleted
+                    ? 'bg-emerald-500 border-emerald-500 text-white'
+                    : 'border-theme-muted/40 hover:border-sky-400 text-transparent hover:bg-sky-400/5'
+                )}
+                title={isCompleted ? 'Mark as not done' : 'Mark as done'}
+              >
+                <Check className="w-3 h-3" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                  <span
+                    className={clsx(
+                      'font-semibold transition-colors',
+                      compact ? 'text-[12px]' : 'text-[13px]',
+                      isCompleted ? 'text-theme-muted line-through decoration-theme-muted/50' : 'text-theme-fg'
+                    )}
+                  >
+                    {task.title}
+                  </span>
+                  <GoogleTaskBadge />
+                </div>
+                <div className="flex items-center gap-2.5 text-[10px] text-theme-muted">
+                  {dueValid && (
+                    <span className={clsx('flex items-center gap-1 font-medium', isOverdue ? 'text-red-500' : '')}>
+                      <Calendar className="w-3 h-3" />
+                      {(dueDate as Date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
+                  {task.listTitle && (
+                    <span className="truncate max-w-[160px]">{task.listTitle}</span>
+                  )}
+                </div>
+                {task.notes && (
+                  <p className="text-[10px] text-theme-muted/80 mt-1 line-clamp-2">{task.notes}</p>
+                )}
+              </div>
+              {task.webLink && (
+                <button
+                  onClick={() => onOpen(task)}
+                  className="p-1.5 text-theme-muted hover:text-theme-fg hover:bg-theme-hover rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                  title="Open in Google Tasks"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, defaultSubTab = 'todo', onSubTabChange }) => {
   const [tasks, setTasks] = useState<UnifiedTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -367,6 +480,9 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   const [editGlobalReminderTime, setEditGlobalReminderTime] = useState('');
   const [editGlobalReminderMessage, setEditGlobalReminderMessage] = useState('');
   const remindersSectionRef = useRef<HTMLDivElement>(null);
+  // Google Tasks merged in read-only-ish (toggle write-back), mirroring how Google
+  // Calendar events merge into the planner.
+  const [googleTasks, setGoogleTasks] = useState<GoogleTask[]>([]);
 
   // New task form state
   const [newTask, setNewTask] = useState({
@@ -393,6 +509,62 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  const loadGoogleTasks = useCallback(async (wantCompleted: boolean) => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) { setGoogleTasks([]); return; }
+      const res = await fetch(
+        `${CLOUD_AI_HTTP}/v1/tasks/google?showCompleted=${wantCompleted ? 'true' : 'false'}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const j = res.ok ? await res.json().catch(() => null) : null;
+      // Not connected / missing scopes → render nothing rather than nagging.
+      setGoogleTasks(j?.ok && Array.isArray(j.items) ? (j.items as GoogleTask[]) : []);
+    } catch {
+      setGoogleTasks([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadGoogleTasks(filter !== 'pending');
+  }, [filter, loadGoogleTasks]);
+
+  const handleToggleGoogleTask = useCallback(async (task: GoogleTask) => {
+    const next = !task.completed;
+    const matches = (t: GoogleTask) => t.id === task.id && t.listId === task.listId;
+    setGoogleTasks(prev => prev.map(t => (matches(t) ? { ...t, completed: next } : t)));
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error('no_session');
+      const res = await fetch(`${CLOUD_AI_HTTP}/v1/tasks/google/${encodeURIComponent(task.id)}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: task.listId, completed: next }),
+      });
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j?.ok) throw new Error(j?.message || 'patch_failed');
+      // Drop the task once it no longer matches the active filter (checked off in the
+      // pending view, or un-checked in the completed view).
+      if ((filter === 'pending' && next) || (filter === 'completed' && !next)) {
+        setGoogleTasks(prev => prev.filter(t => !matches(t)));
+      }
+    } catch {
+      setGoogleTasks(prev => prev.map(t => (matches(t) ? { ...t, completed: task.completed } : t)));
+      try { (window as any).desktopAPI?.notify?.('Google Tasks', 'Could not update the task in Google.'); } catch { /* ignore */ }
+    }
+  }, [filter]);
+
+  const handleOpenGoogleTask = useCallback((task: GoogleTask) => {
+    const url = task.webLink || 'https://tasks.google.com/';
+    try {
+      const w: any = window as any;
+      if (w?.desktopAPI?.openExternal) w.desktopAPI.openExternal(url);
+      else window.open(url, '_blank');
+    } catch { /* ignore */ }
+  }, []);
 
   const handleAddTask = async () => {
     if (!newTask.title.trim()) return;
@@ -493,6 +665,17 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
     });
   }, [tasks, filter]);
 
+  const filteredGoogleTasks = useMemo(() => {
+    return googleTasks
+      .filter(t => (filter === 'completed' ? t.completed : !t.completed))
+      .sort((a, b) => {
+        if (a.due && b.due) return new Date(a.due).getTime() - new Date(b.due).getTime();
+        if (a.due) return -1;
+        if (b.due) return 1;
+        return 0;
+      });
+  }, [googleTasks, filter]);
+
   // Get all reminders from tasks (must be before any early returns for hooks rules)
   const allReminders = useMemo(() => {
     const reminders: Array<AgentAssignment & { taskId: string; taskTitle: string }> = [];
@@ -562,7 +745,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
   }, [defaultSubTab, loading, allReminders.length, onSubTabChange]);
 
   const showRemindersInList = filter === 'pending' && allReminders.length > 0;
-  const showEmptyTasksState = !loading && filteredTasks.length === 0 && !showRemindersInList;
+  const showEmptyTasksState = !loading && filteredTasks.length === 0 && filteredGoogleTasks.length === 0 && !showRemindersInList;
 
   if (loading && compact) {
     return (
@@ -626,7 +809,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
               isAdding ? "ring-2 ring-primary/20 rounded-xl" : ""
             )}>
               <div className={clsx(
-                "flex items-center gap-3 bg-theme-card border border-theme/10 rounded-xl shadow-sm transition-all",
+                "flex items-center gap-3 bg-theme-card border border-theme/10 rounded-xl shadow-[var(--dashboard-shadow-soft)] transition-all",
                 compact ? "px-3 py-2" : "px-4 py-3",
                 isAdding ? "shadow-lg border-primary/20" : "hover:border-theme/20"
               )}>
@@ -677,7 +860,7 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
             </div>
           ) : (
             <div className="flex justify-center w-full">
-              <div className="w-full max-w-[480px] flex flex-col rounded-[22px] bg-[color:var(--dashboard-panel-solid)] px-5 pt-4 pb-3.5 min-h-[100px] shadow-sm">
+              <div className="w-full max-w-[480px] flex flex-col rounded-[22px] border border-[color:var(--dashboard-panel-border)] bg-[color:var(--dashboard-panel-solid)] px-5 pt-4 pb-3.5 min-h-[100px] shadow-[var(--dashboard-shadow-soft)]">
                 <input
                   type="text"
                   placeholder="Add Task"
@@ -818,6 +1001,13 @@ export const UnifiedTasksView: React.FC<UnifiedTasksViewProps> = ({ compact, def
                 ))}
               </>
             )}
+
+            <GoogleTasksSection
+              tasks={filteredGoogleTasks}
+              compact={compact}
+              onToggle={handleToggleGoogleTask}
+              onOpen={handleOpenGoogleTask}
+            />
       </div>
     </div>
   );

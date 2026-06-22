@@ -5,7 +5,7 @@ export * from "./app-discovery";
 export * from "./app-search";
 export * from "./unified-tasks";
 export * from "./offline-calendar";
-export { startReminderScheduler, stopReminderScheduler } from "./reminder-scheduler";
+export { startReminderScheduler, stopReminderScheduler, clearFiredReminder } from "./reminder-scheduler";
 export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
 export { startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
 export { proactiveService } from "./proactive-service";

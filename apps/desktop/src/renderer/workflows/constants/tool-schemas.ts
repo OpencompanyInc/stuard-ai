@@ -3162,9 +3162,10 @@ if (TOOL_SCHEMAS['generate_image']) {
       placeholder: 'A futuristic city skyline at sunset with flying cars...',
     },
     input_images: {
-      type: 'files',
+      type: 'array',
       label: 'Input Images',
-      description: 'Optional reference/source images for image-to-image or editing. Supported by the Gemini image models.',
+      description: 'Optional reference/source images for image-to-image or editing. Use {{step_id.filePath}} for outputs from previous steps, or pick local files.',
+      itemType: 'object' as ArgType,
       default: [],
     },
     model: {

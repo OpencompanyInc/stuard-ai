@@ -1,15 +1,9 @@
 import HeroSection from '@/components/sections/HeroSection';
-import AboutSection from '@/components/sections/AboutSection';
-import UseCasesSection from '@/components/sections/UseCasesSection';
-import ProductShowcase from '@/components/sections/ProductShowcase';
-import BeyondTheChatSection from '@/components/sections/BeyondTheChatSection';
-import ConnectedAppsSection from '@/components/sections/ConnectedAppsSection';
-import HowItWorksIntroSection from '@/components/sections/HowItWorksIntroSection';
-import MarketplacePromoSection from '@/components/sections/MarketplacePromoSection';
-import CloudAgentsSection from '@/components/sections/CloudAgentsSection';
-import PrivacySection from '@/components/sections/PrivacySection';
-import PricingSection from '@/components/sections/PricingSection';
+import DayJourneySection from '@/components/sections/DayJourneySection';
+import CompoundsSection from '@/components/sections/CompoundsSection';
+import TrustPricingSection from '@/components/sections/TrustPricingSection';
 import FAQ from '@/components/sections/FAQ';
+import ClosingSection from '@/components/sections/ClosingSection';
 
 export default function Home() {
   const organizationSchema = {
@@ -45,13 +39,7 @@ export default function Home() {
       '@type': 'Offer',
       price: '0',
       priceCurrency: 'USD',
-      priceValidUntil: '2026-12-31',
       availability: 'https://schema.org/InStock',
-    },
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: '4.8',
-      ratingCount: '150',
     },
     description:
       'Stuard AI is a personal AI assistant app for Windows. It organizes your files, manages Gmail and Calendar, works your apps, and turns repeated tasks into one-click automations, mini-apps, and scheduled agents — local-first, cloud only when you ask.',
@@ -86,25 +74,20 @@ export default function Home() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }}
       />
       {/*
-        Page narrative, in order:
-        1. What it is (Hero + About) — purpose stated above the fold, statically rendered
-        2. What I'd use it for (UseCases) — concrete prompts visitors can steal
-        3. Proof it's real (Showcase + Demo)
-        4. How it grows with you (Ecosystem ladder → Toolbelt → Marketplace → Cloud)
-        5. Trust and cost (Privacy → Pricing → FAQ)
+        The page is one connected story — a single day of using Stuard:
+        1. Hero — the hook + a live compact-mode demo you can type in
+        2. DayJourney — 7:55 AM → 11:58 PM, every use case as a moment in the day
+        3. Compounds — the payoff: one day's work becomes permanent automation
+        4. TrustPricing — the day stayed private and cost nothing
+        5. FAQ + Closing — objections answered, then "tomorrow, 7:55 AM"
+        Anything deeper redirects out (/how-it-works, /marketplace, /pricing, /privacy).
       */}
       <HeroSection />
-      <AboutSection />
-      <UseCasesSection />
-      <ProductShowcase />
-      <BeyondTheChatSection />
-      <HowItWorksIntroSection />
-      <ConnectedAppsSection />
-      <MarketplacePromoSection />
-      <CloudAgentsSection />
-      <PrivacySection />
-      <PricingSection />
+      <DayJourneySection />
+      <CompoundsSection />
+      <TrustPricingSection />
       <FAQ />
+      <ClosingSection />
     </>
   );
 }

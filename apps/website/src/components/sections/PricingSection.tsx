@@ -12,7 +12,7 @@ const FREE_FEATURES = [
 
 const CREDIT_FEATURES = [
   'Stuard-managed AI, no keys to wrangle',
-  'Always-on Cloud Engine for agents',
+  'Always-on Cloud Computer for agents',
   'Semantic search across your files',
   'Monthly or one-time, cancel anytime',
 ];

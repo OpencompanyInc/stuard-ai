@@ -32,12 +32,13 @@ export function ArrayEditor({
 }: ArrayEditorProps) {
   // Detect if value is a variable reference string (e.g. "{{step_id.items}}")
   const isVarRef = typeof value === 'string' && value.includes('{{');
+  const isPathSourcesField = argKey === 'sources' || argKey === 'input_images';
   const [mode, setMode] = useState<'manual' | 'variable'>(isVarRef ? 'variable' : 'manual');
 
   const rawItems = Array.isArray(value) ? value : [];
-  const isSourcesField = argKey === 'sources';
+  const isSourcesField = isPathSourcesField;
 
-  // Auto-convert string items to {path: string} for sources field
+  // Auto-convert string items to {path: string} for path-based media fields
   const items = isSourcesField
     ? rawItems.map(item => typeof item === 'string' ? { path: item } : item)
     : rawItems;
@@ -83,7 +84,7 @@ export function ArrayEditor({
   };
 
   const getItemLabel = () => {
-    if (isPathArray) return 'file';
+    if (isPathArray) return argKey === 'input_images' ? 'image' : 'file';
     if (argKey === 'packages') return 'package';
     if (argKey === 'items') return 'item';
     if (argKey === 'events') return 'event';
@@ -182,7 +183,7 @@ export function ArrayEditor({
                           <TextInputWithVariables
                             value={item.path || ''}
                             onChange={v => updateItemPath(i, v)}
-                            placeholder="Enter file path..."
+                            placeholder={argKey === 'input_images' ? '{{step_id.filePath}}' : 'Enter file path...'}
                             upstreamNodes={upstreamNodes}
                             workflowVariables={workflowVariables}
                           />
@@ -192,7 +193,16 @@ export function ArrayEditor({
                             try {
                               const api = (window as any).desktopAPI;
                               if (!api?.pickFiles) return;
-                              const result = await api.pickFiles({ title: 'Select File', multiple: false });
+                              const result = await api.pickFiles({
+                                title: argKey === 'input_images' ? 'Select Image' : 'Select File',
+                                multiple: false,
+                                filters: argKey === 'input_images'
+                                  ? [
+                                      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] },
+                                      { name: 'All Files', extensions: ['*'] },
+                                    ]
+                                  : undefined,
+                              });
                               if (result?.ok && result.files?.length > 0) {
                                 const file = result.files[0];
                                 updateItemPath(i, typeof file === 'string' ? file : file.path);

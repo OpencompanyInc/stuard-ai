@@ -1,6 +1,7 @@
 import type { Message as ChatMessage } from '@stuardai/chat-ui/types';
 import type { IVmChatPlatform, VmConversationEntry } from '@stuardai/vm-chat/types';
 import { displayConversationTitle, isPlaceholderConversationTitle } from '@stuardai/chat-ui';
+import { supabase } from '@/lib/supabaseClient';
 import {
   getCloudConversationMessages,
   getCloudConversations,
@@ -15,6 +16,23 @@ export function createWebVmChatPlatform(): IVmChatPlatform {
   return {
     async getAccessToken() {
       return '';
+    },
+
+    // Mirrors the desktop platform's greeting so the chat empty-state reads
+    // identically on both apps instead of "Good morning, there" on the web.
+    async getDisplayName() {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const user = data?.user;
+        const rawName =
+          user?.user_metadata?.full_name
+          || user?.user_metadata?.name
+          || user?.email?.split('@')[0]
+          || 'there';
+        return String(rawName).split(/\s+/)[0] || 'there';
+      } catch {
+        return 'there';
+      }
     },
 
     uploadFileToVm: (targetPath, file) => uploadFileToVm(targetPath, file),
@@ -134,7 +152,21 @@ export function createWebVmChatPlatform(): IVmChatPlatform {
       }
 
       if (rawMsgs.length === 0) {
-        return { messages: [], error: loadError };
+        // Mirror the desktop platform: show a friendly placeholder instead of
+        // a silently empty thread when the messages haven't synced yet.
+        return {
+          messages: [
+            {
+              id: `${conversationId}-empty`,
+              role: 'assistant',
+              text: loadError
+                ? `Couldn't load this conversation: ${loadError}`
+                : 'No messages stored for this chat yet. Start typing to continue it — the history will sync in the background.',
+              timestamp: Date.now(),
+            },
+          ],
+          error: loadError,
+        };
       }
       const messages: ChatMessage[] = rawMsgs.map((m, i) => ({
         id: `${conversationId}-${i}`,

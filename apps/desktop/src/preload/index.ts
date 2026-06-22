@@ -1,5 +1,5 @@
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const __cloudBase = process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || "";
 try { contextBridge.exposeInMainWorld('__CLOUD_AI_HTTP__', __cloudBase); } catch { }
@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   hide: () => ipcRenderer.invoke("overlay:hide"),
   toggle: () => ipcRenderer.invoke("overlay:toggle"),
   startOverlayScreenSnip: (durationMs?: number) => ipcRenderer.invoke("overlay:startScreenSnip", durationMs),
-  setMode: (mode: 'compact' | 'sidebar' | 'window') => ipcRenderer.invoke('overlay:setMode', mode),
+  setMode: (mode: 'compact' | 'sidebar' | 'window' | 'app') => ipcRenderer.invoke('overlay:setMode', mode),
   resize: (w: number, h: number, anchor?: 'top' | 'bottom') => ipcRenderer.invoke('overlay:resize', w, h, anchor),
   setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) => ipcRenderer.invoke('overlay:setBounds', bounds),
   moveBy: (dx: number, dy: number) => ipcRenderer.invoke('overlay:moveBy', dx, dy),
@@ -65,7 +65,7 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('overlay:resized', handler);
     return () => { try { ipcRenderer.off('overlay:resized', handler); } catch { } };
   },
-  onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string }) => void) => {
+  onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string; transitionMs?: number }) => void) => {
     const handler = (_e: any, data: any) => cb(data);
     ipcRenderer.on('overlay:modeChanged', handler);
     return () => { try { ipcRenderer.off('overlay:modeChanged', handler); } catch { } };
@@ -127,8 +127,18 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   // Files
   selectFiles: () => ipcRenderer.invoke('files:select'),
   selectImages: () => ipcRenderer.invoke('files:selectImages'),
+  // Resolve the absolute path of a drag-and-dropped File (Electron 30 removed
+  // the legacy File.path). Returns '' if unavailable (e.g. non-file drag).
+  getPathForFile: (file: File): string => {
+    try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
+  },
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('files:showItemInFolder', filePath),
   listDirectory: (path: string) => ipcRenderer.invoke('files:listDirectory', path),
+  // Workspace file preview: open a file in the user's OS app, read raw content
+  // for the in-app preview pane, or pick local files to preview.
+  openPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
+  previewReadFile: (filePath: string) => ipcRenderer.invoke('preview:readFile', filePath),
+  previewPickFiles: () => ipcRenderer.invoke('preview:pickFiles'),
   pickFiles: async (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => {
     try {
       const files = await ipcRenderer.invoke('files:select', options);

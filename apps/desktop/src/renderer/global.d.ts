@@ -70,7 +70,7 @@ declare global {
       hide: () => Promise<void>;
       toggle: () => Promise<void>;
       startOverlayScreenSnip: (durationMs?: number) => Promise<{ ok: boolean; enabled: boolean; restoreDelay: number; error?: string }>;
-      setMode: (mode: 'compact' | 'sidebar' | 'window') => Promise<void>;
+      setMode: (mode: 'compact' | 'sidebar' | 'window' | 'app') => Promise<void>;
       resize: (w: number, h: number, anchor?: 'top' | 'bottom') => Promise<void>;
       setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) => Promise<void>;
       setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
@@ -89,7 +89,7 @@ declare global {
       // Resize events
       onResizing: (cb: (data: { width: number; height: number }) => void) => () => void;
       onResized: (cb: (data: { width: number; height: number; mode: string }) => void) => () => void;
-      onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string }) => void) => () => void;
+      onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string; transitionMs?: number }) => void) => () => void;
       openDashboard: (options?: { tab?: string }) => Promise<void>;
       openOnboarding: () => Promise<void>;
       openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'agents' | 'tools' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => Promise<void>;
@@ -113,8 +113,12 @@ declare global {
       handleCloudWebhook: (payload: any) => Promise<any>;
       selectFiles: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
       selectImages: () => Promise<Array<{ name: string; path: string; data: string; mimeType: string }> | null>;
+      getPathForFile: (file: File) => string;
       captureScreenClean: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
-      listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean }>; error?: string }>;
+      listDirectory: (path: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDirectory: boolean; size?: number }>; error?: string }>;
+      openPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
+      previewReadFile: (filePath: string) => Promise<{ content?: string; encoding?: 'utf-8' | 'base64'; size: number; error?: string }>;
+      previewPickFiles: () => Promise<string[]>;
       pickFiles: (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => Promise<{ ok: boolean; files?: Array<{ name: string; path: string; data?: string; mimeType?: string }>; error?: string }>;
       pickFolder: (options?: { title?: string; multiple?: boolean }) => Promise<{ ok: boolean; folders?: Array<{ path: string }>; error?: string }>;
       chatUiPickFile: (options?: { title?: string; filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }) => Promise<{ canceled: boolean; filePaths: string[] }>;

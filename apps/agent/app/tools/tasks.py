@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 import json
 from datetime import datetime, timezone, timedelta
@@ -8,70 +7,17 @@ from typing import Any, Dict, Optional, List
 
 from ..connections import manager
 
-# In-memory scheduled jobs map
-_REMINDER_TASKS: Dict[str, asyncio.Task] = {}
+# NOTE: Reminders are fired by the persistent desktop reminder-scheduler
+# (apps/desktop/.../services/reminder-scheduler.ts). It polls the unified-tasks
+# store, sends the notification, and advances recurrence in place. This module
+# is intentionally CRUD-only — it writes/reads reminder assignments over the
+# bridge and never runs its own in-process timers. The old in-memory asyncio
+# firing loop was removed because it raced the desktop poller (double-fires and
+# skipped occurrences for recurring reminders) and was lost on every restart.
 
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat()
-
-
-def _calculate_next_occurrence(last_dt: datetime, recurrence: Dict[str, Any]) -> Optional[datetime]:
-    import calendar as _cal
-    freq = str(recurrence.get("frequency") or "daily").lower()
-    interval = int(recurrence.get("interval") or 1)
-    days = recurrence.get("days")  # List[int] 0=Mon, 6=Sun
-    until_str = recurrence.get("until")
-
-    next_dt: Optional[datetime] = None
-
-    if freq == "daily":
-        next_dt = last_dt + timedelta(days=interval)
-
-    elif freq == "weekly":
-        if days and isinstance(days, list) and len(days) > 0:
-            current_weekday = last_dt.weekday()
-            sorted_days = sorted([int(d) % 7 for d in days])
-
-            next_day = next((d for d in sorted_days if d > current_weekday), None)
-            if next_day is not None:
-                next_dt = last_dt + timedelta(days=next_day - current_weekday)
-            else:
-                first_day = sorted_days[0]
-                delta = (7 - current_weekday) + first_day + (7 * max(0, interval - 1))
-                next_dt = last_dt + timedelta(days=delta)
-        else:
-            next_dt = last_dt + timedelta(weeks=interval)
-
-    elif freq == "monthly":
-        month = last_dt.month + interval
-        year = last_dt.year + (month - 1) // 12
-        month = ((month - 1) % 12) + 1
-        max_day = _cal.monthrange(year, month)[1]
-        next_dt = last_dt.replace(year=year, month=month, day=min(last_dt.day, max_day))
-
-    elif freq == "yearly":
-        try:
-            next_dt = last_dt.replace(year=last_dt.year + interval)
-        except ValueError:
-            # Feb 29 in non-leap year → use Feb 28
-            next_dt = last_dt.replace(year=last_dt.year + interval, day=28)
-
-    if next_dt is None:
-        return None
-
-    # Check 'until' constraint
-    if until_str:
-        try:
-            until_dt = datetime.fromisoformat(str(until_str).replace('Z', '+00:00'))
-            if until_dt.tzinfo is None:
-                until_dt = until_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-            if next_dt.astimezone(timezone.utc) > until_dt.astimezone(timezone.utc):
-                return None
-        except Exception:
-            pass
-
-    return next_dt
 
 
 def _parse_when_to_datetime(when: Any) -> datetime:
@@ -229,137 +175,18 @@ async def task_crud(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": False, "error": "unknown_action"}
 
 
-async def _assignment_still_exists(assignment_id: str) -> bool:
-    """Check whether the assignment is still present and pending in the DB.
-
-    The desktop reminder scheduler may have already fired and marked it completed,
-    or the user may have deleted it. In either case we should not double-fire.
-    """
-    try:
-        resp = await manager.send_request("unified_tasks_find_assignment", {"assignmentId": assignment_id})
-        if not isinstance(resp, dict) or not resp.get("ok"):
-            return False
-        assignment = resp.get("assignment") or {}
-        status = str(assignment.get("status") or "pending").lower()
-        return status == "pending"
-    except Exception:
-        # If we can't verify (e.g. desktop bridge down), default to firing — the
-        # in-app notification is more useful than silent suppression.
-        return True
-
-
 async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
+    """Reminder CRUD over the desktop bridge.
+
+    This tool only reads/writes reminder assignments in Unified Tasks. The
+    actual firing, recurrence advancement, and notification delivery are owned
+    by the desktop reminder-scheduler, which is persistent and survives agent
+    restarts. Keeping a single firing authority avoids the double-fire /
+    skipped-occurrence races we used to get from an in-process timer loop.
+    """
     action = str(args.get("action") or "").lower()
     if action not in ("schedule", "update", "cancel", "delete", "list", "resume"):
         return {"ok": False, "error": "unknown_action"}
-
-    # Common firing logic
-    async def _fire_logic(assignment_id: str, task_id: str, message: str, target_dt: datetime, recurrence: Optional[Dict]):
-        try:
-            # Wait until target time
-            now_ts = datetime.now(timezone.utc).timestamp()
-            target_ts = target_dt.astimezone(timezone.utc).timestamp()
-            delay = max(0.0, target_ts - now_ts)
-
-            await asyncio.sleep(delay)
-
-            # Skip firing if the assignment was deleted, cancelled, or already
-            # handled by the desktop scheduler while we were sleeping.
-            if not await _assignment_still_exists(assignment_id):
-                _REMINDER_TASKS.pop(assignment_id, None)
-                return
-
-            # Fire!
-            # Broadcast reminder trigger event
-            try:
-                await manager.broadcast(json.dumps({
-                    "type": "progress",
-                    "event": "reminder_triggered",
-                    "data": {"id": assignment_id, "taskId": task_id, "message": message},
-                }))
-            except Exception:
-                pass
-            if emit:
-                try:
-                    await emit("reminder_triggered", {"id": assignment_id, "taskId": task_id, "message": message})
-                except Exception:
-                    pass
-
-            # Handle recurrence or finish
-            updated_recurrence: Optional[Dict] = None
-            next_dt_val: Optional[datetime] = None
-
-            if isinstance(recurrence, dict) and recurrence:
-                # Check count: if count is set, decrement and stop when exhausted
-                count = recurrence.get("count")
-                if count is not None:
-                    remaining = int(count) - 1
-                    if remaining <= 0:
-                        next_dt_val = None
-                    else:
-                        updated_recurrence = dict(recurrence)
-                        updated_recurrence["count"] = remaining
-                        next_dt_val = _calculate_next_occurrence(target_dt, updated_recurrence)
-                else:
-                    updated_recurrence = recurrence
-                    next_dt_val = _calculate_next_occurrence(target_dt, recurrence)
-
-                # Fast-forward past any missed occurrences so we don't fire stale ones.
-                now_local = datetime.now().astimezone()
-                skipped = 0
-                while next_dt_val and next_dt_val.astimezone(timezone.utc) <= now_local.astimezone(timezone.utc) and skipped < 1000:
-                    if updated_recurrence:
-                        count_val = updated_recurrence.get("count")
-                        if count_val is not None:
-                            remaining = int(count_val) - 1
-                            if remaining <= 0:
-                                next_dt_val = None
-                                updated_recurrence = None
-                                break
-                            updated_recurrence = dict(updated_recurrence)
-                            updated_recurrence["count"] = remaining
-                    next_dt_val = _calculate_next_occurrence(next_dt_val, updated_recurrence) if updated_recurrence else None
-                    skipped += 1
-
-            if next_dt_val and updated_recurrence:
-                # Reschedule in Unified Tasks
-                next_iso = next_dt_val.astimezone().isoformat()
-                try:
-                    await manager.send_request("unified_tasks_update_agent_assignment", {
-                        "taskId": task_id,
-                        "assignmentId": assignment_id,
-                        "updates": {
-                            "scheduledAt": next_iso,
-                            "recurring": updated_recurrence,
-                            "status": "pending",
-                            "triggeredAt": None,
-                        }
-                    })
-                except Exception:
-                    pass
-
-                # Schedule next run in memory
-                t = asyncio.create_task(_fire_logic(assignment_id, task_id, message, next_dt_val, updated_recurrence))
-                _REMINDER_TASKS[assignment_id] = t
-            else:
-                # Mark completed
-                try:
-                    await manager.send_request("unified_tasks_update_agent_assignment", {
-                        "taskId": task_id,
-                        "assignmentId": assignment_id,
-                        "updates": {
-                            "status": "completed",
-                            "completedAt": _now_iso(),
-                        }
-                    })
-                except Exception:
-                    pass
-                _REMINDER_TASKS.pop(assignment_id, None)
-
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            _REMINDER_TASKS.pop(assignment_id, None)
 
     try:
         if action == "list":
@@ -383,47 +210,22 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
             return {"ok": True, "items": items}
 
         if action == "resume":
-            try:
-                resp = await _get_all_reminders()
-            except Exception:
-                return {"ok": False, "error": "connection_failed"}
-                
-            if not resp.get("ok"):
-                return resp
-                
-            resumed_count = 0
-            for p in resp.get("items", []):
-                a = p.get("assignment", {})
-                rid = a.get("id")
-                if not rid or rid in _REMINDER_TASKS:
-                    continue
-                
-                if a.get("type") != "reminder" or a.get("status") != "pending":
-                    continue
-
-                when_iso = a.get("scheduledAt")
-                try:
-                    target_dt = datetime.fromisoformat(when_iso)
-                    if target_dt.tzinfo is None:
-                         target_dt = target_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                except:
-                    continue
-
-                recurrence = a.get("recurring")
-                if not isinstance(recurrence, dict): recurrence = None
-                
-                t = asyncio.create_task(_fire_logic(rid, p.get("taskId"), a.get("message"), target_dt, recurrence))
-                _REMINDER_TASKS[rid] = t
-                resumed_count += 1
-                
-            return {"ok": True, "scheduled": len(_REMINDER_TASKS), "resumed": resumed_count}
+            # Firing is handled by the persistent desktop reminder-scheduler,
+            # which reloads pending assignments from storage on every poll.
+            # There is nothing to resume in-process.
+            return {
+                "ok": True,
+                "scheduled": 0,
+                "resumed": 0,
+                "note": "Reminders fire via the desktop scheduler; no in-process resume needed.",
+            }
 
         if action == "schedule":
             when = args.get("when")
             message = str(args.get("message") or "Reminder")
             recurrence = args.get("recurrence")
             taskId = str(args.get("taskId") or "")
-            
+
             target_dt = _parse_when_to_datetime(when)
 
             assignment = {
@@ -432,11 +234,10 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 "message": message,
                 "recurring": recurrence
             }
-            
-            # If taskId is missing, create a task first? Or fail?
-            # User might say "Remind me to X".
+
+            # "Remind me to X" with no taskId — create a backing task so the
+            # reminder is visible and the scheduler has something to fire against.
             if not taskId:
-                # Create a task for it
                 t_resp = await manager.send_request("unified_tasks_add", {
                     "title": message,
                     "status": "pending",
@@ -447,14 +248,10 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 else:
                     return {"ok": False, "error": "failed_to_create_task_for_reminder"}
 
-            resp = await manager.send_request("unified_tasks_add_agent_assignment", {"taskId": taskId, "assignment": assignment})
-            
-            if resp.get("ok"):
-                rid = resp.get("assignment", {}).get("id")
-                t = asyncio.create_task(_fire_logic(rid, taskId, message, target_dt, recurrence))
-                _REMINDER_TASKS[rid] = t
-                
-            return resp
+            return await manager.send_request(
+                "unified_tasks_add_agent_assignment",
+                {"taskId": taskId, "assignment": assignment},
+            )
 
         if action == "update":
             rid = str(args.get("id") or "").strip()
@@ -490,19 +287,10 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 return {"ok": False, "error": "task_id_mismatch"}
 
             updates: Dict[str, Any] = {}
-            target_dt: Optional[datetime] = None
 
             if args.get("when") is not None:
-                target_dt = _parse_when_to_datetime(args.get("when"))
-                updates["scheduledAt"] = target_dt.astimezone().isoformat()
+                updates["scheduledAt"] = _parse_when_to_datetime(args.get("when")).astimezone().isoformat()
             elif args.get("scheduledAt") is not None:
-                try:
-                    parsed = datetime.fromisoformat(str(args.get("scheduledAt")).replace('Z', '+00:00'))
-                    if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                    target_dt = parsed
-                except Exception:
-                    target_dt = None
                 updates["scheduledAt"] = str(args.get("scheduledAt"))
 
             if args.get("message") is not None:
@@ -510,6 +298,8 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
 
             if "recurrence" in args:
                 # Allow caller to clear recurrence by passing null/None explicitly.
+                # This turns a recurring reminder into a one-time one (or stops it
+                # after its next/last fire); the desktop scheduler reads `recurring`.
                 rec = args.get("recurrence")
                 if rec is None or rec == "none":
                     updates["recurring"] = None
@@ -520,49 +310,19 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                 return {"ok": False, "error": "no_updates"}
 
             # If the user is changing scheduledAt and the reminder was already
-            # completed/triggered, resurrect it back to pending so it fires again.
+            # completed/triggered, resurrect it back to pending so the desktop
+            # scheduler fires it again at the new time.
             current_status = str(assignment.get("status") or "pending").lower()
             if "scheduledAt" in updates and current_status != "pending":
                 updates["status"] = "pending"
                 updates["triggeredAt"] = None
                 updates["completedAt"] = None
 
-            resp = await manager.send_request("unified_tasks_update_agent_assignment", {
+            return await manager.send_request("unified_tasks_update_agent_assignment", {
                 "taskId": task_id,
                 "assignmentId": rid,
                 "updates": updates,
             })
-
-            if isinstance(resp, dict) and resp.get("ok"):
-                # Cancel any existing in-memory firing task; we'll requeue below if appropriate.
-                t = _REMINDER_TASKS.pop(rid, None)
-                if t:
-                    t.cancel()
-
-                # Resolve effective scheduledAt
-                if target_dt is None:
-                    try:
-                        existing_iso = str(updates.get("scheduledAt") or assignment.get("scheduledAt") or "")
-                        if existing_iso:
-                            parsed = datetime.fromisoformat(existing_iso.replace('Z', '+00:00'))
-                            if parsed.tzinfo is None:
-                                parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                            target_dt = parsed
-                    except Exception:
-                        target_dt = None
-
-                effective_status = str(updates.get("status") or assignment.get("status") or "pending").lower()
-                if target_dt and effective_status == "pending":
-                    message = str(updates.get("message") if updates.get("message") is not None else assignment.get("message") or "Reminder")
-                    if "recurring" in updates:
-                        recurrence = updates.get("recurring")
-                    else:
-                        recurrence = assignment.get("recurring")
-                    if not isinstance(recurrence, dict):
-                        recurrence = None
-                    _REMINDER_TASKS[rid] = asyncio.create_task(_fire_logic(rid, task_id, message, target_dt, recurrence))
-
-            return resp
 
         if action in ("cancel", "delete"):
             rid = str(args.get("id") or "").strip()
@@ -571,14 +331,10 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
             if not rid:
                 return {"ok": False, "error": "missing_id"}
 
-            # Always cancel the in-memory firing task first so it can't fire
-            # against a now-deleted assignment.
-            t = _REMINDER_TASKS.pop(rid, None)
-            if t:
-                t.cancel()
-
             # Try the targeted delete first (cheaper); the unified-tasks service
             # also falls back to a global search if taskId is missing/stale.
+            # Deleting the assignment is what stops a recurring reminder — the
+            # desktop scheduler will no longer find it on its next poll.
             resp = await manager.send_request("unified_tasks_delete_agent_assignment", {
                 "taskId": task_id_hint or None,
                 "assignmentId": rid,
@@ -600,9 +356,8 @@ async def task_reminders(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
                         if isinstance(retry, dict) and retry.get("ok"):
                             return {"ok": True, "deleted": True, "id": rid}
 
-            # Nothing to delete in storage but we did cancel the in-memory task — treat as success.
             return {"ok": True, "deleted": False, "id": rid, "note": "no_persisted_assignment"}
-            
+
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

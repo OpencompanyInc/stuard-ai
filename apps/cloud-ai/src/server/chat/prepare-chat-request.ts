@@ -29,7 +29,8 @@ import { userHasUserFundedInference } from '../../byok/keys';
 import { verifyVMToken } from '../../services/vm-tokens';
 import { resolveVMSecret } from '../../services/vm-command';
 import { getSkillsFromContext } from '../../tools/skill-tools';
-import { clearSessionWorkflow, setSessionWorkflow, setWorkflowWorkspacePath } from '../../tools/workflow';
+import { clearSessionWorkflow, setSessionWorkflow, setWorkflowWorkspacePath, getSessionWorkflow } from '../../tools/workflow';
+import { serializeWorkflow } from '@stuardai/workflow-core/dsl';
 import { contentToText, normalizeMessages } from '../../utils/messages';
 import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
 import { writeLog } from '../../utils/logger';
@@ -326,6 +327,21 @@ export async function prepareChatRequest({
       prompt,
     });
 
+  // Phone-origin turn (SMS/MMS/WhatsApp): mark the prompt so the orchestrator
+  // gets the texting voice + native media-send tools (voice note / image+file).
+  // Two signals: `mobileSource` (set by the desktop SMS bridge) and
+  // `context.source` ∈ {sms,mms,whatsapp} (set by the cloud→VM agent_chat path).
+  // Skipped for quick sends (no tools); the research/project takeovers build
+  // their own prompt and simply ignore this flag.
+  if (!quickRequest) {
+    const mobileSource = typeof msg?.mobileSource === 'string' ? msg.mobileSource.trim().toLowerCase() : '';
+    const ctxSource = typeof msg?.context?.source === 'string' ? msg.context.source.trim().toLowerCase() : '';
+    const phoneSignal = mobileSource || (['sms', 'mms', 'whatsapp'].includes(ctxSource) ? ctxSource : '');
+    if (phoneSignal) {
+      promptOptions.mobileMessaging = { provider: phoneSignal === 'whatsapp' ? 'whatsapp' : 'telnyx' };
+    }
+  }
+
   const agent = await resolveAgent({
     agentType,
     msg,
@@ -347,6 +363,14 @@ export async function prepareChatRequest({
   }
 
   const { resource, thread } = resolveMemoryContext(ws, msg, authUser?.userId || '', conversationId);
+  // Concrete model id used to gate attachment transport (vision/file-capable →
+  // embed natively; otherwise downgrade to a hidden file-path reference). Falls
+  // back to undefined for pure tier routing, which assumes full support.
+  const attachmentModelId = agentType === 'workflow'
+    ? workflowModelId
+    : agentType === 'skill'
+      ? skillModelId
+      : chosenModelId;
   const inputMessages = await buildInputMessages({
     msg,
     prompt,
@@ -357,6 +381,7 @@ export async function prepareChatRequest({
     agent,
     conversationId,
     memoryOwner,
+    modelId: attachmentModelId,
   });
 
   if (authUser && conversationId && !conversationCreatedNow) {
@@ -982,16 +1007,12 @@ async function resolveWorkflowAgent(
   modelSource?: string,
 ) {
   try {
-    const agent = await getWorkflowAgentForUser({
-      modelId: workflowModelId,
-      userId,
-      modelSource,
-    });
     const rawAgent = typeof msg?.agent === 'string' ? String(msg.agent) : '';
     const clientType = typeof (ws as any)?.__clientType === 'string' ? String((ws as any).__clientType).trim() : '';
     const contextMode = typeof msg?.context?.mode === 'string' ? String(msg.context.mode).trim() : '';
-    console.log('[cloud-ai] Using workflow agent', { rawAgent, clientType, ctxMode: contextMode, modelId: workflowModelId });
 
+    // Load the workflow into session FIRST so we can tell whether the user is
+    // editing an existing flow (→ slim edit-mode agent) or building a new one.
     clearSessionWorkflow();
     const incomingContext = msg?.context || {};
     const directWorkflow = incomingContext?.workflow;
@@ -1030,6 +1051,7 @@ async function resolveWorkflowAgent(
         const workflowJson = extractWorkflowJson(workflowMessage.content);
         if (workflowJson && (workflowJson.id || workflowJson.triggers || workflowJson.nodes)) {
           setSessionWorkflow(workflowJson);
+          sessionLoaded = true;
           console.log('[cloud-ai] Pre-stored workflow in session:', {
             id: workflowJson.id,
             nodes: workflowJson.nodes?.length,
@@ -1038,6 +1060,39 @@ async function resolveWorkflowAgent(
         }
       }
     }
+
+    // EDIT MODE: a non-empty workflow is loaded → the user is iterating on it,
+    // not building from scratch. Use the slim prompt + lean tool schemas so a
+    // single edit costs ~6k of prefix instead of ~18k. A blank/just-created
+    // flow (0 nodes) stays in full build-mode (docs + discovery + file tools).
+    const loadedWorkflow: any = getSessionWorkflow();
+    const nodeCount = Array.isArray(loadedWorkflow?.nodes) ? loadedWorkflow.nodes.length : 0;
+    const editMode = nodeCount > 0;
+
+    const agent = await getWorkflowAgentForUser({
+      modelId: workflowModelId,
+      userId,
+      modelSource,
+      editMode,
+    });
+
+    // DSL CONTEXT (edit-mode only): stash a compact DSL projection of the loaded
+    // flow on the agent so buildInputMessages can show it to the model. A
+    // targeted edit then needs NO read_workflow round-trip (one of the biggest
+    // step-count savings). Long string args are abbreviated to keep it small;
+    // the model windows in via read_workflow only when it needs exact arg text.
+    if (editMode && loadedWorkflow) {
+      try {
+        const mode = nodeCount <= 25 ? 'full' : 'outline';
+        (agent as any).__workflowDsl = serializeWorkflow(loadedWorkflow, { mode, abbreviateOver: 600 });
+      } catch (err: any) {
+        console.warn('[cloud-ai] workflow DSL context serialize failed:', err?.message);
+      }
+    }
+
+    console.log('[cloud-ai] Using workflow agent', {
+      rawAgent, clientType, ctxMode: contextMode, modelId: workflowModelId, editMode, nodeCount,
+    });
 
     return agent;
   } catch (error: any) {

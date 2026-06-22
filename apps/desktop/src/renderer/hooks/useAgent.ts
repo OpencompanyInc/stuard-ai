@@ -108,6 +108,82 @@ const HIDDEN_WRAPPER_TOOL_NAMES = new Set([
   'run_parallel',
 ]);
 
+// Meta-tool wrappers: the model calls these with the *real* tool nested inside
+// (`execute_tool` → args.tool_name, `vm_execute_tool` → args.tool). The backend
+// runs the inner tool and returns an envelope (`{ success, tool, result }` /
+// `{ ok, tool, result }`). For the chain-of-thought we never want the generic
+// "Execute Tool" shell to surface — the inner tool must drive the label, args,
+// grouping and result preview.
+const META_WRAPPER_TOOL_NAMES = new Set(['execute_tool', 'vm_execute_tool', 'sis_execute_tool']);
+
+/**
+ * Collapse a meta-tool wrapper event into the real tool it ran, mutating
+ * `data` (tool/args/result/status) in place and returning the resolved name.
+ *
+ * The inner tool name only rides along on the `called` event (in args); the
+ * matching `completed`/`error` event carries the result but no args, so we
+ * remember the inner identity by toolCallId via `cache` and re-apply it. This
+ * makes the unwrap durable across the whole event lifecycle — without it the
+ * result-only event resolves to nothing and the trace falls back to the bare
+ * "Execute Tool" wrapper label.
+ */
+function normalizeWrapperToolEvent(
+  rawTool: string,
+  toolCallId: string,
+  data: any,
+  cache: Map<string, { tool: string; args: any }>,
+): string {
+  if (!data || !META_WRAPPER_TOOL_NAMES.has(rawTool)) return rawTool;
+
+  const wrapperArgs = data.args && typeof data.args === 'object' && !Array.isArray(data.args) ? data.args : null;
+  // execute_tool/sis_execute_tool → tool_name; vm_execute_tool → tool (also
+  // surfaced as a top-level `vmTool` on the start event).
+  let inner =
+    (wrapperArgs && (wrapperArgs.tool_name || wrapperArgs.tool || wrapperArgs.toolName || wrapperArgs.name)) ||
+    data.vmTool ||
+    data.tool_name ||
+    '';
+  inner = typeof inner === 'string' ? inner.trim() : '';
+
+  let innerArgs =
+    wrapperArgs && wrapperArgs.args && typeof wrapperArgs.args === 'object' && !Array.isArray(wrapperArgs.args)
+      ? wrapperArgs.args
+      : undefined;
+
+  const cached = cache.get(toolCallId);
+  if (!inner && cached) inner = cached.tool;
+  if (innerArgs === undefined && cached) innerArgs = cached.args;
+
+  // Can't resolve the inner tool yet (args still streaming) — leave the wrapper
+  // untouched; a later event with args will resolve and rewrite it.
+  if (!inner || inner === rawTool || META_WRAPPER_TOOL_NAMES.has(inner)) return rawTool;
+
+  cache.set(toolCallId, { tool: inner, args: innerArgs });
+  if (cache.size > 200) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey !== undefined) cache.delete(firstKey);
+  }
+
+  data.tool = inner;
+  if (innerArgs !== undefined) data.args = innerArgs;
+
+  // Peel the result envelope so the inner tool's own output drives the preview.
+  const env = data.result;
+  if (env && typeof env === 'object' && !Array.isArray(env)
+    && ('result' in env || 'success' in env || ('ok' in env && 'tool' in env))) {
+    const failed = env.success === false || env.ok === false;
+    if (failed) {
+      if (data.error === undefined && env.error != null) {
+        data.error = typeof env.error === 'string' ? env.error : JSON.stringify(env.error);
+      }
+      if (typeof data.status === 'string' && data.status.toLowerCase() === 'completed') data.status = 'error';
+    } else if ('result' in env) {
+      data.result = env.result;
+    }
+  }
+  return inner;
+}
+
 /** Interactive terminal sessions only — not run_command / run_python_script / etc. */
 const SIDEBAR_TERMINAL_ACTIVITY_TOOLS = new Set([
   'start_terminal',
@@ -663,6 +739,11 @@ export function useAgent(options?: string | UseAgentOptions) {
   const wrapperSequentialCounterRef = useRef<Map<string, number>>(new Map());
   /** Mastra tool-result omits args; keep steps from the initial tool-call. */
   const wrapperArgsByParentRef = useRef<Map<string, any>>(new Map());
+  // execute_tool/vm_execute_tool/sis_execute_tool carry the REAL tool name only
+  // on the `called` event's args; the matching `completed` event omits args. We
+  // remember the inner identity by toolCallId so the wrapper collapses into the
+  // real tool on every event (otherwise the trace shows a generic "Execute Tool").
+  const wrapperInnerByCallIdRef = useRef<Map<string, { tool: string; args: any }>>(new Map());
   // chat_ui: maps AI SDK tool call id → bridge pending id, so submitToolOutput resolves the bridge
   const chatUiLastTcIdRef = useRef<string | null>(null);
   const chatUiBridgeMapRef = useRef<Map<string, string>>(new Map());
@@ -1961,11 +2042,15 @@ export function useAgent(options?: string | UseAgentOptions) {
                 console.log('[agent] Ignoring tool_event after stop');
                 return;
               }
-              const tool = String(evt.data?.tool || 'tool');
+              const rawTool = String(evt.data?.tool || 'tool');
+              const toolCallId = evt.data?.toolCallId || evt.data?.id || `tc-${Date.now()}`;
+              // Collapse execute_tool/vm_execute_tool wrappers into the real tool
+              // (mutates evt.data in place) so the label, grouping, args and
+              // result preview are all driven by the tool that actually ran.
+              const tool = normalizeWrapperToolEvent(rawTool, toolCallId, evt.data, wrapperInnerByCallIdRef.current);
               const toolStatus = evt.data?.status || '';
               const humanTool = humanizeToolName(tool);
               const normalizedStatus = typeof toolStatus === 'string' ? toolStatus.toLowerCase() : '';
-              const toolCallId = evt.data?.toolCallId || evt.data?.id || `tc-${Date.now()}`;
               // Get description from args.description or generate from tool name
               // Truncate long descriptions to max 60 chars for better UX
               const rawDescription = evt.data?.args?.description || evt.data?.description || '';

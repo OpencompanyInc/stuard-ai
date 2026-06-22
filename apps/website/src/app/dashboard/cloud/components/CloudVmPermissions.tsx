@@ -190,7 +190,7 @@ export function CloudVmPermissions({ engine, className }: Props) {
       <div className={clsx('flex flex-col items-center justify-center text-theme-muted gap-3 py-12', className)}>
         <Shield className="w-10 h-10" />
         <p className="text-sm font-semibold">Engine is not running</p>
-        <p className="text-xs">Start your Cloud Engine to configure permissions.</p>
+        <p className="text-xs">Start your Cloud Computer to configure permissions.</p>
       </div>
     );
   }

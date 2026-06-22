@@ -29,7 +29,7 @@ export function CloudVmSettings({ engine, onRefresh, className }: Props) {
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const handlePause = useCallback(async () => {
-    if (typeof window !== 'undefined' && !window.confirm('Pause your cloud engine? It will stop billing for compute time.')) return;
+    if (typeof window !== 'undefined' && !window.confirm('Pause your cloud computer? It will stop billing for compute time.')) return;
     setPauseLoading(true);
     try {
       await stopCloudEngine();
@@ -42,7 +42,7 @@ export function CloudVmSettings({ engine, onRefresh, className }: Props) {
   const handleDelete = useCallback(async () => {
     if (typeof window === 'undefined') return;
     const confirmed = window.confirm(
-      'Permanently delete your cloud engine?\n\nThis will destroy the VM, all of its files and any running deployments. This cannot be undone.',
+      'Permanently delete your cloud computer?\n\nThis will destroy the VM, all of its files and any running deployments. This cannot be undone.',
     );
     if (!confirmed) return;
     setDeleteLoading(true);
@@ -66,7 +66,7 @@ export function CloudVmSettings({ engine, onRefresh, className }: Props) {
         <div>
           <h2 className="text-xl font-bold text-theme-fg tracking-tight">VM Settings</h2>
           <p className="text-xs text-theme-muted mt-1 max-w-lg">
-            Basic information and controls for your Cloud Engine.
+            Basic information and controls for your Cloud Computer.
           </p>
         </div>
         {onRefresh && (

@@ -33,26 +33,34 @@ function cleanupFiredTracker() {
 }
 
 function sendNotification(title: string, body: string, assignmentId?: string, taskId?: string) {
-  try {
-    if (Notification.isSupported()) {
-      const notif = new Notification({ title, body: body || '' });
-      notif.show();
-    }
-  } catch (e) {
-    logger.warn('[reminder-scheduler] Failed to send notification:', e);
-  }
-
-  // Also notify renderer windows for in-app toast (NotificationController + onReminderTriggered)
+  // Surface an in-app toast in every renderer window via IPC. The renderer
+  // (AppController) listens for 'reminder-triggered' and shows the toast. This
+  // is the single in-app delivery path now that the Python agent no longer
+  // fires reminders itself.
+  let appFocused = false;
   try {
     const payload = { title, body, message: body, id: assignmentId, taskId, timestamp: Date.now() };
     const allWindows = BrowserWindow.getAllWindows();
     for (const win of allWindows) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('reminder-triggered', payload);
-      }
+      if (win.isDestroyed()) continue;
+      if (win.isFocused()) appFocused = true;
+      win.webContents.send('reminder-triggered', payload);
     }
   } catch (e) {
     // Ignore renderer notification failures
+  }
+
+  // Raise a native OS notification only when the app isn't already focused, so
+  // a focused user doesn't get a redundant OS popup on top of the in-app toast.
+  if (!appFocused) {
+    try {
+      if (Notification.isSupported()) {
+        const notif = new Notification({ title, body: body || '' });
+        notif.show();
+      }
+    } catch (e) {
+      logger.warn('[reminder-scheduler] Failed to send notification:', e);
+    }
   }
 }
 

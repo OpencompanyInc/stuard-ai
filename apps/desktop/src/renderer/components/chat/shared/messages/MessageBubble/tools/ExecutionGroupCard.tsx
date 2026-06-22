@@ -1,8 +1,7 @@
 import React, { memo, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronRight, ListOrdered, Loader2, Split, XCircle } from 'lucide-react';
-import { Shimmer } from '../../../../../ai-elements/Shimmer';
+import { Check, ChevronRight, ListOrdered, Split, XCircle } from 'lucide-react';
 import { useElapsedSecondsFine } from '../../../../../../hooks/useSharedTicker';
 import { formatDuration } from '../helpers/media';
 import { buildExecutionGroupFallbackChildren, deriveExecutionGroupStatus, getExecutionGroupKind, normalizeExecutionGroupChildren } from '../helpers/delegation';
@@ -45,10 +44,6 @@ function BranchStatusNode({ status }: { status: TraceStatus }) {
   if (status === 'active') {
     return (
       <span className={base} style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 16%, transparent)' }}>
-        <span
-          className="absolute inline-flex h-full w-full rounded-full animate-ping"
-          style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 45%, transparent)' }}
-        />
         <span className="relative h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--primary)' }} />
       </span>
     );
@@ -77,36 +72,6 @@ function BranchStatusNode({ status }: { status: TraceStatus }) {
   );
 }
 
-/** Slim segmented progress: one segment per child step, colored by status. */
-function SegmentedProgress({ steps }: { steps: AssistantTraceStepData[] }) {
-  const tools = steps.filter((c) => c.kind === 'tool');
-  if (tools.length < 2) return null;
-  return (
-    <div className="mt-2 flex items-center gap-1">
-      {tools.map((c) => {
-        const bg =
-          c.status === 'error'
-            ? 'color-mix(in srgb, var(--destructive) 65%, transparent)'
-            : c.status === 'complete'
-              ? 'color-mix(in srgb, var(--primary) 55%, transparent)'
-              : c.status === 'active'
-                ? 'color-mix(in srgb, var(--primary) 30%, transparent)'
-                : 'color-mix(in srgb, var(--foreground-muted) 16%, transparent)';
-        return (
-          <span key={c.id} className="h-[3px] flex-1 overflow-hidden rounded-full" style={{ backgroundColor: bg }}>
-            {c.status === 'active' ? (
-              <span
-                className="block h-full w-1/2 animate-pulse rounded-full"
-                style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 85%, transparent)' }}
-              />
-            ) : null}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 /** One branch row on the execution rail, with click-to-reveal detail. */
 function BranchLane({ child }: { child: AssistantTraceStepData }) {
   const tool = child.tool;
@@ -132,7 +97,7 @@ function BranchLane({ child }: { child: AssistantTraceStepData }) {
               className="truncate text-[12px] font-medium"
               style={{ color: 'color-mix(in srgb, var(--foreground) 82%, transparent)' }}
             >
-              {isActive ? <Shimmer as="span" duration={2} spread={3}>{child.label}</Shimmer> : child.label}
+              {isActive ? <span className="text-theme-muted/80">{child.label}</span> : child.label}
             </span>
             {argHint ? (
               <span
@@ -265,7 +230,9 @@ export const ExecutionGroupCard: React.FC<ExecutionGroupCardProps> = memo(({ ste
                 className="truncate text-[12.5px] font-semibold tracking-tight"
                 style={{ color: 'color-mix(in srgb, var(--foreground) 88%, transparent)' }}
               >
-                {isRunning ? <Shimmer as="span" duration={2.4} spread={4}>{headerLabel}</Shimmer> : headerLabel}
+                {isRunning ? (
+                  <span className="text-theme-muted/80">{headerLabel}</span>
+                ) : headerLabel}
               </span>
             </div>
 
@@ -280,7 +247,10 @@ export const ExecutionGroupCard: React.FC<ExecutionGroupCardProps> = memo(({ ste
                 {statusText}
               </span>
               {isRunning ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: tinted(90) }} />
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: tinted(90) }}
+                />
               ) : isComplete ? (
                 <Check className="h-3.5 w-3.5" style={{ color: 'color-mix(in srgb, var(--primary) 80%, transparent)' }} />
               ) : isError ? (
@@ -292,8 +262,6 @@ export const ExecutionGroupCard: React.FC<ExecutionGroupCardProps> = memo(({ ste
               />
             </div>
           </div>
-
-          <SegmentedProgress steps={displayChildren} />
         </button>
 
         <AnimatePresence initial={false}>

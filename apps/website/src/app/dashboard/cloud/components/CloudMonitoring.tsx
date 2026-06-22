@@ -107,7 +107,7 @@ export function CloudMonitoring({ engine }: CloudMonitoringProps) {
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h2 className="text-xl font-semibold tracking-tight text-theme-fg">Resource monitoring</h2>
-        <p className="mt-1 text-sm text-theme-muted">Live CPU, memory, disk, and network for your cloud engine.</p>
+        <p className="mt-1 text-sm text-theme-muted">Live CPU, memory, disk, and network for your cloud computer.</p>
       </div>
 
       <div className="flex flex-wrap gap-2">

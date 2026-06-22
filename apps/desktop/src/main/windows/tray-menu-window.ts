@@ -4,7 +4,7 @@
 // Frameless popup near the tray icon — Stuard-branded UI instead of the native
 // OS context menu. Self-contained HTML (no separate Vite entry).
 
-import { app, BrowserWindow, clipboard, ipcMain, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, nativeImage, screen, shell, Tray } from "electron";
 import path from "path";
 import fs from "fs";
 import logger from "../utils/logger";
@@ -67,11 +67,31 @@ function getFeedbackUrl(): string {
     : "https://stuard.ai/dashboard/support/new";
 }
 
+function getTrayMenuLogoDataUrl(): string | null {
+  const appPath = (() => { try { return app?.getAppPath?.() || ""; } catch { return ""; } })();
+  const candidates = [
+    path.join(process.resourcesPath || "", "icon2.png"),
+    path.join(__dirname, "..", "..", "icons", "icon2.png"),
+    appPath ? path.join(appPath, "icons", "icon2.png") : "",
+    path.join(__dirname, "..", "..", "build", "icon2.png"),
+  ].filter(Boolean);
+
+  for (const iconPath of candidates) {
+    try {
+      if (!iconPath || !fs.existsSync(iconPath)) continue;
+      const img = nativeImage.createFromPath(iconPath);
+      if (!img.isEmpty()) return img.toDataURL();
+    } catch { }
+  }
+  return null;
+}
+
 function buildMenuHTML(state: {
   overlayVisible: boolean;
   themeMode: TrayThemeMode;
   summonShortcut: string;
   version: string;
+  logoDataUrl: string | null;
 }): string {
   const toggleLabel = state.overlayVisible ? "Hide Stuard" : "Show Stuard";
   const shortcutParts = formatAcceleratorDisplay(state.summonShortcut).split(" + ");
@@ -124,12 +144,16 @@ function buildMenuHTML(state: {
   .logo {
     width: 28px; height: 28px;
     border-radius: 8px;
-    background: linear-gradient(145deg, #ff383c 0%, #e62e32 100%);
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(255, 56, 60, 0.35);
+    overflow: hidden;
   }
-  .logo svg { width: 14px; height: 14px; fill: #fff; }
+  .logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
   .brand { flex: 1; min-width: 0; }
   .brand-name {
     font-size: 14px;
@@ -287,7 +311,9 @@ function buildMenuHTML(state: {
   <div class="panel">
     <div class="header">
       <div class="logo">
-        <svg viewBox="0 0 24 24"><path d="M12 2L4 6v6c0 5.25 3.4 10.15 8 11.35C16.6 22.15 20 17.25 20 12V6l-8-4z"/></svg>
+        ${state.logoDataUrl
+    ? `<img src="${state.logoDataUrl}" alt="" />`
+    : `<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#ff383c"><path d="M12 2L4 6v6c0 5.25 3.4 10.15 8 11.35C16.6 22.15 20 17.25 20 12V6l-8-4z"/></svg>`}
       </div>
       <div class="brand">
         <div class="brand-name">Stuard</div>
@@ -574,6 +600,7 @@ export function showTrayMenu(tray: Tray): void {
     themeMode: deps.getThemeMode(),
     summonShortcut: getGlobalHotkey(),
     version: app.getVersion(),
+    logoDataUrl: getTrayMenuLogoDataUrl(),
   };
 
   const html = buildMenuHTML(state);

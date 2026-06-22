@@ -22,7 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const nav = [
         { name: 'Overview', href: '/dashboard', icon: DashboardIcon },
-        { name: 'Cloud Engine', href: '/dashboard/cloud', icon: CloudIcon },
+        { name: 'Cloud Computer', href: '/dashboard/cloud', icon: CloudIcon },
         { name: 'Billings', href: '/dashboard/billing', icon: CreditCardIcon },
         { name: 'Settings', href: '/dashboard/settings', icon: SettingsIcon },
     ];

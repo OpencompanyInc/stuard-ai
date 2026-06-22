@@ -32,7 +32,7 @@ const TOOL_LABELS: Record<string, string> = {
   delegate: 'Delegating to a specialist',
   reply_to_subagent: 'Answering the specialist',
   analyze_media: 'Looking at the media',
-  agent_todo: 'Tracking the task list',
+  agent_todo: 'Updating your progress',
   search_local_workflows: 'Finding a workflow',
   run_workflow: 'Running a workflow',
   get_skill_info: 'Looking up a skill',
@@ -89,8 +89,19 @@ function detailFromArgs(name: string, args?: Record<string, any>): string | unde
     case 'run_workflow':
       return typeof args.name === 'string' ? truncate(args.name, 40)
         : typeof args.id === 'string' ? truncate(args.id, 40) : undefined;
-    case 'agent_todo':
-      return typeof args.action === 'string' ? args.action : undefined;
+    case 'agent_todo': {
+      const action = typeof args.action === 'string' ? args.action : '';
+      const data = args.data && typeof args.data === 'object' ? args.data : args;
+      if (action === 'set_status' || action === 'finish') {
+        const label = data.label || data.summary;
+        if (typeof label === 'string' && label.trim()) return truncate(label.trim(), 40);
+      }
+      if (action === 'start' || action === 'create') {
+        const title = data.title;
+        if (typeof title === 'string' && title.trim()) return truncate(title.trim(), 40);
+      }
+      return typeof action === 'string' ? action : undefined;
+    }
     case 'get_skill_info':
       return typeof args.skill_name === 'string' ? truncate(args.skill_name, 40)
         : typeof args.skill_id === 'string' ? truncate(args.skill_id, 40) : undefined;

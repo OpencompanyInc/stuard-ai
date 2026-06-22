@@ -1195,6 +1195,29 @@ body.dashboard-cloud-workspace .dashboard-shell-row > aside {
 .shadow-soft { box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18); }
 .shadow-elevate { box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35); }
 
+/* Hidden-scrollbar utility used by vm-chat (composer textarea, history and
+   model lists) and chat-ui tool output panes. Defined in the desktop build,
+   absent here — without it the website shows scrollbars that eat the padding
+   the desktop app keeps. */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* Muted card + pill chrome used by vm-chat's default composer variant —
+   mirror of the desktop's .dashboard-card-muted / .dashboard-pill. */
+.dashboard-card-muted {
+  background: rgba(23, 23, 23, 0.5);
+  border: none;
+  border-radius: 18px;
+}
+.dashboard-pill {
+  background: var(--sidebar-item-active);
+  border: none;
+  border-radius: 999px;
+}
+
 .input-field {
   border: 1px solid var(--input-border);
   background: var(--input-bg);
@@ -1257,12 +1280,14 @@ body.dashboard-cloud-workspace .dashboard-shell-row > aside {
   background: rgba(64, 64, 64, 0.75);
 }
 
+/* No fixed padding/font-size here — the shared components (vm-chat etc.)
+   always pass their own px/py/text utilities, and a hardcoded padding would
+   override them (plain CSS outlasts the Tailwind utilities layer), making the
+   buttons render slightly different from the desktop app. */
 .cloud-ide .dashboard-refresh-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
-  font-size: 12px;
   font-weight: 500;
   color: var(--foreground-muted);
   background: #262626;

@@ -8,7 +8,7 @@
  * clicking pauses the loop so visitors can try their own prompts.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -36,6 +36,9 @@ import {
   Layers,
   Paperclip,
   ExternalLink,
+  AtSign,
+  Wrench,
+  Bell,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -131,7 +134,16 @@ interface Scenario {
 }
 
 /** Scenarios cycled during the unattended demo loop. */
-const AUTO_DEMO_IDS = ['pdf', 'research', 'spreadsheet', 'french-call', 'x-post', 'nav'] as const;
+const AUTO_DEMO_IDS = [
+  'pdf',
+  'at-search',
+  'website',
+  'slash',
+  'mini-app',
+  'research',
+  'remind',
+  'nav',
+] as const;
 
 const NAV_DEMO = {
   id: 'nav' as const,
@@ -205,6 +217,74 @@ function filterDemoNav(query: string, max = 6): DemoNavItem[] {
     .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
     .slice(0, max)
     .map(({ item }) => item);
+}
+
+/** Slash commands surfaced when the visitor types "/" — mirrors the desktop app. */
+interface SlashCmd {
+  cmd: string;
+  label: string;
+  hint: string;
+  scenarioId: string;
+  Icon: LucideIcon;
+}
+
+const SLASH_COMMANDS: SlashCmd[] = [
+  { cmd: '/research', label: 'Deep research', hint: 'Read real sources, return a cited brief', scenarioId: 'research', Icon: Search },
+  { cmd: '/build', label: 'Make a mini-app', hint: 'Describe a tool, get an app in your workspace', scenarioId: 'mini-app', Icon: Wrench },
+  { cmd: '/website', label: 'Build a website', hint: 'Scaffold, style, and preview it locally', scenarioId: 'website', Icon: Globe },
+  { cmd: '/remind', label: 'Text your phone', hint: 'Reminders where you\'ll actually see them', scenarioId: 'remind', Icon: Bell },
+  { cmd: '/call', label: 'Schedule a call', hint: 'Stuard calls you with what it found', scenarioId: 'french-call', Icon: Phone },
+  { cmd: '/schedule', label: 'Book a meeting', hint: 'Find a slot, send the invites', scenarioId: 'calendar', Icon: Calendar },
+];
+
+function filterSlashCommands(query: string): SlashCmd[] {
+  const q = query.trimStart().slice(1).toLowerCase().trim();
+  if (!q) return SLASH_COMMANDS;
+  return SLASH_COMMANDS.filter(
+    (c) => c.cmd.slice(1).startsWith(q) || c.label.toLowerCase().includes(q),
+  );
+}
+
+/** Fake local file index behind the "@" mention dropdown. */
+interface DemoFile {
+  name: string;
+  kind: DemoAttachment['kind'];
+  path: string;
+  /** Concepts the file matches when searched "by meaning" rather than by name. */
+  meaning: string[];
+}
+
+const DEMO_FILES: DemoFile[] = [
+  { name: 'Q3-Investor-Deck.pdf', kind: 'pdf', path: 'Desktop', meaning: ['investor', 'deck', 'metrics', 'pitch', 'q3'] },
+  { name: 'Tax-Return-2025.pdf', kind: 'pdf', path: 'Documents/Finance', meaning: ['tax', 'taxes', 'return', 'irs', 'march', 'filing', 'doc', 'document'] },
+  { name: 'Lease-Agreement.pdf', kind: 'pdf', path: 'Documents', meaning: ['apartment', 'rent', 'lease', 'landlord', 'housing', 'contract'] },
+  { name: 'resume-2026.pdf', kind: 'pdf', path: 'Documents', meaning: ['resume', 'cv', 'internship', 'job', 'application', 'career'] },
+  { name: 'Sales-Pipeline-Q1.xlsx', kind: 'sheet', path: 'Desktop', meaning: ['sales', 'pipeline', 'deals', 'revenue', 'spreadsheet'] },
+  { name: 'French-Progress.md', kind: 'file', path: 'Notes', meaning: ['french', 'lesson', 'language', 'verbs', 'learning'] },
+  { name: 'receipt-march-14.png', kind: 'file', path: 'Downloads', meaning: ['receipt', 'dinner', 'march', 'expense', 'restaurant'] },
+];
+
+function quickFileMatches(q: string): DemoFile[] {
+  const needle = q.toLowerCase().trim();
+  if (!needle) return DEMO_FILES.slice(0, 4);
+  return DEMO_FILES.filter((f) => f.name.toLowerCase().includes(needle)).slice(0, 5);
+}
+
+function semanticFileMatches(q: string): DemoFile[] {
+  const words = q.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  if (!words.length) return [];
+  return DEMO_FILES
+    .map((f) => ({ f, score: words.filter((w) => f.meaning.some((m) => m.startsWith(w) || w.startsWith(m))).length }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(({ f }) => f);
+}
+
+/** A query reads as "semantic" once it's a phrase, not a filename fragment. */
+function isSemanticFileQuery(q: string): boolean {
+  const t = q.trim();
+  return t.includes(' ') || t.length >= 8;
 }
 
 const AUTO_PAUSE_IDLE_MS = 1600;
@@ -304,6 +384,54 @@ const SCENARIOS: Scenario[] = [
       '**2/** Starter is now free forever. Pro drops to $12/mo — no seat minimums, cancel anytime.\n\n' +
       '**3/** Already a customer? You\'ve been auto-moved to the best-value plan. Questions? Reply here.\n\n' +
       'Want me to post it, or tweak the hook first?',
+  },
+  {
+    id: 'website',
+    label: 'Build a website',
+    prompt: 'Build me a clean portfolio site — my projects, an about page, and a contact form',
+    keywords: ['website', 'web site', 'portfolio', 'landing page', 'site for', 'build me a site'],
+    steps: [
+      { brand: 'files', status: 'Scaffolding the project…', duration: 1300 },
+      { brand: 'docs', status: 'Writing pages & styles…', duration: 1500 },
+      { brand: 'web', status: 'Starting local preview…', duration: 1100 },
+    ],
+    reply:
+      'Your site is running at **localhost:3000** ✅\n\n' +
+      '- **Home** — hero + your three best projects\n' +
+      '- **About** — written from your résumé\n' +
+      '- **Contact** — form wired to your email\n\n' +
+      'Open it and tell me what to change — or say the word and I\'ll deploy it.',
+  },
+  {
+    id: 'mini-app',
+    label: 'Create a tool on the spot',
+    prompt: 'Make me a tool that splits a dinner bill from a receipt photo, tip included',
+    keywords: ['make me a tool', 'build me a tool', 'mini-app', 'mini app', 'app that', 'tool that'],
+    steps: [
+      { brand: 'generic', status: 'Designing the tool…', duration: 1200 },
+      { brand: 'files', status: 'Wiring the workflow…', duration: 1400 },
+      { brand: 'generic', status: 'Adding buttons & inputs…', duration: 1100 },
+    ],
+    reply:
+      '**Bill Splitter** is in your workspace ✅\n\n' +
+      '- Drop in a receipt photo\n' +
+      '- It reads the items, adds tax & tip\n' +
+      '- Tap names to assign dishes — everyone gets a total\n\n' +
+      'It\'s yours now — runs any time, no rebuilding. Want a "request via Venmo" button on it?',
+  },
+  {
+    id: 'remind',
+    label: 'Text your phone',
+    prompt: 'Text me at 5pm to stretch and drink water, every weekday',
+    keywords: ['remind', 'text me', 'reminder', 'notify me at', 'every weekday'],
+    steps: [
+      { brand: 'calendar', status: 'Setting the schedule…', duration: 1200 },
+      { brand: 'phone', status: 'Sending a test text…', duration: 1100 },
+    ],
+    reply:
+      'Done — I\'ll text your phone at **5:00 PM, Mon–Fri** 📱\n\n' +
+      '> Stretch + water break 🧘\n\n' +
+      'A test message just landed. Want a morning version with your day\'s plan too?',
   },
   {
     id: 'crm',
@@ -869,6 +997,204 @@ function QuickActionsPanel({
   );
 }
 
+function PanelShell({ children, panelKey }: { children: ReactNode; panelKey: string }) {
+  return (
+    <motion.div
+      key={panelKey}
+      className="w-full"
+      style={{ maxWidth: PILL_MAX_WIDTH, marginBottom: 10 }}
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 6, scale: 0.98 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="overflow-hidden flex flex-col" style={{ background: BG, borderRadius: 12, boxShadow: SHADOW }}>
+        <div className="flex flex-col custom-scrollbar" style={{ padding: 16, gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+          {children}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function SlashPanel({
+  commands,
+  selectedIndex,
+  onHoverIndex,
+  onRun,
+}: {
+  commands: SlashCmd[];
+  selectedIndex: number;
+  onHoverIndex: (i: number) => void;
+  onRun: (cmd: SlashCmd) => void;
+}) {
+  return (
+    <PanelShell panelKey="slash-panel">
+      <div style={{ fontSize: 10, lineHeight: '14px', color: FG, fontWeight: 400 }}>Commands</div>
+      {commands.length === 0 && (
+        <div style={{ fontSize: 12, lineHeight: '16px', color: FG_MUTED, padding: '6px 8px' }}>
+          No matching command — just ask in plain English instead.
+        </div>
+      )}
+      {commands.map((cmd, idx) => {
+        const isSel = selectedIndex === idx;
+        return (
+          <button
+            key={cmd.cmd}
+            type="button"
+            onMouseEnter={() => onHoverIndex(idx)}
+            onClick={() => onRun(cmd)}
+            className="w-full flex items-center text-left"
+            style={{ ...(isSel ? ROW_PRIMARY : ROW_BASE), padding: '6px 8px 6px 6px', gap: 8 }}
+          >
+            <div
+              className="flex items-center justify-center shrink-0"
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 9,
+                background: 'rgb(var(--compact-pill-fg) / 0.06)',
+                color: FG_MUTED,
+              }}
+            >
+              <cmd.Icon style={{ width: 15, height: 15 }} strokeWidth={1.75} />
+            </div>
+            <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 4 }}>
+              <div className="flex items-baseline" style={{ gap: 6 }}>
+                <span style={{ fontSize: 12, lineHeight: '16px', color: FG, fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
+                  {cmd.cmd}
+                </span>
+                <span className="truncate" style={{ fontSize: 11, lineHeight: '15px', color: FG }}>
+                  {cmd.label}
+                </span>
+              </div>
+              <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: FG_MUTED }}>
+                {cmd.hint}
+              </div>
+            </div>
+            {isSel && (
+              <span className="shrink-0" style={{ ...KBD, fontSize: 10, lineHeight: '14px' }}>
+                Enter
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </PanelShell>
+  );
+}
+
+function FilePanel({
+  atQuery,
+  semanticLoading,
+  quick,
+  semantic,
+  selectedIndex,
+  onHoverIndex,
+  onSelect,
+}: {
+  atQuery: string;
+  semanticLoading: boolean;
+  quick: DemoFile[];
+  semantic: DemoFile[];
+  selectedIndex: number;
+  onHoverIndex: (i: number) => void;
+  onSelect: (file: DemoFile) => void;
+}) {
+  const fileTint = (kind: DemoAttachment['kind']) =>
+    kind === 'pdf' ? '#EA4335' : kind === 'sheet' ? '#22C55E' : '#60A5FA';
+
+  const renderRow = (file: DemoFile, rowIdx: number, byMeaning: boolean) => {
+    const isSel = selectedIndex === rowIdx;
+    const FileIcon = file.kind === 'pdf' ? FileText : file.kind === 'sheet' ? Table2 : File;
+    return (
+      <button
+        key={`${byMeaning ? 'sem' : 'quick'}-${file.name}`}
+        type="button"
+        onMouseEnter={() => onHoverIndex(rowIdx)}
+        onClick={() => onSelect(file)}
+        className="w-full flex items-center text-left"
+        style={{ ...(isSel ? ROW_PRIMARY : ROW_BASE), padding: '6px 8px 6px 6px', gap: 8 }}
+      >
+        <div
+          className="flex items-center justify-center shrink-0"
+          style={{ width: 30, height: 30, borderRadius: 7, background: fileTint(file.kind) }}
+        >
+          <FileIcon style={{ width: 15, height: 15, color: '#fff' }} strokeWidth={1.75} />
+        </div>
+        <div className="flex-1 min-w-0 flex flex-col" style={{ gap: 4 }}>
+          <div className="truncate" style={{ fontSize: 12, lineHeight: '16px', color: FG }}>
+            {file.name}
+          </div>
+          <div className="truncate" style={{ fontSize: 10, lineHeight: '14px', color: FG_MUTED }}>
+            ~/{file.path}
+          </div>
+        </div>
+        {byMeaning && (
+          <span
+            className="shrink-0"
+            style={{
+              fontSize: 9,
+              lineHeight: '13px',
+              padding: '2px 7px',
+              borderRadius: 9999,
+              color: '#FF8A8C',
+              background: 'rgba(255,56,60,0.10)',
+              border: '0.4px solid rgba(255,56,60,0.28)',
+            }}
+          >
+            meaning match
+          </span>
+        )}
+        {isSel && (
+          <span className="shrink-0 flex items-center justify-center" style={{ padding: '3px 4px', color: FG_MUTED }}>
+            <Paperclip style={{ width: 14, height: 14 }} strokeWidth={1.75} />
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  const semanticOffset = quick.length;
+
+  return (
+    <PanelShell panelKey="file-panel">
+      <div className="flex items-center" style={{ gap: 6 }}>
+        <AtSign style={{ width: 11, height: 11, color: FG_MUTED }} strokeWidth={2} />
+        <span style={{ fontSize: 10, lineHeight: '14px', color: FG, fontWeight: 400 }}>
+          {atQuery.trim() ? 'Your files' : 'Attach a file — type a name, or describe it'}
+        </span>
+      </div>
+
+      {quick.map((f, i) => renderRow(f, i, false))}
+
+      {semanticLoading && (
+        <div className="flex items-center" style={{ gap: 7, padding: '6px 8px' }}>
+          <Loader2 className="animate-spin shrink-0" style={{ width: 12, height: 12, color: RED }} strokeWidth={2.5} />
+          <span style={{ fontSize: 11, lineHeight: '15px', color: FG_MUTED }}>
+            Searching by meaning…
+          </span>
+        </div>
+      )}
+
+      {!semanticLoading && semantic.length > 0 && (
+        <>
+          <div style={{ fontSize: 9, lineHeight: '12px', color: FG_MUTED, paddingLeft: 8, paddingTop: 2, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Semantic matches
+          </div>
+          {semantic.map((f, i) => renderRow(f, semanticOffset + i, true))}
+        </>
+      )}
+
+      {!semanticLoading && quick.length === 0 && semantic.length === 0 && (
+        <div style={{ fontSize: 12, lineHeight: '16px', color: FG_MUTED, padding: '6px 8px' }}>
+          Nothing in the demo index — try &ldquo;@tax doc from march&rdquo;.
+        </div>
+      )}
+    </PanelShell>
+  );
+}
+
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const uid = () => Math.random().toString(36).slice(2);
 
@@ -991,14 +1317,68 @@ export default function CompactDemo() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  const showQuickActions = query.trim().length > 0 && !busy && !showResponse;
+  // --- "/" slash-command mode -------------------------------------------------
+  const slashActive = query.trimStart().startsWith('/');
+  const slashCommands = useMemo(() => (slashActive ? filterSlashCommands(query) : []), [slashActive, query]);
+  const showSlashPanel = slashActive && !busy && !showResponse;
+
+  // --- "@" file-mention mode ---------------------------------------------------
+  const atQuery = useMemo(() => {
+    if (slashActive) return null;
+    const idx = query.lastIndexOf('@');
+    if (idx === -1) return null;
+    return { idx, q: query.slice(idx + 1) };
+  }, [query, slashActive]);
+  const showFilePanel = !!atQuery && !busy && !showResponse;
+
+  const [fileSemanticLoading, setFileSemanticLoading] = useState(false);
+  const [semanticResults, setSemanticResults] = useState<DemoFile[]>([]);
+  const semanticTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const quickFiles = useMemo(() => (atQuery ? quickFileMatches(atQuery.q) : []), [atQuery]);
+
+  useEffect(() => {
+    if (semanticTimer.current) {
+      clearTimeout(semanticTimer.current);
+      semanticTimer.current = null;
+    }
+    if (!atQuery || !isSemanticFileQuery(atQuery.q)) {
+      setFileSemanticLoading(false);
+      setSemanticResults([]);
+      return;
+    }
+    const q = atQuery.q;
+    setFileSemanticLoading(true);
+    setSemanticResults([]);
+    semanticTimer.current = setTimeout(() => {
+      setSemanticResults(semanticFileMatches(q));
+      setFileSemanticLoading(false);
+    }, 650);
+    return () => {
+      if (semanticTimer.current) clearTimeout(semanticTimer.current);
+    };
+  }, [atQuery]);
+
+  const showQuickActions =
+    query.trim().length > 0 && !busy && !showResponse && !slashActive && !atQuery;
 
   const stuardNavItems = useMemo(() => filterDemoNav(query), [query]);
 
   const selectableCount = useMemo(() => {
+    if (showSlashPanel) return slashCommands.length;
+    if (showFilePanel) return quickFiles.length + semanticResults.length;
     if (!showQuickActions) return 0;
     return 2 + attachments.length + stuardNavItems.length;
-  }, [showQuickActions, attachments.length, stuardNavItems.length]);
+  }, [
+    showSlashPanel,
+    slashCommands.length,
+    showFilePanel,
+    quickFiles.length,
+    semanticResults.length,
+    showQuickActions,
+    attachments.length,
+    stuardNavItems.length,
+  ]);
 
   const markInteracted = useCallback(() => {
     if (!interacted.current) {
@@ -1121,6 +1501,44 @@ export default function CompactDemo() {
       const id = AUTO_DEMO_IDS[autoIndex.current % AUTO_DEMO_IDS.length];
       autoIndex.current += 1;
 
+      if (id === 'slash') {
+        resetDemoState();
+        setAutoDemoLabel('Type / for commands');
+        await delay(AUTO_PAUSE_IDLE_MS);
+        if (autoToken.current !== token || interacted.current) break;
+
+        await autoTypePrompt('/', token);
+        if (autoToken.current !== token || interacted.current) break;
+        await delay(2200);
+        if (autoToken.current !== token || interacted.current) break;
+
+        setQuery('');
+        await delay(AUTO_BETWEEN_MS);
+        continue;
+      }
+
+      if (id === 'at-search') {
+        resetDemoState();
+        setAutoDemoLabel('@ finds your files — even by meaning');
+        await delay(AUTO_PAUSE_IDLE_MS);
+        if (autoToken.current !== token || interacted.current) break;
+
+        await autoTypePrompt('@that tax doc from march', token);
+        if (autoToken.current !== token || interacted.current) break;
+        // hold while the "Searching by meaning…" beat plays and results land
+        await delay(2400);
+        if (autoToken.current !== token || interacted.current) break;
+
+        setQuery('');
+        setAttachments([{ name: 'Tax-Return-2025.pdf', kind: 'pdf' }]);
+        await delay(1500);
+        if (autoToken.current !== token || interacted.current) break;
+
+        setAttachments([]);
+        await delay(AUTO_BETWEEN_MS);
+        continue;
+      }
+
       if (id === 'nav') {
         resetDemoState();
         setAutoDemoLabel(NAV_DEMO.label);
@@ -1212,7 +1630,59 @@ export default function CompactDemo() {
     [query, busy, run, attachments, markInteracted],
   );
 
+  const runSlashCommand = useCallback(
+    (cmd: SlashCmd) => {
+      const scn = scenarioById(cmd.scenarioId);
+      if (!scn || busy) return;
+      markInteracted();
+      setQuery('');
+      setSelectedAction(0);
+      void runScenario(scn);
+    },
+    [busy, markInteracted, runScenario],
+  );
+
+  const selectDemoFile = useCallback(
+    (file: DemoFile) => {
+      if (!atQuery) return;
+      markInteracted();
+      setAttachments((prev) =>
+        prev.some((a) => a.name === file.name) ? prev : [...prev, { name: file.name, kind: file.kind }],
+      );
+      setQuery(query.slice(0, atQuery.idx));
+      setSelectedAction(0);
+      inputRef.current?.focus();
+    },
+    [atQuery, markInteracted, query],
+  );
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((showSlashPanel || showFilePanel) && selectableCount > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        setSelectedAction((i) => Math.max(0, Math.min(selectableCount - 1, i + delta)));
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (showSlashPanel) {
+          const cmd = slashCommands[selectedAction] ?? slashCommands[0];
+          if (cmd) runSlashCommand(cmd);
+        } else {
+          const all = [...quickFiles, ...semanticResults];
+          const file = all[selectedAction] ?? all[0];
+          if (file) selectDemoFile(file);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setQuery(showFilePanel && atQuery ? query.slice(0, atQuery.idx) : '');
+        return;
+      }
+    }
+
     if (showQuickActions && selectableCount > 0) {
       const maxIdx = selectableCount - 1;
       if (e.key === 'ArrowDown') {
@@ -1233,7 +1703,7 @@ export default function CompactDemo() {
       }
     }
 
-    if (e.key === 'Tab' && !e.shiftKey && query.trim()) {
+    if (e.key === 'Tab' && !e.shiftKey && query.trim() && !showSlashPanel && !showFilePanel) {
       e.preventDefault();
       submit();
       return;
@@ -1274,6 +1744,31 @@ export default function CompactDemo() {
       </AnimatePresence>
 
       <div className="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-4 pb-8 pt-4">
+        <AnimatePresence initial={false}>
+          {showSlashPanel && (
+            <SlashPanel
+              commands={slashCommands}
+              selectedIndex={selectedAction}
+              onHoverIndex={setSelectedAction}
+              onRun={runSlashCommand}
+            />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence initial={false}>
+          {showFilePanel && atQuery && (
+            <FilePanel
+              atQuery={atQuery.q}
+              semanticLoading={fileSemanticLoading}
+              quick={quickFiles}
+              semantic={semanticResults}
+              selectedIndex={selectedAction}
+              onHoverIndex={setSelectedAction}
+              onSelect={selectDemoFile}
+            />
+          )}
+        </AnimatePresence>
+
         <AnimatePresence initial={false}>
           {showQuickActions && (
             <QuickActionsPanel
@@ -1478,7 +1973,7 @@ export default function CompactDemo() {
                 </button>
 
                 <div className="flex-1 relative flex items-center justify-center" style={{ minHeight: 36, padding: 6, gap: 4 }}>
-                  {query.trim().length > 0 && !busy && (
+                  {query.trim().length > 0 && !busy && !slashActive && !atQuery && (
                     <span
                       className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 whitespace-nowrap select-none"
                       style={{ fontSize: 10, lineHeight: 1, fontWeight: 400, color: 'rgb(var(--compact-pill-fg) / 0.35)' }}
@@ -1529,6 +2024,44 @@ export default function CompactDemo() {
             </div>
             <CompactDragCorner />
           </div>
+
+          {/* "Try it" hint chips — the playground is useless if visitors don't know
+              the affordances. Hidden the moment anything is typed or running. */}
+          {!busy && !showResponse && query.length === 0 && (
+            <div className="flex items-center justify-center flex-wrap" style={{ gap: 6, marginTop: 12 }}>
+              {[
+                { label: '/ commands', value: '/' },
+                { label: '@ your files', value: '@' },
+                { label: '“@tax doc from march” — search by meaning', value: '@tax doc from march' },
+              ].map((hint) => (
+                <button
+                  key={hint.label}
+                  type="button"
+                  onClick={() => {
+                    markInteracted();
+                    setQuery(hint.value);
+                    setSelectedAction(0);
+                    inputRef.current?.focus();
+                  }}
+                  className="transition-colors hover:opacity-90"
+                  style={{
+                    fontFamily: FONT,
+                    fontSize: 10,
+                    lineHeight: '14px',
+                    fontWeight: 500,
+                    padding: '5px 10px',
+                    borderRadius: 9999,
+                    color: 'rgb(var(--compact-pill-fg) / 0.78)',
+                    background: BG,
+                    border: `0.4px solid ${BORDER}`,
+                    boxShadow: SHADOW,
+                  }}
+                >
+                  {hint.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

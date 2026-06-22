@@ -69,7 +69,13 @@ import {
   search_local_workflows,
   run_workflow,
 } from '../tools/device-tools';
+// Mobile/phone-mode media-send tools — lifted inline when the turn originates
+// from a phone (SMS/MMS/WhatsApp) so the orchestrator can reply with a voice
+// note or image without the search_tools discovery dance.
+import { telnyx_send_voice_note, telnyx_send_mms } from '../tools/telnyx-tools';
+import { whatsapp_send_voice_note, whatsapp_send_media } from '../tools/whatsapp-tools';
 import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
+import { createVariablesTool, wrapToolWithVariables, conversationKeyFromSecrets } from '../tools/chat-variables';
 
 // Resolved at startup via execution-tools-resolver to break the circular
 // dependency: orchestrator-agent → stuard/tools → meta-tools → workflow-subagent → orchestrator.
@@ -93,6 +99,14 @@ const DELEGATED_AGENT_TOOL_NAMES = new Set([
   'bot_get_status',
   'agent_get_status',
 ]);
+
+// Research tools split: `enter_research_mode` is the always-visible "door"; the
+// rest of the gather/compile loop is gated to an active research session. On the
+// turn that enters research mode there's no session yet, so the loop is re-armed
+// mid-turn via prepareStep (see __rearmOnResearch + stream-runner). On later
+// turns the session is known at turn start, so they're surfaced natively.
+const { enter_research_mode: ENTER_RESEARCH_MODE, ...RESEARCH_SESSION_TOOLS } = RESEARCH_MODE_TOOLS;
+const RESEARCH_SESSION_TOOL_NAMES = Object.keys(RESEARCH_SESSION_TOOLS);
 
 function withoutDelegatedAgentTools(tools: Record<string, any>): Record<string, any> {
   return Object.fromEntries(
@@ -154,6 +168,32 @@ export interface OrchestratorPromptOptions {
   browserConnected?: boolean;
   /** Compact Tab quick send: plain Q&A, no tools or delegation. */
   quickResponse?: boolean;
+  /**
+   * Mobile-origin turn (SMS/MMS/WhatsApp). When set, the orchestrator's plain-
+   * text reply is auto-delivered to the phone as it streams, and the matching
+   * media-send tools (voice note / image+file) are lifted into the native tool
+   * set so the AI can reply with media directly.
+   */
+  mobileMessaging?: { provider: 'telnyx' | 'whatsapp' } | null;
+}
+
+function buildMobileMessagingSection(mobile: { provider: 'telnyx' | 'whatsapp' }): string {
+  const isWa = mobile.provider === 'whatsapp';
+  const channel = isWa ? 'WhatsApp' : 'SMS/MMS';
+  const voiceTool = isWa ? 'whatsapp_send_voice_note' : 'telnyx_send_voice_note';
+  const mediaTool = isWa ? 'whatsapp_send_media' : 'telnyx_send_mms';
+  const urlArg = isWa ? 'a public URL' : 'a public `media_url`';
+  return `
+
+## You're texting (${channel} mode)
+
+The user is messaging you from their phone. **Your plain-text reply is delivered to them automatically** — never call a send-text tool for a normal reply, that double-sends. Just answer in plain text (no markdown, no headers, no bullet syntax).
+
+To send **rich media** back to their phone you have these tools natively (no discovery needed):
+- \`${voiceTool}\` — reply with a spoken **voice note**. Great for longer, warmer, or hands-free answers.
+- \`${mediaTool}\` — send an **image, audio clip, or file** (a photo, a generated image, a chart/screenshot you produced, etc.). Pass a local file \`path\`, ${urlArg}, or base64 \`data\`.
+
+Any media the user sent you was downloaded to this device and its local path is included with the message — re-open it with \`read_file\` / \`analyze_media\`, or send it back with \`${mediaTool}\` { path }. Only send media when it genuinely helps or the user asked for it.`;
 }
 
 function buildQuickResponsePrompt(): string {
@@ -170,7 +210,7 @@ You have **no tools** in this mode — do not attempt tool calls, delegation, su
 If the request requires actions on the user's device, browsing, files, or integrations, say so briefly and suggest they use full mode (Enter) instead.`;
 }
 
-function buildOrchestratorPrompt(
+export function buildOrchestratorPrompt(
   enabledIntegrations: string[] = [],
   skills: SkillSummary[] = [],
   bots: BotPromptSummary[] = [],
@@ -220,11 +260,14 @@ function buildOrchestratorPrompt(
   const projectBlock = '';
   const projectModeIntroLine = '';
   const toolDatabaseSection = buildOrchestratorToolDatabaseSection();
+  const mobileSection = promptOptions.mobileMessaging
+    ? buildMobileMessagingSection(promptOptions.mobileMessaging)
+    : '';
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
 **Date/Time**: ${now}
-**System**: Windows | Home: ${DEFAULT_USER_HOME_DIR}${integrationLine}${conversationBlock}${projectBlock}${projectModeIntroLine}
+**System**: Windows | Home: ${DEFAULT_USER_HOME_DIR}${integrationLine}${conversationBlock}${projectBlock}${projectModeIntroLine}${mobileSection}
 
 ## How You Work
 
@@ -236,6 +279,8 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | file_ops    | Reading/writing files, code editing, terminal commands, compute |
 | cli_agent   | Drive installed coding-agent CLIs (Codex, Cursor Agent, Antigravity, Claude Code) for codebase Q&A and agentic coding tasks — runs interactively so it uses the user's own subscription |
 | workflow    | **Creating**, modifying, and testing StuardAI automation workflows (the Workflow Architect) |
+| integration_builder | **Building** a custom integration/tool for an API you don't already have: researches the API, authors + deploys a manifest, then calls it. Use when the user needs to connect a service Stuard has no built-in tool for. |
+| skills      | **Recording** a reusable skill from work that needs repeating — captures the successful steps + tools so the assistant doesn't have to be re-taught. Use when the user says "remember how to do this" / "save this as a skill". |
 | reminders   | Scheduling one-time/recurring reminders, managing the user's tasks and to-dos |
 | ffmpeg      | Media processing — convert formats, trim, extract audio, probe metadata, extract frames |
 | data_analysis | Charts & data — load CSV/XLSX/JSON, summarize, correlate, and render charts |
@@ -279,40 +324,31 @@ ${toolDatabaseSection}
 
 ## Tool Batching — run_sequential / run_parallel
 
-Run several **direct tool calls** without delegating to a subagent. Each step is \`{ tool, args, kind? }\` where \`kind\` is \`auto\` (default), \`cloud\`, or \`local\`.
-- \`run_sequential({ steps, continueOnError? })\` — run steps in order; stops on first error unless \`continueOnError: true\`
-- \`run_parallel({ steps, concurrency? })\` — run independent steps concurrently (e.g. read multiple files, fire parallel API calls)
-
-Use for predictable multi-step chains. For open-ended work that needs reasoning (browser automation, code edits, workflow authoring), delegate instead.
+Batch several **direct tool calls** without a subagent (each step \`{ tool, args, kind? }\`, kind = auto|cloud|local). \`run_sequential\` stops on first error unless \`continueOnError\`; \`run_parallel\` runs independent steps concurrently. Use for predictable chains; for open-ended reasoning (browser, code edits, workflow authoring), delegate instead.
 
 ## ask_user — Interactive Input
 
-Use when **you** need user input, or when a **subagent question** (via ask_orchestrator) requires the user's decision, credentials, or confirmation — ask_user first, then reply_to_subagent.
-
-Types: \`confirm\` (yes/no), \`choices\` (pick from options), \`text\` (free input), or multi-page \`pages\` for wizards/forms.
-- confirm: \`{ message: "Delete 5 files?", type: "confirm" }\`
-- choices: \`{ message: "Which theme?", type: "choices", options: [{id:"dark",label:"Dark"},{id:"light",label:"Light"}] }\`
-- text: \`{ message: "Project name?", type: "text", placeholder: "my-app" }\`
-- pages: \`{ pages: [{ title: "Setup", questions: [{ message: "Name?", type: "text" }, { message: "Lang?", type: "choices", options: [...] }] }] }\`
-Use for: destructive actions, genuinely ambiguous requests, multi-step flows. Do NOT use for routine "should I proceed?" — Act > Ask.
+Use when **you** need user input, or when a subagent question requires the user's decision/credentials/confirmation (ask_user first, then reply_to_subagent). Types: \`confirm\` (yes/no), \`choices\` (\`options: [{id,label}]\`), \`text\` (free input), or multi-page \`pages\` for wizards/forms. Use for destructive actions, genuinely ambiguous requests, or multi-step flows — NOT for routine "should I proceed?" (Act > Ask).
 
 ## <<path>> — Inline Media
 
-Show local files in chat: \`<<C:/Users/solar/photo.png>>\` — works for images, video, audio, PDFs. Also works with https media URLs (e.g. cloud storage links from cloud_storage_upload / cloud_storage_get_url): \`<<https://…/video.mp4>>\`. Use whenever you have a file path or media URL to display.
+Show local files in chat: \`<<C:/Users/solar/photo.png>>\` — works for images, video, audio, PDFs. Also works with https media URLs (e.g. from cloud_storage_upload / cloud_storage_get_url): \`<<https://…/video.mp4>>\`. Use whenever you have a file path or media URL to display.
 
-## chat_ui — Rich Structured Output
+## Large values — pass {{var:…}} handles, never raw bytes
 
-DEFAULT for any structured data. Prefer over plain text for tables, stats, lists, dashboards, search results.
-- Define \`function App()\` in JSX (Sucrase). Tailwind CSS + dark: variants. \`initialData\` from \`data\` arg.
-- \`stuard.submit(data)\` (blocking), \`stuard.close()\`, \`designScheme.mode\`/\`.colors\`.
-- Non-blocking (\`blocking:false\`): display-only. Blocking (\`blocking:true\`): custom input forms.
+Big payloads (base64 media, long documents, fat API responses) must NOT sit in your messages — they balloon context and re-send every step. Large tool outputs are auto-stored and returned as \`{ _ref: "{{var:NAME}}" }\` — reuse that handle string directly as the next tool's argument (it's rehydrated right before that tool runs). Use the \`variables\` tool to set/list/delete deliberately; prefer passing handles over \`get\`.
+
+## chat_ui — Rich Output
+
+DEFAULT for structured data (tables, stats, lists, dashboards, search results) — prefer it over plain text. The chat_ui tool description carries the authoring API and theming rules.
 
 ## Local Workflows — search_local_workflows / run_workflow
 
-User-authored Stuard workflows act as custom tools. When a request matches something the user has already automated, run it instead of reinventing the steps.
-- \`search_local_workflows({ query?, mode?, limit? })\` — search local workflows semantically or lexically. Returns \`id\`, \`name\`, \`description\`, \`triggers\`, \`inputSchema\`, \`outputSchema\`. Call with empty query to browse.
-- \`run_workflow({ id | name, args?, timeoutMs? })\` — execute a workflow synchronously. Match \`args\` keys to the workflow's \`inputSchema\` names.
-- Typical flow: \`search_local_workflows\` first to discover + check required args, then \`run_workflow\` with matching \`args\`. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+The user's saved Stuard workflows act as custom tools — when a request matches one they've automated, \`search_local_workflows\` to find it (and check its \`inputSchema\`), then \`run_workflow\` with matching \`args\`, instead of reinventing the steps. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+
+## Skills — when to delegate to \`skills\`
+
+Proactively delegate to the **skills** subagent (passing the relevant steps/tools) when you finished a clearly repeatable multi-step procedure, when the user **had to correct or guide you** (capture the golden path), or when they say "remember/save this." Don't bank one-off tasks, pure Q&A, or casual chat. When unsure, briefly offer rather than saving silently.
 
 ${PROJECT_MODE_GUIDANCE}
 
@@ -364,6 +400,11 @@ function getOrchestratorActiveTools(
     scrape_url,
     analyze_media: analyzeMediaTool,
 
+    // Chat variables — store/recall large payloads by reference so base64 and
+    // other blobs never sit in the model context. Bound to this conversation so
+    // it resolves the right store even if ALS propagation is broken downstream.
+    variables: createVariablesTool(conversationKeyFromSecrets()),
+
     // Memory
     search_past_conversations,
     get_conversation_context,
@@ -372,9 +413,11 @@ function getOrchestratorActiveTools(
     agent_todo,
 
     // Research Mode — cloud-side (no bridge needed), so it works from desktop,
-    // website, and VM chat alike. Tools hard-gate on an active session, and
-    // being native means enter_research_mode → research_search works mid-turn.
-    ...RESEARCH_MODE_TOOLS,
+    // website, and VM chat alike. Only the entry "door" is always visible; the
+    // gather/compile loop is gated to an active session (re-armed mid-turn via
+    // prepareStep on the entry turn) to keep the default prompt lean.
+    enter_research_mode: ENTER_RESEARCH_MODE,
+    ...(promptOptions.activeResearch ? RESEARCH_SESSION_TOOLS : {}),
 
     // Skills
     get_skill_info,
@@ -388,29 +431,46 @@ function getOrchestratorActiveTools(
     tools.chat_ui = chatUiTool;
     tools.search_local_workflows = search_local_workflows;
     tools.run_workflow = run_workflow;
-    // Project Mode tools — desktop-only, always native so the AI can enter/exit
-    // without going through the search_tools discovery dance.
+    // Project Mode entry points — always native so the AI can discover / create /
+    // enter a project from a cold start without the search_tools discovery dance.
     tools.list_projects = list_projects;
     tools.create_project = create_project;
-    tools.update_project = update_project;
-    tools.delete_project = delete_project;
     tools.enter_project_mode = enter_project_mode;
-    tools.exit_project_mode = exit_project_mode;
-    tools.journal_add = journal_add;
-    tools.memory_add = memory_add;
-    tools.project_search = project_search;
-    tools.pin_file = pin_file;
-    tools.add_project_context = add_project_context;
-    tools.unpin_file = unpin_file;
 
-    // When Project Mode is **active**, surface task management and project-scoped
-    // conversation search natively. These are technically available via the
-    // discovery dance, but lifting them inline matches the research-lab framing
-    // ("capture a finding, file a task, search prior work" should be one tool call).
+    // When Project Mode is **active**, surface the rest of the project tool
+    // surface (edit/journal/memory/pin/scoped search) plus task management
+    // natively. These all operate on the *active* project, so they're dead
+    // weight on a cold "hey" and only meaningful once a project is entered —
+    // entering flips activeProject (read at turn start), so the next turn loads
+    // them. Mirrors the research-mode gating above.
     if (promptOptions.activeProject) {
+      tools.update_project = update_project;
+      tools.delete_project = delete_project;
+      tools.exit_project_mode = exit_project_mode;
+      tools.journal_add = journal_add;
+      tools.memory_add = memory_add;
+      tools.project_search = project_search;
+      tools.pin_file = pin_file;
+      tools.add_project_context = add_project_context;
+      tools.unpin_file = unpin_file;
       tools.task_crud = task_crud;
       tools.task_reminders = task_reminders;
       tools.search_project_conversations = search_project_conversations;
+    }
+  }
+
+  // Phone mode: lift the media-send tools inline so the AI can reply with a
+  // voice note or an image/file directly. Plain text already auto-delivers as a
+  // message, so the send-*text* tools are deliberately left out (using them
+  // would double-send). These don't require the bridge — voice notes are
+  // generated server-side and media can be sent from a path, URL, or base64.
+  if (promptOptions.mobileMessaging) {
+    if (promptOptions.mobileMessaging.provider === 'whatsapp' && WHATSAPP_INTEGRATION_ENABLED) {
+      tools.whatsapp_send_voice_note = whatsapp_send_voice_note;
+      tools.whatsapp_send_media = whatsapp_send_media;
+    } else {
+      tools.telnyx_send_voice_note = telnyx_send_voice_note;
+      tools.telnyx_send_mms = telnyx_send_mms;
     }
   }
 
@@ -431,6 +491,12 @@ export function getOrchestratorAgent(
   const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
   // Full execution universe so meta-tools (execute_tool) still work
   const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
+  // The orchestrator's OWN registry must hold the full research tool set so
+  // prepareStep can re-arm the gather/compile loop mid-turn (the entry turn has
+  // no active session yet, so getOrchestratorActiveTools only exposed the door).
+  // getExecutionTools deliberately omits enter/exit/compile/report to keep them
+  // out of parallel sub-researchers, so add them on the orchestrator here.
+  Object.assign(executionTools, RESEARCH_MODE_TOOLS);
   const selectedModel = getModel(model, modelId);
   const name = getAgentName(model);
 
@@ -443,6 +509,15 @@ export function getOrchestratorAgent(
   if (bridgeWs) {
     for (const toolName of Object.keys(executionTools)) {
       executionTools[toolName] = wrapToolWithBridge(executionTools[toolName], bridgeWs, bridgeSecrets);
+    }
+  }
+  // Variable layer — OUTERMOST wrap (after bridge): rehydrate {{var:…}} handles
+  // in tool args and capture oversized outputs to reusable handles. Applied
+  // regardless of bridge so cloud-only chats benefit too.
+  {
+    const convKey = conversationKeyFromSecrets(bridgeSecrets);
+    for (const toolName of Object.keys(executionTools)) {
+      executionTools[toolName] = wrapToolWithVariables(executionTools[toolName], convKey);
     }
   }
 
@@ -468,6 +543,14 @@ export function getOrchestratorAgent(
   (agent as any).__diagInstructions = instructions;
   (agent as any).__activeToolNames = Object.keys(activeTools);
   (agent as any).__executionToolNames = Object.keys(executionTools);
+  // Mid-turn re-arm hint for stream-runner's prepareStep: when a research session
+  // exists for this conversation (created same-turn by enter_research_mode), flip
+  // the gather/compile loop on for the remaining steps. Pure in-memory check —
+  // no desktop round-trip, no context refetch.
+  (agent as any).__rearmOnResearch = {
+    conversationId: promptOptions.conversationId || null,
+    toolNames: RESEARCH_SESSION_TOOL_NAMES,
+  };
   (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
   (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
   return agent;
@@ -517,12 +600,27 @@ export async function getOrchestratorAgentForUser(
 
   const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
   const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
+  // The orchestrator's OWN registry must hold the full research tool set so
+  // prepareStep can re-arm the gather/compile loop mid-turn (the entry turn has
+  // no active session yet, so getOrchestratorActiveTools only exposed the door).
+  // getExecutionTools deliberately omits enter/exit/compile/report to keep them
+  // out of parallel sub-researchers, so add them on the orchestrator here.
+  Object.assign(executionTools, RESEARCH_MODE_TOOLS);
 
   const bridgeWs = getBridgeWs();
   const bridgeSecrets = getBridgeSecrets();
   if (bridgeWs) {
     for (const toolName of Object.keys(executionTools)) {
       executionTools[toolName] = wrapToolWithBridge(executionTools[toolName], bridgeWs, bridgeSecrets);
+    }
+  }
+  // Variable layer — OUTERMOST wrap (after bridge): rehydrate {{var:…}} handles
+  // in tool args and capture oversized outputs to reusable handles. Applied
+  // regardless of bridge so cloud-only chats benefit too.
+  {
+    const convKey = conversationKeyFromSecrets(bridgeSecrets);
+    for (const toolName of Object.keys(executionTools)) {
+      executionTools[toolName] = wrapToolWithVariables(executionTools[toolName], convKey);
     }
   }
 
@@ -548,6 +646,14 @@ export async function getOrchestratorAgentForUser(
   (agent as any).__diagInstructions = instructions;
   (agent as any).__activeToolNames = Object.keys(activeTools);
   (agent as any).__executionToolNames = Object.keys(executionTools);
+  // Mid-turn re-arm hint for stream-runner's prepareStep: when a research session
+  // exists for this conversation (created same-turn by enter_research_mode), flip
+  // the gather/compile loop on for the remaining steps. Pure in-memory check —
+  // no desktop round-trip, no context refetch.
+  (agent as any).__rearmOnResearch = {
+    conversationId: promptOptions.conversationId || null,
+    toolNames: RESEARCH_SESSION_TOOL_NAMES,
+  };
   (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
   (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
   return agent;

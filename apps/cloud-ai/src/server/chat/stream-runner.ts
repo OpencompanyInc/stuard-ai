@@ -10,7 +10,7 @@ import { compactHistory } from '../../memory/context-compactor';
 import * as memoryService from '../../memory/conversations';
 import { withClientBridge, getBridgeWs, getBridgeSecrets } from '../../tools/bridge';
 import { getSessionWorkflow, getWorkflowById } from '../../tools/workflow';
-import { attachResearchReportForClient } from '../../tools/research-mode';
+import { attachResearchReportForClient, getResearchSessionView } from '../../tools/research-mode';
 import {
   addAssistantMessage,
   addUserMessage,
@@ -474,12 +474,38 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
     };
 
     const basePrepareStep = streamOptions.prepareStep || streamOptions.experimental_prepareStep;
+    const rearmOnResearch = (agent as any).__rearmOnResearch as
+      | { conversationId: string | null; toolNames: string[] }
+      | undefined;
     streamOptions.prepareStep = async (options: any) => {
       const preparedStep = typeof basePrepareStep === 'function'
         ? await basePrepareStep(options)
         : undefined;
+
+      // Mid-turn tool re-arm: the research gather/compile loop is gated out of
+      // the cold tool set, but once enter_research_mode creates the in-memory
+      // session (same turn), flip it on for the remaining steps so research can
+      // start immediately. Pure in-memory lookup — no desktop round-trip, no
+      // context refetch (all that happened once at turn start).
+      let rearmedActiveTools: string[] | undefined;
+      if (
+        rearmOnResearch?.conversationId &&
+        Array.isArray(rearmOnResearch.toolNames) &&
+        rearmOnResearch.toolNames.length > 0 &&
+        getResearchSessionView(rearmOnResearch.conversationId)
+      ) {
+        const base = Array.isArray(preparedStep?.activeTools)
+          ? preparedStep.activeTools
+          : (activeToolNames || []);
+        rearmedActiveTools = Array.from(new Set([...base, ...rearmOnResearch.toolNames]));
+      }
+
       const interjection = drainInterjectionPayload(ws, requestId);
-      if (!interjection) return preparedStep;
+      if (!interjection) {
+        return rearmedActiveTools
+          ? { ...(preparedStep || {}), activeTools: rearmedActiveTools }
+          : preparedStep;
+      }
 
       const baseMessages = Array.isArray(preparedStep?.messages)
         ? preparedStep.messages
@@ -496,6 +522,7 @@ export async function runPreparedChatStream(prepared: PreparedChatRequest) {
 
       return {
         ...(preparedStep || {}),
+        ...(rearmedActiveTools ? { activeTools: rearmedActiveTools } : {}),
         messages: appendInterjectionToMessages(baseMessages, interjection.content),
       };
     };
@@ -1000,7 +1027,7 @@ function startKnowledgeIngestion(
 
   const run = async () => {
     try {
-      const { ingestConversationTurn, analyzeForAutoSkill } = await import('../../knowledge');
+      const { ingestConversationTurn } = await import('../../knowledge');
       const { synthesizeCollections } = await import('../../memory/collection-synthesizer');
       const { execLocalTool } = await import('../../tools/bridge');
       const fullHistory = [...history];
@@ -1026,13 +1053,11 @@ function startKnowledgeIngestion(
           console.error('[cloud-ai] Knowledge ingestion failed:', error);
         });
 
-      analyzeForAutoSkill(fullHistory, conversationId ?? undefined, totalTokens).then((draft) => {
-        if (draft) {
-          console.log(`[cloud-ai] Auto-skill generated: "${draft.name}" (confidence=${draft.confidence}, steps=${draft.steps.length})`);
-        }
-      }).catch((error) => {
-        console.error('[cloud-ai] Auto-skill analysis failed:', error);
-      });
+      // Auto-skill analysis (per-turn gemini-flash teachable-pattern detection)
+      // is intentionally disabled — skill creation is now agent-driven via the
+      // `skills` delegated subagent (orchestrator delegates when work is
+      // repeatable or the user asks to remember a procedure). The analyzer in
+      // knowledge/auto-skills.ts is kept for reference but no longer invoked here.
 
       // B4: pending-memory TTL + cap hygiene. Single SQL — runs every turn.
       execLocalTool('pending_memory_expire', {}, undefined, 5000, { silent: true })

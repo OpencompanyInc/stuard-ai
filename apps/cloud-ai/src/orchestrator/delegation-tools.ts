@@ -377,11 +377,11 @@ function startDelegateTask(
   runSubagentImpl?: (args: any) => Promise<DelegationResult>,
 ): StartedDelegateTask {
   const name = task.subagent.trim().toLowerCase() as SubagentName;
-  const STATIC_KINDS = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'custom'] as const;
+  const STATIC_KINDS = ['browser', 'file_ops', 'cli_agent', 'workflow', 'reminders', 'ffmpeg', 'data_analysis', 'vm', 'bot', 'agent', 'integration_builder', 'skills', 'custom'] as const;
   const isIntegration = !STATIC_KINDS.includes(name as any);
   const kind = isIntegration
     ? 'integration' as const
-    : name as 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'vm' | 'bot' | 'agent' | 'custom';
+    : name as 'browser' | 'file_ops' | 'cli_agent' | 'workflow' | 'reminders' | 'ffmpeg' | 'data_analysis' | 'vm' | 'bot' | 'agent' | 'integration_builder' | 'skills' | 'custom';
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const parentAbortSignal = bridgeSecrets?.__abortSignal;
   const isBrowserSubagent = kind === 'browser';
@@ -750,27 +750,14 @@ export const delegate = createTool({
   id: 'delegate',
   description:
     'Delegate one or more tasks to specialized subagents.\n' +
-    'Pass a single task or multiple independent tasks — multiple tasks run in parallel.\n\n' +
+    'Pass a single task or multiple independent tasks — multiple tasks run in parallel.\n' +
     'If you pass skill, the matching user-defined skill is loaded into the delegated subagent context automatically.\n\n' +
-    'Available subagents:\n' +
-    '  browser     — web browsing, form filling, page scraping, screenshots\n' +
-    '  file_ops    — reading/writing files, code editing, terminal, commands\n' +
-    '  cli_agent   — drive installed coding-agent CLIs (Codex, Cursor, Antigravity, Claude Code) for codebase Q&A and agentic coding work — uses the user\'s subscription\n' +
-    '  workflow    — creating/modifying/testing StuardAI automation workflows\n' +
-    '  reminders   — scheduling one-time/recurring reminders, managing the user\'s tasks and to-dos\n' +
-    '  vm          — cloud VM operations: file transfers, headless browser, commands, always-on automations\n' +
-    '  bot         — legacy proactive bot status/ask workflows by bot id or name\n' +
-    '  agent       — proactive agent status/ask workflows by agent id or name\n' +
-    '  custom      — an ad-hoc subagent you define yourself: pass `tools` (exact tool names it may use) and `system_prompt` (its role/instructions). Use this when no built-in subagent fits.\n' +
-    '  google      — Gmail, Calendar, Drive, Sheets, Docs, Tasks\n' +
-    (OUTLOOK_INTEGRATION_ENABLED ? '  outlook     — Outlook mail & calendar\n' : '') +
-    '  github      — repos, issues, PRs, branches, actions\n' +
-    (META_INTEGRATION_ENABLED ? '  meta        — Facebook, Instagram, Threads\n' : '') +
-    (WHATSAPP_INTEGRATION_ENABLED ? '  whatsapp    — WhatsApp messaging\n' : '') +
-    '  telnyx      — SMS, voice calls\n' +
-    (REDDIT_INTEGRATION_ENABLED ? '  reddit      — subreddits, posts, comments\n' : '') +
-    (DISCORD_INTEGRATION_ENABLED ? '  discord     — Discord bot operations\n' : '') +
-    '  x           — X/Twitter tweets, timelines, users, DMs\n\n' +
+    'Valid subagent names (see the subagent table in your instructions for what each one does):\n' +
+    '  browser, file_ops, cli_agent, workflow, integration_builder, skills, reminders, vm, bot, agent, custom, ' +
+    'google, ' + (OUTLOOK_INTEGRATION_ENABLED ? 'outlook, ' : '') + 'github, ' +
+    (META_INTEGRATION_ENABLED ? 'meta, ' : '') + (WHATSAPP_INTEGRATION_ENABLED ? 'whatsapp, ' : '') + 'telnyx, ' +
+    (REDDIT_INTEGRATION_ENABLED ? 'reddit, ' : '') + (DISCORD_INTEGRATION_ENABLED ? 'discord, ' : '') + 'x\n' +
+    '(For "custom": also pass `tools` — exact tool names it may use — and `system_prompt` — its role.)\n\n' +
     'A subagent can ask you questions mid-task via ask_orchestrator. When that happens, ' +
     'this tool returns with the question and a questionId. If the user must decide or confirm, ' +
     'call ask_user first, then reply_to_subagent with the user\'s answer. Otherwise reply_to_subagent directly.',

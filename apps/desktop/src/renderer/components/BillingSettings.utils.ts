@@ -390,6 +390,121 @@ export function rollupUsageBreakdownForDisplay(
   return [...head, other];
 }
 
+/**
+ * Activity-level breakdown — answers "what did I spend credits on?" rather than
+ * "which model vendor served the request?". Every charge the system records carries
+ * an activity (chat, delegated agents, voice, messaging, cloud compute, storage),
+ * which is far more meaningful to a user than the underlying model provider. The
+ * per-provider model split is kept as a drill-down under the "ai" activity so power
+ * users can still see it without it dominating the top level.
+ */
+export type UsageActivityKey =
+  | "ai"
+  | "subagent"
+  | "compute"
+  | "storage"
+  | "messaging"
+  | "voice"
+  | "other";
+
+export interface UsageActivityProvider {
+  category: string; // inference:<provider>
+  credits: number;
+  costUsd: number;
+  count: number;
+}
+
+export interface UsageActivityRow {
+  key: UsageActivityKey;
+  credits: number;
+  costUsd: number;
+  count: number;
+  /** Per-provider model detail — only populated for the "ai" activity. */
+  providers?: UsageActivityProvider[];
+}
+
+export function usageActivityFromCategory(category: string): UsageActivityKey {
+  const cat = String(category || "usage").toLowerCase();
+  if (cat.startsWith("inference:")) return "ai";
+  if (cat === "subagent" || cat.startsWith("subagent") || cat.startsWith("browser") || cat.startsWith("delegation")) {
+    return "subagent";
+  }
+  if (cat === "voice" || cat.startsWith("voice")) return "voice";
+  if (cat === "messaging" || cat.startsWith("messaging")) return "messaging";
+  if (cat === "compute" || cat.startsWith("compute") || cat.startsWith("cloud_compute")) return "compute";
+  if (cat === "storage" || cat.startsWith("storage")) return "storage";
+  return "other";
+}
+
+export function buildUsageActivityBreakdown(
+  items: UsageBreakdownLike[],
+  options?: { maxProviders?: number },
+): UsageActivityRow[] {
+  const maxProviders = Math.max(3, options?.maxProviders ?? 5);
+  const activities = new Map<UsageActivityKey, UsageActivityRow>();
+  const providerBuckets = new Map<string, UsageActivityProvider>();
+
+  for (const row of items || []) {
+    const credits = Number(row?.credits) || 0;
+    const costUsd = Number(row?.costUsd) || 0;
+    const count = Number(row?.count) || 0;
+    const key = usageActivityFromCategory(String(row?.category || "usage"));
+
+    const activity = activities.get(key) || { key, credits: 0, costUsd: 0, count: 0 };
+    activity.credits += credits;
+    activity.costUsd += costUsd;
+    activity.count += count;
+    activities.set(key, activity);
+
+    if (key === "ai") {
+      const providerCat = rollupUsageCategory(String(row?.category || "usage"));
+      const bucket = providerBuckets.get(providerCat) || { category: providerCat, credits: 0, costUsd: 0, count: 0 };
+      bucket.credits += credits;
+      bucket.costUsd += costUsd;
+      bucket.count += count;
+      providerBuckets.set(providerCat, bucket);
+    }
+  }
+
+  const aiRow = activities.get("ai");
+  if (aiRow) {
+    let providers = Array.from(providerBuckets.values())
+      .map((p) => ({ ...p, credits: Number(p.credits.toFixed(2)), costUsd: Number(p.costUsd.toFixed(6)) }))
+      .sort((a, b) => b.credits - a.credits || b.count - a.count);
+
+    if (providers.length > maxProviders) {
+      const head = providers.slice(0, maxProviders - 1);
+      const remainder = providers.slice(maxProviders - 1).reduce(
+        (acc, p) => ({
+          credits: acc.credits + p.credits,
+          costUsd: acc.costUsd + p.costUsd,
+          count: acc.count + p.count,
+        }),
+        { credits: 0, costUsd: 0, count: 0 },
+      );
+      const existingOther = head.find((p) => p.category === "inference:other");
+      if (existingOther) {
+        existingOther.credits = Number((existingOther.credits + remainder.credits).toFixed(2));
+        existingOther.costUsd = Number((existingOther.costUsd + remainder.costUsd).toFixed(6));
+        existingOther.count += remainder.count;
+      } else {
+        head.push({
+          category: "inference:other",
+          credits: Number(remainder.credits.toFixed(2)),
+          costUsd: Number(remainder.costUsd.toFixed(6)),
+          count: remainder.count,
+        });
+      }
+      providers = head.sort((a, b) => b.credits - a.credits || b.count - a.count);
+    }
+    aiRow.providers = providers;
+  }
+
+  return Array.from(activities.values())
+    .map((a) => ({ ...a, credits: Number(a.credits.toFixed(2)), costUsd: Number(a.costUsd.toFixed(6)) }))
+    .sort((a, b) => b.credits - a.credits || b.count - a.count);
+}
+
 export function mergeUsageBreakdowns(
   usageRows: UsageBreakdownLike[],
   computeRows: UsageBreakdownLike[]

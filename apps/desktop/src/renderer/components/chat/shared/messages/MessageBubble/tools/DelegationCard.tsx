@@ -1,9 +1,8 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, ChevronRight, ExternalLink, Loader2, Users, XCircle } from 'lucide-react';
+import { CheckCircle, ChevronRight, ExternalLink, Users, XCircle } from 'lucide-react';
 import { ChainOfThoughtStep } from '../../../../../ai-elements/ChainOfThought';
-import { Shimmer } from '../../../../../ai-elements/Shimmer';
 import { useElapsedSeconds } from '../../../../../../hooks/useSharedTicker';
 import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../../utils/text';
 import { extractDelegationTasks, normalizeSubagentName, resolveToolName } from '../helpers/delegation';
@@ -155,7 +154,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
                 style={{ color: 'color-mix(in srgb, var(--foreground) 82%, transparent)' }}
               >
                 {isRunning ? (
-                  <Shimmer as="span" duration={2} spread={3}>{agentLabel}</Shimmer>
+                  <span className="text-theme-muted/80">{agentLabel}</span>
                 ) : agentLabel}
               </span>
               <span
@@ -223,9 +222,9 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
               </span>
             ) : null}
             {isRunning ? (
-              <Loader2
-                className="h-3.5 w-3.5 animate-spin"
-                style={{ color: 'color-mix(in srgb, var(--primary) 90%, transparent)' }}
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 90%, transparent)' }}
               />
             ) : isError ? (
               <XCircle className="h-3.5 w-3.5 text-red-500" />
@@ -264,7 +263,7 @@ export const DelegationCard: React.FC<DelegationCardProps> = memo(({ step, child
                     isLast={idx === visibleChildSteps.length - 1}
                     label={
                       child.status === 'active' ? (
-                        <Shimmer as="span" duration={2} spread={3}>{child.label}</Shimmer>
+                        <span className="text-theme-muted/80">{child.label}</span>
                       ) : child.label
                     }
                   >

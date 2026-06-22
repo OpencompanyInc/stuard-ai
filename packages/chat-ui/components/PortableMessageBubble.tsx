@@ -11,7 +11,7 @@ import { Archive, Check, ChevronRight, Copy, ListOrdered, Loader2, Split, Users,
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '../ai-elements/ChainOfThought';
 import { Shimmer } from '../ai-elements/Shimmer';
 import { AUDIO_EXTS, IMAGE_EXTS, extractFilePaths, formatSec, getFileExt, humanizeToolName, isFilePath, unwrapExecuteTool } from '../helpers';
-import { isRedundantStreamingUpdate, mergeStreamingText } from '../streamMerge';
+import { isRedundantStreamingUpdate, joinReasoningBlocks, mergeStreamingText } from '../streamMerge';
 import { convertLatexDelims, escapeCurrencyDollars } from '../text';
 import type { Message, StreamChunk, ToolCall } from '../types';
 
@@ -351,6 +351,10 @@ function CopyActionButton({
   );
 }
 
+function isPunctuationOnly(content: string): boolean {
+  return !/[\p{L}\p{N}]/u.test(content);
+}
+
 function summarizeReasoningLabel(content: string, fallback: string = 'Planning next moves'): string {
   const plain = content
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -360,9 +364,17 @@ function summarizeReasoningLabel(content: string, fallback: string = 'Planning n
 
   if (!plain) return fallback;
 
-  const sentence = plain.split(/[.?!]/)[0]?.trim() || plain;
+  // First sentence with real words — skip stray leading punctuation (a chunk
+  // beginning ". Click…" must not yield a ". Click" label) and trim leading
+  // symbols so the label always starts on a word.
+  const sentence = (
+    plain.split(/[.?!]/).map((s) => s.trim()).find((s) => /[\p{L}\p{N}]/u.test(s)) || plain
+  )
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .trim();
+
   const summary = truncatePreviewText(sentence, 72);
-  return summary.split(' ').length >= 2 ? summary : fallback;
+  return summary.split(' ').filter(Boolean).length >= 2 ? summary : fallback;
 }
 
 const SUBAGENT_REPLY_FALLBACK = 'Subagent reply';
@@ -372,6 +384,11 @@ function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantT
 
   for (const step of steps) {
     const last = compacted[compacted.length - 1];
+    // Consecutive reasoning/text steps (nothing visible between them) are one
+    // thinking block — fold them together whether the provider streamed
+    // overlapping snapshots or non-overlapping increments. This stops a stream
+    // split into fragments ("…button 3" + ". Click" + "the appropriate…") from
+    // rendering as a pile of ugly mid-sentence steps.
     if (
       (step.kind === 'reasoning' || step.kind === 'text')
       && last?.kind === step.kind
@@ -379,9 +396,8 @@ function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantT
       && last.content
       && Boolean(step.nested) === Boolean(last.nested)
       && (step.subagentId || '') === (last.subagentId || '')
-      && isRedundantStreamingUpdate(last.content, step.content)
     ) {
-      const mergedContent = mergeStreamingText(last.content, step.content);
+      const mergedContent = joinReasoningBlocks(last.content, step.content);
       compacted[compacted.length - 1] = {
         ...last,
         id: step.id,
@@ -394,6 +410,16 @@ function compactReasoningTraceSteps(steps: AssistantTraceStepData[]): AssistantT
         nested: step.nested,
         subagentId: step.subagentId,
       };
+      continue;
+    }
+
+    // Drop a standalone punctuation-only fragment (e.g. a lone "." chunk) that
+    // couldn't be folded into a neighbour — alone it renders as an empty step.
+    if (
+      (step.kind === 'reasoning' || step.kind === 'text')
+      && step.content
+      && isPunctuationOnly(step.content)
+    ) {
       continue;
     }
 

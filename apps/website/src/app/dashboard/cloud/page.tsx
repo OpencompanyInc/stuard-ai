@@ -1,10 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { getCloudEngineStatus } from '@/lib/cloudApi';
+import { getCloudEngineStatus, getVMStatus } from '@/lib/cloudApi';
 import { useAuthContext } from '@/components/providers/AuthProvider';
 import { CloudOverview } from './components/CloudOverview';
 import { CloudIDELayout } from './components/CloudIDELayout';
+
+// Remembered across mounts so revisiting the page on an already-ready VM
+// doesn't flash the boot screen while the readiness probe round-trips.
+let _vmChatReadyEngineId: string | null = null;
 
 export default function CloudDashboardPage() {
   const { user, loading: authLoading } = useAuthContext();
@@ -13,6 +17,9 @@ export default function CloudDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const hasEngine = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Ready-latch: once this engine has shown the workspace, a transient failed
+  // health poll must not bounce the user back to the "still booting" screen.
+  const readyEngineIdRef = useRef<string | null>(null);
   const hasRenderableEngine = Boolean(engine);
   const engineStatus = engine?.status;
 
@@ -20,7 +27,7 @@ export default function CloudDashboardPage() {
     if (authLoading) return;
     if (!user) {
       setEngine(null);
-      setError('Sign in to load your cloud engine.');
+      setError('Sign in to load your cloud computer.');
       setLoading(false);
       hasEngine.current = false;
       return;
@@ -39,7 +46,7 @@ export default function CloudDashboardPage() {
         hasEngine.current = Boolean(data.engine);
         setError(null);
       } else if (!controller.signal.aborted) {
-        setError(data.message || data.error || 'Could not load your cloud engine.');
+        setError(data.message || data.error || 'Could not load your cloud computer.');
       }
     } catch {
       if (controller.signal.aborted) return;
@@ -59,10 +66,55 @@ export default function CloudDashboardPage() {
     return () => abortRef.current?.abort();
   }, []);
 
-  const isVmWorkspace =
+  // Chat-agent readiness: healthStatus === 'healthy' only means the VM agent's
+  // HTTP server answers — the Python agent (the LLM brain) can still take a
+  // while to connect, leaving the IDE open but the composer locked. Probe
+  // /v1/vm/status (agentReady) so the boot screen covers until a message can
+  // actually be sent. Fail-open after 90s so a broken endpoint never locks the page.
+  const engineId = engine?.id ? String(engine.id) : null;
+  const [chatReady, setChatReady] = useState(() => Boolean(engineId && _vmChatReadyEngineId === engineId));
+  useEffect(() => {
+    if (!engineId || engine?.status !== 'running') {
+      setChatReady(false);
+      return;
+    }
+    if (_vmChatReadyEngineId === engineId) {
+      setChatReady(true);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+    const probe = async () => {
+      if (cancelled) return;
+      let ok = false;
+      try {
+        const res = await getVMStatus() as { ok?: boolean; reachable?: boolean; agentReady?: boolean };
+        ok = Boolean(res?.ok && (res.agentReady ?? res.reachable));
+      } catch { ok = false; }
+      if (cancelled) return;
+      if (ok || Date.now() - startedAt > 90_000) {
+        _vmChatReadyEngineId = engineId;
+        setChatReady(true);
+        return;
+      }
+      timer = setTimeout(probe, 2_500);
+    };
+    void probe();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [engineId, engine?.status]);
+
+  if (engine?.status === 'running' && engine?.healthStatus === 'healthy' && chatReady) {
+    readyEngineIdRef.current = String(engine.id || 'engine');
+  } else if (readyEngineIdRef.current && engine?.id && readyEngineIdRef.current !== String(engine.id)) {
+    readyEngineIdRef.current = null;
+  }
+  const hasBeenReady = Boolean(engine?.id ? readyEngineIdRef.current === String(engine.id) : readyEngineIdRef.current);
+
+  const agentBootPending =
     engine?.status === 'running' &&
-    engine?.healthStatus !== 'unreachable' &&
-    engine?.healthStatus !== 'unknown';
+    (engine?.healthStatus === 'unreachable' || engine?.healthStatus === 'unknown');
+  const isVmWorkspace = engine?.status === 'running' && ((!agentBootPending && chatReady) || hasBeenReady);
 
   useEffect(() => {
     if (isVmWorkspace) {
@@ -77,16 +129,17 @@ export default function CloudDashboardPage() {
   useEffect(() => {
     if (authLoading || !user) return;
     if (!hasEngine.current && !hasRenderableEngine) return;
-    const isTransitional = Boolean(engineStatus && ['provisioning', 'starting', 'stopping'].includes(engineStatus));
+    const isTransitional = Boolean(engineStatus && ['provisioning', 'starting', 'stopping'].includes(engineStatus))
+      || (agentBootPending && !hasBeenReady);
     const interval = isTransitional ? 5_000 : 30_000;
     const timer = setInterval(loadStatus, interval);
     return () => clearInterval(timer);
-  }, [authLoading, user, hasRenderableEngine, engineStatus, loadStatus]);
+  }, [authLoading, user, hasRenderableEngine, engineStatus, agentBootPending, hasBeenReady, loadStatus]);
 
   if ((authLoading || loading) && !engine) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-neutral-400">Loading cloud engine...</div>
+        <div className="text-neutral-400">Loading cloud computer...</div>
       </div>
     );
   }
@@ -95,7 +148,7 @@ export default function CloudDashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center gap-4">
         <div>
-          <div className="text-sm font-semibold text-white">Unable to load your cloud engine</div>
+          <div className="text-sm font-semibold text-white">Unable to load your cloud computer</div>
           <div className="text-sm text-neutral-400 mt-1">{error}</div>
         </div>
         <button
@@ -122,9 +175,9 @@ export default function CloudDashboardPage() {
           </svg>
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-white">No Cloud Engine Found</h2>
+          <h2 className="text-lg font-semibold text-white">No Cloud Computer Found</h2>
           <p className="text-sm text-neutral-400 mt-1 max-w-sm">
-            Deploying a Cloud Engine is only available in the Stuard desktop app. Once deployed, you can interact with it here.
+            Deploying a Cloud Computer is only available in the Stuard desktop app. Once deployed, you can interact with it here.
           </p>
         </div>
         <a
@@ -164,7 +217,7 @@ export default function CloudDashboardPage() {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
             </div>
-            <h1 className="dash-page-title text-xl">Setting up your Cloud Engine</h1>
+            <h1 className="dash-page-title text-xl">Setting up your Cloud Computer</h1>
             <p className="dash-page-subtitle">This usually takes 1-3 minutes.</p>
           </div>
 
@@ -225,7 +278,7 @@ export default function CloudDashboardPage() {
 
           <div className="mt-6 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-center">
             <p className="text-[11px] text-neutral-500">
-              Your engine runs 24/7 once set up. Credits are only used while active.
+              Your cloud computer runs 24/7 once set up. Credits are only used while active.
             </p>
           </div>
         </div>
@@ -233,8 +286,10 @@ export default function CloudDashboardPage() {
     );
   }
 
-  // Show "still booting" view when engine is running but agent hasn't come online yet
-  if (engine.status === 'running' && (engine.healthStatus === 'unreachable' || engine.healthStatus === 'unknown')) {
+  // Show "still booting" view when engine is running but the agent (or its
+  // chat brain) hasn't come online yet. The ready-latch above keeps the
+  // workspace mounted afterwards.
+  if (engine.status === 'running' && !isVmWorkspace) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh]">
         <div className="w-full max-w-md text-center">
@@ -252,7 +307,9 @@ export default function CloudDashboardPage() {
           <div className="mt-6 p-4 rounded-xl dash-card space-y-2 text-left">
             <div className="flex justify-between text-xs">
               <span className="text-neutral-500">Status</span>
-              <span className="font-semibold text-amber-400">Agent starting...</span>
+              <span className="font-semibold text-amber-400">
+                {agentBootPending ? 'Agent starting...' : 'Connecting chat agent...'}
+              </span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-neutral-500">VM</span>
@@ -286,7 +343,7 @@ export default function CloudDashboardPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="dash-page-title">Cloud Engine</h1>
+        <h1 className="dash-page-title">Cloud Computer</h1>
         <div className="flex items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
             engine.status === 'stopped' ? 'bg-neutral-800 text-neutral-300 border border-neutral-700' :

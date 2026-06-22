@@ -6,7 +6,7 @@
  * collected from the workflow trigger's declared inputParams, which the
  * engine exposes to steps as {{input.x}} / {{args.x}}.
  */
-import { Bell, ListTodo, Play } from 'lucide-react';
+import { Bell, Bookmark, ListTodo, Play } from 'lucide-react';
 import { parseWhen } from './parseWhen';
 import type { SlashCommandSpec, SlashFieldSpec, SlashRunResult, SlashSession } from './types';
 
@@ -59,6 +59,26 @@ async function createTask(values: Record<string, string>): Promise<SlashRunResul
   return { ok: true, message: when?.label ? `Task added · ${when.label}` : 'Task added' };
 }
 
+async function createBookmark(values: Record<string, string>): Promise<SlashRunResult> {
+  const name = String(values.name || '').trim();
+  let target = String(values.target || '').trim();
+  const type = String(values.type || 'url').toLowerCase() as 'url' | 'app' | 'file' | 'folder';
+  if (!name) return { ok: false, message: 'Give the shortcut a name' };
+  if (!target) return { ok: false, message: 'What should it open? (URL or path)' };
+  // Normalize a bare domain into a URL so "google.com" still opens in a browser.
+  if (type === 'url' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) {
+    target = `https://${target}`;
+  }
+
+  const id = `bm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const res = await api()?.bookmarksAdd?.({ id, name, type, target });
+  if (!res?.ok) return { ok: false, message: res?.error || 'Failed to save shortcut' };
+  // Nudge any mounted useBookmarks() hooks (search dropdown, launcher grid) to
+  // reload from disk so the new shortcut shows up without reopening the overlay.
+  try { window.dispatchEvent(new CustomEvent('stuard:bookmarks-changed')); } catch { /* best effort */ }
+  return { ok: true, message: `Shortcut saved · ${name}` };
+}
+
 export const BUILTIN_COMMANDS: SlashCommandSpec[] = [
   {
     id: 'remind',
@@ -82,6 +102,18 @@ export const BUILTIN_COMMANDS: SlashCommandSpec[] = [
       { key: 'priority', hint: 'priority', kind: 'select', options: ['normal', 'high', 'urgent', 'low'], defaultValue: 'normal' },
     ],
     run: createTask,
+  },
+  {
+    id: 'bookmark',
+    title: 'Save shortcut',
+    subtitle: 'Pin a site, app, file or folder to quick actions',
+    icon: Bookmark,
+    fields: [
+      { key: 'name', hint: 'name…', kind: 'text', required: true },
+      { key: 'target', hint: 'https://… or path', kind: 'text', required: true },
+      { key: 'type', hint: 'type', kind: 'select', options: ['url', 'app', 'file', 'folder'], defaultValue: 'url' },
+    ],
+    run: createBookmark,
   },
 ];
 

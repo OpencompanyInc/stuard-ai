@@ -87,12 +87,15 @@ describe('search_tools Supabase-backed discovery', () => {
       filter_kind: null,
       enabled_only: true,
     });
-    expect(result.tools[0]).toEqual({
+    expect(result.tools[0]).toMatchObject({
       name: 'browser_use_navigate',
       description: longDescription.slice(0, 240),
       category: 'GUI',
     });
     expect(result.tools[0].description.length).toBe(240);
+    // search_tools now inlines a compact input signature for registered tools so
+    // the model can call execute_tool directly without a get_tool_schema hop.
+    expect(result.tools[0].inputSchema).toBeTruthy();
   });
 
   it('passes category and kind filters to semantic search', async () => {
@@ -124,7 +127,7 @@ describe('search_tools Supabase-backed discovery', () => {
       filter_kind: 'local',
       enabled_only: true,
     });
-    expect(result.tools[0]).toEqual(
+    expect(result.tools[0]).toMatchObject(
       { name: 'run_command', description: 'Run a shell command', category: 'System' },
     );
   });

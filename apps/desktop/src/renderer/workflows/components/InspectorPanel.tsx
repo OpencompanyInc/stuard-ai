@@ -269,6 +269,9 @@ export function InspectorPanel({ model, selectedNodeId, onUpdate, onDelete, onCl
         id: 'loop',
         label: 'Loop Context',
         tool: '__loop__', // Special marker for loop variables
+        loopItemVar: loop?.itemVar || 'item',
+        loopIndexVar: loop?.indexVar || 'index',
+        loopType: loop?.type || (incomingBackEdge ? 'repeat' : 'forEach'),
       });
     }
     

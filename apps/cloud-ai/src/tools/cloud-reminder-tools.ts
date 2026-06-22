@@ -13,6 +13,12 @@ export async function syncReminderToCloud(
     message: string;
     recurrence?: any;
     cloud_notify_method?: 'sms' | 'whatsapp' | 'both';
+    /**
+     * Stable handle linking every occurrence of this (recurring) reminder,
+     * normally the local Unified Tasks assignment id. Carried forward across
+     * recurrence re-inserts so the whole series can be cancelled later.
+     */
+    seriesId?: string;
   },
 ): Promise<void> {
   const supabase = getSupabaseAdmin();
@@ -50,7 +56,38 @@ export async function syncReminderToCloud(
     timezone: tz,
     delivery_method: method,
     recurrence: opts.recurrence || null,
+    series_id: opts.seriesId || null,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stop a cloud reminder series (used to cancel recurring SMS/WhatsApp reminders)
+// Called from the task_reminders wrapper on cancel/delete or when recurrence is
+// removed, so stopping a reminder locally also stops its offline delivery.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function cancelCloudReminderSeries(
+  userId: string,
+  seriesId: string,
+): Promise<number> {
+  const id = String(seriesId || '').trim();
+  if (!id) return 0;
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return 0;
+
+  const { data, error } = await supabase
+    .from('cloud_reminders')
+    .update({ status: 'cancelled' })
+    .eq('user_id', userId)
+    .eq('series_id', id)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (error) {
+    console.error('[cloud-reminders] Failed to cancel series:', error.message);
+    return 0;
+  }
+  return Array.isArray(data) ? data.length : 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

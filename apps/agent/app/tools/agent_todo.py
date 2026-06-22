@@ -65,6 +65,15 @@ class AgentTodo:
 # In-memory storage: session_id -> list of todos
 _SESSION_TODOS: Dict[str, List[AgentTodo]] = {}
 
+# In-memory storage: session_id -> live status headline. This is the single,
+# plain-language "what's happening right now" line a (possibly non-technical)
+# user sees — surfaced in the always-visible status pill and the To-Do panel,
+# independent of whether a multi-step checklist exists. Shape:
+#   { "label": str, "detail": str | None, "state": "working|done|blocked|idle" }
+_SESSION_STATUS: Dict[str, Dict[str, Any]] = {}
+
+_VALID_STATUS_STATES = {"working", "done", "blocked", "idle"}
+
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat()
@@ -74,6 +83,37 @@ def _get_session_todos(session_id: str) -> List[AgentTodo]:
     if session_id not in _SESSION_TODOS:
         _SESSION_TODOS[session_id] = []
     return _SESSION_TODOS[session_id]
+
+
+def _compute_status(session_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve the live status line for a session.
+
+    An explicit `set_status` always wins. Otherwise we derive a sensible
+    plain-language status from the checklist so the user still sees "what's
+    happening now" even when the model only manages items: the in-progress
+    step while working, a "Done" once every step is terminal.
+    """
+    explicit = _SESSION_STATUS.get(session_id)
+    if explicit and str(explicit.get("label") or "").strip():
+        return explicit
+
+    todos = _get_session_todos(session_id)
+    if not todos:
+        return None
+
+    for t in todos:
+        if t.status == TodoStatus.IN_PROGRESS:
+            return {"label": t.title, "detail": t.description or None, "state": "working"}
+
+    blocked = next((t for t in todos if t.status == TodoStatus.BLOCKED), None)
+    if blocked:
+        return {"label": blocked.title, "detail": blocked.error_message or None, "state": "blocked"}
+
+    # Everything terminal — surface a quiet "done" so the UI can settle.
+    if all(t.status in (TodoStatus.COMPLETED, TodoStatus.FAILED) for t in todos):
+        return {"label": "Done", "detail": None, "state": "done"}
+
+    return None
 
 
 def _find_todo(session_id: str, todo_id: str) -> Optional[AgentTodo]:
@@ -89,13 +129,15 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
     Agent's internal todo management for long-running tasks.
 
     Actions:
+    - set_status: Set the live plain-language status headline ("what's happening now")
     - list: Get all todos for the session
     - create: Create a new todo
     - update: Update a todo's status or details
     - complete: Mark a todo as completed
     - fail: Mark a todo as failed with error
     - delete: Remove a todo
-    - clear: Clear all todos for the session
+    - finish: Mark every remaining step complete + set a done status (finalize)
+    - clear: Clear all todos + status for the session
     - get_current: Get the currently in-progress todo
     - bulk_create: Create multiple todos at once (for planning)
     - reorder: Reorder todos by priority
@@ -135,7 +177,8 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
     # nested ({data: {title: "..."}}) or flat ({title: "..."}) payloads.
     for key in ("title", "description", "items", "id", "status", "priority",
                 "tags", "metadata", "parentId", "note", "reason", "error",
-                "includeCompleted", "keepInProgress"):
+                "includeCompleted", "keepInProgress",
+                "label", "detail", "state", "summary"):
         if key not in data and key in args:
             data[key] = args[key]
 
@@ -168,6 +211,7 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
         genui_payload = {
             "items": display_items,
             "title": "Agent Plan",
+            "status": _compute_status(current_session_id),
             "progress": {
                 "total": total,
                 "completed": completed,
@@ -188,6 +232,37 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
 
     if not action:
         return {"ok": False, "error": "action_required"}
+
+    # SET_STATUS - Set the live plain-language status headline.
+    # This is the single "what's happening now" line for the user and works
+    # with or without a checklist. Passing an empty label clears it (idle).
+    if action == "set_status":
+        label = str(
+            data.get("label")
+            or data.get("status")
+            or data.get("title")
+            or data.get("text")
+            or ""
+        ).strip()
+
+        if not label:
+            _SESSION_STATUS.pop(session_id, None)
+            await _emit_update(session_id)
+            return {"ok": True, "status": None}
+
+        state = str(data.get("state") or "working").strip().lower()
+        if state not in _VALID_STATUS_STATES:
+            state = "working"
+
+        detail_raw = data.get("detail") or data.get("description") or data.get("note")
+        status = {
+            "label": label,
+            "detail": str(detail_raw).strip() if detail_raw else None,
+            "state": state,
+        }
+        _SESSION_STATUS[session_id] = status
+        await _emit_update(session_id)
+        return {"ok": True, "status": status}
 
     # LIST - Get all todos for session
     if action == "list":
@@ -383,7 +458,25 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
 
         return {"ok": False, "error": "not_found"}
 
-    # CLEAR - Clear all todos for session
+    # FINISH - Finalize the plan in one call: mark every still-open step done
+    # and set a "done" status. This is the reliable "wrap up before ending"
+    # action so a half-checked plan never lingers looking stuck. The UI shows
+    # the completed checklist briefly, then settles on its own.
+    if action == "finish":
+        todos = _get_session_todos(session_id)
+        for t in todos:
+            if t.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS):
+                t.status = TodoStatus.COMPLETED
+                t.completed_at = _now_iso()
+                t.updated_at = _now_iso()
+
+        summary = str(data.get("summary") or data.get("label") or "Done").strip() or "Done"
+        _SESSION_STATUS[session_id] = {"label": summary, "detail": None, "state": "done"}
+
+        await _emit_update(session_id)
+        return {"ok": True, "todos": [t.to_dict() for t in todos], "status": _SESSION_STATUS[session_id]}
+
+    # CLEAR - Clear all todos (and the status line) for the session
     if action == "clear":
         keep_in_progress = bool(data.get("keepInProgress", False))
 
@@ -392,6 +485,7 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
             _SESSION_TODOS[session_id] = [t for t in todos if t.status == TodoStatus.IN_PROGRESS]
         else:
             _SESSION_TODOS[session_id] = []
+            _SESSION_STATUS.pop(session_id, None)
 
         await _emit_update(session_id)
         return {"ok": True, "cleared": True}
@@ -448,10 +542,18 @@ async def agent_todo(args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] |
 
 # Convenience function for clearing a session when conversation ends
 def clear_session(session_id: str) -> None:
-    """Clear all todos for a session. Call this when a conversation ends."""
+    """Clear all todos + status for a session. Call this when a conversation ends."""
     _SESSION_TODOS.pop(session_id, None)
+    _SESSION_STATUS.pop(session_id, None)
 
 
 def get_all_sessions() -> List[str]:
     """Get list of all active session IDs."""
     return list(_SESSION_TODOS.keys())
+
+
+def clear_all() -> None:
+    """Drop every session's todos + status. Called when the socket disconnects
+    so a reconnecting client starts with a clean plan (mirrors FolderLimiter)."""
+    _SESSION_TODOS.clear()
+    _SESSION_STATUS.clear()
