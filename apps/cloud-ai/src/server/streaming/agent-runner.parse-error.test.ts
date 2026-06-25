@@ -41,6 +41,7 @@ vi.mock('../../agents/skill-agent', () => {
     SKILL_SYSTEM_PROMPT: '',
     clearSessionSkill: vi.fn(),
     setSessionSkill: vi.fn(),
+    modifySkillTool: {},
   };
 });
 

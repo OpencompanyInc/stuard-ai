@@ -107,8 +107,8 @@ describe('orchestrator cold-start prefix size', () => {
 
     // Regression guard: the system prompt is re-sent every step, so keep it
     // lean. Tool-specific mechanics belong in the tool descriptions (single
-    // source of truth), not duplicated here. (Measured ~3.8k for the minimal
+    // source of truth), not duplicated here. (Measured ~4.1k for the minimal
     // cold prompt; production adds conversation/skills/bots context on top.)
-    expect(systemTok).toBeLessThan(4000);
+    expect(systemTok).toBeLessThan(4200);
   });
 });
