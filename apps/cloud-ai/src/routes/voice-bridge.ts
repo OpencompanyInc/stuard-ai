@@ -35,6 +35,7 @@ import {
 import {
   executeVoiceToolCall,
   truncateVoiceToolResult,
+  normalizeLiveSessionFeedback,
 } from '../voice/voice-runtime-tools';
 import { getDesktopWs } from '../services/vm-bridge';
 import { LiveUsageBillingTracker } from '../services/live-usage-billing';
@@ -199,6 +200,20 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
         console.warn('[voice-bridge] No persistent desktop WS — voice will run with cloud-only context', { userId });
       }
 
+      // Sandboxed RAG: the desktop attaches knowledge packs to the session
+      // (from the start_live_session tool). Accept either id+title pairs or a
+      // bare id list and normalize to { id, title } for the context builder.
+      const knowledgePacks: Array<{ id: string; title?: string }> = (() => {
+        const fromPairs = Array.isArray((config as any)?.knowledgePacks)
+          ? (config as any).knowledgePacks
+              .map((p: any) => ({ id: String(p?.id || '').trim(), title: p?.title ? String(p.title) : undefined }))
+              .filter((p: any) => p.id)
+          : [];
+        if (fromPairs.length) return fromPairs;
+        const ids = Array.isArray((config as any)?.knowledgePackIds) ? (config as any).knowledgePackIds : [];
+        return ids.map((id: any) => ({ id: String(id || '').trim() })).filter((p: any) => p.id);
+      })();
+
       let voiceContext: Awaited<ReturnType<typeof buildVoiceContext>> | null = null;
       if (userId) {
         try {
@@ -208,6 +223,7 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
             customPrompt: config.systemPrompt,
             bridgeWs,
             enableTools: enableVoiceTools,
+            knowledgePacks: knowledgePacks.length ? knowledgePacks : undefined,
           });
         } catch (err: any) {
           console.warn('[voice-bridge] buildVoiceContext failed, using fallback prompt:', err?.message);
@@ -313,6 +329,35 @@ export function handleVoiceConnection(ws: WebSocket, _req: IncomingMessage) {
                 args: safeParseArgs(argsJson),
               });
             }
+
+            // end_live_session is owned here, not by the generic tool runner:
+            // it needs the client WS + provider session to forward the model's
+            // wrap-up back to the desktop (which injects a silent orchestrator
+            // turn) and then close the session after a brief spoken sign-off.
+            if (name === 'end_live_session') {
+              const feedback = normalizeLiveSessionFeedback(safeParseArgs(argsJson));
+              if (!isClosed) {
+                send(ws, { type: 'session_feedback', feedback });
+                send(ws, { type: 'tool_result', callId, name, ok: true });
+              }
+              try {
+                session?.sendFunctionResult?.(callId, JSON.stringify({
+                  ok: true,
+                  ended: true,
+                  hint: 'Give the user a brief spoken sign-off now. The session is closing and your summary has been sent to the chat assistant.',
+                }));
+              } catch (err: any) {
+                console.error('[voice-bridge] Failed to ack end_live_session:', err?.message);
+              }
+              // Let the model deliver a one-line goodbye, then end the session.
+              setTimeout(() => {
+                if (isClosed) return;
+                try { session?.close('ended_by_tool'); } catch {}
+                if (!isClosed) send(ws, { type: 'session_ended', reason: 'ended_by_tool' });
+              }, 4000);
+              return;
+            }
+
             handleFunctionCall(callId, name, argsJson, userId || '', voiceSessionId || '', session, ws, () => isClosed)
               .catch(err => {
                 console.error('[voice-bridge] Function call error:', err?.message);

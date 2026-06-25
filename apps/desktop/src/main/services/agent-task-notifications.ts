@@ -1,4 +1,4 @@
-import { getNotificationWindow, openNotificationWindow, isAnyAppWindowFocused } from '../windows';
+import { getNotificationWindow, openNotificationWindow, shouldSuppressAmbientNotifications } from '../windows';
 
 const notifiedKeys = new Map<string, number>();
 const DEDUPE_MS = 60_000;
@@ -55,8 +55,8 @@ export function notifyOrchestratorDone(msg: any): void {
   if (result.finishReason === 'aborted') return;
 
   // Don't interrupt with a toast if the user is already looking at Stuard —
-  // they can see the result in the chat. Only notify when we're in the background.
-  if (isAnyAppWindowFocused()) return;
+  // they can see the result in the chat / compact response panel.
+  if (shouldSuppressAmbientNotifications()) return;
 
   const requestId = String(msg.requestId || msg.id || '').trim();
   if (!shouldNotify(requestId || `final-${Date.now()}`)) return;

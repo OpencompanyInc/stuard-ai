@@ -67,6 +67,21 @@ export const HIDDEN_TOOL_NAMES = new Set([
   'add_project_context',
   'pin_file',
   'unpin_file',
+  // File index is underlying tech — pinning a file/folder scans, indexes, and
+  // embeds it automatically. Keep that plumbing out of the trace (the user sees
+  // it surface as project context / search results, not "chunking" pills). The
+  // file-*search* tools stay visible — those are real, user-meaningful actions.
+  'file_index_add_root',
+  'file_index_remove_root',
+  'file_index_list_roots',
+  'file_index_scan',
+  'file_index_get_pending',
+  'file_index_stats',
+  'file_index_update',
+  'file_index_mark_error',
+  'process_pending_file_index',
+  'process_pending_file_index_batch',
+  'sync_file_index_batch_jobs',
   // Agent internal tools
   'agent_todo',
   // Knowledge tools (internal)

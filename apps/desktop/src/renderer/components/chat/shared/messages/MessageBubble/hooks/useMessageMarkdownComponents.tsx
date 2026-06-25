@@ -55,8 +55,8 @@ export function useMessageMarkdownComponents(role: 'user' | 'assistant') {
         >{children}</a>
       );
     },
-    ul: (props: any) => <ul className="list-disc pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm" {...props} />,
-    ol: (props: any) => <ol className="list-decimal pl-6 mb-4 space-y-1.5 marker:text-theme/60 marker:text-sm marker:font-semibold" {...props} />,
+    ul: (props: any) => <ul className="list-disc pl-6 mb-4 space-y-1.5 marker:text-theme-fg-soft marker:text-sm" {...props} />,
+    ol: (props: any) => <ol className="list-decimal pl-6 mb-4 space-y-1.5 marker:text-theme-fg-soft marker:text-sm marker:font-semibold" {...props} />,
     li: (props: any) => <li className="leading-[1.7] text-theme-fg/95 pl-1" {...props} />,
     blockquote: ({ children, ...props }: any) => (
       <blockquote

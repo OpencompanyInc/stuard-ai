@@ -398,7 +398,7 @@ export function SmartValueEditor({ value, onChange, keyName, availableVariables 
 
   if (isObject) {
     return (
-      <div className="h-48 border border-white/[0.08] rounded-xl overflow-hidden shadow-sm">
+      <div className="h-48 border wf-border-subtle rounded-xl overflow-hidden shadow-sm">
         <RichCodeEditor
           value={JSON.stringify(value, null, 2)}
           onChange={v => {

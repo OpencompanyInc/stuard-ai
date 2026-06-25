@@ -102,7 +102,7 @@ function ColumnTypeSelect({ value, onChange }: { value: string; onChange: (v: st
       </button>
 
       {open && (
-        <div className="absolute z-50 right-0 mt-1.5 w-56 bg-white/[0.04] border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 right-0 mt-1.5 w-56 wf-bg-elevated border wf-border-subtle rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1">
             {COLUMN_TYPES.map(opt => (
               <button

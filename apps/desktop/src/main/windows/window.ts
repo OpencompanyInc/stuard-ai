@@ -2298,6 +2298,27 @@ export function isAnyAppWindowFocused(): boolean {
   }
 }
 
+export function isOverlayLogicallyVisible(): boolean {
+  try {
+    if (!win || win.isDestroyed()) return false;
+    return win.isVisible() && !wasHidden;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether ambient toasts (task-complete, etc.) should be suppressed because
+ * the user is already looking at Stuard. Compact mode counts even when OS
+ * focus briefly leaves the frameless overlay — the bar/response panel is the
+ * notification surface in that mode.
+ */
+export function shouldSuppressAmbientNotifications(): boolean {
+  if (isAnyAppWindowFocused()) return true;
+  if (isOverlayLogicallyVisible() && currentMode === 'compact') return true;
+  return false;
+}
+
 export function registerGlobalShortcuts() {
   logger.info("Registering global shortcuts...");
 
@@ -2842,10 +2863,17 @@ export function startOverlayScreenSnip() {
   return { ok: true, enabled: false, restoreDelay: 0 };
 }
 
+export function hideNotificationWindow() {
+  if (notificationWin && !notificationWin.isDestroyed()) {
+    try { notificationWin.hide(); } catch { }
+  }
+}
+
 export function openNotificationWindow() {
   if (notificationWin && !notificationWin.isDestroyed()) {
-    // Should be invisible to interaction but visible for rendering
-    // notificationWin.show(); 
+    if (!notificationWin.isVisible()) {
+      try { notificationWin.showInactive(); } catch { }
+    }
     return;
   }
 

@@ -177,6 +177,9 @@ declare global {
       workflowsDeleteVersion: (id: string, versionId: string) => Promise<{ ok: boolean; error?: string }>;
       workflowsRunStep: (id: string, options: { step: { id: string; tool: string; args: any }; accessToken?: string }) => Promise<{ ok: boolean; result?: any; error?: string }>;
       workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) => Promise<{ ok: boolean; error?: string }>;
+      // Python environment / dependency provisioning
+      pythonStatus: () => Promise<{ ok?: boolean; available?: boolean; error?: string; [k: string]: any }>;
+      pythonInstall: (args: { packages?: string[]; requirementsTxt?: string; envId?: string }) => Promise<{ ok: boolean; packagesInstalled?: string[]; packagesSkipped?: string[]; error?: string; [k: string]: any }>;
       // Folder operations
       workflowsCreateFolder: (name: string) => Promise<{ ok: boolean; folder?: string; error?: string }>;
       workflowsRenameFolder: (oldName: string, newName: string) => Promise<{ ok: boolean; folder?: string; error?: string }>;

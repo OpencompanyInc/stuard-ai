@@ -201,7 +201,7 @@ function VariableRow({
 
       {/* Expanded content */}
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-white/[0.04] space-y-3">
+        <div className="px-3 pb-3 pt-1 border-t wf-border-subtle space-y-3">
           {/* Variable name */}
           <div className="space-y-1">
             <label className="text-xs font-medium wf-fg-muted">Variable Name</label>

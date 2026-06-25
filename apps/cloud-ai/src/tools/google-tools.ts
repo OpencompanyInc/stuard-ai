@@ -475,9 +475,22 @@ function toRfc3339(value: string, endOfDay = false): string {
   return s;
 }
 
+// Pull the Google Meet join URL out of a Calendar event response. Google
+// returns it on `hangoutLink` and/or in conferenceData.entryPoints (video).
+function extractMeetLink(event: any): string | null {
+  if (!event || typeof event !== 'object') return null;
+  if (typeof event.hangoutLink === 'string' && event.hangoutLink) return event.hangoutLink;
+  const entries = Array.isArray(event?.conferenceData?.entryPoints) ? event.conferenceData.entryPoints : [];
+  const video = entries.find((e: any) => e?.entryPointType === 'video' && e?.uri);
+  return video?.uri || null;
+}
+
 export const calendar_create_event = createTool({
   id: 'calendar_create_event',
-  description: 'Create a Google Calendar event. Requires calendar.events. Supports date-time and all-day events.',
+  description:
+    'Create a Google Calendar event. Use this to schedule meetings and video calls: set addGoogleMeet to attach a Google Meet ' +
+    'video conferencing link (returned as meetLink and embedded in the invite). Requires calendar.events. ' +
+    'Supports date-time and all-day events, attendees, and recurrence.',
   inputSchema: z.object({
     calendarId: z.string().default('primary'),
     summary: z.string(),
@@ -486,6 +499,13 @@ export const calendar_create_event = createTool({
     start: z.string().describe('ISO 8601 date/time or date (YYYY-MM-DD) for all-day'),
     end: z.string().describe('ISO 8601 date/time or date (YYYY-MM-DD) for all-day'),
     timeZone: z.string().optional(),
+    addGoogleMeet: z
+      .boolean()
+      .optional()
+      .describe(
+        'When true, attach a Google Meet video call link to the event (use for video/phone calls and meetings). ' +
+        'The link is returned as meetLink and included in the calendar invite sent to attendees. No extra scope required.'
+      ),
     attendees: z
       .array(
         z.object({
@@ -516,11 +536,17 @@ export const calendar_create_event = createTool({
         'Supported RRULE properties: FREQ (DAILY/WEEKLY/MONTHLY/YEARLY), INTERVAL, BYDAY, COUNT, UNTIL. ' +
         'Pass a single-element array for most cases.'
       ),
+    sendUpdates: z
+      .enum(['all', 'externalOnly', 'none'])
+      .optional()
+      .describe('Who to email the invite to. Use "all" when inviting attendees to a call/meeting so they receive the Meet link.'),
+    profile: profileField,
   }),
   execute: async (inputData, context) => {
-    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events']);
+    const { profile } = inputData as any;
+    const gate = await ensureConnectedAndScopes(['https://www.googleapis.com/auth/calendar.events'], profile);
     if ((gate as any).ok !== true) return gate;
-    const { calendarId, summary, description, location, start, end, timeZone, attendees, reminders, recurrence } = inputData as any;
+    const { calendarId, summary, description, location, start, end, timeZone, attendees, reminders, recurrence, addGoogleMeet, sendUpdates } = inputData as any;
     const isDateOnly = (s: string) => {
       try {
         const str = String(s || '');
@@ -560,14 +586,28 @@ export const calendar_create_event = createTool({
     }
     if (reminders && typeof reminders === 'object') body.reminders = reminders;
     if (Array.isArray(recurrence) && recurrence.length > 0) body.recurrence = recurrence;
+    if (addGoogleMeet) {
+      body.conferenceData = {
+        createRequest: {
+          requestId: `stuard-meet-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      };
+    }
+    const params = new URLSearchParams();
+    // conferenceDataVersion=1 is required for Google to honor the Meet createRequest.
+    if (addGoogleMeet) params.set('conferenceDataVersion', '1');
+    if (sendUpdates) params.set('sendUpdates', String(sendUpdates));
+    const qs = params.toString();
     const data = await googleAuthorizedFetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/events`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/events${qs ? `?${qs}` : ''}`,
       {
         method: 'POST',
         body: JSON.stringify(body),
       } as any,
+      profile,
     );
-    return { event: data };
+    return { event: data, meetLink: extractMeetLink(data) };
   },
 });
 
@@ -649,6 +689,10 @@ export const calendar_update_event = createTool({
         'RFC 5545 recurrence rules, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"]. ' +
         'Pass an empty array [] to remove recurrence (make the event non-repeating).'
       ),
+    addGoogleMeet: z
+      .boolean()
+      .optional()
+      .describe('When true, attach a Google Meet video call link to the event if it doesn\'t already have one. The link is returned as meetLink.'),
     sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional().describe('Who to notify of the update.'),
     profile: profileField,
   }),
@@ -658,12 +702,14 @@ export const calendar_update_event = createTool({
     if ((gate as any).ok !== true) return gate;
     const {
       calendarId, eventId, modificationScope, summary, description, location,
-      start, end, timeZone, attendees, reminders, recurrence, sendUpdates,
+      start, end, timeZone, attendees, reminders, recurrence, sendUpdates, addGoogleMeet,
     } = inputData as any;
 
     // First fetch the existing event to PATCH it (PATCH requires only changed fields)
     const existing: any = await googleAuthorizedFetch(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId || 'primary')}/events/${encodeURIComponent(eventId)}`,
+      undefined,
+      profile,
     );
 
     if ((existing as any)?.error) {
@@ -695,10 +741,22 @@ export const calendar_update_event = createTool({
         ? { date: end, ...(timeZone ? { timeZone } : {}) }
         : { dateTime: end, ...(timeZone ? { timeZone } : {}) };
     }
+    // Attach a Google Meet link if requested and the event doesn't already have one.
+    const alreadyHasMeet = !!extractMeetLink(existing);
+    if (addGoogleMeet && !alreadyHasMeet) {
+      patch.conferenceData = {
+        createRequest: {
+          requestId: `stuard-meet-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      };
+    }
 
     const scope = modificationScope || 'single';
     const params = new URLSearchParams();
     if (sendUpdates) params.set('sendUpdates', String(sendUpdates));
+    // conferenceDataVersion=1 is required for Google to honor the Meet createRequest.
+    if (addGoogleMeet && !alreadyHasMeet) params.set('conferenceDataVersion', '1');
 
     let url: string;
     if (scope === 'all' && existing.recurringEventId) {
@@ -716,9 +774,9 @@ export const calendar_update_event = createTool({
     const result = await googleAuthorizedFetch(`${url}${qs ? `?${qs}` : ''}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
-    } as any);
+    } as any, profile);
 
-    return { ok: true, event: result };
+    return { ok: true, event: result, meetLink: extractMeetLink(result) };
   },
 });
 

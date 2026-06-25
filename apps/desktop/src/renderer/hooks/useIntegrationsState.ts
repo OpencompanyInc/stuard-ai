@@ -163,6 +163,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
   const [browserUseStatus, setBrowserUseStatus] = useState<any | null>(null);
   const [browserUseChecking, setBrowserUseChecking] = useState<boolean>(false);
   const [browserUseSetupProgress, setBrowserUseSetupProgress] = useState<string | null>(null);
+  const [browserExtBridgeInfo, setBrowserExtBridgeInfo] = useState<any | null>(null);
+  const [browserExtStatus, setBrowserExtStatus] = useState<any | null>(null);
+  const [browserExtChecking, setBrowserExtChecking] = useState<boolean>(false);
+  const [browserExtServices, setBrowserExtServices] = useState<any[]>([]);
   const [cliAgentStatus, setCliAgentStatus] = useState<any | null>(null);
   const [cliAgentChecking, setCliAgentChecking] = useState<boolean>(false);
   const [telnyxPhones, setTelnyxPhones] = useState<Array<{phone: string, slot: number}>>([]);
@@ -378,6 +382,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       applyIntegrationBranding({ slug: "data-analysis", name: "Data Analysis", description: "Analyze and visualize data with pandas, numpy, scipy, matplotlib, and seaborn. Installed on demand into an isolated environment.", category: "Local", homepage: "https://pandas.pydata.org/", available: true }),
       applyIntegrationBranding({ slug: "ollama", name: "Ollama", description: "Run AI models privately on your computer — chat, vision, embeddings, no data leaves your device.", category: "Local", homepage: "https://ollama.com/", available: true }),
       applyIntegrationBranding({ slug: "browser-use", name: "Stuard Browser", description: "Let Stuard browse the web for you — fill forms, search, log in, and complete tasks. Saves your cookies and sessions.", category: "Local", homepage: "https://stuard.ai/", available: true }),
+      applyIntegrationBranding({ slug: "browser-extension", name: "Browser Connector", description: "Read, script, and organize tabs in your real browser — the page you're looking at, logged-in sessions, and open windows.", category: "Local", homepage: "https://stuard.ai/", available: true }),
       applyIntegrationBranding({ slug: "agent-cli", name: "Agent CLI", description: "Delegate coding work to installed CLIs: Codex, Cursor Agent, Antigravity, or Claude Code.", category: "Development", homepage: "https://github.com/openai/codex", available: true }),
       // Disabled — Outlook/Discord/Reddit integrations temporarily hidden (see shared/integration-flags.ts)
       ...(OUTLOOK_INTEGRATION_ENABLED
@@ -710,6 +715,74 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     }
   };
 
+  const refreshBrowserExtensionStatus = async () => {
+    setBrowserExtChecking(true);
+    try {
+      let bridge: any = null;
+      try {
+        bridge = await (window as any).desktopAPI?.serviceExtensionBridgeGetInfo?.();
+        if (bridge && typeof bridge === 'object') setBrowserExtBridgeInfo(bridge);
+      } catch {}
+
+      const res = await (window as any).desktopAPI?.execTool?.('browser_ext_status', {});
+      if (res && typeof res === 'object') setBrowserExtStatus(res);
+
+      const connected = !!(res && (res as any).connected);
+
+      try {
+        const svc = await (window as any).desktopAPI?.execTool?.('browser_ext_service_list', {});
+        const list = Array.isArray(svc?.services) ? svc.services : Array.isArray(svc?.items) ? svc.items : [];
+        setBrowserExtServices(list);
+      } catch {
+        setBrowserExtServices([]);
+      }
+
+      setConnectedMap((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        if (connected) next['browser-extension'] = true;
+        else delete next['browser-extension'];
+        try { localStorage.setItem("integrations.connected", JSON.stringify(next)); } catch {}
+        emitConnectedChanged();
+        return next;
+      });
+    } catch {
+    } finally {
+      setBrowserExtChecking(false);
+    }
+  };
+
+  const openBrowserExtensionFolder = async () => {
+    try {
+      const res = await (window as any).desktopAPI?.serviceExtensionBridgeGetDistPath?.();
+      const distPath = res?.path;
+      if (distPath) {
+        await (window as any).desktopAPI?.showItemInFolder?.(pathJoinForReveal(distPath));
+      }
+    } catch {}
+  };
+
+  /** showItemInFolder needs a file inside the folder on Windows — pass manifest.json. */
+  function pathJoinForReveal(dir: string): string {
+    const sep = dir.includes('\\') ? '\\' : '/';
+    return dir.endsWith(sep) ? `${dir}manifest.json` : `${dir}${sep}manifest.json`;
+  }
+
+  const copyBrowserExtensionPairingKey = async () => {
+    try {
+      let bridge = browserExtBridgeInfo;
+      if (!bridge?.pairingToken) {
+        bridge = await (window as any).desktopAPI?.serviceExtensionBridgeGetInfo?.();
+        if (bridge && typeof bridge === 'object') setBrowserExtBridgeInfo(bridge);
+      }
+      const key = String(bridge?.pairingToken || '').trim();
+      if (!key) return false;
+      await navigator.clipboard.writeText(key);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const updateBrowserUse = async () => {
     setBrowserUseUpdating(true);
     setBrowserUseSetupProgress('Updating...');
@@ -827,6 +900,7 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
         refreshOllamaStatus(),
         refreshCliAgentStatus(),
         refreshBrowserUseStatus(),
+        refreshBrowserExtensionStatus(),
       ]);
     });
   }, [statusChecksEnabled]);
@@ -1433,6 +1507,14 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
       return;
     }
 
+    if (slug === "browser-extension") {
+      try {
+        await openBrowserExtensionFolder();
+        await refreshBrowserExtensionStatus();
+      } catch {}
+      return;
+    }
+
     if (slug === "agent-cli") {
       try {
         await refreshCliAgentStatus();
@@ -1700,6 +1782,10 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     browserUseStatus,
     browserUseChecking,
     browserUseSetupProgress,
+    browserExtBridgeInfo,
+    browserExtStatus,
+    browserExtChecking,
+    browserExtServices,
     cliAgentStatus,
     cliAgentChecking,
     telnyxPhones,
@@ -1728,6 +1814,9 @@ export function useIntegrationsState({ session, AGENT_HTTP, CLOUD_AI_HTTP, statu
     refreshOllamaStatus,
     startOllama,
     refreshBrowserUseStatus,
+    refreshBrowserExtensionStatus,
+    openBrowserExtensionFolder,
+    copyBrowserExtensionPairingKey,
     refreshCliAgentStatus,
     setupBrowserUse,
     startBrowserUse,

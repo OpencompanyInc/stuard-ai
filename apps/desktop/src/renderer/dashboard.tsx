@@ -355,6 +355,13 @@ function DashboardApp() {
     stopBrowserUse,
     uninstallBrowserUse,
     updateBrowserUse,
+    browserExtBridgeInfo,
+    browserExtStatus,
+    browserExtChecking,
+    browserExtServices,
+    refreshBrowserExtensionStatus,
+    openBrowserExtensionFolder,
+    copyBrowserExtensionPairingKey,
     cliAgentStatus,
     cliAgentChecking,
     refreshCliAgentStatus,
@@ -1928,6 +1935,13 @@ function DashboardApp() {
                                 browserUseUpdateInfo={browserUseUpdateInfo}
                                 browserUseUpdating={browserUseUpdating}
                                 updateBrowserUse={updateBrowserUse}
+                                browserExtBridgeInfo={browserExtBridgeInfo}
+                                browserExtStatus={browserExtStatus}
+                                browserExtChecking={browserExtChecking}
+                                browserExtServices={browserExtServices}
+                                refreshBrowserExtensionStatus={refreshBrowserExtensionStatus}
+                                openBrowserExtensionFolder={openBrowserExtensionFolder}
+                                copyBrowserExtensionPairingKey={copyBrowserExtensionPairingKey}
                                 cliAgentStatus={cliAgentStatus}
                                 cliAgentChecking={cliAgentChecking}
                                 refreshCliAgentStatus={refreshCliAgentStatus}

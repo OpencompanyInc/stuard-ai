@@ -263,6 +263,10 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.invoke('workflows:runStep', id, options),
   workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) =>
     ipcRenderer.invoke('workflows:runFromStep', id, options),
+  // Python environment / dependency provisioning
+  pythonStatus: () => ipcRenderer.invoke('python:status'),
+  pythonInstall: (args: { packages?: string[]; requirementsTxt?: string; envId?: string }) =>
+    ipcRenderer.invoke('python:install', args),
   // Folder operations
   workflowsCreateFolder: (name: string) => ipcRenderer.invoke('workflows:createFolder', name),
   workflowsRenameFolder: (oldName: string, newName: string) => ipcRenderer.invoke('workflows:renameFolder', oldName, newName),
@@ -396,6 +400,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
   serviceBrowserUseInstall: () => ipcRenderer.invoke('service:browserUse:install'),
   serviceBrowserUseUpdate: () => ipcRenderer.invoke('service:browserUse:update'),
   serviceBrowserUseUninstall: () => ipcRenderer.invoke('service:browserUse:uninstall'),
+  serviceExtensionBridgeGetInfo: () => ipcRenderer.invoke('service:extensionBridge:getInfo'),
+  serviceExtensionBridgeGetDistPath: () => ipcRenderer.invoke('service:extensionBridge:getDistPath'),
   // Speech
   startSpeechStream: (url: string, token: string) => ipcRenderer.invoke('speech:start', { url, token }),
   stopSpeechStream: () => ipcRenderer.invoke('speech:stop'),
@@ -631,8 +637,8 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on('notification:dismiss', handler);
     return () => { try { ipcRenderer.off('notification:dismiss', handler); } catch { } };
   },
-  // Tell main the notification overlay has no visible toasts so it can close the
-  // window and reclaim the renderer's memory (it's re-created on the next toast).
+  // Tell main the notification overlay has no visible toasts so it can hide the
+  // always-on-top window (re-shown on the next toast).
   notificationsIdle: () => { try { ipcRenderer.send('notifications:idle'); } catch { } },
   respondToPermission: (id: string, allow: boolean) => ipcRenderer.invoke('notification:respondToPermission', { id, allow }),
   respondToNotification: (payload: { responseId: string; type: string; value?: string }) => ipcRenderer.invoke('notification:respondToNotification', payload),
@@ -645,6 +651,16 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     const handler = (_e: any, data: { promptId: string; args: any }) => cb(data);
     ipcRenderer.on('ask_user:show', handler);
     return () => { try { ipcRenderer.off('ask_user:show', handler); } catch { } };
+  },
+  onLiveSessionStart: (cb: (data: { requestId: string; cfg: any }) => void) => {
+    const handler = (_e: any, data: { requestId: string; cfg: any }) => cb(data);
+    ipcRenderer.on('live_session:start', handler);
+    return () => { try { ipcRenderer.off('live_session:start', handler); } catch { } };
+  },
+  respondLiveSessionStart: (requestId: string, result: any) =>
+    ipcRenderer.invoke(`live_session:respond:${requestId}`, result),
+  notifyLiveSessionEnded: (payload: any) => {
+    try { ipcRenderer.send('live_session:ended', payload); } catch { }
   },
   onVoiceSetActive: (cb: (active: boolean) => void) => {
     const handler = (_e: any, active: boolean) => cb(Boolean(active));

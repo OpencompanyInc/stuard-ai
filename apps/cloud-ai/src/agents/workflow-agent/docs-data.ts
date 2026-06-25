@@ -780,6 +780,35 @@ Quick polish: className="p-6 space-y-4 animate-fade-in-up" + whileHover/whileTap
 DevTools: Ctrl+Shift+I on a focused custom_ui window.`,
   },
 
+  {
+    id: 'live_session',
+    title: 'Live Voice Session — start_live_session + live.session.end trigger',
+    keywords: [
+      'live session', 'live_session', 'start_live_session', 'voice', 'voice session',
+      'live.session.end', 'On Live Session End', 'transcript', 'sessionId', 'persona',
+      'knowledge pack', 'knowledgePackIds', 'quiz', 'interview', 'tutor', 'spoken',
+      'realtime', 'real-time', 'microphone', 'session feedback', 'summary',
+    ],
+    content: `Real-time SPOKEN assistant on the user's desktop (quiz, mock interview, tutoring, intake call). DESKTOP-ONLY — needs a microphone; NEVER deploy a flow that uses it to the VM (like custom_ui / mouse / keyboard / screen).
+SHAPE: start_live_session opens the voice pill and RETURNS IMMEDIATELY — the spoken conversation then runs independently, OFF the graph. When it ends, a SEPARATE live.session.end TRIGGER fires carrying the transcript. So you build TWO disconnected pieces, not one chain.
+
+start_live_session (local.tool) — opens the session:
+  args: { sessionId?: "grc1" /* your correlation id; "" auto-generates one */, knowledgePackIds?: ["pack_…"] /* attach RAG packs the voice model can query aloud (create_knowledge_pack / list_knowledge_packs) */, persona?: "a backend-SWE interviewer; one question at a time, probe follow-ups", initialMessage?: "Welcome — let's begin.", provider?: "" /* blank = default voice */ }
+  output: { ok, started, sessionId, workflowId, attachedPacks }. (The assistant ends the call itself via a built-in end_live_session tool — you do NOT place an end node.)
+
+live.session.end (TRIGGER — palette "On Live Session End") — fires when a session ends. It is its OWN entry point; do NOT wire it downstream of start_live_session (the session ends asynchronously, long after that node returns).
+  args: { match: "own" | "sessionId" | "any", sessionId?: "grc1" }
+    • "own" (default) — only sessions started BY THIS workflow. Simplest; no id juggling.
+    • "sessionId" — only the session whose id equals this arg (set start_live_session.sessionId to the SAME value).
+    • "any" — every live session end on the device.
+  trigger.data.*: event, sessionId, workflowId, summary, outcome, highlights[], followUps[], structured(bool), transcript(string), transcripts[]({ role, text, timestamp }). Read with {{trigger.data.transcript}}, {{trigger.data.summary}}, etc.
+
+TYPICAL FLOW (two disconnected halves in one flow):
+  manual/other trigger -> start_live_session { sessionId: "grc1", persona, initialMessage }
+  live.session.end { match: "sessionId", sessionId: "grc1" } -> agent_node { prompt uses {{trigger.data.transcript}} } -> custom_ui (show result) | write_file | gmail_send
+PITFALLS: wiring start_live_session -> analysis directly (it returns BEFORE the conversation happens, so analysis runs on nothing — use the end trigger) · match:"sessionId" with mismatched ids → trigger never fires (prefer "own" when one workflow owns the session) · expecting the flow to pause for the call (it doesn't) · deploying to the VM.`,
+  },
+
   // ── MODIFY ─────────────────────────────────────────────────────────────────
   {
     id: 'modify_operations',
@@ -796,7 +825,7 @@ update_node (MUST include a change): { op: "update_node", nodeId: "step_abc", ar
 edit_node_text — find/replace inside a string arg; ALWAYS prefer over update_node for small changes to LARGE text (custom_ui component, inline scripts, long prompts):
   { op: "edit_node_text", nodeId: "ui", old_string: "<h1>Old</h1>", new_string: "<h1>New</h1>" }
   { op: "edit_node_text", nodeId: "ui", path: "args.component", old_string: "...", new_string: "...", replace_all?: true }
-  old_string must match EXACTLY and be unique in the field (else pass replace_all or a longer string); path optional when old_string appears in only one string field of the node. Read the current text first via read_workflow({ mode: "window", focusIds: [nodeId] }).
+  old_string must match EXACTLY and be unique in the field (else pass replace_all or a longer string); path optional when old_string appears in only one string field of the node. Read the current text first via read_workflow({ mode: "node", focusIds: [nodeId] }) — it prints every string arg VERBATIM (real newlines) with its exact edit_node_text path; do NOT use mode:"window"/"full" (they abbreviate it to …(Nc)… so anchors won't match) and do NOT read the .stuard file for it.
 remove_node: { op: "remove_node", nodeId: "step_abc" } (also removes its wires)
 add_wire: { op: "add_wire", from, to, guard? }
 callNode / loop wires — use set_path on the wires array:
@@ -945,6 +974,7 @@ export const REFERENCE_DOC_IDS: ReadonlySet<string> = new Set<string>([
   'custom_ui_multiscreen', 'custom_ui_markdown', 'custom_ui_live_updates',
   'custom_ui_stuard_api', 'custom_ui_node_routing', 'custom_ui_multi_page',
   'custom_ui_window', 'custom_ui_visual', 'custom_ui_pitfalls',
+  'live_session',
   'debugging', 'performance',
 ]);
 

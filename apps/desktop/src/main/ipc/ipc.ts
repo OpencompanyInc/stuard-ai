@@ -2,14 +2,14 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, globalShortcut, nativeImage, type IpcMainInvokeEvent } from "electron";
 import * as path from "path";
 import { selectFiles, selectImages, listDirectory, selectFolder, readFileForPreview, pickFilesForPreview } from "../utils/files";
-import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, setScreenCaptureInvisible, captureScreenExcludingStuard, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow, isAnyAppWindowFocused } from "../windows";
-import { getLocalWebhookPort, handleCloudWebhookEvent, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_listVersions, workflows_revertToVersion, workflows_deleteVersion, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
+import { openDashboardWindow, openOnboardingWindow, closeOnboardingWindow, openVoiceTestWindow, closeVoiceTestWindow, openWorkflowsWindow, openSidebarWindow, closeSidebarWindow, toggleSidebarWindow, getSidebarWindow, setOverlayMode, setOverlaySize, setOverlayBounds, moveOverlayBy, showWindow, hideWindow, toggleWindow, overlayMinimize, overlayToggleMaximize, overlayIsMaximized, createBoardWindow, updateBoardWindow, deleteBoardWindow, listBoardWindows, clearBoardWindows, hideBoardWindow, focusBoardWindow, showBoardWindow, getOverlaySize, getOverlayMode, toggleInternalSidebar, resizeInternalSidebar, getInternalSidebarState, getNotificationWindow, openNotificationWindow, hideNotificationWindow, setScreenCaptureInvisible, captureScreenExcludingStuard, startOverlayScreenSnip, getMainWindow, showVoiceBorderWindow, hideVoiceBorderWindow, getVoiceBorderWindow, shouldSuppressAmbientNotifications } from "../windows";
+import { getLocalWebhookPort, handleCloudWebhookEvent, handleLiveSessionEnded, workflows_list, workflows_read, workflows_save, workflows_delete, workflows_run, workflows_stop, workflows_deploy, workflows_undeploy, workflows_getDeployStatus, workflows_listVersions, workflows_revertToVersion, workflows_deleteVersion, workflows_runStep, workflows_runFromStep, workflowToStuardSpec, WorkflowDefinition, workflows_createFolder, workflows_renameFolder, workflows_deleteFolder, workflows_moveToFolder, workflows_ensureWorkspace, workflows_getWorkspaceInfo, workflows_listWorkspaceFiles, workflows_readWorkspaceFile, workflows_readWorkspaceFileBinary, workflows_writeWorkspaceFile, workflows_writeWorkspaceFileBinary, workflows_deleteWorkspaceFile, workflows_createWorkspaceSubdir, workflows_renameWorkspaceFile, workflows_moveWorkspaceFile, workflows_createWorkspaceStuard, workflows_readWorkspaceStuard, workflows_saveWorkspaceStuard, workflows_listWorkspaceFunctions, workflows_importAsWorkspaceFunction } from "../workflows";
 import { stuards_list, stuards_read, stuards_save, stuards_deploy, stuards_stop, stuards_run, safeStuardId, execLocalTool } from "../stuards";
 import { execTool as execUnifiedTool, RouterContext } from "../tool-router";
 import { dismissNotificationById, settleNotificationResponse } from "../tools/handlers/electron";
 import { settleToolApprovalResponse } from "../services/tool-approval";
 import { getOutlookAccessTokenLocal, startOutlookConnect, getOutlookStatus } from "../integrations/outlook";
-import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm } from "../services";
+import { updates_getState, updates_check, updates_download, updates_install, updates_setChannel, startAgent, stopAgent, listAgents, listRoots, addRoot, removeRoot, getStats as getFileIndexStats, scanRoot, searchFiles, getPendingCount, getScanStatus, reinitializeDefaultFolders, runStartupIndexing, processSemanticIndexing, unifiedTasksService, getInstalledApps, refreshAppCache, unifiedSearch, proactiveService, triggerManualWakeUp, triggerVmWakeUp, isProactiveSchedulerRunning, handleProactiveReply, botService, syncBotTriggers, deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm, botMemoryService, syncTimezoneToVm, getExtensionBridgeInfo, getExtensionDistPath } from "../services";
 import { setupSpeechIpc } from "./speech";
 import { setupTerminalIpc } from "../terminal";
 import { estimateEmbedJob, startEmbedJob, getActiveEmbedJobs, resumeEmbedJobs } from "../services/file-embedding";
@@ -371,6 +371,11 @@ export function setupIpc() {
         w.setIgnoreMouseEvents(true, { forward: true });
       }
     } catch { }
+  });
+
+  // Live voice session ended — fire workflows with a live.session.end trigger.
+  ipcMain.on('live_session:ended', (_e, payload: any) => {
+    try { handleLiveSessionEnded(payload || {}); } catch { }
   });
 
   // Latest agent to-do plan, cached so a freshly-opened detached sidebar
@@ -766,9 +771,11 @@ export function setupIpc() {
     try {
       // Task-complete toasts shouldn't interrupt when the user is already in
       // Stuard (any window focused, incl. window/overlay mode) — the result is
-      // visible in the chat. Other notifications (permissions, reminders,
-      // check-ins) still come through regardless of focus.
-      if (payload?.orchestratorDone && isAnyAppWindowFocused()) {
+      // visible in the chat. In compact mode the bar/response panel is the
+      // ambient surface even when OS focus briefly leaves the frameless window.
+      // Other notifications (permissions, reminders, check-ins) still come
+      // through regardless.
+      if (payload?.orchestratorDone && shouldSuppressAmbientNotifications()) {
         return { ok: true, skipped: 'focused' };
       }
 
@@ -817,14 +824,12 @@ export function setupIpc() {
     }
   });
 
-  // The notification overlay renderer reports it has no visible toasts. Close the
-  // window to reclaim its memory; it's re-created lazily on the next notification.
+  // The notification overlay renderer reports it has no visible toasts. Hide the
+  // always-on-top window so it doesn't sit above compact mode; it's re-shown
+  // lazily on the next notification.
   ipcMain.on('notifications:idle', () => {
     try {
-      const w = getNotificationWindow();
-      if (w && !w.isDestroyed()) {
-        w.close(); // the 'closed' handler resets the module-level ref to null
-      }
+      hideNotificationWindow();
     } catch { }
   });
 
@@ -1332,6 +1337,14 @@ export function setupIpc() {
   });
   ipcMain.handle('service:browserUse:uninstall', async () => {
     try { return await uninstallBrowserUse(); } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  });
+
+  // Browser Extension bridge — connection state + pairing key for Settings UI.
+  ipcMain.handle('service:extensionBridge:getInfo', () => {
+    try { return getExtensionBridgeInfo(); } catch (e: any) { return { running: false, error: e?.message || String(e) }; }
+  });
+  ipcMain.handle('service:extensionBridge:getDistPath', () => {
+    try { return { ok: true, path: getExtensionDistPath() }; } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
   });
 
   // Tools execution (Renderer -> Main -> Local Agent/System)

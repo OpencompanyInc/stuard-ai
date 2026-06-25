@@ -83,6 +83,7 @@ async function build() {
       // transpiles + inlines the TS. Keep in sync with tsconfig "paths".
       alias: {
         '@stuardai/workflow-core/runtime': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'runtime', 'index.ts'),
+        '@stuardai/workflow-core/dependencies': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'dependencies.ts'),
         '@stuardai/workflow-core': path.join(ROOT, '..', '..', 'packages', 'workflow-core', 'src', 'index.ts'),
         '@stuardai/bots-core/bot-memory': path.join(ROOT, '..', '..', 'packages', 'bots-core', 'src', 'bot-memory.ts'),
         '@stuardai/bots-core': path.join(ROOT, '..', '..', 'packages', 'bots-core', 'src', 'index.ts'),

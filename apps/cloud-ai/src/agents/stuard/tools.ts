@@ -10,6 +10,7 @@ import { send_hotkey, list_directory, read_file, write_file, create_directory, o
 import { computer_use_agent, agent_node, agent_decision, agent_extract } from '../../tools/device-tools';
 import { browser_use_status, browser_use_configure, browser_use_navigate, browser_use_click, browser_use_type, browser_use_press_key, browser_use_screenshot, browser_use_analyze_screenshot, browser_use_content, browser_use_scroll, browser_use_tabs, browser_use_cookies, browser_use_hover, browser_use_select_option, browser_use_get_dropdown_options, browser_use_get_interactive_elements, browser_use_fill_form, browser_use_upload_file, browser_use_wait_for, browser_use_execute_script } from '../../tools/device-tools';
 import { describe_desktop_control_capabilities, get_desktop_wallpaper, set_desktop_wallpaper, get_system_volume, set_system_volume, list_bluetooth_devices, connect_bluetooth_device, disconnect_bluetooth_device, get_display_brightness, set_display_brightness, get_power_status } from '../../tools/device-tools';
+import { create_knowledge_pack, list_knowledge_packs, query_knowledge_pack, start_live_session } from '../../tools/device-tools';
 import { web_search } from '../../tools/perplexity-tools';
 import { scrape_url } from '../../tools/tavily-tools';
 import { maps_static_map, maps_distance_matrix, maps_search_places, maps_place_details } from '../../tools/google-maps-tools';
@@ -226,6 +227,11 @@ const RAW_ALL_TOOLS = {
   invoke_workflow,  // Invoke workflows with custom arguments
   search_local_workflows,  // Primary tool for listing/searching workflows
   run_workflow,  // Run workflow by ID or name
+  // Knowledge Packs (sandboxed RAG namespaces)
+  create_knowledge_pack,
+  list_knowledge_packs,
+  query_knowledge_pack,
+  start_live_session,
   // Memory
   search_past_conversations,
   get_conversation_context,

@@ -87,6 +87,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'workspace_get_info', category: 'data', kind: 'local', description: 'Get workspace info: absolute path, subdirectories, and all files.', argsTemplate: {}, outputSchema: { ok: 'boolean', workspacePath: 'string', subdirs: 'string[]', files: 'array', error: 'string' } },
   { id: 'log', category: 'flow', kind: 'local', description: 'Log a message to the workflow execution log', argsTemplate: { message: 'Step completed' }, outputSchema: { ok: 'boolean', logged: 'string' } },
   { id: 'send_notification', category: 'flow', kind: 'local', description: 'Show a rich local desktop notification with optional image and reply input', argsTemplate: { title: 'Stuard AI', body: 'Hello!', severity: 'info', imagePath: '', durationMs: 5000, showInput: false, waitForInput: false, inputPlaceholder: 'Reply…', inputDefaultValue: '', inputSubmitText: 'Send', inputCancelText: 'Cancel', inputType: 'text', keepAfterSubmit: false, progress: 0, taskId: '', workflowRunId: '', timeoutMs: 300000 }, outputSchema: { ok: 'boolean', notification: 'object', value: 'string', response: 'object', submitted: 'boolean', cancelled: 'boolean', dismissed: 'boolean', error: 'string' } },
+  { id: 'start_live_session', category: 'integrations', kind: 'local', description: 'Open a real-time voice session on the desktop. Returns a sessionId to correlate with On Live Session End triggers.', argsTemplate: { sessionId: '', knowledgePackIds: [], persona: '', initialMessage: '', provider: '' }, outputSchema: { ok: 'boolean', started: 'boolean', sessionId: 'string', workflowId: 'string', attachedPacks: 'array', note: 'string', error: 'string' } },
 
   // --- SYSTEM ---
   { id: 'run_command', category: 'system', kind: 'local', description: 'Run shell commands cross-platform with timeout. Use shell="default" for the platform default shell.', argsTemplate: { command: 'echo hello', isPermissionRequired: false, description: '', shell: 'auto', timeoutMs: 30000, cwd: '', checkpoint: false, background: false, terminalId: '' }, outputSchema: { ok: 'boolean', stdout: 'string', stderr: 'string', exitCode: 'number', terminalId: 'string', pid: 'number', status: 'string', shell: 'string' } },
@@ -265,7 +266,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   // { id: 'gmail_mark_as_unread', category: 'integrations', kind: 'cloud', description: 'Mark a Gmail message as unread', argsTemplate: { id: '', profile: '' }, outputSchema: { message: 'object' } },
   // { id: 'drive_list_files', category: 'integrations', kind: 'cloud', description: 'List Google Drive files', argsTemplate: { query: '', pageSize: 20, orderBy: '', profile: '' }, outputSchema: { files: 'any[]', count: 'number', nextPageToken: 'string' } },
   { id: 'calendar_list_events', category: 'integrations', kind: 'cloud', description: 'List Google Calendar events', argsTemplate: { calendarId: 'primary', timeMin: '', timeMax: '', maxResults: 10, profile: '' }, outputSchema: { items: 'any[]', count: 'number', nextPageToken: 'string' } },
-  { id: 'calendar_create_event', category: 'integrations', kind: 'cloud', description: 'Create a Google Calendar event', argsTemplate: { calendarId: 'primary', summary: '', description: '', start: '', end: '', timeZone: '', profile: '' }, outputSchema: { event: 'object' } },
+  { id: 'calendar_create_event', category: 'integrations', kind: 'cloud', description: 'Create a Google Calendar event (set addGoogleMeet for a video call link)', argsTemplate: { calendarId: 'primary', summary: '', description: '', start: '', end: '', timeZone: '', addGoogleMeet: false, sendUpdates: '', profile: '' }, outputSchema: { event: 'object', meetLink: 'string' } },
   { id: 'sheets_read_range', category: 'integrations', kind: 'cloud', description: 'Read a range from Google Sheets', argsTemplate: { spreadsheetId: '', range: '', profile: '' }, outputSchema: { values: 'any[]', range: 'string' } },
   { id: 'docs_get_document', category: 'integrations', kind: 'cloud', description: 'Get a Google Docs document', argsTemplate: { documentId: '', profile: '' }, outputSchema: { document: 'object' } },
   { id: 'docs_create_document', category: 'integrations', kind: 'cloud', description: 'Create a new Google Doc', argsTemplate: { title: '', profile: '' }, outputSchema: { document: 'object' } },
@@ -442,6 +443,16 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   { id: 'browser_use_fill_form', category: 'system', kind: 'local', description: 'Fill multiple form fields at once and optionally submit. Supports text fields, dropdowns, toggles, and file paths when type is "file".', argsTemplate: { fields: {}, submit: false, form_selector: '' }, outputSchema: { ok: 'boolean', filled: 'number', total: 'number', submitted: 'boolean', errors: 'array', error: 'string' } },
   { id: 'browser_use_upload_file', category: 'system', kind: 'local', description: 'Upload a local file from disk into a browser file input', argsTemplate: { selector: '', filePath: '', timeout: 5000 }, outputSchema: { ok: 'boolean', uploaded: 'boolean', filePath: 'string', fileName: 'string', selector: 'string', method: 'string', error: 'string' } },
   { id: 'browser_use_wait_for', category: 'system', kind: 'local', description: 'Wait for an element, text, or URL change before proceeding. Essential for SPAs and dynamic pages.', argsTemplate: { selector: '', text: '', url_pattern: '', state: 'visible', timeout: 10000 }, outputSchema: { ok: 'boolean', matched: 'boolean', url: 'string', type: 'string', error: 'string' } },
+  { id: 'browser_ext_status', category: 'system', kind: 'local', description: 'Check if the Browser Connector extension is paired with the desktop app', argsTemplate: {}, outputSchema: { ok: 'boolean', connected: 'boolean', browser: 'string', activeTab: 'object', error: 'string' } },
+  { id: 'browser_ext_get_page', category: 'system', kind: 'local', description: 'Read URL, title, selection, and readable text from a tab in your real browser', argsTemplate: { tabId: 0, max_chars: 12000 }, outputSchema: { ok: 'boolean', url: 'string', title: 'string', text: 'string', error: 'string' } },
+  { id: 'browser_ext_extract', category: 'system', kind: 'local', description: 'Extract structured rows from the current page using CSS selectors (CSP-safe)', argsTemplate: { spec: { selector: '', fields: {}, limit: 50 } }, outputSchema: { ok: 'boolean', rows: 'array', count: 'number', error: 'string' } },
+  { id: 'browser_ext_run_script', category: 'system', kind: 'local', description: 'Run JavaScript in your real browser tab (requires approval)', argsTemplate: { script: 'return document.title;', args: {}, timeout: 30000 }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
+  { id: 'browser_ext_tabs', category: 'system', kind: 'local', description: 'List, activate, close, create, move, or group tabs in your real browser', argsTemplate: { action: 'list' }, outputSchema: { ok: 'boolean', tabs: 'array', error: 'string' } },
+  { id: 'browser_ext_capture_screenshot', category: 'system', kind: 'local', description: 'Capture a screenshot of a tab in your real browser', argsTemplate: { format: 'jpeg', quality: 85 }, outputSchema: { ok: 'boolean', dataUrl: 'string', error: 'string' } },
+  { id: 'browser_ext_service_list', category: 'system', kind: 'local', description: 'List saved browser mini-scripts', argsTemplate: {}, outputSchema: { ok: 'boolean', services: 'array', count: 'number', error: 'string' } },
+  { id: 'browser_ext_service_save', category: 'system', kind: 'local', description: 'Save a reusable browser mini-script (requires approval)', argsTemplate: { name: '', action: 'tabs', payload: {} }, outputSchema: { ok: 'boolean', service: 'object', error: 'string' } },
+  { id: 'browser_ext_service_run', category: 'system', kind: 'local', description: 'Run a saved browser mini-script — use in scheduled workflows for study mode, tab cleanup, etc.', argsTemplate: { name: '' }, outputSchema: { ok: 'boolean', result: 'any', error: 'string' } },
+  { id: 'browser_ext_service_delete', category: 'system', kind: 'local', description: 'Delete a saved browser mini-script', argsTemplate: { name: '' }, outputSchema: { ok: 'boolean', deleted: 'string', error: 'string' } },
 ];
 
 const TRIGGER_DEFINITIONS = [
@@ -465,6 +476,7 @@ const TRIGGER_DEFINITIONS = [
   { type: 'hotkey', description: 'Global hotkey trigger. Enable hold to fire on both press and release.', argsTemplate: { accelerator: 'Ctrl+Alt+K', passthrough: false, hold: false } },
   { type: 'hotkey.release', description: 'Fires only when the key is released. Pair with a hotkey trigger for hold-to-record patterns.', argsTemplate: { accelerator: 'Ctrl+Alt+K' } },
   { type: 'fs.watch', description: 'File/Folder watch trigger - fires when files are created, modified, or deleted', argsTemplate: { path: '', pattern: '*.*', recursive: true, events: ['add', 'change', 'unlink'] } },
+  { type: 'live.session.end', description: 'Fires when a deployed workflow\'s live voice session ends. Match mode controls which sessions trigger it (default: only sessions this workflow started).', argsTemplate: { match: 'own', sessionId: '' } },
   { type: 'keystroke', description: 'Keystroke sequence trigger (type a word)', argsTemplate: { sequence: 'stuard' } },
 ];
 
@@ -2169,6 +2181,86 @@ if (TOOL_SCHEMAS['text_to_speech']) {
       advanced: true,
     },
   };
+}
+
+if (TOOL_SCHEMAS['start_live_session']) {
+  TOOL_SCHEMAS['start_live_session'].label = 'Start Live Voice Session';
+  TOOL_SCHEMAS['start_live_session'].description =
+    'Open a real-time voice session on the desktop. The conversation runs live by voice — this step returns once the session has started.';
+  TOOL_SCHEMAS['start_live_session'].args = {
+    sessionId: {
+      type: 'string',
+      label: 'Session ID',
+      description: 'Optional stable id for this session (e.g. grc-review-001). Auto-generated if blank. Use the same id on an On Live Session End trigger with match = Session ID.',
+      placeholder: 'grc-review-001',
+    },
+    knowledgePackIds: {
+      type: 'array',
+      label: 'Knowledge Pack IDs',
+      description: 'Optional knowledge pack ids to attach so the live assistant can query them.',
+      itemType: 'string',
+      default: [],
+    },
+    persona: {
+      type: 'string',
+      label: 'Persona / Instructions',
+      description: 'How the live assistant should behave (e.g. mock interviewer, tutor).',
+      placeholder: 'Quiz me on my notes, one question at a time.',
+    },
+    initialMessage: {
+      type: 'string',
+      label: 'Opening Line',
+      description: 'The first line the assistant speaks when the session opens.',
+      placeholder: 'Ready when you are — let\'s begin.',
+    },
+    provider: {
+      type: 'string',
+      label: 'Voice Provider',
+      description: 'Optional provider override. Leave blank for the default.',
+      advanced: true,
+    },
+  };
+  TOOL_SCHEMAS['start_live_session'].outputs = ['ok', 'started', 'sessionId', 'workflowId', 'attachedPacks', 'note', 'error'];
+}
+
+if (TOOL_SCHEMAS['live.session.end']) {
+  TOOL_SCHEMAS['live.session.end'].label = 'On Live Session End';
+  TOOL_SCHEMAS['live.session.end'].description =
+    'Requires deployment. Fires when a matching live voice session ends. Default match: only sessions started by this workflow\'s Start Live Voice Session step.';
+  TOOL_SCHEMAS['live.session.end'].args = {
+    match: {
+      type: 'select',
+      label: 'Match Sessions',
+      description: 'Which ended sessions should trigger this workflow.',
+      default: 'own',
+      options: [
+        { value: 'own', label: 'This workflow only', description: 'Sessions started by this workflow\'s Start Live Voice Session step' },
+        { value: 'sessionId', label: 'Specific session ID', description: 'Only the session id set below' },
+        { value: 'any', label: 'Any voice session', description: 'Every live session end (use carefully)' },
+      ],
+    },
+    sessionId: {
+      type: 'string',
+      label: 'Session ID',
+      description: 'Required when Match = Specific session ID. Can reference {{step_id.sessionId}} from the start step.',
+      placeholder: '{{local_tool_mqsm4ycb.sessionId}}',
+      showWhen: { field: 'match', value: 'sessionId' },
+    },
+  };
+  TOOL_SCHEMAS['live.session.end'].outputs = [
+    'trigger',
+    'trigger.data',
+    'trigger.data.sessionId',
+    'trigger.data.workflowId',
+    'trigger.data.event',
+    'trigger.data.structured',
+    'trigger.data.summary',
+    'trigger.data.outcome',
+    'trigger.data.highlights',
+    'trigger.data.followUps',
+    'trigger.data.transcript',
+    'trigger.data.transcripts',
+  ];
 }
 
 if (TOOL_SCHEMAS['telnyx_send_mms']) {

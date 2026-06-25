@@ -10,26 +10,51 @@ Workflow execution and terminal tools route to the local Node.js VM agent
 
 Environment variable STUARD_AGENT_MODE=vm activates this dispatch.
 """
+
 from __future__ import annotations
 
-import os
-import json
 import asyncio
-from typing import Any, Dict, Callable, Awaitable, Optional, Set
+import json
+import os
+from typing import Any, Awaitable, Callable, Dict, Optional, Set
 
 # ── VM-compatible modules (no GUI, no display, no hardware capture) ──────────
 from . import (
-    system, fs, memory, knowledge, tasks, workflows,
-    context, concurrency, transform, loops, memory_conversations,
-    file_scanner, file_search, subagents, agent_todo, ffmpeg,
-    math_ops, http, streams, database, folder_limiter, utils,
+    agent_todo,
+    concurrency,
+    context,
     data_analysis,
+    database,
+    ffmpeg,
+    file_scanner,
+    file_search,
+    folder_limiter,
+    fs,
+    http,
+    knowledge,
+    loops,
+    math_ops,
+    memory,
+    memory_conversations,
+    rag,
+    streams,
+    subagents,
+    system,
+    tasks,
+    transform,
+    utils,
+    workflows,
 )
 
 # ── Stub out desktop-only modules ───────────────────────────────────────────
 # These would fail on a headless VM (no display, no audio devices, no clipboard)
 
-_STUB_RESULT: Dict[str, Any] = {"ok": False, "error": "tool_not_available_on_vm", "reason": "This tool requires the desktop app (GUI/display/hardware)."}
+_STUB_RESULT: Dict[str, Any] = {
+    "ok": False,
+    "error": "tool_not_available_on_vm",
+    "reason": "This tool requires the desktop app (GUI/display/hardware).",
+}
+
 
 async def _stub_handler(args: Dict[str, Any], *_: Any) -> Dict[str, Any]:
     return _STUB_RESULT
@@ -43,40 +68,94 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "get_local_time": ("system", "Get the current local time"),
     "python_status": ("system", "Check Python environment status"),
     "python_setup": ("system", "Setup a Python environment"),
-    "python_list_packages": ("system", "List installed Python packages in a managed venv"),
+    "python_list_packages": (
+        "system",
+        "List installed Python packages in a managed venv",
+    ),
     "python_install": ("system", "Install Python packages in an environment"),
     "run_python_script": ("system", "Run Python code inline or from file"),
     "run_node_script": ("system", "Run Node.js code inline or from file"),
-
     # Data Analysis (pandas/numpy/scipy + matplotlib/seaborn in dedicated venv — installed on demand)
-    "data_analysis_status": ("data_analysis", "Check data analysis env + required-package install status"),
-    "data_analysis_setup": ("data_analysis", "Create venv and install pandas/numpy/scipy/matplotlib/seaborn/openpyxl"),
-    "data_analysis_uninstall": ("data_analysis", "Remove the data analysis env and free disk space"),
-    "data_load": ("data_analysis", "Peek at a CSV/XLSX/JSON/Parquet file: columns, dtypes, shape, sample rows"),
-    "describe_data": ("data_analysis", "Pandas describe()-style summary stats for numeric columns"),
-    "correlate_data": ("data_analysis", "Correlation matrix (Pearson/Spearman/Kendall) for numeric columns"),
-    "plot_line": ("data_analysis", "Render a line chart (single or multi-series) to PNG"),
+    "data_analysis_status": (
+        "data_analysis",
+        "Check data analysis env + required-package install status",
+    ),
+    "data_analysis_setup": (
+        "data_analysis",
+        "Create venv and install pandas/numpy/scipy/matplotlib/seaborn/openpyxl",
+    ),
+    "data_analysis_uninstall": (
+        "data_analysis",
+        "Remove the data analysis env and free disk space",
+    ),
+    "data_load": (
+        "data_analysis",
+        "Peek at a CSV/XLSX/JSON/Parquet file: columns, dtypes, shape, sample rows",
+    ),
+    "describe_data": (
+        "data_analysis",
+        "Pandas describe()-style summary stats for numeric columns",
+    ),
+    "correlate_data": (
+        "data_analysis",
+        "Correlation matrix (Pearson/Spearman/Kendall) for numeric columns",
+    ),
+    "plot_line": (
+        "data_analysis",
+        "Render a line chart (single or multi-series) to PNG",
+    ),
     "plot_bar": ("data_analysis", "Render a bar chart (vertical or horizontal) to PNG"),
-    "plot_scatter": ("data_analysis", "Render a scatter plot with optional regression line to PNG"),
-    "plot_hist": ("data_analysis", "Render a histogram (with optional KDE overlay) to PNG"),
+    "plot_scatter": (
+        "data_analysis",
+        "Render a scatter plot with optional regression line to PNG",
+    ),
+    "plot_hist": (
+        "data_analysis",
+        "Render a histogram (with optional KDE overlay) to PNG",
+    ),
     "plot_pie": ("data_analysis", "Render a pie or donut chart to PNG"),
-    "plot_heatmap": ("data_analysis", "Render a seaborn heatmap from a 2D matrix to PNG"),
+    "plot_heatmap": (
+        "data_analysis",
+        "Render a seaborn heatmap from a 2D matrix to PNG",
+    ),
     "plot_box": ("data_analysis", "Render a box plot (single or grouped) to PNG"),
-    "run_data_python": ("data_analysis", "Run arbitrary Python with pandas/numpy/scipy/matplotlib/seaborn pre-loaded"),
-
+    "run_data_python": (
+        "data_analysis",
+        "Run arbitrary Python with pandas/numpy/scipy/matplotlib/seaborn pre-loaded",
+    ),
     # Desktop controls (stubbed on VM)
-    "describe_desktop_control_capabilities": ("desktop", "Describe desktop-control availability"),
+    "describe_desktop_control_capabilities": (
+        "desktop",
+        "Describe desktop-control availability",
+    ),
     "get_desktop_wallpaper": ("desktop", "Get the current desktop wallpaper path"),
-    "set_desktop_wallpaper": ("desktop", "Set the desktop wallpaper from a local image path"),
+    "set_desktop_wallpaper": (
+        "desktop",
+        "Set the desktop wallpaper from a local image path",
+    ),
     "get_system_volume": ("desktop", "Get current system output volume and mute state"),
-    "set_system_volume": ("desktop", "Set or adjust system output volume and mute state"),
+    "set_system_volume": (
+        "desktop",
+        "Set or adjust system output volume and mute state",
+    ),
     "list_bluetooth_devices": ("desktop", "List known Bluetooth devices"),
-    "connect_bluetooth_device": ("desktop", "Connect a Bluetooth device when supported"),
-    "disconnect_bluetooth_device": ("desktop", "Disconnect a Bluetooth device when supported"),
-    "get_display_brightness": ("desktop", "Get laptop or display brightness when available"),
-    "set_display_brightness": ("desktop", "Set laptop or display brightness when available"),
+    "connect_bluetooth_device": (
+        "desktop",
+        "Connect a Bluetooth device when supported",
+    ),
+    "disconnect_bluetooth_device": (
+        "desktop",
+        "Disconnect a Bluetooth device when supported",
+    ),
+    "get_display_brightness": (
+        "desktop",
+        "Get laptop or display brightness when available",
+    ),
+    "set_display_brightness": (
+        "desktop",
+        "Set laptop or display brightness when available",
+    ),
     "get_power_status": ("desktop", "Get battery and charging status"),
-
     # ── Filesystem ───────────────────────────────────────────────────────────
     "list_directory": ("system", "List directory contents"),
     "read_file": ("system", "Read text file contents"),
@@ -90,13 +169,15 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "write_file_base64": ("system", "Write base64 encoded string to a file"),
     "file_read": ("system", "Read file contents with line numbers for AI agents"),
     "file_edit": ("system", "Edit file contents using string-based matching"),
-    "glob": ("system", "Find files by glob pattern (e.g. **/*.pdf). Requires root for **; **/* is rejected."),
+    "glob": (
+        "system",
+        "Find files by glob pattern (e.g. **/*.pdf). Requires root for **; **/* is rejected.",
+    ),
     "grep": ("system", "Search text in files (regex or literal)"),
     "checkpoint_create": ("system", "Create a checkpoint of files for rollback"),
     "checkpoint_restore": ("system", "Restore files from a checkpoint"),
     "checkpoint_redo": ("system", "Re-apply previously reverted file changes"),
     "checkpoint_list": ("system", "List available checkpoints"),
-
     # ── Utilities ────────────────────────────────────────────────────────────
     "get_datetime": ("utils", "Get current date and time with formatting"),
     "math_eval": ("utils", "Evaluate a safe math expression"),
@@ -113,7 +194,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "sleep": ("utils", "Sleep/wait for a duration"),
     "regex_match": ("utils", "Match regex pattern against text"),
     "regex_replace": ("utils", "Replace text using regex"),
-
     # ── Memory / Knowledge ───────────────────────────────────────────────────
     "memory_retrieval": ("memory", "Retrieve memories by query"),
     "group_management": ("memory", "Manage memory groups"),
@@ -129,8 +209,14 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "knowledge_get_directives": ("knowledge", "Get system directives"),
     "knowledge_get_bio": ("knowledge", "Get user biography information"),
     "knowledge_search_facts": ("knowledge", "Search facts in knowledge graph"),
-    "knowledge_get_facts_for_conversation": ("knowledge", "Get facts extracted from a conversation"),
-    "knowledge_get_conversations_for_entity": ("knowledge", "Get conversations for an entity"),
+    "knowledge_get_facts_for_conversation": (
+        "knowledge",
+        "Get facts extracted from a conversation",
+    ),
+    "knowledge_get_conversations_for_entity": (
+        "knowledge",
+        "Get conversations for an entity",
+    ),
     "knowledge_deduplicate_facts": ("knowledge", "Deduplicate near-identical facts"),
     "knowledge_stats": ("knowledge", "Get knowledge graph statistics"),
     "knowledge_delete_fact": ("knowledge", "Delete a fact"),
@@ -141,13 +227,27 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "knowledge_get_procedural": ("knowledge", "Get procedural knowledge"),
     "knowledge_get_events": ("knowledge", "Get event history"),
     "knowledge_get_graph": ("knowledge", "Get knowledge graph visualization data"),
+    "rag_pack_create": ("rag", "Create a new (empty) knowledge pack / RAG namespace"),
+    "rag_pack_list": ("rag", "List knowledge packs"),
+    "rag_pack_get": ("rag", "Get a knowledge pack and its stats by id"),
+    "rag_pack_delete": ("rag", "Delete a knowledge pack and all its chunks"),
+    "rag_pack_delete_source": ("rag", "Delete one source from a knowledge pack"),
+    "rag_pack_add_chunks": ("rag", "Add pre-embedded chunks to a knowledge pack"),
+    "rag_pack_query": ("rag", "Search a single knowledge pack by query vector"),
+    "rag_pack_stats": ("rag", "Get chunk/source counts for a knowledge pack"),
+    "rag_project_pack_get_or_create": (
+        "rag",
+        "Get/create hidden project document context",
+    ),
+    "rag_project_pack_stats": ("rag", "Get hidden project document context stats"),
+    "rag_project_pack_query": ("rag", "Search hidden project document context"),
+    "rag_project_pack_delete": ("rag", "Delete hidden project document context"),
     "pending_memory_create": ("memory", "Create a pending memory for confirmation"),
     "pending_memory_list": ("memory", "List pending memories"),
     "pending_memory_get": ("memory", "Get a pending memory"),
     "pending_memory_confirm": ("memory", "Confirm a pending memory"),
     "pending_memory_reject": ("memory", "Reject a pending memory"),
     "pending_memory_delete": ("memory", "Delete a pending memory"),
-
     # ── Conversations & Spaces ───────────────────────────────────────────────
     "conversation_create": ("memory", "Create a new conversation"),
     "conversation_get": ("memory", "Get a conversation"),
@@ -162,7 +262,10 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "segment_list_recent": ("memory", "List recent segments"),
     "segment_search": ("memory", "Search segments"),
     "segment_build_topic_drawers": ("memory", "Build topic drawers"),
-    "segment_search_drawers_by_embedding": ("memory", "Search topic drawers by embedding"),
+    "segment_search_drawers_by_embedding": (
+        "memory",
+        "Search topic drawers by embedding",
+    ),
     "collection_summary_upsert": ("memory", "Upsert a collection summary"),
     "collection_summary_get": ("memory", "Get a collection summary by topic"),
     "collection_summary_search": ("memory", "Search collection summaries by embedding"),
@@ -172,7 +275,10 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "project_list": ("data", "List projects"),
     "project_update": ("data", "Update a project"),
     "project_delete": ("data", "Delete a project"),
-    "project_context_add": ("data", "Attach a file or folder as indexed project context"),
+    "project_context_add": (
+        "data",
+        "Attach a file or folder as indexed project context",
+    ),
     "memory_create": ("data", "Create a new memory entry (atomic note/fact/snippet)"),
     "memory_list": ("data", "List memories, optionally scoped to a project"),
     "memory_search": ("data", "Cosine-similarity search over memory embeddings"),
@@ -182,22 +288,26 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "journal_update": ("data", "Update a journal entry in place"),
     "journal_list": ("data", "List journal entries for a project"),
     "journal_delete": ("data", "Delete a journal entry"),
-    "conversation_set_project": ("data", "Stamp a conversation with a project_id (or clear it)"),
+    "conversation_set_project": (
+        "data",
+        "Stamp a conversation with a project_id (or clear it)",
+    ),
     "security_get_settings": ("system", "Get security settings"),
     "security_set_password": ("system", "Set security password"),
     "security_verify_password": ("system", "Verify security password"),
     "security_update_settings": ("system", "Update security settings"),
     "security_remove_password": ("system", "Remove security password"),
     "memory_stats": ("memory", "Get memory statistics"),
-    "memory_export_plaintext": ("memory", "Export memory.db with all encrypted columns decrypted (for VM sync)"),
-
+    "memory_export_plaintext": (
+        "memory",
+        "Export memory.db with all encrypted columns decrypted (for VM sync)",
+    ),
     # ── Canvas ───────────────────────────────────────────────────────────────
     # ── Tasks / Reminders ────────────────────────────────────────────────────
     "calendar_crud": ("integrations", "Manage calendar events"),
     "task_crud": ("integrations", "Manage tasks"),
     "task_reminders": ("integrations", "Manage task reminders"),
     "unified_task_assignments": ("integrations", "Manage user task assignments"),
-
     # ── Agent / Flow ─────────────────────────────────────────────────────────
     "agent_todo": ("core", "Manage agent's internal todo list"),
     "parallel_executor": ("flow", "Execute tools in parallel"),
@@ -208,7 +318,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "import_workflow": ("flow", "Import a workflow from JSON"),
     "export_workflow": ("flow", "Export a workflow to JSON"),
     "validate_workflow_requirements": ("flow", "Validate workflow requirements"),
-
     # ── VM Workflow Execution ────────────────────────────────────────────────
     "invoke_workflow": ("flow", "Run a workflow on the VM"),
     "run_automation": ("flow", "Run a workflow/automation on the VM"),
@@ -216,7 +325,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "stop_automation": ("flow", "Stop a running workflow on the VM"),
     "stuards_stop": ("flow", "Stop a running Stuard automation"),
     "show_json_workflow_code": ("flow", "Show workflow JSON source code"),
-
     # ── Browser Use (headless on VM) ────────────────────────────────────────
     "browser_use_status": ("browser", "Check browser-use status"),
     "browser_use_configure": ("browser", "Configure browser mode/profile"),
@@ -235,7 +343,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "browser_use_fill_form": ("browser", "Fill form fields"),
     "browser_use_wait_for": ("browser", "Wait for condition"),
     "browser_use_execute_script": ("browser", "Execute JavaScript"),
-
     # ── VM Terminal ──────────────────────────────────────────────────────────
     "terminal_create": ("system", "Create a PTY terminal session"),
     "terminal_send_input": ("system", "Send input to a terminal session"),
@@ -244,7 +351,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "terminal_destroy": ("system", "Close a terminal session"),
     "terminal_send_keys": ("system", "Send key sequence to a terminal"),
     "terminal_send_raw": ("system", "Send raw data to a terminal"),
-
     # ── File Index & Search ──────────────────────────────────────────────────
     "file_index_add_root": ("data", "Add a root directory to file index"),
     "file_index_remove_root": ("data", "Remove a root from file index"),
@@ -263,7 +369,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "file_search_details": ("data", "Get file details"),
     "file_search_folder": ("data", "Get folder contents"),
     "file_search_similar": ("data", "Find similar files"),
-
     # ── Sub-agents ───────────────────────────────────────────────────────────
     "subagent_spawn": ("core", "Spawn a sub-agent"),
     "subagent_status": ("core", "Get sub-agent status"),
@@ -271,7 +376,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "subagent_update": ("core", "Update sub-agent"),
     "subagent_steer": ("core", "Queue a steering message for a running sub-agent"),
     "subagent_consume_steers": ("core", "Drain pending steer messages for a sub-agent"),
-
     # ── Math ─────────────────────────────────────────────────────────────────
     "math_add": ("math", "Add two values/tensors"),
     "math_subtract": ("math", "Subtract b from a"),
@@ -318,14 +422,12 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "math_slice": ("math", "Slice tensor"),
     "math_get_index": ("math", "Get element"),
     "math_set_index": ("math", "Set element"),
-
     # ── Folder Permissions ───────────────────────────────────────────────────
     "folder_permission_add": ("system", "Add folder permission"),
     "folder_permission_remove": ("system", "Remove folder permission"),
     "folder_permission_list": ("system", "List folder permissions"),
     "folder_permission_set_enabled": ("system", "Enable/disable folder limiter"),
     "folder_permission_check": ("system", "Check path permission"),
-
     # ── Database ─────────────────────────────────────────────────────────────
     "db_query": ("data", "Execute SQL against local database"),
     "db_store": ("data", "Store JSON document"),
@@ -333,10 +435,8 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "db_search": ("data", "Search documents"),
     "db_delete": ("data", "Delete document by ID"),
     "db_list_tables": ("data", "List tables/collections"),
-
     # ── HTTP ─────────────────────────────────────────────────────────────────
     "http_request": ("integrations", "Make HTTP requests"),
-
     # ── Streaming ────────────────────────────────────────────────────────────
     "stream_create": ("streaming", "Create a named data stream"),
     "stream_write": ("streaming", "Push data to a stream"),
@@ -353,7 +453,6 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
     "stream_from_script": ("streaming", "Stream from Python script"),
     "stream_from_api": ("streaming", "Stream from API"),
     "stream_from_llm": ("streaming", "Stream from LLM"),
-
     # ── FFmpeg (available if binary is auto-downloaded) ──────────────────────
     "ffmpeg_status": ("vision", "Check FFmpeg availability"),
     "ffmpeg_setup": ("vision", "Setup FFmpeg"),
@@ -372,17 +471,22 @@ _TOOL_METADATA: Dict[str, tuple[str, str]] = {
 _VM_AGENT_URL = os.environ.get("STUARD_VM_AGENT_URL", "http://127.0.0.1:7400")
 
 
-async def _call_vm_agent(endpoint: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+async def _call_vm_agent(
+    endpoint: str, body: Dict[str, Any], timeout: float = 60.0
+) -> Dict[str, Any]:
     """POST to the local Node.js VM agent and return the JSON response."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"{_VM_AGENT_URL}{endpoint}"
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
 
     loop = asyncio.get_event_loop()
     try:
+
         def _do():
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -392,7 +496,11 @@ async def _call_vm_agent(endpoint: str, body: Dict[str, Any], timeout: float = 6
                     err_body = json.loads(e.read().decode("utf-8"))
                 except Exception:
                     err_body = {}
-                return {"ok": False, "error": err_body.get("error", f"http_{e.code}"), "status": e.code}
+                return {
+                    "ok": False,
+                    "error": err_body.get("error", f"http_{e.code}"),
+                    "status": e.code,
+                }
             except urllib.error.URLError as e:
                 return {"ok": False, "error": f"vm_agent_unreachable: {e.reason}"}
             except Exception as e:
@@ -403,12 +511,15 @@ async def _call_vm_agent(endpoint: str, body: Dict[str, Any], timeout: float = 6
         return {"ok": False, "error": str(e)}
 
 
-async def _vm_command(command: str, args: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+async def _vm_command(
+    command: str, args: Dict[str, Any], timeout: float = 60.0
+) -> Dict[str, Any]:
     """Send a command to the Node.js VM agent's /command endpoint."""
     return await _call_vm_agent("/command", {"command": command, "args": args}, timeout)
 
 
 # ── VM workflow handlers (route to Node.js DeployExecutor) ─────────────────
+
 
 async def _vm_invoke_workflow(args: Dict[str, Any]) -> Dict[str, Any]:
     """Run a workflow on the VM via the local DeployExecutor."""
@@ -422,7 +533,9 @@ async def _vm_invoke_workflow(args: Dict[str, Any]) -> Dict[str, Any]:
     wf_path = None
     for search_dir in [
         os.path.join(os.path.expanduser("~"), ".config", "Stuard AI", "workflows"),
-        os.path.join(os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"),
+        os.path.join(
+            os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"
+        ),
         "/home/stuard/workspace/workflows",
         "/home/stuard/deploys",
     ]:
@@ -442,20 +555,29 @@ async def _vm_invoke_workflow(args: Dict[str, Any]) -> Dict[str, Any]:
 
     # Deploy via the Node.js agent's DeployExecutor with inline bundle
     deploy_id = f"wf_{wf_id}_{int(asyncio.get_event_loop().time() * 1000)}"
-    result = await _vm_command("deploy_start", {
-        "deployId": deploy_id,
-        "downloadUrl": "",
-        "kind": "workflow",
-        "name": name or wf_data.get("name", wf_id),
-        "envVars": {},
-        "autoRestart": False,
-        "schedule": None,
-        "sourceWorkflowId": wf_id,
-        "inlineBundle": wf_data,
-    }, timeout=300.0)
+    result = await _vm_command(
+        "deploy_start",
+        {
+            "deployId": deploy_id,
+            "downloadUrl": "",
+            "kind": "workflow",
+            "name": name or wf_data.get("name", wf_id),
+            "envVars": {},
+            "autoRestart": False,
+            "schedule": None,
+            "sourceWorkflowId": wf_id,
+            "inlineBundle": wf_data,
+        },
+        timeout=300.0,
+    )
 
     if result.get("ok"):
-        return {"ok": True, "deployId": deploy_id, "workflowId": wf_id, "message": "Workflow started on VM"}
+        return {
+            "ok": True,
+            "deployId": deploy_id,
+            "workflowId": wf_id,
+            "message": "Workflow started on VM",
+        }
     return result
 
 
@@ -466,13 +588,17 @@ async def _vm_run_automation(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _vm_stop_automation(args: Dict[str, Any]) -> Dict[str, Any]:
     """Stop a running workflow/automation on the VM."""
-    deploy_id = str(args.get("deployId") or args.get("deploy_id") or args.get("id") or "").strip()
+    deploy_id = str(
+        args.get("deployId") or args.get("deploy_id") or args.get("id") or ""
+    ).strip()
     if not deploy_id:
         return {"ok": False, "error": "missing deployId"}
     return await _vm_command("deploy_stop", {"deployId": deploy_id})
 
 
-async def _vm_show_json_workflow_code(args: Dict[str, Any], emit=None) -> Dict[str, Any]:
+async def _vm_show_json_workflow_code(
+    args: Dict[str, Any], emit=None
+) -> Dict[str, Any]:
     """Read and return workflow JSON from the local filesystem."""
     wf_id = str(args.get("id") or "").strip()
     if not wf_id:
@@ -480,7 +606,9 @@ async def _vm_show_json_workflow_code(args: Dict[str, Any], emit=None) -> Dict[s
 
     for search_dir in [
         os.path.join(os.path.expanduser("~"), ".config", "Stuard AI", "workflows"),
-        os.path.join(os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"),
+        os.path.join(
+            os.path.expanduser("~"), ".config", "@stuardai/desktop", "workflows"
+        ),
         "/home/stuard/workspace/workflows",
     ]:
         candidate = os.path.join(search_dir, f"{wf_id}.json")
@@ -497,61 +625,83 @@ async def _vm_show_json_workflow_code(args: Dict[str, Any], emit=None) -> Dict[s
 
 # ── VM terminal handlers (route to Node.js ShellExecutor) ──────────────────
 
+
 async def _vm_terminal_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a PTY terminal session via the Node.js agent."""
-    return await _call_vm_agent("/terminal/open", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-        "cols": args.get("cols", 120),
-        "rows": args.get("rows", 30),
-    })
+    return await _call_vm_agent(
+        "/terminal/open",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+            "cols": args.get("cols", 120),
+            "rows": args.get("rows", 30),
+        },
+    )
 
 
 async def _vm_terminal_send_input(args: Dict[str, Any]) -> Dict[str, Any]:
     """Send input to a PTY terminal session."""
-    return await _call_vm_agent("/terminal/data", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-        "data": args.get("data") or args.get("input", ""),
-    })
+    return await _call_vm_agent(
+        "/terminal/data",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+            "data": args.get("data") or args.get("input", ""),
+        },
+    )
 
 
 async def _vm_terminal_read(args: Dict[str, Any]) -> Dict[str, Any]:
     """Read output from a PTY terminal session."""
-    return await _call_vm_agent("/terminal/read", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-    })
+    return await _call_vm_agent(
+        "/terminal/read",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        },
+    )
 
 
 async def _vm_terminal_resize(args: Dict[str, Any]) -> Dict[str, Any]:
     """Resize a PTY terminal session."""
-    return await _call_vm_agent("/terminal/resize", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-        "cols": args.get("cols", 120),
-        "rows": args.get("rows", 30),
-    })
+    return await _call_vm_agent(
+        "/terminal/resize",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+            "cols": args.get("cols", 120),
+            "rows": args.get("rows", 30),
+        },
+    )
 
 
 async def _vm_terminal_destroy(args: Dict[str, Any]) -> Dict[str, Any]:
     """Close/destroy a PTY terminal session."""
-    return await _call_vm_agent("/terminal/close", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-    })
+    return await _call_vm_agent(
+        "/terminal/close",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+        },
+    )
 
 
 async def _vm_terminal_send_keys(args: Dict[str, Any]) -> Dict[str, Any]:
     """Send key sequence to a terminal (maps to terminal data)."""
     keys = args.get("keys") or args.get("data", "")
-    return await _call_vm_agent("/terminal/data", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-        "data": keys,
-    })
+    return await _call_vm_agent(
+        "/terminal/data",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+            "data": keys,
+        },
+    )
 
 
 async def _vm_terminal_send_raw(args: Dict[str, Any]) -> Dict[str, Any]:
     """Send raw bytes to a terminal."""
-    return await _call_vm_agent("/terminal/data", {
-        "sessionId": args.get("session_id") or args.get("sessionId", ""),
-        "data": args.get("data", ""),
-    })
+    return await _call_vm_agent(
+        "/terminal/data",
+        {
+            "sessionId": args.get("session_id") or args.get("sessionId", ""),
+            "data": args.get("data", ""),
+        },
+    )
 
 
 # ── VM browser-use handlers (route to local browser_use_server.py) ───────
@@ -559,10 +709,18 @@ async def _vm_terminal_send_raw(args: Dict[str, Any]) -> Dict[str, Any]:
 # We proxy tool calls to it via HTTP, mirroring the desktop handler pattern.
 
 _BROWSER_USE_URL = os.environ.get("BROWSER_USE_URL", "http://127.0.0.1:18082")
-_BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "") or os.environ.get("STUARD_BROWSER_AUTH_TOKEN", "")
-_BROWSER_SERVER_PATH = os.environ.get("STUARD_BROWSER_SERVER_PATH", "/opt/stuard/python-agent")
-_BROWSER_SERVER_SCRIPT = os.environ.get("STUARD_BROWSER_SERVER_SCRIPT", "browser_use_server.py")
-_BROWSER_SERVER_VENV_PYTHON = os.environ.get("STUARD_BROWSER_SERVER_PYTHON", "/opt/stuard/python-agent/venv/bin/python")
+_BROWSER_USE_TOKEN = os.environ.get("BROWSER_USE_AUTH_TOKEN", "") or os.environ.get(
+    "STUARD_BROWSER_AUTH_TOKEN", ""
+)
+_BROWSER_SERVER_PATH = os.environ.get(
+    "STUARD_BROWSER_SERVER_PATH", "/opt/stuard/python-agent"
+)
+_BROWSER_SERVER_SCRIPT = os.environ.get(
+    "STUARD_BROWSER_SERVER_SCRIPT", "browser_use_server.py"
+)
+_BROWSER_SERVER_VENV_PYTHON = os.environ.get(
+    "STUARD_BROWSER_SERVER_PYTHON", "/opt/stuard/python-agent/venv/bin/python"
+)
 _BROWSER_SERVICE_NAME = os.environ.get("STUARD_BROWSER_SERVICE", "stuard-browser-use")
 
 # Lock so only one in-flight start attempt runs at a time
@@ -604,7 +762,9 @@ async def _is_browser_server_running(timeout: float = 2.0) -> bool:
     headers = {}
     if _BROWSER_USE_TOKEN:
         headers["x-stuard-browser-token"] = _BROWSER_USE_TOKEN
-    req = urllib.request.Request(f"{_BROWSER_USE_URL}/status", headers=headers, method="GET")
+    req = urllib.request.Request(
+        f"{_BROWSER_USE_URL}/status", headers=headers, method="GET"
+    )
 
     loop = asyncio.get_event_loop()
 
@@ -626,8 +786,8 @@ async def _start_browser_server() -> bool:
 
     Returns True if the server is reachable after starting, False otherwise.
     """
-    import subprocess
     import shutil
+    import subprocess
 
     loop = asyncio.get_event_loop()
 
@@ -645,7 +805,9 @@ async def _start_browser_server() -> bool:
             try:
                 result = subprocess.run(
                     cmd,
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 if result.returncode == 0:
                     return True
@@ -659,7 +821,11 @@ async def _start_browser_server() -> bool:
         script = _resolve_browser_server_entrypoint()
         if not script:
             return False
-        python_bin = _BROWSER_SERVER_VENV_PYTHON if os.path.isfile(_BROWSER_SERVER_VENV_PYTHON) else "python3"
+        python_bin = (
+            _BROWSER_SERVER_VENV_PYTHON
+            if os.path.isfile(_BROWSER_SERVER_VENV_PYTHON)
+            else "python3"
+        )
         env = os.environ.copy()
         env.setdefault("STUARD_BROWSER_HOST", "127.0.0.1")
         env.setdefault("STUARD_BROWSER_PORT", "18082")
@@ -701,15 +867,20 @@ async def _ensure_browser_server() -> bool:
         if await _is_browser_server_running():
             return True
         if not _browser_start_logged_once:
-            print("[dispatch_vm] browser server not running, attempting to start...", flush=True)
+            print(
+                "[dispatch_vm] browser server not running, attempting to start...",
+                flush=True,
+            )
             _browser_start_logged_once = True
         return await _start_browser_server()
 
 
-async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float = 60.0, method: str = "POST") -> Dict[str, Any]:
+async def _browser_use_call(
+    endpoint: str, body: Dict[str, Any], timeout: float = 60.0, method: str = "POST"
+) -> Dict[str, Any]:
     """Send request to the local browser server and return the JSON response."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"{_BROWSER_USE_URL}{endpoint}"
     headers = {}
@@ -724,6 +895,7 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
 
     loop = asyncio.get_event_loop()
     try:
+
         def _do():
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -735,7 +907,11 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
                     err_body = {}
                 return {"ok": False, "error": err_body.get("error", f"http_{e.code}")}
             except urllib.error.URLError as e:
-                return {"ok": False, "error": f"browser_unreachable: {e.reason}", "_unreachable": True}
+                return {
+                    "ok": False,
+                    "error": f"browser_unreachable: {e.reason}",
+                    "_unreachable": True,
+                }
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
@@ -744,7 +920,9 @@ async def _browser_use_call(endpoint: str, body: Dict[str, Any], timeout: float 
         return {"ok": False, "error": str(e)}
 
 
-async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> Dict[str, Any]:
+async def _vm_browser_use_generic(
+    args: Dict[str, Any], tool_name: str = ""
+) -> Dict[str, Any]:
     """Generic handler — strips the browser_use_ prefix and routes to /<action>.
 
     Auto-starts browser_use_server.py on first call, and retries once if the
@@ -771,17 +949,22 @@ async def _vm_browser_use_generic(args: Dict[str, Any], tool_name: str = "") -> 
             ),
         }
 
-    result = await _browser_use_call(f"/{action}", args, timeout=effective_timeout, method=method)
+    result = await _browser_use_call(
+        f"/{action}", args, timeout=effective_timeout, method=method
+    )
     # If the server died mid-flight, try one re-start + retry before giving up.
     if result.get("_unreachable"):
         result.pop("_unreachable", None)
         if await _ensure_browser_server():
-            retry = await _browser_use_call(f"/{action}", args, timeout=effective_timeout, method=method)
+            retry = await _browser_use_call(
+                f"/{action}", args, timeout=effective_timeout, method=method
+            )
             retry.pop("_unreachable", None)
             return retry
         return {
             "ok": False,
-            "error": "browser_server_unavailable_after_restart: " + str(result.get("error", "")),
+            "error": "browser_server_unavailable_after_restart: "
+            + str(result.get("error", "")),
         }
     return result
 
@@ -800,7 +983,9 @@ async def _vm_status(args: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG001
         try:
             r = subprocess.run(
                 ["systemctl", "is-active", name],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             return r.stdout.strip() or "unknown"
         except Exception:
@@ -814,7 +999,12 @@ async def _vm_status(args: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG001
             "stuard-xvfb": _service_active("stuard-xvfb"),
         }
         chrome = ""
-        for bin_name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
+        for bin_name in (
+            "chromium",
+            "chromium-browser",
+            "google-chrome",
+            "google-chrome-stable",
+        ):
             p = shutil.which(bin_name)
             if p:
                 chrome = p
@@ -837,35 +1027,73 @@ async def _vm_status(args: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ARG001
 # ── Desktop-only tools (stubbed) ────────────────────────────────────────────
 _DESKTOP_ONLY_STUBS = [
     # GUI tools
-    "get_mouse_position", "move_cursor", "computer_use", "click_at_coordinates",
-    "double_click_at_coordinates", "type_text", "send_hotkey", "scroll",
-    "drag_and_drop", "take_screenshot", "capture_screen_to_file", "prepare_image_for_model",
+    "get_mouse_position",
+    "move_cursor",
+    "computer_use",
+    "click_at_coordinates",
+    "double_click_at_coordinates",
+    "type_text",
+    "send_hotkey",
+    "scroll",
+    "drag_and_drop",
+    "take_screenshot",
+    "capture_screen_to_file",
+    "prepare_image_for_model",
     # Window management
-    "get_foreground_window", "list_open_windows", "bring_window_to_foreground",
+    "get_foreground_window",
+    "list_open_windows",
+    "bring_window_to_foreground",
     # Clipboard
-    "get_clipboard_content", "set_clipboard_content",
+    "get_clipboard_content",
+    "set_clipboard_content",
     # Media capture (needs hardware)
-    "capture_media", "stop_capture", "stop_captures_by_flow", "list_active_captures",
-    "describe_media_capture_capabilities", "upload_file_to_url",
+    "capture_media",
+    "stop_capture",
+    "stop_captures_by_flow",
+    "list_active_captures",
+    "describe_media_capture_capabilities",
+    "upload_file_to_url",
     # Media bus
-    "subscribe_media_bus", "unsubscribe_media_bus", "get_bus_status",
-    "list_media_buses", "start_bus_recording", "stop_bus_recording", "get_bus_frames",
+    "subscribe_media_bus",
+    "unsubscribe_media_bus",
+    "get_bus_status",
+    "list_media_buses",
+    "start_bus_recording",
+    "stop_bus_recording",
+    "get_bus_frames",
     # Screen recording
-    "capture_screen", "stop_screen_capture", "describe_screen_capture_capabilities",
-    "capture_system_audio", "stop_system_audio", "describe_system_audio_capabilities",
+    "capture_screen",
+    "stop_screen_capture",
+    "describe_screen_capture_capabilities",
+    "capture_system_audio",
+    "stop_system_audio",
+    "describe_system_audio_capabilities",
     # MediaPipe (needs opencv + display for some)
-    "mediapipe_status", "mediapipe_setup", "mediapipe_pose", "mediapipe_hands",
-    "mediapipe_face_detection", "mediapipe_face_mesh", "mediapipe_segmentation",
-    "mediapipe_holistic", "mediapipe_process_video",
+    "mediapipe_status",
+    "mediapipe_setup",
+    "mediapipe_pose",
+    "mediapipe_hands",
+    "mediapipe_face_detection",
+    "mediapipe_face_mesh",
+    "mediapipe_segmentation",
+    "mediapipe_holistic",
+    "mediapipe_process_video",
     # Desktop notifications (no UI to show them)
     "send_notification",
     # Desktop file open (no GUI to open with)
     "open_file",
     # Desktop OS controls
-    "describe_desktop_control_capabilities", "get_desktop_wallpaper",
-    "set_desktop_wallpaper", "get_system_volume", "set_system_volume",
-    "list_bluetooth_devices", "connect_bluetooth_device", "disconnect_bluetooth_device",
-    "get_display_brightness", "set_display_brightness", "get_power_status",
+    "describe_desktop_control_capabilities",
+    "get_desktop_wallpaper",
+    "set_desktop_wallpaper",
+    "get_system_volume",
+    "set_system_volume",
+    "list_bluetooth_devices",
+    "connect_bluetooth_device",
+    "disconnect_bluetooth_device",
+    "get_display_brightness",
+    "set_display_brightness",
+    "get_power_status",
 ]
 
 
@@ -874,346 +1102,368 @@ _DESKTOP_ONLY_STUBS = [
 _HANDLERS: Dict[str, Callable[..., Any]] = {}
 
 # Register VM-compatible handlers
-_HANDLERS.update({
-    # System
-    "run_command": system.run_command,
-    "list_terminals": system.list_terminals,
-    "read_terminal": system.read_terminal,
-    "get_local_time": system.get_local_time,
-    "python_status": system.python_status,
-    "python_setup": system.python_setup,
-    "python_list_packages": system.python_list_packages,
-    "python_install": system.python_install,
-    "run_python_script": system.run_python_script,
-    "run_node_script": system.run_node_script,
-
-    # Data Analysis (pandas/numpy/scipy + matplotlib/seaborn, on-demand venv)
-    "data_analysis_status": data_analysis.data_analysis_status,
-    "data_analysis_setup": data_analysis.data_analysis_setup,
-    "data_analysis_uninstall": data_analysis.data_analysis_uninstall,
-    "data_load": data_analysis.data_load,
-    "describe_data": data_analysis.describe_data,
-    "correlate_data": data_analysis.correlate_data,
-    "plot_line": data_analysis.plot_line,
-    "plot_bar": data_analysis.plot_bar,
-    "plot_scatter": data_analysis.plot_scatter,
-    "plot_hist": data_analysis.plot_hist,
-    "plot_pie": data_analysis.plot_pie,
-    "plot_heatmap": data_analysis.plot_heatmap,
-    "plot_box": data_analysis.plot_box,
-    "run_data_python": data_analysis.run_data_python,
-
-    # Filesystem
-    "list_directory": fs.list_directory,
-    "read_file": fs.read_file,
-    "write_file": fs.write_file,
-    "create_directory": fs.create_directory,
-    "move_file": fs.move_file,
-    "copy_file": fs.copy_file,
-    "delete_file": fs.delete_file,
-    "read_file_binary": fs.read_file_binary,
-    "write_file_base64": fs.write_file_base64,
-    "read_file_base64": fs.read_file_binary,
-    "file_read": fs.file_read,
-    "file_edit": fs.file_edit,
-    "glob": fs.glob_paths,
-    "grep": fs.grep,
-    "checkpoint_create": fs.checkpoint_create,
-    "checkpoint_restore": fs.checkpoint_restore,
-    "checkpoint_redo": fs.checkpoint_redo,
-    "checkpoint_list": fs.checkpoint_list,
-
-    # Utilities
-    "get_datetime": utils.get_datetime,
-    "math_eval": utils.math_eval,
-    "generate_uuid": utils.generate_uuid,
-    "random_number": utils.random_number,
-    "random_choice": utils.random_choice,
-    "get_env_var": utils.get_env_var,
-    "get_system_info": utils.get_system_info,
-    "hash_string": utils.hash_string,
-    "base64_encode": utils.base64_encode,
-    "base64_decode": utils.base64_decode,
-    "json_parse": utils.json_parse,
-    "json_stringify": utils.json_stringify,
-    "sleep": utils.sleep,
-    "regex_match": utils.regex_match,
-    "regex_replace": utils.regex_replace,
-
-    # Memory / Knowledge
-    "memory_retrieval": memory.memory_retrieval,
-    "group_management": memory.group_management,
-    "context_manager": context.context_manager,
-    "knowledge_upsert_core": knowledge.knowledge_upsert_core,
-    "knowledge_add_fact": knowledge.knowledge_add_fact,
-    "knowledge_upsert_procedural": knowledge.knowledge_upsert_procedural,
-    "knowledge_create_entity": knowledge.knowledge_create_entity,
-    "knowledge_find_entity": knowledge.knowledge_find_entity,
-    "knowledge_list_entities": knowledge.knowledge_list_entities,
-    "knowledge_get_entity_context": knowledge.knowledge_get_entity_context,
-    "knowledge_get_identity": knowledge.knowledge_get_identity,
-    "knowledge_get_directives": knowledge.knowledge_get_directives,
-    "knowledge_get_bio": knowledge.knowledge_get_bio,
-    "knowledge_search_facts": knowledge.knowledge_search_facts,
-    "knowledge_get_facts_for_conversation": knowledge.knowledge_get_facts_for_conversation,
-    "knowledge_get_conversations_for_entity": knowledge.knowledge_get_conversations_for_entity,
-    "knowledge_deduplicate_facts": knowledge.knowledge_deduplicate_facts,
-    "knowledge_stats": knowledge.knowledge_stats,
-    "knowledge_delete_fact": knowledge.knowledge_delete_fact,
-    "knowledge_invalidate_fact": knowledge.knowledge_invalidate_fact,
-    "knowledge_delete_entity": knowledge.knowledge_delete_entity,
-    "knowledge_update_entity": knowledge.knowledge_update_entity,
-    "knowledge_build_context": knowledge.knowledge_build_context,
-    "knowledge_get_procedural": knowledge.knowledge_get_procedural,
-    "knowledge_get_events": knowledge.knowledge_get_events,
-    "knowledge_get_graph": knowledge.knowledge_get_graph,
-    "pending_memory_create": knowledge.pending_memory_create,
-    "pending_memory_list": knowledge.pending_memory_list,
-    "pending_memory_get": knowledge.pending_memory_get,
-    "pending_memory_confirm": knowledge.pending_memory_confirm,
-    "pending_memory_reject": knowledge.pending_memory_reject,
-    "pending_memory_delete": knowledge.pending_memory_delete,
-
-    # Conversations & Spaces
-    "conversation_create": memory_conversations.conversation_create,
-    "conversation_get": memory_conversations.conversation_get,
-    "conversation_list": memory_conversations.conversation_list,
-    "conversation_update": memory_conversations.conversation_update,
-    "conversation_search": memory_conversations.conversation_search,
-    "message_add": memory_conversations.message_add,
-    "message_list": memory_conversations.message_list,
-    "segment_create": memory_conversations.segment_create,
-    "segment_update": memory_conversations.segment_update,
-    "segment_list": memory_conversations.segment_list,
-    "segment_list_recent": memory_conversations.segment_list_recent,
-    "segment_search": memory_conversations.segment_search,
-    "segment_build_topic_drawers": memory_conversations.segment_build_topic_drawers,
-    "segment_search_drawers_by_embedding": memory_conversations.segment_search_drawers_by_embedding,
-    "collection_summary_upsert": memory_conversations.collection_summary_upsert,
-    "collection_summary_get": memory_conversations.collection_summary_get,
-    "collection_summary_search": memory_conversations.collection_summary_search,
-    "collection_summary_list": memory_conversations.collection_summary_list,
-    "project_create": memory_conversations.project_create,
-    "project_get": memory_conversations.project_get,
-    "project_list": memory_conversations.project_list,
-    "project_update": memory_conversations.project_update,
-    "project_delete": memory_conversations.project_delete,
-    "project_context_add": memory_conversations.project_context_add,
-    "memory_create": memory_conversations.memory_create,
-    "memory_list": memory_conversations.memory_list,
-    "memory_search": memory_conversations.memory_search,
-    "memory_delete": memory_conversations.memory_delete,
-    "journal_add": memory_conversations.journal_add,
-    "journal_get": memory_conversations.journal_get,
-    "journal_update": memory_conversations.journal_update,
-    "journal_list": memory_conversations.journal_list,
-    "journal_delete": memory_conversations.journal_delete,
-    "conversation_set_project": memory_conversations.conversation_set_project,
-    "security_get_settings": memory_conversations.security_get_settings,
-    "security_set_password": memory_conversations.security_set_password,
-    "security_verify_password": memory_conversations.security_verify_password,
-    "security_update_settings": memory_conversations.security_update_settings,
-    "security_remove_password": memory_conversations.security_remove_password,
-    "memory_stats": memory_conversations.memory_stats,
-    "memory_export_plaintext": memory_conversations.memory_export_plaintext,
-
-    # Canvas (in-memory doc store — works on VM)
-
-    # Tasks & Reminders
-    "calendar_crud": tasks.calendar_crud,
-    "task_crud": tasks.task_crud,
-    "task_reminders": tasks.task_reminders,
-    "unified_task_assignments": tasks.unified_task_assignments,
-
-    # Agent & Flow
-    "agent_todo": agent_todo.agent_todo,
-    "parallel_executor": concurrency.parallel_executor,
-    "transform_data": transform.transform_data,
-    "loop_executor": loops.loop_executor,
-    "search_local_workflows": workflows.search_local_workflows,
-    "list_local_stuards": workflows.list_local_stuards,
-    "import_workflow": workflows.import_workflow,
-    "export_workflow": workflows.export_workflow,
-    "validate_workflow_requirements": workflows.validate_workflow_requirements,
-
-    # VM-native workflow execution (routes to Node.js DeployExecutor)
-    "invoke_workflow": _vm_invoke_workflow,
-    "run_automation": _vm_run_automation,
-    "stuards_run": _vm_run_automation,
-    "stop_automation": _vm_stop_automation,
-    "stuards_stop": _vm_stop_automation,
-    "show_json_workflow_code": _vm_show_json_workflow_code,
-
-    # VM-native terminal tools (routes to Node.js ShellExecutor)
-    "terminal_create": _vm_terminal_create,
-    "terminal_send_input": _vm_terminal_send_input,
-    "terminal_read": _vm_terminal_read,
-    "terminal_resize": _vm_terminal_resize,
-    "terminal_destroy": _vm_terminal_destroy,
-    "terminal_send_keys": _vm_terminal_send_keys,
-    "terminal_send_raw": _vm_terminal_send_raw,
-})
+_HANDLERS.update(
+    {
+        # System
+        "run_command": system.run_command,
+        "list_terminals": system.list_terminals,
+        "read_terminal": system.read_terminal,
+        "get_local_time": system.get_local_time,
+        "python_status": system.python_status,
+        "python_setup": system.python_setup,
+        "python_list_packages": system.python_list_packages,
+        "python_install": system.python_install,
+        "run_python_script": system.run_python_script,
+        "run_node_script": system.run_node_script,
+        # Data Analysis (pandas/numpy/scipy + matplotlib/seaborn, on-demand venv)
+        "data_analysis_status": data_analysis.data_analysis_status,
+        "data_analysis_setup": data_analysis.data_analysis_setup,
+        "data_analysis_uninstall": data_analysis.data_analysis_uninstall,
+        "data_load": data_analysis.data_load,
+        "describe_data": data_analysis.describe_data,
+        "correlate_data": data_analysis.correlate_data,
+        "plot_line": data_analysis.plot_line,
+        "plot_bar": data_analysis.plot_bar,
+        "plot_scatter": data_analysis.plot_scatter,
+        "plot_hist": data_analysis.plot_hist,
+        "plot_pie": data_analysis.plot_pie,
+        "plot_heatmap": data_analysis.plot_heatmap,
+        "plot_box": data_analysis.plot_box,
+        "run_data_python": data_analysis.run_data_python,
+        # Filesystem
+        "list_directory": fs.list_directory,
+        "read_file": fs.read_file,
+        "write_file": fs.write_file,
+        "create_directory": fs.create_directory,
+        "move_file": fs.move_file,
+        "copy_file": fs.copy_file,
+        "delete_file": fs.delete_file,
+        "read_file_binary": fs.read_file_binary,
+        "write_file_base64": fs.write_file_base64,
+        "read_file_base64": fs.read_file_binary,
+        "file_read": fs.file_read,
+        "file_edit": fs.file_edit,
+        "glob": fs.glob_paths,
+        "grep": fs.grep,
+        "checkpoint_create": fs.checkpoint_create,
+        "checkpoint_restore": fs.checkpoint_restore,
+        "checkpoint_redo": fs.checkpoint_redo,
+        "checkpoint_list": fs.checkpoint_list,
+        # Utilities
+        "get_datetime": utils.get_datetime,
+        "math_eval": utils.math_eval,
+        "generate_uuid": utils.generate_uuid,
+        "random_number": utils.random_number,
+        "random_choice": utils.random_choice,
+        "get_env_var": utils.get_env_var,
+        "get_system_info": utils.get_system_info,
+        "hash_string": utils.hash_string,
+        "base64_encode": utils.base64_encode,
+        "base64_decode": utils.base64_decode,
+        "json_parse": utils.json_parse,
+        "json_stringify": utils.json_stringify,
+        "sleep": utils.sleep,
+        "regex_match": utils.regex_match,
+        "regex_replace": utils.regex_replace,
+        # Memory / Knowledge
+        "memory_retrieval": memory.memory_retrieval,
+        "group_management": memory.group_management,
+        "context_manager": context.context_manager,
+        "knowledge_upsert_core": knowledge.knowledge_upsert_core,
+        "knowledge_add_fact": knowledge.knowledge_add_fact,
+        "knowledge_upsert_procedural": knowledge.knowledge_upsert_procedural,
+        "knowledge_create_entity": knowledge.knowledge_create_entity,
+        "knowledge_find_entity": knowledge.knowledge_find_entity,
+        "knowledge_list_entities": knowledge.knowledge_list_entities,
+        "knowledge_get_entity_context": knowledge.knowledge_get_entity_context,
+        "knowledge_get_identity": knowledge.knowledge_get_identity,
+        "knowledge_get_directives": knowledge.knowledge_get_directives,
+        "knowledge_get_bio": knowledge.knowledge_get_bio,
+        "knowledge_search_facts": knowledge.knowledge_search_facts,
+        "knowledge_get_facts_for_conversation": knowledge.knowledge_get_facts_for_conversation,
+        "knowledge_get_conversations_for_entity": knowledge.knowledge_get_conversations_for_entity,
+        "knowledge_deduplicate_facts": knowledge.knowledge_deduplicate_facts,
+        "knowledge_stats": knowledge.knowledge_stats,
+        "knowledge_delete_fact": knowledge.knowledge_delete_fact,
+        "knowledge_invalidate_fact": knowledge.knowledge_invalidate_fact,
+        "knowledge_delete_entity": knowledge.knowledge_delete_entity,
+        "knowledge_update_entity": knowledge.knowledge_update_entity,
+        "knowledge_build_context": knowledge.knowledge_build_context,
+        "knowledge_get_procedural": knowledge.knowledge_get_procedural,
+        "knowledge_get_events": knowledge.knowledge_get_events,
+        "knowledge_get_graph": knowledge.knowledge_get_graph,
+        "rag_pack_create": rag.rag_pack_create,
+        "rag_pack_list": rag.rag_pack_list,
+        "rag_pack_get": rag.rag_pack_get,
+        "rag_pack_delete": rag.rag_pack_delete,
+        "rag_pack_delete_source": rag.rag_pack_delete_source,
+        "rag_pack_add_chunks": rag.rag_pack_add_chunks,
+        "rag_pack_query": rag.rag_pack_query,
+        "rag_pack_stats": rag.rag_pack_stats,
+        "rag_project_pack_get_or_create": rag.rag_project_pack_get_or_create,
+        "rag_project_pack_stats": rag.rag_project_pack_stats,
+        "rag_project_pack_query": rag.rag_project_pack_query,
+        "rag_project_pack_delete": rag.rag_project_pack_delete,
+        "pending_memory_create": knowledge.pending_memory_create,
+        "pending_memory_list": knowledge.pending_memory_list,
+        "pending_memory_get": knowledge.pending_memory_get,
+        "pending_memory_confirm": knowledge.pending_memory_confirm,
+        "pending_memory_reject": knowledge.pending_memory_reject,
+        "pending_memory_delete": knowledge.pending_memory_delete,
+        # Conversations & Spaces
+        "conversation_create": memory_conversations.conversation_create,
+        "conversation_get": memory_conversations.conversation_get,
+        "conversation_list": memory_conversations.conversation_list,
+        "conversation_update": memory_conversations.conversation_update,
+        "conversation_search": memory_conversations.conversation_search,
+        "message_add": memory_conversations.message_add,
+        "message_list": memory_conversations.message_list,
+        "segment_create": memory_conversations.segment_create,
+        "segment_update": memory_conversations.segment_update,
+        "segment_list": memory_conversations.segment_list,
+        "segment_list_recent": memory_conversations.segment_list_recent,
+        "segment_search": memory_conversations.segment_search,
+        "segment_build_topic_drawers": memory_conversations.segment_build_topic_drawers,
+        "segment_search_drawers_by_embedding": memory_conversations.segment_search_drawers_by_embedding,
+        "collection_summary_upsert": memory_conversations.collection_summary_upsert,
+        "collection_summary_get": memory_conversations.collection_summary_get,
+        "collection_summary_search": memory_conversations.collection_summary_search,
+        "collection_summary_list": memory_conversations.collection_summary_list,
+        "project_create": memory_conversations.project_create,
+        "project_get": memory_conversations.project_get,
+        "project_list": memory_conversations.project_list,
+        "project_update": memory_conversations.project_update,
+        "project_delete": memory_conversations.project_delete,
+        "project_context_add": memory_conversations.project_context_add,
+        "memory_create": memory_conversations.memory_create,
+        "memory_list": memory_conversations.memory_list,
+        "memory_search": memory_conversations.memory_search,
+        "memory_delete": memory_conversations.memory_delete,
+        "journal_add": memory_conversations.journal_add,
+        "journal_get": memory_conversations.journal_get,
+        "journal_update": memory_conversations.journal_update,
+        "journal_list": memory_conversations.journal_list,
+        "journal_delete": memory_conversations.journal_delete,
+        "conversation_set_project": memory_conversations.conversation_set_project,
+        "security_get_settings": memory_conversations.security_get_settings,
+        "security_set_password": memory_conversations.security_set_password,
+        "security_verify_password": memory_conversations.security_verify_password,
+        "security_update_settings": memory_conversations.security_update_settings,
+        "security_remove_password": memory_conversations.security_remove_password,
+        "memory_stats": memory_conversations.memory_stats,
+        "memory_export_plaintext": memory_conversations.memory_export_plaintext,
+        # Canvas (in-memory doc store — works on VM)
+        # Tasks & Reminders
+        "calendar_crud": tasks.calendar_crud,
+        "task_crud": tasks.task_crud,
+        "task_reminders": tasks.task_reminders,
+        "unified_task_assignments": tasks.unified_task_assignments,
+        # Agent & Flow
+        "agent_todo": agent_todo.agent_todo,
+        "parallel_executor": concurrency.parallel_executor,
+        "transform_data": transform.transform_data,
+        "loop_executor": loops.loop_executor,
+        "search_local_workflows": workflows.search_local_workflows,
+        "list_local_stuards": workflows.list_local_stuards,
+        "import_workflow": workflows.import_workflow,
+        "export_workflow": workflows.export_workflow,
+        "validate_workflow_requirements": workflows.validate_workflow_requirements,
+        # VM-native workflow execution (routes to Node.js DeployExecutor)
+        "invoke_workflow": _vm_invoke_workflow,
+        "run_automation": _vm_run_automation,
+        "stuards_run": _vm_run_automation,
+        "stop_automation": _vm_stop_automation,
+        "stuards_stop": _vm_stop_automation,
+        "show_json_workflow_code": _vm_show_json_workflow_code,
+        # VM-native terminal tools (routes to Node.js ShellExecutor)
+        "terminal_create": _vm_terminal_create,
+        "terminal_send_input": _vm_terminal_send_input,
+        "terminal_read": _vm_terminal_read,
+        "terminal_resize": _vm_terminal_resize,
+        "terminal_destroy": _vm_terminal_destroy,
+        "terminal_send_keys": _vm_terminal_send_keys,
+        "terminal_send_raw": _vm_terminal_send_raw,
+    }
+)
 
 # ── Register browser_use handlers (each routes to browser_use_server.py) ──
 _BROWSER_USE_TOOLS = [
-    "browser_use_status", "browser_use_configure", "browser_use_navigate",
-    "browser_use_click", "browser_use_type", "browser_use_press_key",
-    "browser_use_screenshot", "browser_use_content", "browser_use_scroll",
-    "browser_use_tabs", "browser_use_cookies", "browser_use_hover",
-    "browser_use_select_option", "browser_use_get_interactive_elements",
-    "browser_use_fill_form", "browser_use_wait_for", "browser_use_execute_script",
+    "browser_use_status",
+    "browser_use_configure",
+    "browser_use_navigate",
+    "browser_use_click",
+    "browser_use_type",
+    "browser_use_press_key",
+    "browser_use_screenshot",
+    "browser_use_content",
+    "browser_use_scroll",
+    "browser_use_tabs",
+    "browser_use_cookies",
+    "browser_use_hover",
+    "browser_use_select_option",
+    "browser_use_get_interactive_elements",
+    "browser_use_fill_form",
+    "browser_use_wait_for",
+    "browser_use_execute_script",
 ]
 
 for _bu_tool in _BROWSER_USE_TOOLS:
     _tool_name_capture = _bu_tool  # capture for closure
+
     async def _make_handler(args, _tn=_tool_name_capture):
         return await _vm_browser_use_generic(args, tool_name=_tn)
+
     _HANDLERS[_bu_tool] = _make_handler
 
 # VM-only diagnostic tool — reports running systemd services and browser reachability.
 _HANDLERS["vm_status"] = _vm_status
-_TOOL_METADATA["vm_status"] = ("system", "Report VM service status (browser, agent, deploys)")
+_TOOL_METADATA["vm_status"] = (
+    "system",
+    "Report VM service status (browser, agent, deploys)",
+)
 
-_HANDLERS.update({
-    # File Index & Search
-    "file_index_add_root": file_scanner.add_index_root,
-    "file_index_remove_root": file_scanner.remove_index_root,
-    "file_index_list_roots": file_scanner.list_index_roots,
-    "file_index_scan": file_scanner.scan_index_root,
-    "file_index_get_pending": file_scanner.get_pending_files,
-    "file_index_stats": file_scanner.get_index_stats,
-    "file_index_update": file_scanner.update_file_index_data,
-    "file_index_mark_error": file_scanner.mark_file_error,
-    "file_index_purge_deleted": file_scanner.purge_deleted,
-    "file_search": file_search.search_files,
-    "file_search_by_filename": file_search.search_by_filename,
-    "file_search_by_extension": file_search.search_by_extension,
-    "file_search_by_kind": file_search.search_by_kind,
-    "file_search_recent": file_search.get_recent_files,
-    "file_search_details": file_search.get_file_details,
-    "file_search_folder": file_search.get_folder_contents,
-    "file_search_similar": file_search.find_similar_files,
-
-    # Sub-agents
-    "subagent_spawn": subagents.subagent_spawn,
-    "subagent_status": subagents.subagent_status,
-    "subagent_list": subagents.subagent_list,
-    "subagent_update": subagents.subagent_update,
-    "subagent_steer": subagents.subagent_steer,
-    "subagent_consume_steers": subagents.subagent_consume_steers,
-
-    # Math
-    "math_add": math_ops.math_add,
-    "math_subtract": math_ops.math_subtract,
-    "math_multiply": math_ops.math_multiply,
-    "math_divide": math_ops.math_divide,
-    "math_power": math_ops.math_power,
-    "math_sqrt": math_ops.math_sqrt,
-    "math_abs": math_ops.math_abs,
-    "math_negate": math_ops.math_negate,
-    "math_exp": math_ops.math_exp,
-    "math_log": math_ops.math_log,
-    "math_sum": math_ops.math_sum,
-    "math_mean": math_ops.math_mean,
-    "math_max": math_ops.math_max,
-    "math_min": math_ops.math_min,
-    "math_argmax": math_ops.math_argmax,
-    "math_argmin": math_ops.math_argmin,
-    "math_dot": math_ops.math_dot,
-    "math_transpose": math_ops.math_transpose,
-    "math_reshape": math_ops.math_reshape,
-    "math_shape": math_ops.math_shape,
-    "math_flatten": math_ops.math_flatten,
-    "math_zeros": math_ops.math_zeros,
-    "math_ones": math_ops.math_ones,
-    "math_random": math_ops.math_random,
-    "math_range": math_ops.math_range,
-    "math_linspace": math_ops.math_linspace,
-    "math_sigmoid": math_ops.math_sigmoid,
-    "math_relu": math_ops.math_relu,
-    "math_leaky_relu": math_ops.math_leaky_relu,
-    "math_tanh": math_ops.math_tanh,
-    "math_softmax": math_ops.math_softmax,
-    "math_gelu": math_ops.math_gelu,
-    "math_swish": math_ops.math_swish,
-    "math_linear": math_ops.math_linear,
-    "math_forward_pass": math_ops.math_forward_pass,
-    "math_cross_entropy_loss": math_ops.math_cross_entropy_loss,
-    "math_mse_loss": math_ops.math_mse_loss,
-    "math_compare": math_ops.math_compare,
-    "math_clip": math_ops.math_clip,
-    "math_where": math_ops.math_where,
-    "math_concat": math_ops.math_concat,
-    "math_stack": math_ops.math_stack,
-    "math_slice": math_ops.math_slice,
-    "math_get_index": math_ops.math_get_index,
-    "math_set_index": math_ops.math_set_index,
-
-    # Folder Permissions
-    "folder_permission_add": folder_limiter.folder_permission_add,
-    "folder_permission_remove": folder_limiter.folder_permission_remove,
-    "folder_permission_list": folder_limiter.folder_permission_list,
-    "folder_permission_set_enabled": folder_limiter.folder_permission_set_enabled,
-    "folder_permission_check": folder_limiter.folder_permission_check,
-
-    # Database
-    "db_query": database.db_query,
-    "db_store": database.db_store,
-    "db_retrieve": database.db_retrieve,
-    "db_search": database.db_search,
-    "db_delete": database.db_delete,
-    "db_list_tables": database.db_list_tables,
-
-    # HTTP
-    "http_request": http.http_request,
-
-    # Streaming
-    "stream_create": streams.stream_create,
-    "stream_write": streams.stream_write,
-    "stream_read": streams.stream_read,
-    "stream_close": streams.stream_close,
-    "stream_subscribe": streams.stream_subscribe,
-    "stream_unsubscribe": streams.stream_unsubscribe,
-    "stream_add_transform": streams.stream_add_transform,
-    "stream_remove_transform": streams.stream_remove_transform,
-    "stream_update_transform": streams.stream_update_transform,
-    "stream_list": streams.stream_list,
-    "close_all_streams": streams.close_all_streams,
-    "stream_get_status": streams.stream_get_status,
-    "stream_from_script": streams.stream_from_script,
-    "stream_from_api": streams.stream_from_api,
-    "stream_from_llm": streams.stream_from_llm,
-
-    # FFmpeg
-    "ffmpeg_status": ffmpeg.ffmpeg_status,
-    "ffmpeg_setup": ffmpeg.ffmpeg_setup,
-    "ffmpeg_run": ffmpeg.ffmpeg_run,
-    "ffmpeg_convert_media": ffmpeg.ffmpeg_convert_media,
-    "ffmpeg_extract_audio": ffmpeg.ffmpeg_extract_audio,
-    "ffmpeg_trim_media": ffmpeg.ffmpeg_trim_media,
-    "ffmpeg_probe_media": ffmpeg.ffmpeg_probe_media,
-    "ffmpeg_extract_frames": ffmpeg.ffmpeg_extract_frames,
-})
+_HANDLERS.update(
+    {
+        # File Index & Search
+        "file_index_add_root": file_scanner.add_index_root,
+        "file_index_remove_root": file_scanner.remove_index_root,
+        "file_index_list_roots": file_scanner.list_index_roots,
+        "file_index_scan": file_scanner.scan_index_root,
+        "file_index_get_pending": file_scanner.get_pending_files,
+        "file_index_stats": file_scanner.get_index_stats,
+        "file_index_update": file_scanner.update_file_index_data,
+        "file_index_mark_error": file_scanner.mark_file_error,
+        "file_index_purge_deleted": file_scanner.purge_deleted,
+        "file_search": file_search.search_files,
+        "file_search_by_filename": file_search.search_by_filename,
+        "file_search_by_extension": file_search.search_by_extension,
+        "file_search_by_kind": file_search.search_by_kind,
+        "file_search_recent": file_search.get_recent_files,
+        "file_search_details": file_search.get_file_details,
+        "file_search_folder": file_search.get_folder_contents,
+        "file_search_similar": file_search.find_similar_files,
+        # Sub-agents
+        "subagent_spawn": subagents.subagent_spawn,
+        "subagent_status": subagents.subagent_status,
+        "subagent_list": subagents.subagent_list,
+        "subagent_update": subagents.subagent_update,
+        "subagent_steer": subagents.subagent_steer,
+        "subagent_consume_steers": subagents.subagent_consume_steers,
+        # Math
+        "math_add": math_ops.math_add,
+        "math_subtract": math_ops.math_subtract,
+        "math_multiply": math_ops.math_multiply,
+        "math_divide": math_ops.math_divide,
+        "math_power": math_ops.math_power,
+        "math_sqrt": math_ops.math_sqrt,
+        "math_abs": math_ops.math_abs,
+        "math_negate": math_ops.math_negate,
+        "math_exp": math_ops.math_exp,
+        "math_log": math_ops.math_log,
+        "math_sum": math_ops.math_sum,
+        "math_mean": math_ops.math_mean,
+        "math_max": math_ops.math_max,
+        "math_min": math_ops.math_min,
+        "math_argmax": math_ops.math_argmax,
+        "math_argmin": math_ops.math_argmin,
+        "math_dot": math_ops.math_dot,
+        "math_transpose": math_ops.math_transpose,
+        "math_reshape": math_ops.math_reshape,
+        "math_shape": math_ops.math_shape,
+        "math_flatten": math_ops.math_flatten,
+        "math_zeros": math_ops.math_zeros,
+        "math_ones": math_ops.math_ones,
+        "math_random": math_ops.math_random,
+        "math_range": math_ops.math_range,
+        "math_linspace": math_ops.math_linspace,
+        "math_sigmoid": math_ops.math_sigmoid,
+        "math_relu": math_ops.math_relu,
+        "math_leaky_relu": math_ops.math_leaky_relu,
+        "math_tanh": math_ops.math_tanh,
+        "math_softmax": math_ops.math_softmax,
+        "math_gelu": math_ops.math_gelu,
+        "math_swish": math_ops.math_swish,
+        "math_linear": math_ops.math_linear,
+        "math_forward_pass": math_ops.math_forward_pass,
+        "math_cross_entropy_loss": math_ops.math_cross_entropy_loss,
+        "math_mse_loss": math_ops.math_mse_loss,
+        "math_compare": math_ops.math_compare,
+        "math_clip": math_ops.math_clip,
+        "math_where": math_ops.math_where,
+        "math_concat": math_ops.math_concat,
+        "math_stack": math_ops.math_stack,
+        "math_slice": math_ops.math_slice,
+        "math_get_index": math_ops.math_get_index,
+        "math_set_index": math_ops.math_set_index,
+        # Folder Permissions
+        "folder_permission_add": folder_limiter.folder_permission_add,
+        "folder_permission_remove": folder_limiter.folder_permission_remove,
+        "folder_permission_list": folder_limiter.folder_permission_list,
+        "folder_permission_set_enabled": folder_limiter.folder_permission_set_enabled,
+        "folder_permission_check": folder_limiter.folder_permission_check,
+        # Database
+        "db_query": database.db_query,
+        "db_store": database.db_store,
+        "db_retrieve": database.db_retrieve,
+        "db_search": database.db_search,
+        "db_delete": database.db_delete,
+        "db_list_tables": database.db_list_tables,
+        # HTTP
+        "http_request": http.http_request,
+        # Streaming
+        "stream_create": streams.stream_create,
+        "stream_write": streams.stream_write,
+        "stream_read": streams.stream_read,
+        "stream_close": streams.stream_close,
+        "stream_subscribe": streams.stream_subscribe,
+        "stream_unsubscribe": streams.stream_unsubscribe,
+        "stream_add_transform": streams.stream_add_transform,
+        "stream_remove_transform": streams.stream_remove_transform,
+        "stream_update_transform": streams.stream_update_transform,
+        "stream_list": streams.stream_list,
+        "close_all_streams": streams.close_all_streams,
+        "stream_get_status": streams.stream_get_status,
+        "stream_from_script": streams.stream_from_script,
+        "stream_from_api": streams.stream_from_api,
+        "stream_from_llm": streams.stream_from_llm,
+        # FFmpeg
+        "ffmpeg_status": ffmpeg.ffmpeg_status,
+        "ffmpeg_setup": ffmpeg.ffmpeg_setup,
+        "ffmpeg_run": ffmpeg.ffmpeg_run,
+        "ffmpeg_convert_media": ffmpeg.ffmpeg_convert_media,
+        "ffmpeg_extract_audio": ffmpeg.ffmpeg_extract_audio,
+        "ffmpeg_trim_media": ffmpeg.ffmpeg_trim_media,
+        "ffmpeg_probe_media": ffmpeg.ffmpeg_probe_media,
+        "ffmpeg_extract_frames": ffmpeg.ffmpeg_extract_frames,
+    }
+)
 
 # Register desktop-only stubs
 for _tool_name in _DESKTOP_ONLY_STUBS:
     _HANDLERS[_tool_name] = _stub_handler
     if _tool_name not in _TOOL_METADATA:
-        _TOOL_METADATA[_tool_name] = ("desktop_only", f"{_tool_name} (not available on VM)")
+        _TOOL_METADATA[_tool_name] = (
+            "desktop_only",
+            f"{_tool_name} (not available on VM)",
+        )
 
 
 # ── Tool discovery handlers ──────────────────────────────────────────────────
+
 
 async def _list_tools_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     category = args.get("category")
     return list_tools(category)
 
+
 async def _get_tool_info_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     tool_name = args.get("name") or args.get("tool_name") or ""
     return get_tool_info(tool_name)
 
+
 async def _list_tool_categories_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     return get_all_categories()
+
 
 _HANDLERS["list_tools"] = _list_tools_handler
 _HANDLERS["get_tool_info"] = _get_tool_info_handler
@@ -1228,22 +1478,53 @@ _TOOL_METADATA["list_tool_categories"] = ("core", "List tool categories")
 # Tools that accept an emit callback for progress events (same list as desktop dispatch)
 _EMIT_TOOLS = {
     "run_command",
-    "python_install", "run_python_script", "run_node_script",
-    "data_analysis_setup", "data_load", "describe_data", "correlate_data",
-    "plot_line", "plot_bar", "plot_scatter", "plot_hist", "plot_pie", "plot_heatmap", "plot_box",
+    "python_install",
+    "run_python_script",
+    "run_node_script",
+    "data_analysis_setup",
+    "data_load",
+    "describe_data",
+    "correlate_data",
+    "plot_line",
+    "plot_bar",
+    "plot_scatter",
+    "plot_hist",
+    "plot_pie",
+    "plot_heatmap",
+    "plot_box",
     "run_data_python",
     "task_reminders",
-    "ffmpeg_setup", "ffmpeg_run", "ffmpeg_convert_media", "ffmpeg_extract_audio",
-    "ffmpeg_trim_media", "ffmpeg_probe_media", "ffmpeg_extract_frames",
-    "stream_create", "stream_write", "stream_read", "stream_close",
-    "stream_subscribe", "stream_unsubscribe", "stream_add_transform",
-    "stream_remove_transform", "stream_update_transform", "stream_list",
-    "stream_get_status", "stream_from_script", "stream_from_api", "stream_from_llm",
-    "agent_todo", "show_json_workflow_code",
+    "ffmpeg_setup",
+    "ffmpeg_run",
+    "ffmpeg_convert_media",
+    "ffmpeg_extract_audio",
+    "ffmpeg_trim_media",
+    "ffmpeg_probe_media",
+    "ffmpeg_extract_frames",
+    "stream_create",
+    "stream_write",
+    "stream_read",
+    "stream_close",
+    "stream_subscribe",
+    "stream_unsubscribe",
+    "stream_add_transform",
+    "stream_remove_transform",
+    "stream_update_transform",
+    "stream_list",
+    "stream_get_status",
+    "stream_from_script",
+    "stream_from_api",
+    "stream_from_llm",
+    "agent_todo",
+    "show_json_workflow_code",
 }
 
 
-async def execute(tool: str, args: Dict[str, Any], emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None) -> Dict[str, Any]:
+async def execute(
+    tool: str,
+    args: Dict[str, Any],
+    emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
+) -> Dict[str, Any]:
     handler = _HANDLERS.get(tool)
     if handler is None:
         return {"ok": False, "error": "unknown_tool"}
@@ -1263,7 +1544,14 @@ def list_tools(category: str | None = None) -> Dict[str, Any]:
             continue
         # Mark desktop-only stubs
         kind = "stub" if name in _DESKTOP_ONLY_STUBS else "local"
-        tools.append({"name": name, "category": tool_category, "description": description, "kind": kind})
+        tools.append(
+            {
+                "name": name,
+                "category": tool_category,
+                "description": description,
+                "kind": kind,
+            }
+        )
     tools.sort(key=lambda t: (t["category"], t["name"]))
     return {"ok": True, "count": len(tools), "tools": tools, "mode": "vm"}
 
@@ -1273,8 +1561,14 @@ def get_tool_info(tool_name: str) -> Dict[str, Any]:
         return {"ok": False, "error": f"Tool '{tool_name}' not found"}
     meta = _TOOL_METADATA.get(tool_name, ("other", tool_name.replace("_", " ").title()))
     category, description = meta
-    return {"ok": True, "name": tool_name, "category": category, "description": description,
-            "kind": "stub" if tool_name in _DESKTOP_ONLY_STUBS else "local", "available": tool_name not in _DESKTOP_ONLY_STUBS}
+    return {
+        "ok": True,
+        "name": tool_name,
+        "category": category,
+        "description": description,
+        "kind": "stub" if tool_name in _DESKTOP_ONLY_STUBS else "local",
+        "available": tool_name not in _DESKTOP_ONLY_STUBS,
+    }
 
 
 def get_all_categories() -> Dict[str, Any]:
@@ -1282,4 +1576,9 @@ def get_all_categories() -> Dict[str, Any]:
     for name in _HANDLERS.keys():
         meta = _TOOL_METADATA.get(name, ("other", ""))
         category_counts[meta[0]] = category_counts.get(meta[0], 0) + 1
-    return {"ok": True, "categories": [{"id": c, "count": n} for c, n in sorted(category_counts.items())]}
+    return {
+        "ok": True,
+        "categories": [
+            {"id": c, "count": n} for c, n in sorted(category_counts.items())
+        ],
+    }

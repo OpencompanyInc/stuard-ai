@@ -31,7 +31,7 @@ describe('isBackEdge', () => {
     const wires: DesignerWire[] = [
       { from: 'a', to: 'b' },
       { from: 'b', to: 'c' },
-      { from: 'c', to: 'a', loop: { type: 'while', conditionText: '{{done}}' } },
+      { from: 'c', to: 'a', loop: { type: 'while', condition: { '==': [1, 1] } } },
     ];
 
     expect(isBackEdge('a', 'b', wires)).toBe(false);

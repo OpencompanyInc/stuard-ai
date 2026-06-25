@@ -9,6 +9,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { describeTool } from '../components/voice/voiceLabels';
+import {
+  publishLiveSessionFeedback,
+  type LiveSessionConfig,
+  type LiveSessionFeedback,
+} from '../lib/liveSessionBus';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -20,6 +25,13 @@ export interface TranscriptLine {
   text: string;
   isFinal: boolean;
   timestamp: number;
+}
+
+function formatSessionTranscript(lines: TranscriptLine[]): string {
+  return lines
+    .filter((l) => l.text.trim())
+    .map((l) => `${l.role === 'user' ? 'User' : 'Assistant'}: ${l.text.trim()}`)
+    .join('\n\n');
 }
 
 export interface VoiceToolEvent {
@@ -66,8 +78,8 @@ export interface VoiceModeReturn {
   sharingScreen: boolean;
   /** Toggle screen-share. Only works on providers that accept video frames (Gemini Live). */
   toggleScreenShare: () => void;
-  /** Start a voice session */
-  start: () => Promise<void>;
+  /** Start a voice session. Pass overrides to attach knowledge packs / persona for this session. */
+  start: (overrides?: LiveSessionConfig) => Promise<void>;
   /** End the voice session */
   stop: () => void;
   /** Toggle mic mute */
@@ -232,6 +244,15 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
 
   // Refs for mutable session state
   const wsRef = useRef<WebSocket | null>(null);
+  const sessionOverridesRef = useRef<LiveSessionConfig | null>(null);
+  // Guards against double-publishing the live-session wrap-up (the model could
+  // call end_live_session more than once before the session actually closes).
+  const feedbackSentRef = useRef(false);
+  const pendingSessionFeedbackRef = useRef<LiveSessionFeedback | null>(null);
+  const sessionEndNotifiedRef = useRef(false);
+  const sessionTranscriptsRef = useRef<TranscriptLine[]>([]);
+  const sessionIdRef = useRef<string>('');
+  const workflowIdRef = useRef<string>('');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playerRef = useRef<AudioChunkPlayer | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -294,7 +315,37 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     setSharingScreen(false);
   }, []);
 
+  const notifyLiveSessionEndOnce = useCallback(() => {
+    if (sessionEndNotifiedRef.current) return;
+    sessionEndNotifiedRef.current = true;
+    const fb = pendingSessionFeedbackRef.current;
+    const lines = sessionTranscriptsRef.current;
+    const transcript = formatSessionTranscript(lines);
+    try {
+      (window as any).desktopAPI?.notifyLiveSessionEnded?.({
+        sessionId: sessionIdRef.current || undefined,
+        workflowId: workflowIdRef.current || undefined,
+        structured: Boolean(fb?.summary?.trim()),
+        summary: fb?.summary || '',
+        outcome: fb?.outcome || '',
+        highlights: fb?.highlights || [],
+        followUps: fb?.followUps || [],
+        transcript,
+        transcripts: lines.map((l) => ({
+          role: l.role,
+          text: l.text,
+          timestamp: l.timestamp,
+        })),
+      });
+    } catch { /* workflow trigger must not block voice teardown */ }
+    pendingSessionFeedbackRef.current = null;
+    sessionTranscriptsRef.current = [];
+  }, []);
+
   const cleanup = useCallback(() => {
+    if (stateRef.current !== 'idle') {
+      notifyLiveSessionEndOnce();
+    }
     stopMic();
     stopLevelMeter();
     stopScreenShare();
@@ -318,7 +369,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
     }
     smoothedInputLevel.current = 0;
     smoothedOutputLevel.current = 0;
-  }, [stopMic, stopLevelMeter, stopScreenShare]);
+  }, [stopMic, stopLevelMeter, stopScreenShare, notifyLiveSessionEndOnce]);
 
   // ─── Audio level metering loop ─────────────────────────────────────────
 
@@ -393,9 +444,20 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
 
   // ─── Start voice session ───────────────────────────────────────────────
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (overrides?: LiveSessionConfig) => {
     if (wsRef.current) return;
 
+    // Per-session overrides (knowledge packs, persona, initial line) are read by
+    // the `config` handshake below. Stored in a ref so the ws.onmessage closure
+    // sees the latest value without re-creating this callback.
+    sessionOverridesRef.current = overrides || null;
+    feedbackSentRef.current = false;
+    pendingSessionFeedbackRef.current = null;
+    sessionEndNotifiedRef.current = false;
+    sessionTranscriptsRef.current = [];
+    sessionIdRef.current = String(overrides?.sessionId || '').trim()
+      || `ls_voice_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    workflowIdRef.current = String(overrides?.workflowId || '').trim();
     setError(null);
     setTranscripts([]);
     setActiveTool(null);
@@ -445,12 +507,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
         const msg = JSON.parse(ev.data);
 
         if (msg.type === 'authenticated') {
+          const ov = sessionOverridesRef.current;
+          const packIds = ov?.knowledgePackIds
+            || (Array.isArray(ov?.knowledgePacks) ? ov!.knowledgePacks!.map((p) => p.id).filter(Boolean) : undefined);
           ws.send(JSON.stringify({
             type: 'config',
-            provider: options.provider || undefined,
+            provider: ov?.provider || options.provider || undefined,
             agentId: options.agentId || undefined,
-            systemPrompt: options.systemPrompt || undefined,
-            initialMessage: options.initialMessage || undefined,
+            systemPrompt: ov?.systemPrompt || options.systemPrompt || undefined,
+            initialMessage: ov?.initialMessage || options.initialMessage || undefined,
+            // Sandboxed RAG: attach knowledge packs so the live model gets a
+            // scoped query_knowledge_pack tool grounded in these sources.
+            knowledgePackIds: packIds && packIds.length ? packIds : undefined,
+            knowledgePacks: Array.isArray(ov?.knowledgePacks) && ov!.knowledgePacks!.length ? ov!.knowledgePacks : undefined,
           }));
         }
 
@@ -479,6 +548,16 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
             }
             return [...prev, line];
           });
+
+          if (msg.isFinal && String(msg.text || '').trim()) {
+            sessionTranscriptsRef.current.push({
+              id: line.id,
+              role: msg.role,
+              text: String(msg.text).trim(),
+              isFinal: true,
+              timestamp: line.timestamp,
+            });
+          }
 
           // Update state based on who is speaking
           if (msg.role === 'user') {
@@ -538,6 +617,20 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeReturn {
             else setActiveTool(curr[curr.length - 1].name);
             return curr;
           });
+        }
+
+        if (msg.type === 'session_feedback') {
+          // A structured session ended via end_live_session — hand the model's
+          // wrap-up to the chat side (useAgent) so it injects a silent turn.
+          // Publish before the session_ended teardown that follows.
+          if (!feedbackSentRef.current && msg.feedback && typeof msg.feedback === 'object') {
+            feedbackSentRef.current = true;
+            const fb = msg.feedback as LiveSessionFeedback;
+            if (fb.summary && fb.summary.trim()) {
+              pendingSessionFeedbackRef.current = fb;
+              publishLiveSessionFeedback(fb);
+            }
+          }
         }
 
         if (msg.type === 'session_ended') {

@@ -26,6 +26,7 @@ export const TRIGGER_ITEMS: PaletteItem[] = [
   { k: 'trigger', t: 'schedule.cron', label: 'Schedule', args: { cron: '*/5 * * * *' } },
   { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', args: { path: '', pattern: '*.*', recursive: true } },
   { k: 'trigger', t: 'clipboard.change', label: 'On Clipboard Change', args: { types: [], pollMs: 600 } },
+  { k: 'trigger', t: 'live.session.end', label: 'On Live Session End', args: { match: 'own', sessionId: '' } },
   { k: 'trigger', t: 'command.watch', label: 'Custom Script (watch)', args: { cmd: 'python', args: ['script.py'] } },
 ];
 
@@ -231,6 +232,7 @@ export const CLOUD_TOOL_ITEMS: PaletteItem[] = [
   { k: 'cloud.tool', t: 'get_tts_models', label: 'Get TTS Models', args: {} },
   { k: 'cloud.tool', t: 'elevenlabs_list_agents', label: 'List Live Agents', args: { search: '', archived: false, show_only_owned_agents: true, page_size: 20 } },
   { k: 'cloud.tool', t: 'elevenlabs_get_signed_conversation_url', label: 'Get Live Session URL', args: { agent_id: '', include_conversation_id: true, branch_id: '' } },
+  { k: 'local.tool', t: 'start_live_session', label: 'Start Live Voice Session', args: { sessionId: '', knowledgePackIds: [], persona: '', initialMessage: '', provider: '' } },
   { k: 'cloud.tool', t: 'elevenlabs_get_webrtc_token', label: 'Get WebRTC Token', args: { agent_id: '', participant_name: '', branch_id: '' } },
   { k: 'cloud.tool', t: 'elevenlabs_list_conversations', label: 'List Voice Sessions', args: { agent_id: '', search: '', branch_id: '', page_size: 20 } },
 ];
@@ -276,6 +278,18 @@ export const BROWSER_USE_ITEMS: PaletteItem[] = [
   { k: 'local.tool', t: 'browser_use_configure', label: 'Configure Browser', args: { mode: 'headed' } },
   { k: 'local.tool', t: 'browser_use_sync_chrome', label: 'Sync Chrome Cookies', args: {} },
   { k: 'local.tool', t: 'browser_use_list_chrome_profiles', label: 'List Chrome Profiles', args: {} },
+];
+
+export const BROWSER_EXT_ITEMS: PaletteItem[] = [
+  { k: 'local.tool', t: 'browser_ext_status', label: 'Extension Status', args: {} },
+  { k: 'local.tool', t: 'browser_ext_get_page', label: 'Read Current Tab', args: { max_chars: 12000 } },
+  { k: 'local.tool', t: 'browser_ext_extract', label: 'Extract from Page', args: { spec: { selector: '', fields: { text: 'innerText' }, limit: 50 } } },
+  { k: 'local.tool', t: 'browser_ext_run_script', label: 'Run Script in Tab', args: { script: 'return document.title;' } },
+  { k: 'local.tool', t: 'browser_ext_tabs', label: 'Manage My Tabs', args: { action: 'list' } },
+  { k: 'local.tool', t: 'browser_ext_capture_screenshot', label: 'Screenshot Tab', args: { format: 'jpeg' } },
+  { k: 'local.tool', t: 'browser_ext_service_run', label: 'Run Saved Script', args: { name: 'study-mode' } },
+  { k: 'local.tool', t: 'browser_ext_service_list', label: 'List Saved Scripts', args: {} },
+  { k: 'local.tool', t: 'browser_ext_service_save', label: 'Save Script', args: { name: '', action: 'tabs', payload: { action: 'group' } } },
 ];
 
 // Streaming — Debug / inspection only (streaming is via `stream: true` toggle on AI/HTTP/Script tools)

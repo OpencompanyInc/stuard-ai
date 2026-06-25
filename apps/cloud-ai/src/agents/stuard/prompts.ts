@@ -1,21 +1,24 @@
-import os from 'node:os';
-import { getToolRegistry, getToolCategories } from '../../tools/tool-registry';
-import { initToolRegistry } from '../../tools/meta-tools';
-import { buildAvailableSkillsPromptSection, type SkillSummary } from '../../tools/skill-tools';
+import os from "node:os";
+import { getToolRegistry, getToolCategories } from "../../tools/tool-registry";
+import { initToolRegistry } from "../../tools/meta-tools";
+import {
+  buildAvailableSkillsPromptSection,
+  type SkillSummary,
+} from "../../tools/skill-tools";
 import {
   DISCORD_INTEGRATION_ENABLED,
   META_INTEGRATION_ENABLED,
   OUTLOOK_INTEGRATION_ENABLED,
   REDDIT_INTEGRATION_ENABLED,
   WHATSAPP_INTEGRATION_ENABLED,
-} from '../../../../../shared/integration-flags';
+} from "../../../../../shared/integration-flags";
 
 // Ensure the tool registry is populated
 initToolRegistry();
 
 const DEFAULT_USER_HOME_DIR = (() => {
   const envHome = process.env.USERPROFILE || os.homedir();
-  return envHome.replace(/\\/g, '/');
+  return envHome.replace(/\\/g, "/");
 })();
 
 /**
@@ -27,14 +30,16 @@ const DEFAULT_USER_HOME_DIR = (() => {
 export function buildToolCatalog(): string {
   const categories = getToolCategories();
   const registry = getToolRegistry();
-  
-  if (categories.size === 0 || registry.size === 0) return '';
+
+  if (categories.size === 0 || registry.size === 0) return "";
 
   const lines: string[] = [];
-  
+
   // Sort categories for consistency
-  const sortedCats = Array.from(categories.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  
+  const sortedCats = Array.from(categories.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0]),
+  );
+
   for (const [cat, toolNames] of sortedCats) {
     if (toolNames.length === 0) continue;
     const entries: string[] = [];
@@ -42,15 +47,15 @@ export function buildToolCatalog(): string {
       const tool = registry.get(name);
       if (!tool) continue;
       // Truncate description to save tokens
-      const desc = (tool.description || '').split('\n')[0].slice(0, 80).trim();
-      entries.push(`${name}${desc ? ' — ' + desc : ''}`);
+      const desc = (tool.description || "").split("\n")[0].slice(0, 80).trim();
+      entries.push(`${name}${desc ? " — " + desc : ""}`);
     }
     if (entries.length > 0) {
-      lines.push(`[${cat}] ${entries.join(' | ')}`);
+      lines.push(`[${cat}] ${entries.join(" | ")}`);
     }
   }
-  
-  return lines.join('\n');
+
+  return lines.join("\n");
 }
 
 export const SYSTEM_INSTRUCTIONS = `You are Stuard — a proactive, warm AI assistant. Complete requests end-to-end. Be a thoughtful friend.
@@ -194,10 +199,18 @@ export interface ProjectFileHitPayload {
   snippet?: string | null;
 }
 
+export interface ProjectDocumentHitPayload {
+  source?: string | null;
+  text?: string | null;
+  score?: number | null;
+  ordinal?: number | null;
+}
+
 export interface ProjectRetrievedContextPayload {
   query: string;
   memories?: ProjectMemoryHitPayload[];
   files?: ProjectFileHitPayload[];
+  documents?: ProjectDocumentHitPayload[];
 }
 
 export interface JournalEntryPayload {
@@ -207,16 +220,18 @@ export interface JournalEntryPayload {
   body?: string | null;
 }
 
-export function buildConversationBlock(conversationId: string | null | undefined): string {
-  const id = String(conversationId || '').trim();
-  if (!id) return '';
+export function buildConversationBlock(
+  conversationId: string | null | undefined,
+): string {
+  const id = String(conversationId || "").trim();
+  if (!id) return "";
   return [
-    '',
-    '<conversation>',
+    "",
+    "<conversation>",
     `conversation_id: ${id}`,
-    'Pass this exact value as `conversation_id` to enter_project_mode and exit_project_mode.',
-    '</conversation>',
-  ].join('\n');
+    "Pass this exact value as `conversation_id` to enter_project_mode and exit_project_mode.",
+    "</conversation>",
+  ].join("\n");
 }
 
 /**
@@ -229,49 +244,60 @@ export function buildProjectContextBlock(
   retrievedContext?: ProjectRetrievedContextPayload | null,
 ): string {
   const lines: string[] = [];
-  const icon = project.icon || '📁';
-  lines.push('');
-  lines.push('── ACTIVE PROJECT ──');
-  lines.push(`${icon} **${project.name}**${project.status ? `  (${project.status})` : ''}`);
+  const icon = project.icon || "📁";
+  lines.push("");
+  lines.push("── ACTIVE PROJECT ──");
+  lines.push(
+    `${icon} **${project.name}**${project.status ? `  (${project.status})` : ""}`,
+  );
   lines.push(`project_id: ${project.id}`);
   if (project.description) lines.push(`Description: ${project.description}`);
   if (project.goals) lines.push(`Goals: ${project.goals}`);
   if (project.instructions) {
-    lines.push('');
-    lines.push('Project instructions:');
+    lines.push("");
+    lines.push("Project instructions:");
     lines.push(project.instructions);
   }
   if (project.tags && project.tags.length > 0) {
-    lines.push(`Tags: ${project.tags.join(', ')}`);
+    lines.push(`Tags: ${project.tags.join(", ")}`);
   }
   if (project.pinned_paths && project.pinned_paths.length > 0) {
-    lines.push('Attached context files/folders:');
+    lines.push("Attached context files/folders:");
     for (const path of project.pinned_paths.slice(0, 10)) {
       lines.push(`  - ${path}`);
     }
   }
   if (project.digest) {
-    lines.push('');
-    lines.push('Project digest:');
+    lines.push("");
+    lines.push("Project digest:");
     lines.push(project.digest);
   }
 
   const notion = (project.settings as any)?.notion;
   if (notion && (notion.page_id || notion.database_id)) {
-    const direction = notion.push_enabled ? 'two-way (pull + push journal)' : 'pull only';
-    lines.push(`Notion sync: linked (${direction}). Linked Notion content appears as Notes tagged "notion"; don't re-save it manually.`);
+    const direction = notion.push_enabled
+      ? "two-way (pull + push journal)"
+      : "pull only";
+    lines.push(
+      `Notion sync: linked (${direction}). Linked Notion content appears as Notes tagged "notion"; don't re-save it manually.`,
+    );
   }
 
   if (recentJournal.length > 0) {
-    lines.push('');
+    lines.push("");
     lines.push(`Recent journal (last ${recentJournal.length}):`);
     for (const entry of recentJournal.slice(0, 5)) {
       const date = formatJournalTs(entry.ts);
-      const title = String(entry.title || '').trim();
-      const type = String(entry.type || 'note');
+      const title = String(entry.title || "").trim();
+      const type = String(entry.type || "note");
       lines.push(`  • [${date}] ${type}: ${title}`);
       if (entry.body) {
-        const body = String(entry.body).trim().split(/\r?\n/).slice(0, 3).join(' ').slice(0, 200);
+        const body = String(entry.body)
+          .trim()
+          .split(/\r?\n/)
+          .slice(0, 3)
+          .join(" ")
+          .slice(0, 200);
         if (body) lines.push(`    ${body}`);
       }
     }
@@ -279,91 +305,127 @@ export function buildProjectContextBlock(
 
   const memoryHits = retrievedContext?.memories || [];
   const fileHits = retrievedContext?.files || [];
-  if (memoryHits.length > 0 || fileHits.length > 0) {
-    lines.push('');
-    lines.push('Relevant project context for this query:');
+  const documentHits = retrievedContext?.documents || [];
+  if (memoryHits.length > 0 || fileHits.length > 0 || documentHits.length > 0) {
+    lines.push("");
+    lines.push("Relevant project context for this query:");
     if (memoryHits.length > 0) {
-      lines.push('  Notes:');
+      lines.push("  Notes:");
       for (const hit of memoryHits.slice(0, 5)) {
-        const title = String(hit.title || hit.type || 'Project note').trim();
-        const score = typeof hit.score === 'number' ? ` score=${hit.score.toFixed(3)}` : '';
-        const content = String(hit.content || '').trim().replace(/\s+/g, ' ').slice(0, 360);
-        lines.push(`    - ${title}${score}${hit.url ? ` (${hit.url})` : ''}`);
+        const title = String(hit.title || hit.type || "Project note").trim();
+        const score =
+          typeof hit.score === "number" ? ` score=${hit.score.toFixed(3)}` : "";
+        const content = String(hit.content || "")
+          .trim()
+          .replace(/\s+/g, " ")
+          .slice(0, 360);
+        lines.push(`    - ${title}${score}${hit.url ? ` (${hit.url})` : ""}`);
         if (content) lines.push(`      ${content}`);
       }
     }
+    if (documentHits.length > 0) {
+      lines.push("  Document passages:");
+      for (const hit of documentHits.slice(0, 5)) {
+        const source = String(hit.source || "Attached document").trim();
+        const score =
+          typeof hit.score === "number" ? ` score=${hit.score.toFixed(3)}` : "";
+        const text = String(hit.text || "")
+          .trim()
+          .replace(/\s+/g, " ")
+          .slice(0, 700);
+        lines.push(`    - ${source}${score}`);
+        if (text) lines.push(`      ${text}`);
+      }
+    }
     if (fileHits.length > 0) {
-      lines.push('  Files:');
+      lines.push("  Files:");
       for (const hit of fileHits.slice(0, 5)) {
-        const label = String(hit.path || hit.name || 'Project file').trim();
-        const score = typeof hit.score === 'number' ? ` score=${hit.score.toFixed(3)}` : '';
-        const kind = hit.kind ? ` kind=${hit.kind}` : '';
-        const snippet = String(hit.snippet || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+        const label = String(hit.path || hit.name || "Project file").trim();
+        const score =
+          typeof hit.score === "number" ? ` score=${hit.score.toFixed(3)}` : "";
+        const kind = hit.kind ? ` kind=${hit.kind}` : "";
+        const snippet = String(hit.snippet || "")
+          .trim()
+          .replace(/\s+/g, " ")
+          .slice(0, 300);
         lines.push(`    - ${label}${score}${kind}`);
         if (snippet) lines.push(`      ${snippet}`);
       }
     }
   }
 
-  lines.push('── END ACTIVE PROJECT ──');
-  return lines.join('\n');
+  lines.push("── END ACTIVE PROJECT ──");
+  return lines.join("\n");
 }
 
 function formatJournalTs(ts: string): string {
   try {
     const date = new Date(ts);
     if (!isNaN(date.getTime())) {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
     }
-  } catch { }
-  return String(ts || '').slice(0, 10);
+  } catch {}
+  return String(ts || "").slice(0, 10);
 }
 
 /** One-line hints for orchestrator category selection before search_tools. */
 const ORCHESTRATOR_CATEGORY_HINTS: Record<string, string> = {
-  Maps: 'nearest places, drive time/ETA, hours/phone/website — maps_search_places, maps_distance_matrix, maps_place_details, maps_static_map',
-  Search: 'web research — web_search, scrape_url',
-  System: 'brightness, volume, Bluetooth, battery, power, wallpaper',
-  Desktop: 'window focus, move, resize',
-  GUI: 'UI overlays, notifications, custom chat UI',
-  Media: 'convert/trim/probe audio & video, extract frames, TTS, generate images & music',
-  Google: 'Gmail, Calendar, Drive, Sheets, Docs, Tasks',
-  Outlook: 'Outlook mail & calendar',
-  GitHub: 'repos, issues, PRs, branches, actions',
-  X: 'tweets, timelines, users, DMs',
-  Discord: 'Discord bot operations',
-  Reddit: 'subreddits, posts, comments',
-  Telnyx: 'SMS, voice calls',
-  WhatsApp: 'WhatsApp messaging',
-  MetaSocial: 'Facebook, Instagram, Threads',
-  Productivity: 'tasks, reminders, to-dos',
-  FileSystem: 'read/write/list files, file edits',
-  FileSearch: 'semantic file search',
-  VM: 'cloud VM file transfers, commands, headless browser',
-  Workflow: 'workflow nodes and automation primitives',
-  AI: 'image generation, media analysis, inference',
-  Research: 'deep research mode tools',
-  Memory: 'long-term memory read/write',
-  Projects: 'project CRUD, journal, scoped memory',
-  Knowledge: 'knowledge base operations',
-  Integrations: 'HTTP requests, generic API calls',
-  YouTube: 'video metadata',
-  Notion: 'Notion pages and databases',
+  Maps: "nearest places, drive time/ETA, hours/phone/website — maps_search_places, maps_distance_matrix, maps_place_details, maps_static_map",
+  Search: "web research — web_search, scrape_url",
+  System: "brightness, volume, Bluetooth, battery, power, wallpaper",
+  Desktop: "window focus, move, resize",
+  GUI: "UI overlays, notifications, custom chat UI",
+  Media:
+    "convert/trim/probe audio & video, extract frames, TTS, generate images & music",
+  Google: "Gmail, Calendar, Drive, Sheets, Docs, Tasks",
+  Outlook: "Outlook mail & calendar",
+  GitHub: "repos, issues, PRs, branches, actions",
+  X: "tweets, timelines, users, DMs",
+  Discord: "Discord bot operations",
+  Reddit: "subreddits, posts, comments",
+  Telnyx: "SMS, voice calls",
+  WhatsApp: "WhatsApp messaging",
+  MetaSocial: "Facebook, Instagram, Threads",
+  Productivity: "tasks, reminders, to-dos",
+  FileSystem: "read/write/list files, file edits",
+  FileSearch: "semantic file search",
+  VM: "cloud VM file transfers, commands, headless browser",
+  Workflow: "workflow nodes and automation primitives",
+  AI: "image generation, media analysis, inference",
+  Research: "deep research mode tools",
+  Memory: "long-term memory read/write",
+  Projects: "project CRUD, journal, scoped memory",
+  Knowledge: "knowledge base operations",
+  Integrations: "HTTP requests, generic API calls",
+  YouTube: "video metadata",
+  Notion: "Notion pages and databases",
 };
 
 /**
  * Tool-database guidance for the orchestrator. Maps live in the registry —
  * not loaded natively — so the model picks the right category before searching.
  */
-export function buildOrchestratorToolDatabaseSection(): string {
+export function buildOrchestratorToolDatabaseSection(
+  opts: { excludeCategories?: string[] } = {},
+): string {
+  const excluded = new Set(opts.excludeCategories || []);
   const categories = getToolCategories();
-  const sortedCats = Array.from(categories.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const sortedCats = Array.from(categories.entries())
+    .filter(([cat]) => !excluded.has(cat))
+    .sort((a, b) => a[0].localeCompare(b[0]));
 
-  const categoryLines = sortedCats.map(([cat, tools]) => {
-    const hint = ORCHESTRATOR_CATEGORY_HINTS[cat];
-    const count = tools.length;
-    return hint ? `- **${cat}** (${count}) — ${hint}` : `- **${cat}** (${count})`;
-  }).join('\n');
+  const categoryLines = sortedCats
+    .map(([cat, tools]) => {
+      const hint = ORCHESTRATOR_CATEGORY_HINTS[cat];
+      const count = tools.length;
+      return hint
+        ? `- **${cat}** (${count}) — ${hint}`
+        : `- **${cat}** (${count})`;
+    })
+    .join("\n");
 
   return `## Tool database — discover on demand
 
@@ -428,39 +490,62 @@ export function buildProjectModeSystemPrompt(
     retrievedContext?: ProjectRetrievedContextPayload | null;
     enabledIntegrations?: string[];
     skills?: SkillSummary[];
-    bots?: { id?: string; name?: string; kind?: 'bot' | 'agent'; status?: string }[];
+    bots?: {
+      id?: string;
+      name?: string;
+      kind?: "bot" | "agent";
+      status?: string;
+    }[];
     homeDir?: string;
   } = {},
 ): string {
-  const now = new Date().toLocaleString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  const now = new Date().toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
   const homeDir = options.homeDir || DEFAULT_USER_HOME_DIR;
   const integrations = options.enabledIntegrations || [];
-  const integrationLine = integrations.length > 0
-    ? `\nConnected integrations: ${integrations.join(', ')}`
-    : '';
+  const integrationLine =
+    integrations.length > 0
+      ? `\nConnected integrations: ${integrations.join(", ")}`
+      : "";
   const conversationBlock = buildConversationBlock(options.conversationId);
-  const projectBlock = '\n' + buildProjectContextBlock(
-    project,
-    options.recentJournal || [],
-    options.retrievedContext || null,
-  );
+  const projectBlock =
+    "\n" +
+    buildProjectContextBlock(
+      project,
+      options.recentJournal || [],
+      options.retrievedContext || null,
+    );
 
-  const skillsSection = options.skills && options.skills.length > 0
-    ? '\n\n' + buildAvailableSkillsPromptSection(options.skills)
-    : '';
-  const botSection = options.bots && options.bots.length > 0
-    ? '\n\nKnown configured agents/bots: ' + options.bots.map((b) => {
-        const kind = b.kind === 'agent' ? 'agent' : 'bot';
-        const id = b.id ? ` id=${b.id}` : '';
-        const status = b.status ? ` status=${b.status}` : '';
-        return `@${b.name || b.id || kind} (${kind}${id}${status})`;
-      }).join(', ')
-    : '';
+  const skillsSection =
+    options.skills && options.skills.length > 0
+      ? "\n\n" + buildAvailableSkillsPromptSection(options.skills)
+      : "";
+  const botSection =
+    options.bots && options.bots.length > 0
+      ? "\n\nKnown configured agents/bots: " +
+        options.bots
+          .map((b) => {
+            const kind = b.kind === "agent" ? "agent" : "bot";
+            const id = b.id ? ` id=${b.id}` : "";
+            const status = b.status ? ` status=${b.status}` : "";
+            return `@${b.name || b.id || kind} (${kind}${id}${status})`;
+          })
+          .join(", ")
+      : "";
 
-  const toolDatabaseSection = buildOrchestratorToolDatabaseSection();
+  // Project tools are already native in Project Mode, so don't advertise the
+  // "Projects" category in the discover-on-demand database — that's what nudged
+  // the model into wrapping pin_file/journal_add in search_tools/execute_tool.
+  const toolDatabaseSection = buildOrchestratorToolDatabaseSection({
+    excludeCategories: ["Projects"],
+  });
 
   return `You are Stuard in **Project Mode**, working inside the user's project "${project.name}". The project's timeline, notes, tasks, and attached files are all within reach — use them so every session picks up exactly where the last one ended.
 
@@ -476,7 +561,7 @@ Project Mode is **active**. Treat messages as project-scoped unless the user cle
 | **Timeline** | The project's story over time. Chat sessions are captured **automatically**; you add only high-signal events | \`journal_add\` |
 | **Tasks** | Open work items | \`task_crud\` |
 | **Notes** | Durable facts, snippets, links — anything to recall later | \`memory_add\` ← default for "save this" |
-| **Files** | Attached files/folders as searchable context | \`add_project_context\` / \`unpin_file\` |
+| **Files** | Attached files/folders; Stuard reads the right passages automatically | \`pin_file\` / \`add_project_context\` / \`unpin_file\` |
 
 ## Memory that works by itself
 
@@ -496,7 +581,7 @@ Title ≤ 80 chars, scannable; \`body\` carries the why; attach \`source_ref\` (
 
 Retrieval — search before guessing:
 - The "Relevant project context" block above was pre-fetched for this query. Use it first.
-- \`project_search({ project_id: "${project.id}", query })\` — semantic search over Notes + attached Files.
+- \`project_search({ project_id: "${project.id}", query })\` — semantic search over Notes + attached Files/document passages.
 - \`search_project_conversations({ conversation_id, query })\` — prior chats in this project ("what did we discuss last time").
 - \`journal_list\` for the timeline; \`search_past_conversations\` only for cross-project recall.
 
@@ -505,7 +590,7 @@ Retrieval — search before guessing:
 - **Goals are live**: when the user refines what success looks like, persist it via \`update_project({ project_id, goals })\`.
 - **Instructions are project law**: apply them every turn. When the user states a standing rule ("in this project, always…"), persist it via \`update_project({ project_id, instructions })\`.
 - **Tasks**: "I should do X" / "next step is…" → \`task_crud\` (pass \`conversation_id\` to auto-scope). \`task_reminders\` for scheduled check-ins.
-- **Files**: "add this folder/repo/docs as context" → \`add_project_context({ project_id, paths })\` (absolute paths; scans + embeds). \`unpin_file\` removes one.
+- **Files**: pin one file with \`pin_file({ project_id, path })\`; attach a folder/repo or several paths at once with \`add_project_context({ project_id, paths })\` (absolute paths). Stuard scans, indexes, and embeds them for search **automatically** — never hand-crank that with \`file_index_*\` / \`process_pending_*\` tools (they're internal). \`unpin_file\` removes one.
 - Outside info: \`web_search\`, \`scrape_url\`. Cite sources by saving the URL with \`memory_add\`.
 
 ## Delegation (only when needed)
@@ -520,9 +605,9 @@ For heavyweight execution, hand off via \`delegate\` (tasks array — multiple e
 | workflow | Authoring or editing StuardAI workflows |
 | ffmpeg | Audio/video processing |
 | vm | Cloud VM operations |
-| google${OUTLOOK_INTEGRATION_ENABLED ? ' / outlook' : ''} / github${META_INTEGRATION_ENABLED ? ' / meta' : ''}${WHATSAPP_INTEGRATION_ENABLED ? ' / whatsapp' : ''} / telnyx${REDDIT_INTEGRATION_ENABLED ? ' / reddit' : ''}${DISCORD_INTEGRATION_ENABLED ? ' / discord' : ''} / x | Connected integrations |
+| google${OUTLOOK_INTEGRATION_ENABLED ? " / outlook" : ""} / github${META_INTEGRATION_ENABLED ? " / meta" : ""}${WHATSAPP_INTEGRATION_ENABLED ? " / whatsapp" : ""} / telnyx${REDDIT_INTEGRATION_ENABLED ? " / reddit" : ""}${DISCORD_INTEGRATION_ENABLED ? " / discord" : ""} / x | Connected integrations |
 
-Default is **act yourself with the native tools above**. For specialized tools in the database, pick a category first — see below.
+Default is **act yourself with the native tools above** — your project tools (\`journal_add\`, \`memory_add\`, \`project_search\`, \`search_project_conversations\`, \`task_crud\`, \`task_reminders\`, \`pin_file\` / \`unpin_file\` / \`add_project_context\`, \`update_project\`) are already loaded; call them **directly by name**. Do **not** wrap them in \`search_tools\` / \`execute_tool\` — that path is only for specialized database capabilities you don't already have. For those, pick a category first — see below.
 
 ${toolDatabaseSection}
 
@@ -546,23 +631,31 @@ ${toolDatabaseSection}
 /**
  * Build the full system instructions, optionally incorporating enabled integrations and skills.
  */
-export function buildSystemInstructions(enabledIntegrations: string[] = [], skills: SkillSummary[] = []): string {
-  const now = new Date().toLocaleString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+export function buildSystemInstructions(
+  enabledIntegrations: string[] = [],
+  skills: SkillSummary[] = [],
+): string {
+  const now = new Date().toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
   let prompt = SYSTEM_INSTRUCTIONS.replace(
     /\*\*System\*\*:/,
-    `**Date/Time**: ${now}\n**System**:`
+    `**Date/Time**: ${now}\n**System**:`,
   );
 
   // Inject the tool catalog at call time (not module-load) so it always reflects
   // every registered tool — including ones registered after this module first
   // loaded and any per-request custom-integration tools.
-  prompt = prompt.replace('__TOOL_CATALOG__', buildToolCatalog());
+  prompt = prompt.replace("__TOOL_CATALOG__", buildToolCatalog());
 
   if (enabledIntegrations.length > 0) {
-    prompt += `\n\n── ENABLED INTEGRATIONS ──\n${enabledIntegrations.join(', ')}\nThese integrations are connected. You can use their tools directly via execute_tool.`;
+    prompt += `\n\n── ENABLED INTEGRATIONS ──\n${enabledIntegrations.join(", ")}\nThese integrations are connected. You can use their tools directly via execute_tool.`;
   }
 
   const skillsSection = buildAvailableSkillsPromptSection(skills);
@@ -577,19 +670,33 @@ export function buildSystemInstructions(enabledIntegrations: string[] = [], skil
  * Build task assignments context for the agent
  * This is injected into the system prompt when there are pending assignments
  */
-export function buildTaskAssignmentsContext(pendingAssignments: Array<{
-  task: { id: string; title: string; description?: string; dueDate?: string; priority: string };
-  assignment: { id: string; type: string; scheduledAt: string; message?: string; recurring: string };
-}>): string {
+export function buildTaskAssignmentsContext(
+  pendingAssignments: Array<{
+    task: {
+      id: string;
+      title: string;
+      description?: string;
+      dueDate?: string;
+      priority: string;
+    };
+    assignment: {
+      id: string;
+      type: string;
+      scheduledAt: string;
+      message?: string;
+      recurring: string;
+    };
+  }>,
+): string {
   if (!pendingAssignments || pendingAssignments.length === 0) {
-    return '';
+    return "";
   }
 
   const lines: string[] = [
-    '',
-    '[TASK ASSIGNMENTS - ACTION REQUIRED]',
-    'The following tasks have been assigned to you by the user and are now due:',
-    '',
+    "",
+    "[TASK ASSIGNMENTS - ACTION REQUIRED]",
+    "The following tasks have been assigned to you by the user and are now due:",
+    "",
   ];
 
   for (const { task, assignment } of pendingAssignments) {
@@ -598,15 +705,23 @@ export function buildTaskAssignmentsContext(pendingAssignments: Array<{
     if (task.description) lines.push(`   Description: ${task.description}`);
     lines.push(`   Assignment Type: ${assignment.type}`);
     lines.push(`   Scheduled For: ${scheduledTime}`);
-    if (assignment.message) lines.push(`   User Message: "${assignment.message}"`);
-    if (task.dueDate) lines.push(`   Task Due Date: ${new Date(task.dueDate).toLocaleDateString()}`);
+    if (assignment.message)
+      lines.push(`   User Message: "${assignment.message}"`);
+    if (task.dueDate)
+      lines.push(
+        `   Task Due Date: ${new Date(task.dueDate).toLocaleDateString()}`,
+      );
     lines.push(`   Priority: ${task.priority}`);
     lines.push(`   Task ID: ${task.id} | Assignment ID: ${assignment.id}`);
-    lines.push('');
+    lines.push("");
   }
 
-  lines.push('Please acknowledge and act on these assignments based on their type.');
-  lines.push('After handling each assignment, inform the user and mark it complete.');
+  lines.push(
+    "Please acknowledge and act on these assignments based on their type.",
+  );
+  lines.push(
+    "After handling each assignment, inform the user and mark it complete.",
+  );
 
-  return lines.join('\n');
+  return lines.join("\n");
 }

@@ -49,6 +49,13 @@ const HIDDEN_TOOL_NAMES = new Set<string>([
   'journal_add', 'journal_list', 'journal_delete',
   'memory_add', 'memory_create', 'memory_list', 'memory_search',
   'project_search', 'add_project_context', 'pin_file', 'unpin_file',
+  // File index is underlying tech — pinning project files scans/indexes/embeds
+  // them automatically; keep that plumbing out of the trace (file-*search* tools
+  // stay visible).
+  'file_index_add_root', 'file_index_remove_root', 'file_index_list_roots',
+  'file_index_scan', 'file_index_get_pending', 'file_index_stats',
+  'file_index_update', 'file_index_mark_error', 'process_pending_file_index',
+  'process_pending_file_index_batch', 'sync_file_index_batch_jobs',
   'agent_todo',
   'knowledge_add_fact', 'knowledge_update_fact', 'knowledge_build_context',
   'knowledge_get_directives', 'knowledge_get_identity',
@@ -175,8 +182,8 @@ function useMarkdownComponents() {
         {children}
       </a>
     ),
-    ul: (props: any) => <ul className="mb-3 list-disc space-y-1 pl-5 marker:text-theme-muted/60" {...props} />,
-    ol: (props: any) => <ol className="mb-3 list-decimal space-y-1 pl-5 marker:text-theme-muted/60" {...props} />,
+    ul: (props: any) => <ul className="mb-3 list-disc space-y-1 pl-5 marker:text-theme-fg-soft" {...props} />,
+    ol: (props: any) => <ol className="mb-3 list-decimal space-y-1 pl-5 marker:text-theme-fg-soft" {...props} />,
     li: (props: any) => <li className="leading-[1.6] text-theme-fg/95" {...props} />,
     blockquote: (props: any) => (
       <blockquote className="my-3 rounded-r-lg border-l-3 border-primary/35 bg-primary/5 py-1 pl-3" {...props}>
@@ -254,8 +261,8 @@ const traceMarkdownComponents = {
       {children}
     </a>
   ),
-  ul: (props: any) => <ul className="mb-1.5 list-disc space-y-0.5 pl-4 marker:text-theme-muted/60" {...props} />,
-  ol: (props: any) => <ol className="mb-1.5 list-decimal space-y-0.5 pl-4 marker:text-theme-muted/60" {...props} />,
+  ul: (props: any) => <ul className="mb-1.5 list-disc space-y-0.5 pl-4 marker:text-theme-fg-soft" {...props} />,
+  ol: (props: any) => <ol className="mb-1.5 list-decimal space-y-0.5 pl-4 marker:text-theme-fg-soft" {...props} />,
   li: (props: any) => <li className="leading-relaxed" {...props} />,
   h1: (props: any) => <h1 className="mb-1 mt-1.5 text-[12px] font-semibold first:mt-0" {...props} />,
   h2: (props: any) => <h2 className="mb-1 mt-1.5 text-[12px] font-semibold first:mt-0" {...props} />,
@@ -337,7 +344,7 @@ function CopyActionButton({
         } catch {}
       }}
       className={clsx(
-        'inline-flex items-center justify-center gap-1 rounded-md font-medium text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-fg',
+        'inline-flex items-center justify-center gap-1 rounded-md font-medium text-theme-fg-soft transition-colors hover:bg-theme-hover hover:text-theme-fg',
         iconOnly ? 'h-7 w-7 text-[11px]' : 'px-2 py-1 text-[11px]',
         className,
       )}
@@ -1022,7 +1029,7 @@ function FilePathChip({ filePath }: { filePath: string }) {
         <button
           type="button"
           onClick={copyPath}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-theme-hover/40 hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-fg-soft transition-colors hover:bg-theme-hover/40 hover:text-theme-fg"
           title="Copy path"
         >
           {copied ? (

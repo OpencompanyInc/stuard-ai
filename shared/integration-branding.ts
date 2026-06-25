@@ -57,6 +57,12 @@ const BRANDING: Record<string, IntegrationBranding> = {
     technicalDetail: 'Browser automation engine',
     shortLabel: 'Browser',
   },
+  'browser-extension': {
+    displayName: 'Browser Connector',
+    description: 'Read, script, and organize tabs in your real browser — the page you are looking at, your sessions, your windows.',
+    technicalDetail: 'Chrome/Edge MV3 extension bridge',
+    shortLabel: 'Connector',
+  },
 };
 
 /** Subagent kinds from capability packs — shown in delegation cards and voice status */

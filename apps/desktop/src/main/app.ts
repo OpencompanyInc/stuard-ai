@@ -12,6 +12,8 @@ import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
 import { shutdownWakewordListener } from "./tools/handlers/wakeword";
 import logger from "./utils/logger";
 import { migrateLegacyCaptureFiles, syncAgentMediaPathConfig } from "./services/media-library";
+import { startMcpLocalServer, stopMcpLocalServer } from "./services/index";
+import { startExtensionBridge, stopExtensionBridge } from "./services/index";
 
 initEnv();
 
@@ -370,6 +372,12 @@ app.whenReady().then(async () => {
   startStep("proactive scheduler", () => { startProactiveScheduler(); }, 2200);
   startStep("bot trigger dispatcher", () => { startBotTriggerDispatcher(); }, 2400);
   startStep("project notion sync", () => { startProjectNotionSync(); }, 2600);
+  // Local MCP server for external coding agents (Claude Code/Codex/Cursor) →
+  // proxies to cloud /mcp/server with the desktop's token. Starts after the
+  // cloud WS (1700) so device tools can relay back to this desktop.
+  startStep("local MCP server", () => { startMcpLocalServer(); }, 2800);
+  // Loopback WS bridge for the Stuard Browser Connector extension (browser_ext_*).
+  startStep("browser extension bridge", () => { startExtensionBridge(); }, 2900);
   // Heaviest / least time-sensitive last: installed-app scan and the file-index
   // sweep. Browser pre-warm was removed from startup entirely — it spawned a
   // ~150MB Chromium server on every launch for anyone who'd ever used browser
@@ -400,6 +408,8 @@ async function runShutdownCleanup(): Promise<void> {
     try { stopProactiveScheduler(); } catch (e) { logger.error("Failed to stop proactive scheduler during shutdown:", e); }
     try { stopBotTriggerDispatcher(); } catch (e) { logger.error("Failed to stop bot trigger dispatcher during shutdown:", e); }
     try { stopProjectNotionSync(); } catch (e) { logger.error("Failed to stop project notion sync during shutdown:", e); }
+    try { stopMcpLocalServer(); } catch (e) { logger.error("Failed to stop local MCP server during shutdown:", e); }
+    try { stopExtensionBridge(); } catch (e) { logger.error("Failed to stop browser extension bridge during shutdown:", e); }
     try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
     try { shutdownWakewordListener(); } catch (e) { logger.error("Failed to stop wakeword listener during shutdown:", e); }
     try {

@@ -718,10 +718,44 @@ export const retrieveToolFormat = createTool({
       };
     }
 
-    // Not found - suggest similar tools
+    // Deployed custom-integration tool? These are request-scoped (compiled in
+    // prepare-chat-request → secretBag.__customTools), so they're never in the
+    // registry. search_workflow_nodes already surfaces them via the custom
+    // catalog; mirror that here so get_tool_schema can return their full schema
+    // too — otherwise the agent discovers a custom tool, then dead-ends looking
+    // it up. Mirrors the meta-tools get_tool_schema custom fallback.
+    const customTools: Record<string, any> = (() => {
+      try {
+        const t = (getBridgeSecrets() as any)?.__customTools;
+        return t && typeof t === 'object' ? t : {};
+      } catch { return {}; }
+    })();
+    const customKey = customTools[toolName]
+      ? toolName
+      : Object.keys(customTools).find((k) => k.toLowerCase() === toolName.toLowerCase());
+    if (customKey) {
+      const customTool = customTools[customKey];
+      const customInput = (customTool as any)?.inputSchema;
+      const customOutput = (customTool as any)?.outputSchema;
+      return {
+        found: true,
+        tool: {
+          id: customKey,
+          kind: 'cloud',
+          description: (customTool as any)?.description || customKey,
+          argsTemplate: customInput ? zodToTemplate(customInput) : {},
+          inputSchema: customInput ? zodToJsonish(customInput) : {},
+          outputSchema: customOutput ? zodToJsonish(customOutput) : {},
+          category: 'Integrations',
+        },
+      };
+    }
+
+    // Not found - suggest similar tools (registry + deployed custom tools)
     const similar: string[] = [];
-    for (const id of registry.keys()) {
-        if (id.toLowerCase().includes(toolName.toLowerCase()) || toolName.toLowerCase().includes(id.toLowerCase().split('_')[0])) {
+    const lower = toolName.toLowerCase();
+    for (const id of [...registry.keys(), ...Object.keys(customTools)]) {
+        if (id.toLowerCase().includes(lower) || lower.includes(id.toLowerCase().split('_')[0])) {
             similar.push(id);
             if (similar.length >= 5) break;
         }

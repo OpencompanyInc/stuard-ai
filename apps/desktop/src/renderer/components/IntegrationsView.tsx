@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare } from "lucide-react";
+import { Search, Link2, RefreshCw, Box, Globe, Plus, Star, Trash2, Users, ChevronDown, ChevronUp, Terminal, Film, ScanFace, Mail, Github, HardDrive, Webhook, Calendar, Table, FileText, CheckCircle, CheckCircle2, AlertCircle, ArrowUpCircle, ArrowUpRight, Download, ArrowRight, Loader2, Shield, X, Bot, Phone, MessageSquare, Copy, Puzzle } from "lucide-react";
 import { IntegrationSearchEmptyState } from "./IntegrationSearchEmptyState";
 import { openCustomIntegrationBuilder } from "../utils/integrationDiscovery";
 import { clsx } from 'clsx';
@@ -98,6 +98,13 @@ interface IntegrationsViewProps {
   browserUseUpdateInfo?: any;
   browserUseUpdating?: boolean;
   updateBrowserUse?: () => Promise<void> | void;
+  browserExtBridgeInfo?: any;
+  browserExtStatus?: any;
+  browserExtChecking?: boolean;
+  browserExtServices?: Array<{ id: string; name: string; description?: string; action: string; updatedAt?: string }>;
+  refreshBrowserExtensionStatus?: () => Promise<void> | void;
+  openBrowserExtensionFolder?: () => Promise<void> | void;
+  copyBrowserExtensionPairingKey?: () => Promise<boolean> | boolean;
   cliAgentStatus?: any;
   cliAgentChecking?: boolean;
   refreshCliAgentStatus?: () => Promise<void> | void;
@@ -1152,6 +1159,13 @@ interface StandardCardProps {
   browserUseUpdateInfo?: any;
   browserUseUpdating?: boolean;
   updateBrowserUse?: () => Promise<void> | void;
+  browserExtBridgeInfo?: any;
+  browserExtStatus?: any;
+  browserExtChecking?: boolean;
+  browserExtServices?: Array<{ id: string; name: string; description?: string; action: string; updatedAt?: string }>;
+  refreshBrowserExtensionStatus?: () => Promise<void> | void;
+  openBrowserExtensionFolder?: () => Promise<void> | void;
+  copyBrowserExtensionPairingKey?: () => Promise<boolean> | boolean;
   cliAgentStatus?: any;
   cliAgentChecking?: boolean;
   refreshCliAgentStatus?: () => Promise<void> | void;
@@ -1176,12 +1190,15 @@ const StandardCard: React.FC<StandardCardProps> = ({
   ollamaStatus, ollamaChecking, refreshOllamaStatus, startOllama,
   browserUseStatus, browserUseChecking, browserUseSetupProgress, refreshBrowserUseStatus, setupBrowserUse, stopBrowserUse, uninstallBrowserUse,
   browserUseLocalStatus, browserUseUpdateInfo, browserUseUpdating, updateBrowserUse,
+  browserExtBridgeInfo, browserExtStatus, browserExtChecking, browserExtServices,
+  refreshBrowserExtensionStatus, openBrowserExtensionFolder, copyBrowserExtensionPairingKey,
   cliAgentStatus, cliAgentChecking, refreshCliAgentStatus,
 }) => {
   const [showProfiles, setShowProfiles] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [showPyPackages, setShowPyPackages] = useState(false);
+  const [pairingKeyCopied, setPairingKeyCopied] = useState(false);
 
   const isPython = i.slug === 'python';
   const isFfmpeg = i.slug === 'ffmpeg';
@@ -1189,6 +1206,7 @@ const StandardCard: React.FC<StandardCardProps> = ({
   const isDataAnalysis = i.slug === 'data-analysis';
   const isOllama = i.slug === 'ollama';
   const isBrowserUse = i.slug === 'browser-use';
+  const isBrowserExt = i.slug === 'browser-extension';
   const isAgentCli = i.slug === 'agent-cli';
   const isOAuth = isOAuthSlug(i.slug);
   const provider = slugToProvider(i.slug);
@@ -1858,6 +1876,112 @@ const StandardCard: React.FC<StandardCardProps> = ({
         </div>
       )}
 
+      {/* Browser Connector details */}
+      {isBrowserExt && (
+        <div className="mb-4 p-3 bg-theme-bg rounded-lg border border-theme space-y-3">
+          {browserExtChecking && !browserExtBridgeInfo ? (
+            <div className="flex items-center gap-2 text-[11px]">
+              <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+              <span className="font-semibold text-theme-fg">Checking bridge...</span>
+            </div>
+          ) : browserExtStatus?.connected ? (
+            <>
+              <div className="flex items-center gap-2 text-[11px]">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className={clsx("font-semibold", statusOkText)}>Paired &amp; connected</span>
+                <span className="text-theme-muted ml-auto text-[10px]">{browserExtBridgeInfo?.browser || browserExtStatus?.browser || 'Chromium'}</span>
+              </div>
+              {browserExtStatus?.activeTab?.title && (
+                <div className="text-[10px] text-theme-muted truncate" title={browserExtStatus.activeTab.url}>
+                  {browserExtStatus.activeTab.title}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                {browserExtBridgeInfo?.running ? (
+                  <>
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="font-semibold text-theme-fg">Waiting for extension</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                    <span className="font-semibold text-theme-fg">Bridge not running</span>
+                  </>
+                )}
+              </div>
+              <ol className="text-[10px] text-theme-muted leading-relaxed list-decimal list-inside space-y-1">
+                <li>Load unpacked from the extension folder (button below)</li>
+                <li>Copy the pairing key into the extension popup</li>
+                <li>Enable <span className="font-semibold text-theme-fg">Allow user scripts</span> for strict sites like Reddit</li>
+              </ol>
+            </div>
+          )}
+
+          {browserExtBridgeInfo?.pairingToken && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Pairing key</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 min-w-0 truncate rounded-md border border-theme bg-theme-card px-2 py-1.5 text-[10px] font-mono text-theme-fg">
+                  {browserExtBridgeInfo.pairingToken}
+                </code>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await copyBrowserExtensionPairingKey?.();
+                    if (ok) {
+                      setPairingKeyCopied(true);
+                      window.setTimeout(() => setPairingKeyCopied(false), 2000);
+                    }
+                  }}
+                  className="h-7 px-2.5 flex items-center gap-1 rounded-md border border-theme text-[10px] font-bold text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all"
+                  title="Copy pairing key"
+                >
+                  <Copy className="w-3 h-3" />
+                  {pairingKeyCopied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {Array.isArray(browserExtServices) && browserExtServices.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-semibold text-theme-muted uppercase tracking-wide">Saved mini scripts</div>
+              <div className="space-y-1 max-h-24 overflow-y-auto">
+                {browserExtServices.map((svc) => (
+                  <div key={svc.id} className="flex items-center gap-2 text-[10px] min-w-0">
+                    <Puzzle className="w-3 h-3 text-theme-muted shrink-0" />
+                    <span className="font-semibold text-theme-fg truncate">{svc.name}</span>
+                    <span className="text-theme-muted ml-auto shrink-0">{svc.action}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => openBrowserExtensionFolder?.()}
+              className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all"
+            >
+              <Download className="w-3 h-3" />
+              Extension folder
+            </button>
+            <button
+              type="button"
+              onClick={() => handleLearnMore('chrome://extensions')}
+              className="flex-1 h-7 flex items-center justify-center gap-1.5 rounded-md border border-theme text-theme-muted text-[10px] font-bold hover:bg-theme-hover transition-all"
+            >
+              <Globe className="w-3 h-3" />
+              Extensions page
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="pt-3 mt-auto border-t border-theme border-dashed flex items-center gap-2">
         {i.available ? (
@@ -1886,6 +2010,42 @@ const StandardCard: React.FC<StandardCardProps> = ({
                 {browserUseChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                 {browserUseChecking ? 'Setting up...' : browserUseStatus?.error ? 'Try Again' : 'Set Up'}
               </button>
+            )
+          ) : isBrowserExt ? (
+            browserExtStatus?.connected ? (
+              <>
+                <div className="flex-1 flex items-center gap-2 text-[10px] text-theme-muted font-medium">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Browser connected
+                </div>
+                <button
+                  onClick={refreshBrowserExtensionStatus}
+                  disabled={browserExtChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Refresh"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", browserExtChecking && "animate-spin")} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleConnect(i.slug)}
+                  disabled={browserExtChecking}
+                  className="flex-1 h-8 flex items-center justify-center gap-2 rounded-md bg-primary text-primary-fg text-[11px] font-bold shadow-sm transition-all active:scale-95 disabled:opacity-50 hover:opacity-90"
+                >
+                  {browserExtChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  {browserExtChecking ? 'Checking...' : 'Set Up'}
+                </button>
+                <button
+                  onClick={refreshBrowserExtensionStatus}
+                  disabled={browserExtChecking}
+                  className="h-8 w-8 flex items-center justify-center rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all disabled:opacity-50"
+                  title="Refresh"
+                >
+                  <RefreshCw className={clsx("w-3.5 h-3.5", browserExtChecking && "animate-spin")} />
+                </button>
+              </>
             )
           ) : isAgentCli ? (
             isConnected ? (
@@ -2145,6 +2305,13 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
     browserUseUpdateInfo,
     browserUseUpdating,
     updateBrowserUse,
+    browserExtBridgeInfo,
+    browserExtStatus,
+    browserExtChecking,
+    browserExtServices,
+    refreshBrowserExtensionStatus,
+    openBrowserExtensionFolder,
+    copyBrowserExtensionPairingKey,
     cliAgentStatus,
     cliAgentChecking,
     refreshCliAgentStatus,
@@ -2313,9 +2480,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
 
               {nonGoogleIntegrations.map((i: any) => {
                 const isBrowserUseSlug = i.slug === 'browser-use';
+                const isBrowserExtSlug = i.slug === 'browser-extension';
                 const isAgentCliSlug = i.slug === 'agent-cli';
                 const isConnected = isBrowserUseSlug
                   ? !!(browserUseStatus?.running || browserUseStatus?.installed)
+                  : isBrowserExtSlug
+                    ? !!browserExtStatus?.connected
                   : isAgentCliSlug
                     ? !!cliAgentStatus?.anyAvailable
                   : !!connectedMap[i.slug];
@@ -2375,6 +2545,13 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = (props) => {
                     browserUseUpdateInfo={browserUseUpdateInfo}
                     browserUseUpdating={browserUseUpdating}
                     updateBrowserUse={updateBrowserUse}
+                    browserExtBridgeInfo={browserExtBridgeInfo}
+                    browserExtStatus={browserExtStatus}
+                    browserExtChecking={browserExtChecking}
+                    browserExtServices={browserExtServices}
+                    refreshBrowserExtensionStatus={refreshBrowserExtensionStatus}
+                    openBrowserExtensionFolder={openBrowserExtensionFolder}
+                    copyBrowserExtensionPairingKey={copyBrowserExtensionPairingKey}
                     cliAgentStatus={cliAgentStatus}
                     cliAgentChecking={cliAgentChecking}
                     refreshCliAgentStatus={refreshCliAgentStatus}

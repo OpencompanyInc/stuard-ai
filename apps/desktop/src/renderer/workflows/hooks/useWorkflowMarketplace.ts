@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { getValidAccessToken } from "../../auth/authManager";
 import { getMarketplaceApi, type MarketplaceUpdate } from "../../utils/cloud";
-import { specToDesignerModel } from "../utils/conversions";
-import { unpackWorkspaceBundle, stripWorkspaceBundle } from "../utils/workspaceBundle";
-import { alertDialog } from "../components/ConfirmDialog";
+import { useWorkflowInstall } from "./useWorkflowInstall";
 
 interface UseWorkflowMarketplaceProps {
-  selectedId: string;
+  /** Currently open workflow id (accepted for API symmetry; not used directly here). */
+  selectedId?: string;
   refresh: () => Promise<void>;
   load: (id: string, options?: { forTour?: boolean }) => Promise<boolean>;
 }
 
-export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflowMarketplaceProps) {
+export function useWorkflowMarketplace({ refresh, load }: UseWorkflowMarketplaceProps) {
   const [showImport, setShowImport] = useState(false);
   const [importJson, setImportJson] = useState("");
   const [importErr, setImportErr] = useState("");
@@ -21,6 +20,10 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
   const [marketplaceSlug, setMarketplaceSlug] = useState<string | undefined>(undefined);
   const [showMyPublished, setShowMyPublished] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState<{ id: string; update: MarketplaceUpdate } | null>(null);
+
+  // Shared install orchestration — provisions files, media, and script
+  // dependencies up front with a progress modal.
+  const { installState, runInstall, dismissInstall } = useWorkflowInstall({ refresh, load });
 
   useEffect(() => {
     const unsub = (window as any).desktopAPI?.onWorkflowsNavigate?.((d: any) => {
@@ -48,41 +51,35 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
 
   const importJsonWorkflow = useCallback(async () => {
     setImportErr("");
+    let parsed: any;
     try {
-      const d = JSON.parse(importJson);
-      const newId = d.id || "flow_" + Date.now().toString(36);
-      const m = specToDesignerModel(stripWorkspaceBundle({ ...d, id: newId }));
-      await (window as any).desktopAPI?.workflowsSave?.(newId, JSON.stringify(m, null, 2));
-      await unpackWorkspaceBundle(newId, d);
-      await refresh();
-      await load(newId);
-      setShowImport(false);
-      setImportJson("");
+      parsed = JSON.parse(importJson);
     } catch (e: any) {
       setImportErr(e?.message || "Invalid JSON");
+      return;
     }
-  }, [importJson, load, refresh]);
+    setShowImport(false);
+    setImportJson("");
+    try {
+      // runInstall provisions files, media, and dependencies with a progress
+      // modal (which also surfaces any error), so no extra alert is needed here.
+      await runInstall(parsed, { name: parsed?.name });
+    } catch {
+      // surfaced by the install progress modal
+    }
+  }, [importJson, runInstall]);
 
   const importFromMarketplace = useCallback(
     async (spec: any) => {
+      // Hand off to the install progress modal; close the browse modal behind it.
+      setShowMarketplace(false);
       try {
-        const newId = spec.id || "flow_" + Date.now().toString(36);
-        // Keep the workspace bundle out of the saved main model, but unpack its
-        // files into the new workflow's workspace so it runs without manual setup.
-        const m = specToDesignerModel(stripWorkspaceBundle({ ...spec, id: newId }));
-        await (window as any).desktopAPI?.workflowsSave?.(newId, JSON.stringify(m, null, 2));
-        await unpackWorkspaceBundle(newId, spec);
-        await refresh();
-        await load(newId);
-      } catch (e: any) {
-        await alertDialog({
-          title: "Import failed",
-          message: e?.message || "We couldn't import this workflow. Please try again.",
-          tone: "danger",
-        });
+        await runInstall(spec, { name: spec?.name });
+      } catch {
+        // surfaced by the install progress modal
       }
     },
-    [load, refresh]
+    [runInstall]
   );
 
   const handleUpdateWorkflow = useCallback((id: string, update: MarketplaceUpdate) => {
@@ -102,28 +99,23 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     }
 
     const spec = res.workflow.spec;
-    const newModel = specToDesignerModel(stripWorkspaceBundle({
-      ...spec,
-      id,
+    // Re-provision in place: save the new spec, refresh bundled files/media to
+    // match the new version, and pre-install any new dependencies — all behind
+    // the install progress modal.
+    await runInstall(spec, {
+      targetId: id,
+      name: update.name,
       marketplaceSlug: update.slug,
       version: update.latestVersion,
       locked: res.workflow.locked || false,
-    }));
-
-    await (window as any).desktopAPI?.workflowsSave?.(id, JSON.stringify(newModel, null, 2));
-    // Refresh the bundled workspace deps to match the new version.
-    await unpackWorkspaceBundle(id, spec);
-
-    try {
-      await api.download(update.slug);
-    } catch {
-      // no-op
-    }
-
-    await refresh();
-    if (selectedId === id) {
-      await load(id);
-    }
+      onInstalled: async () => {
+        try {
+          await api.download(update.slug);
+        } catch {
+          // download-count ping is best-effort
+        }
+      },
+    });
 
     setPendingUpdate(null);
 
@@ -132,7 +124,7 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     } catch {
       // no-op
     }
-  }, [load, pendingUpdate, refresh, selectedId]);
+  }, [pendingUpdate, runInstall]);
 
   return {
     showImport,
@@ -155,5 +147,8 @@ export function useWorkflowMarketplace({ selectedId, refresh, load }: UseWorkflo
     importFromMarketplace,
     handleUpdateWorkflow,
     executeWorkflowUpdate,
+    // Install progress (rendered by the workflows view as <InstallProgressModal/>).
+    installState,
+    dismissInstall,
   };
 }

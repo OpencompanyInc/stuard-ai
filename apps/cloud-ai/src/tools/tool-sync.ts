@@ -401,6 +401,18 @@ const SEMANTIC_HINTS: Record<string, string[]> = {
   x_list_following: ['twitter following', 'x following', 'who are they following'],
 
   // Browser
+  // Browser Extension — the user's real browser (current tab, my tabs, my session)
+  browser_ext_status: ['is my browser connected', 'browser extension status', 'current tab', 'active tab'],
+  browser_ext_get_page: ['read this page', 'page i am looking at', 'what am i reading', 'read current tab', 'this article', 'this reddit post'],
+  browser_ext_extract: ['extract comments', 'scrape this page', 'extract reddit comments', 'extract search results', 'pull rows from page', 'scrape current tab'],
+  browser_ext_run_script: ['run a script in my browser', 'run javascript on this page', 'do something on this page', 'mini script in browser'],
+  browser_ext_tabs: ['organize my tabs', 'list my tabs', 'close tabs', 'group tabs', 'my open tabs', 'study tabs', 'clean up tabs', 'arrange tabs'],
+  browser_ext_capture_screenshot: ['screenshot this tab', 'capture current page', 'screenshot my browser'],
+  browser_ext_service_list: ['list browser services', 'my browser scripts', 'saved mini scripts'],
+  browser_ext_service_save: ['save a browser script', 'create browser mini service', 'save study mode', 'remember this browser action'],
+  browser_ext_service_run: ['run study mode', 'run browser service', 'run my saved script', 'enforce study tabs'],
+  browser_ext_service_delete: ['delete browser service', 'remove saved browser script'],
+
   // Files
   read_file: ['open file', 'view file', 'file content'],
   write_file: ['save file', 'create file', 'write to file'],

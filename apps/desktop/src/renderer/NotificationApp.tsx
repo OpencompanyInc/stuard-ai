@@ -230,9 +230,9 @@ export const NotificationApp = () => {
     useNotificationTheme();
 
     return (
-        <NotificationProvider defaultPosition="top-right" maxNotifications={6}>
+        <NotificationProvider defaultPosition="top-right" maxNotifications={6} topInset={96}>
             <NotificationOverlayHandler />
-            <div className="w-screen h-screen overflow-hidden pointer-events-none stuard-notification-shell launcher-compact-skin">
+            <div className="w-screen h-screen overflow-hidden pointer-events-none stuard-notification-shell">
                 <NotificationListener />
             </div>
         </NotificationProvider>
@@ -247,9 +247,8 @@ const NotificationOverlayHandler = () => {
     // Filter out ghost notifications (empty title + very short duration used for dismissal)
     const visibleCount = notifications.filter(n => !!(n.title || n.message || n.structuredContent)).length;
 
-    // When there are no visible toasts (sticky duration:0 prompts keep this > 0),
-    // ask main to close the overlay window after a short grace period so its
-    // renderer process is freed. It's re-created on the next notification.
+    // When there are no visible toasts, hide the always-on-top overlay window
+    // after the exit animation so it doesn't sit above compact mode.
     useEffect(() => {
         if (idleTimerRef.current) {
             clearTimeout(idleTimerRef.current);
@@ -258,7 +257,7 @@ const NotificationOverlayHandler = () => {
         if (visibleCount === 0) {
             idleTimerRef.current = setTimeout(() => {
                 (window as any).desktopAPI?.notificationsIdle?.();
-            }, 20000);
+            }, 400);
         }
         return () => {
             if (idleTimerRef.current) {

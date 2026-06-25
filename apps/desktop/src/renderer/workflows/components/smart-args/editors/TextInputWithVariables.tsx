@@ -2,10 +2,10 @@
  * TextInputWithVariables - Text input with variable autocomplete
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { Variable, Plus } from 'lucide-react';
 import { getToolOutputs } from '../../../constants/tool-schemas';
 import type { WorkflowVariable } from '../../../types';
+import { WorkflowPortal } from '../../../WorkflowThemeContext';
 
 export interface UpstreamNode {
   id: string;
@@ -307,7 +307,8 @@ export function TextInputWithVariables({
       )}
 
       {/* Suggestions dropdown - rendered via portal to escape overflow clipping */}
-      {showSuggestions && dropdownPos && createPortal(
+      {showSuggestions && dropdownPos && (
+        <WorkflowPortal>
         <div
           ref={dropdownRef}
           style={{
@@ -344,8 +345,8 @@ export function TextInputWithVariables({
               <div className="px-3 py-4 text-sm wf-fg-faint text-center">No variables found</div>
             )}
           </div>
-        </div>,
-        document.body
+        </div>
+        </WorkflowPortal>
       )}
     </div>
   );

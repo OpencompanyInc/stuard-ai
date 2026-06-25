@@ -5,7 +5,8 @@ import { ArrowRight, Check, Download, Layers, Loader2, X } from 'lucide-react';
 import { getMarketplaceApi, type MarketplaceWorkflow } from '../../utils/cloud';
 import { getValidAccessToken } from '../../auth/authManager';
 import { specToDesignerModel } from '../../workflows/utils/conversions';
-import { stripWorkspaceBundle, unpackWorkspaceBundle } from '../../workflows/utils/workspaceBundle';
+import { stripPublishMeta, unpackWorkspaceBundle } from '../../workflows/utils/workspaceBundle';
+import { collectWorkflowDependencies, hasInstallableDependencies } from '@stuardai/workflow-core/dependencies';
 
 // Onboarding beat — after the compact-pill coaching tour and before the Studio
 // hand-off, give the user a running start by letting them install a couple of
@@ -30,8 +31,10 @@ function readFirstName(): string {
 }
 
 // Install a marketplace workflow into the local workflows store. Mirrors the
-// MarketplaceModal import path: strip the bundle out of the saved main model,
-// then unpack the bundled workspace deps so it runs without manual wiring.
+// MarketplaceModal import path: strip the publish metadata out of the saved main
+// model, unpack the bundled workspace deps, then pre-install script dependencies
+// so the workflow runs without a first-run pip stall. Dependency install is
+// best-effort — onboarding never blocks on it (lazy install is the fallback).
 async function installWorkflow(w: MarketplaceWorkflow): Promise<void> {
   const spec = w.spec;
   if (!spec) throw new Error('Workflow has no spec');
@@ -45,9 +48,21 @@ async function installWorkflow(w: MarketplaceWorkflow): Promise<void> {
     marketplaceSlug: w.slug,
     marketplaceVersion: w.version,
   };
-  const model = specToDesignerModel(stripWorkspaceBundle(tagged));
+  const model = specToDesignerModel(stripPublishMeta(tagged));
   await (window as any).desktopAPI?.workflowsSave?.(newId, JSON.stringify(model, null, 2));
   await unpackWorkspaceBundle(newId, spec);
+
+  const deps = collectWorkflowDependencies(spec);
+  if (hasInstallableDependencies(deps)) {
+    try {
+      await (window as any).desktopAPI?.pythonInstall?.({
+        packages: deps.python.packages,
+        requirementsTxt: deps.python.requirementsTxt,
+      });
+    } catch {
+      // best-effort — the runtime lazy-installs on first run if this fails
+    }
+  }
 }
 
 export function FeaturedWorkflows({ onComplete, onSkip }: Props) {

@@ -34,17 +34,82 @@ function resolveUserId(): string | null {
   }
 }
 
+/**
+ * Self-correcting hint appended to every manifest error. The empty-`{}` loop
+ * that burned huge token counts came from terse errors ("manifest.slug is
+ * required") that gave the model nothing to fix — so it re-sent `{}`. This
+ * skeleton lets the model fill in the blanks on the very next attempt.
+ */
+const MANIFEST_SKELETON_HINT =
+  'The `manifest` argument must be the COMPLETE manifest object — never {} and never partial. ' +
+  'Emit every top-level field, for example: ' +
+  '{"slug":"netlify","name":"Netlify","version":"1.0.0",' +
+  '"auth":{"strategy":{"type":"bearer","tokenField":"api_key"},' +
+  '"fields":[{"name":"api_key","label":"API token","secret":true,"required":true}]},' +
+  '"outbound_hosts":["api.netlify.com"],' +
+  '"tools":[{"name":"create_site","description":"Create a site",' +
+  '"args":{"type":"object","properties":{"name":{"type":"string"}}},' +
+  '"request":{"method":"POST","urlTemplate":"https://api.netlify.com/api/v1/sites",' +
+  '"headers":{"Content-Type":"application/json"},' +
+  '"body":{"kind":"json","value":{"name":"{{args.name}}"}}}}]}. ' +
+  'If the manifest is large, pass it as a single JSON string instead of an object.';
+
 /** Accept a manifest as an object or a JSON string (models sometimes stringify). */
 function coerceManifest(raw: any): { manifest?: IntegrationManifest; error?: string } {
   let m = raw;
   if (typeof m === 'string') {
-    try { m = JSON.parse(m); } catch { return { error: 'manifest must be a JSON object (failed to parse string)' }; }
+    const trimmed = m.trim();
+    if (!trimmed) return { error: `manifest was an empty string. ${MANIFEST_SKELETON_HINT}` };
+    try { m = JSON.parse(trimmed); } catch { return { error: `manifest must be valid JSON (failed to parse the string you passed). ${MANIFEST_SKELETON_HINT}` }; }
   }
-  if (!m || typeof m !== 'object' || Array.isArray(m)) return { error: 'manifest must be a JSON object' };
+  if (!m || typeof m !== 'object' || Array.isArray(m)) {
+    return { error: `manifest must be a JSON object. ${MANIFEST_SKELETON_HINT}` };
+  }
+  if (Object.keys(m).length === 0) {
+    return { error: `manifest was empty ({}). ${MANIFEST_SKELETON_HINT}` };
+  }
   const shapeErr = validateManifestShape(m);
-  if (shapeErr) return { error: shapeErr };
+  if (shapeErr) return { error: `${shapeErr}. ${MANIFEST_SKELETON_HINT}` };
   return { manifest: m as IntegrationManifest };
 }
+
+// Structured-but-loose manifest schema. The top-level fields — and each tool's
+// top-level fields — are typed so the model gets real slots to fill. A fully
+// free-form object (z.object({}).loose()) gave no scaffolding, and some models
+// repeatedly emitted `{}` for the whole manifest, looping on "slug is required".
+// The genuinely variant leaves (auth.strategy, tool.args, tool.request, ping)
+// stay loose objects: every node still carries a concrete `type: object`, so
+// this guides the model WITHOUT the Gemini z.any()/type-less-property 400 trap
+// (see project_gemini_tool_schema_no_any) and without discriminated-union anyOf.
+const manifestToolSchema = z.object({
+  name: z.string().describe('Tool name in snake_case; the name run_integration calls.'),
+  description: z.string().describe('Tight description the agent reads to decide when to call this tool.'),
+  args: z.object({}).loose().describe('JSON-Schema-style: { type:"object", properties:{ <arg>:{ type, description?, enum?, default? } }, required?:[] }.'),
+  request: z.object({}).loose().describe('{ method, urlTemplate, headers?, query?, body? }. Use {{args.x}} / {{secrets.y}} templates. body kinds: none|json|form|text.'),
+}).loose();
+
+const manifestAuthSchema = z.object({
+  strategy: z.object({}).loose().describe('e.g. { type:"bearer", tokenField:"api_key" }. Also: apiKey | basic | oauth2 | none.'),
+  fields: z.array(z.object({}).loose()).describe('Credential fields, each: { name, label, secret, required, placeholder?, hint? }.'),
+}).loose();
+
+// Fields are typed (so every slot is advertised to the model and it stops
+// emitting `{}`) but OPTIONAL on purpose: coerceManifest/validateManifestShape
+// stay the single, friendly validation authority that returns the
+// self-correcting skeleton hint, instead of Mastra hard-rejecting a partial
+// manifest with a terse Zod error before execute() is ever reached.
+const manifestSchema = z.object({
+  slug: z.string().optional().describe('REQUIRED. URL-safe identifier, e.g. "netlify".'),
+  name: z.string().optional().describe('REQUIRED. Human-readable display name.'),
+  version: z.string().optional().describe('REQUIRED. Semver string, e.g. "1.0.0".'),
+  description: z.string().optional().describe('One-line summary of what the integration does.'),
+  icon: z.string().optional().describe('Lucide icon id or emoji.'),
+  category: z.string().optional().describe('Free-form category (Payments, Email, DevOps, …).'),
+  auth: manifestAuthSchema.optional().describe('REQUIRED. Auth strategy + the credential fields it references.'),
+  outbound_hosts: z.array(z.string()).optional().describe('REQUIRED, non-empty. Hostnames the tools call, e.g. ["api.netlify.com"].'),
+  tools: z.array(manifestToolSchema).optional().describe('REQUIRED, non-empty. One entry per HTTP operation.'),
+  ping: z.object({}).loose().optional().describe('Optional health check: { method, urlTemplate, headers? }.'),
+}).loose().describe('The full integration manifest. Emit the COMPLETE object (never {}). A JSON string is also accepted.');
 
 export const deploy_integration = createTool({
   id: 'deploy_integration',
@@ -54,11 +119,10 @@ export const deploy_integration = createTool({
     'and enabled. Returns the compiled tool names you can immediately call with run_integration. ' +
     'Author the manifest per the integration-manifest schema; verify real endpoints with web_search/scrape_url before deploying.',
   inputSchema: z.object({
-    // Loose object (NOT z.any()): a required z.any() emits a type-less JSON Schema
-    // property that Gemini drops and then 400s on ("required[0]: property is not
-    // defined"). z.object({}).loose() keeps it free-form but gives Gemini a
-    // concrete `type: object`. The coercion layer still accepts a JSON string.
-    manifest: z.object({}).loose().describe('The full integration manifest object (slug, name, version, auth, outbound_hosts, tools). A JSON string is also accepted.'),
+    // Structured-but-loose (see manifestSchema above): typed top-level slots stop
+    // the model from emitting `{}`, while variant leaves stay loose to dodge the
+    // Gemini z.any() 400 trap. The coercion layer still accepts a JSON string.
+    manifest: manifestSchema,
     secrets: z.record(z.string(), z.string()).optional().describe('Secret values keyed by auth-field name (e.g. { api_key: "sk-..." }). Omit to deploy without credentials.'),
     enabled: z.boolean().optional().default(true).describe('Whether the integration is enabled after deploy (default true).'),
   }),

@@ -31,7 +31,7 @@ export const CodeCopyButton: React.FC<CodeCopyButtonProps> = ({ code }) => {
         'flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors text-[10px] font-medium uppercase tracking-wider',
         copied
           ? 'text-emerald-500'
-          : 'text-theme-muted hover:text-theme-fg hover:bg-theme-active',
+          : 'text-theme-fg-soft hover:text-theme-fg hover:bg-theme-active',
       )}
       title={copied ? 'Copied to clipboard' : 'Copy code'}
     >

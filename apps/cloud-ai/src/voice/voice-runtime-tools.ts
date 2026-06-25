@@ -7,8 +7,10 @@ import { waitTool } from '../tools/wait';
 import { get_skill_info } from '../tools/skill-tools';
 import { agent_todo, search_local_workflows, run_workflow } from '../tools/device-tools';
 import { delegate, replyToSubagent } from '../orchestrator/delegation-tools';
-import { runWithSecrets, withClientBridge } from '../tools/bridge';
+import { runWithSecrets, withClientBridge, execLocalTool } from '../tools/bridge';
 import { sendVMCommand } from '../services/vm-command';
+import { embedMany } from 'ai';
+import { resolveEmbedder } from '../utils/embeddings';
 import {
   DISCORD_INTEGRATION_ENABLED,
   META_INTEGRATION_ENABLED,
@@ -56,6 +58,8 @@ const VOICE_TOOL_TIMEOUTS_MS: Record<string, number> = {
   search_local_workflows: 15_000,
   run_workflow: 90_000,
   get_skill_info: 10_000,
+  query_knowledge_pack: 20_000,
+  end_live_session: 5_000,
   wait: 60_000,
 };
 const DEFAULT_VOICE_TOOL_TIMEOUT_MS = 30_000;
@@ -447,6 +451,95 @@ export const VOICE_TOOL_DEFINITIONS: VoiceToolDefinition[] = [
   ),
 ];
 
+/**
+ * Build the scoped knowledge-pack query tool for a live session. Only added to
+ * the voice tool surface when one or more packs are attached to the session.
+ * The model passes the packId (named in its instructions) to search.
+ */
+export function buildKnowledgePackVoiceTool(
+  packs: Array<{ id: string; title?: string }>,
+): VoiceToolDefinition {
+  const list = packs
+    .map((p) => `"${p.title || 'pack'}" (packId: ${p.id})`)
+    .join('; ');
+  return makeFunctionTool(
+    'query_knowledge_pack',
+    `Search an attached knowledge pack for relevant passages to ground your answers, quiz questions, or interview prompts. Attached packs: ${list || 'none'}. Pass the packId of the pack you want to search; cite the returned source labels.`,
+    {
+      type: 'object',
+      properties: {
+        packId: { type: 'string', description: 'The pack to search (see the attached packs listed in your instructions).' },
+        query: { type: 'string', description: 'What to retrieve relevant passages about.' },
+        limit: { type: 'number', description: 'Max passages to return (1-20). Default 6.' },
+      },
+      required: ['packId', 'query'],
+    },
+  );
+}
+
+/**
+ * `end_live_session` — lets the live model finish a structured session (quiz,
+ * interview, tutoring) and hand a wrap-up back to the chat orchestrator. The
+ * voice-bridge intercepts this call directly (it needs the client WS + session
+ * to forward feedback and close), so it never routes through dispatchVoiceTool.
+ * Only attached to structured sessions (persona and/or knowledge packs).
+ */
+export const END_LIVE_SESSION_TOOL: VoiceToolDefinition = makeFunctionTool(
+  'end_live_session',
+  'End this live voice session and send a wrap-up back to the chat assistant. Call this when the quiz, interview, or session is finished (or the user asks to stop). Provide a thorough summary and feedback — how they did, what they got right or wrong, strengths, and what to review. The chat assistant will relay this to the user and save what matters. After you call this, give a brief spoken sign-off; the session then closes.',
+  {
+    type: 'object',
+    properties: {
+      summary: {
+        type: 'string',
+        description: 'A thorough recap and feedback for the user: how the session went, strengths, mistakes, and overall assessment. Written to be relayed in chat.',
+      },
+      outcome: {
+        type: 'string',
+        enum: ['completed', 'partial', 'stopped_early'],
+        description: 'How the session ended.',
+      },
+      highlights: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Key results — e.g. a score, standout strengths, or notable answers.',
+      },
+      follow_ups: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Specific topics to review or next steps for the user.',
+      },
+    },
+    required: ['summary'],
+  },
+);
+
+export interface LiveSessionFeedback {
+  summary: string;
+  outcome?: 'completed' | 'partial' | 'stopped_early';
+  highlights?: string[];
+  followUps?: string[];
+}
+
+/** Normalize raw `end_live_session` args into a clean feedback payload. */
+export function normalizeLiveSessionFeedback(args: Record<string, any>): LiveSessionFeedback {
+  const toStringArray = (v: unknown): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const out = v.map((x) => String(x || '').trim()).filter(Boolean);
+    return out.length ? out : undefined;
+  };
+  const outcomeRaw = String(args?.outcome || '').trim();
+  const outcome = (['completed', 'partial', 'stopped_early'] as const).includes(outcomeRaw as any)
+    ? (outcomeRaw as LiveSessionFeedback['outcome'])
+    : undefined;
+  return {
+    summary: String(args?.summary || '').trim(),
+    outcome,
+    highlights: toStringArray(args?.highlights),
+    followUps: toStringArray(args?.follow_ups ?? args?.followUps),
+  };
+}
+
 type VoiceSearchResult = { name: string; description: string; category?: string };
 
 export type VoiceRuntimeChannel = 'telnyx' | 'discord';
@@ -758,6 +851,8 @@ const KNOWN_VOICE_TOOLS = new Set([
   'search_local_workflows',
   'run_workflow',
   'get_skill_info',
+  'query_knowledge_pack',
+  'end_live_session',
   'wait',
 ]);
 
@@ -972,6 +1067,45 @@ async function dispatchVoiceTool(
           timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : 120_000,
         }, {} as any),
       );
+    }
+
+    case 'query_knowledge_pack': {
+      const packId = String(args.packId || args.pack_id || '').trim();
+      const query = String(args.query || '').trim();
+      const limit = coerceLimit(args.limit, 6, 20);
+      if (!packId || !query) {
+        return { ok: false, error: 'packId and query are required.', results: [] };
+      }
+      let vector: number[];
+      try {
+        const { embedder } = await resolveEmbedder();
+        const { embeddings } = await embedMany({ model: embedder as any, values: [query] });
+        vector = embeddings[0] as number[];
+      } catch (e: any) {
+        return { ok: false, error: `embedding_failed: ${e?.message || e}`, results: [] };
+      }
+      const res = await bridge(async () =>
+        execLocalTool('rag_pack_query', { pack_id: packId, vector, limit }, undefined, 20_000),
+      );
+      const results = (Array.isArray(res?.results) ? res.results : []).map((r: any) => ({
+        text: String(r?.text || ''),
+        source: r?.source_ref ? String(r.source_ref) : undefined,
+        score: typeof r?.score === 'number' ? r.score : undefined,
+      }));
+      return {
+        ok: res?.ok !== false,
+        packId,
+        results,
+        ...(res?.ok === false ? { error: res?.error || 'query_failed' } : {}),
+      };
+    }
+
+    case 'end_live_session': {
+      // The voice-bridge intercepts end_live_session in onFunctionCall (it owns
+      // the client WS + session needed to forward feedback and close). This case
+      // only runs if the model wraps it in execute_tool — acknowledge cleanly so
+      // it still gets a clean result, though the real close happens at the bridge.
+      return { ok: true, ended: true, note: 'Session end acknowledged.' };
     }
 
     case 'get_skill_info': {

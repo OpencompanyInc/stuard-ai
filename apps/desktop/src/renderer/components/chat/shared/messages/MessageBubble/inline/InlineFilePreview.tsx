@@ -215,7 +215,7 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
   const fgMuted = 'var(--foreground-muted)';
   const fgFaint = 'color-mix(in srgb, var(--foreground-muted) 70%, transparent)';
   const iconBtn =
-    'rounded-lg p-1.5 transition-colors hover:bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)]';
+    'rounded-lg p-1.5 text-theme-fg-soft transition-colors hover:bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg';
 
   if (isImage) {
     return (
@@ -248,7 +248,7 @@ export const InlineFilePreview: React.FC<{ src: string; alt?: string }> = memo((
           </div>
           <div className="mt-0.5 truncate text-[11px]" style={{ color: fgFaint }} title={cleanedSrc}>{cleanedSrc}</div>
         </div>
-        <div className="flex shrink-0 items-center gap-1" style={{ color: fgMuted }}>
+        <div className="flex shrink-0 items-center gap-1 text-theme-fg-soft">
           {state.text && (
             <button onClick={() => copy(state.text || '', 'preview')} className={iconBtn} title="Copy preview">
               {copied === 'preview' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}

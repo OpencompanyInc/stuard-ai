@@ -9,9 +9,10 @@ import {
   Shield, ShieldAlert, ShieldCheck, ChevronDown, Layers, Box, Zap, Brain, Database, Mail, Code,
   Wand2, Terminal, FileText, MessageSquare, Image as ImageIcon, Cloud, ArrowRight, ArrowDown
 } from "lucide-react";
-import { useWorkflowTheme } from "../WorkflowThemeContext";
+import { useWorkflowTheme, WorkflowPortal } from "../WorkflowThemeContext";
 import { FUNCTION_NODE_ICONS, FUNCTION_NODE_COLORS } from "../constants/functionNodeStyle";
 import { withWorkspaceBundle } from "../utils/workspaceBundle";
+import { FilesReviewStep, useBundleSelection } from "./FilesReviewStep";
 import { confirmDialog } from "./ConfirmDialog";
 import {
   getMarketplaceUsername,
@@ -303,7 +304,8 @@ function MarketplaceSelect({
         <ChevronDown className={`w-4 h-4 wf-fg-faint shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && dropdownPos && createPortal(
+      {open && dropdownPos && (
+        <WorkflowPortal>
         <div
           ref={dropdownRef}
           style={{
@@ -333,8 +335,8 @@ function MarketplaceSelect({
               </button>
             ))}
           </div>
-        </div>,
-        document.body,
+        </div>
+        </WorkflowPortal>
       )}
     </div>
   );
@@ -896,15 +898,20 @@ export function PublishModal({
 
   // ─── Wizard steps & navigation ───────────────────────────────────────────
   const wizardSteps = React.useMemo(() => {
-    const base: Array<{ id: 'type' | 'details' | 'node' | 'showcase' | 'review'; label: string; icon: any }> = [
+    const base: Array<{ id: 'type' | 'details' | 'node' | 'files' | 'showcase' | 'review'; label: string; icon: any }> = [
       { id: 'type',     label: 'Type',     icon: Layers },
       { id: 'details',  label: 'Details',  icon: FileText },
     ];
     if (publishAs === 'function') base.push({ id: 'node', label: 'Function Node', icon: Box });
+    base.push({ id: 'files', label: 'Files & Deps', icon: Package });
     base.push({ id: 'showcase', label: 'Showcase', icon: ImagePlus });
     base.push({ id: 'review', label: 'Review', icon: CheckCircle2 });
     return base;
   }, [publishAs]);
+
+  // Auto-detect which workspace files this workflow references → pre-select only
+  // those for the bundle (leak prevention). Creator can adjust on the Files step.
+  const bundleSelection = useBundleSelection(model.id, model);
 
   // Clamp current step if the steps array shrinks
   React.useEffect(() => {
@@ -930,6 +937,7 @@ export function PublishModal({
       case 'type':    return !!publishAs;
       case 'details': return name.trim().length > 0 && description.trim().length > 0;
       case 'node':    return functionNode.label.trim().length > 0 && functionNode.inputs.length + functionNode.outputs.length > 0;
+      case 'files':   return true;
       case 'showcase':return true;
       case 'review':  return true;
       default:        return false;
@@ -989,10 +997,13 @@ export function PublishModal({
       const baseSpec = publishAs === 'function'
         ? { ...model, kind: 'function', functionNode }
         : model;
-      // Make the published workflow self-contained: bundle its workspace
-      // dependencies (imported sub-workflows, functions, scripts, config) so
-      // downloaders don't have to wire anything up by hand.
-      const spec = await withWorkspaceBundle(model.id, baseSpec);
+      // Make the published workflow self-contained: bundle only the workspace
+      // files the creator approved on the Files step (auto-detected references by
+      // default), plus an install manifest of its script dependencies, so
+      // downloaders get everything provisioned without leaking unrelated files.
+      const spec = await withWorkspaceBundle(model.id, baseSpec, {
+        includePaths: bundleSelection.selected,
+      });
 
       const res = await api.publish({
         name,
@@ -1390,6 +1401,18 @@ export function PublishModal({
           </div>
         )}
 
+        {/* ─── STEP: Files & dependencies ─────────────────────────── */}
+        {currentStepId === 'files' && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
+            <StepHeader
+              icon={Package}
+              title="Files & dependencies"
+              subtitle="We bundle only the files your workflow references so nothing personal leaks. Dependencies install for you."
+            />
+            <FilesReviewStep spec={model} selection={bundleSelection} isDark={d} />
+          </div>
+        )}
+
         {/* ─── STEP: Showcase ─────────────────────────────────────── */}
         {currentStepId === 'showcase' && (
           <div className="space-y-5 animate-in fade-in slide-in-from-right-2 duration-200">
@@ -1682,6 +1705,9 @@ export function UpdateWorkflowModal({
   const inputStyle = { background: d ? "rgba(255,255,255,0.04)" : "#ffffff", borderColor: "var(--wf-input-border)", color: "var(--wf-fg)" } as React.CSSProperties;
   const footerStyle = { background: d ? "#0c0f14" : "#ffffff", borderColor: "var(--wf-border)" };
 
+  // Auto-detect referenced workspace files for this new version (leak prevention).
+  const bundleSelection = useBundleSelection(newSpec?.id, newSpec);
+
   // Fetch categories and versions on mount
   useEffect(() => {
     (async () => {
@@ -1757,8 +1783,11 @@ export function UpdateWorkflowModal({
 
       const api = getMarketplaceApi(() => token);
 
-      // Re-bundle workspace deps so each published version stays self-contained.
-      const bundledSpec = await withWorkspaceBundle(newSpec?.id, newSpec);
+      // Re-bundle workspace deps so each published version stays self-contained,
+      // restricted to the creator-approved (auto-detected) file set.
+      const bundledSpec = await withWorkspaceBundle(newSpec?.id, newSpec, {
+        includePaths: bundleSelection.selected,
+      });
 
       const res = await api.update(workflow.slug, {
         name: name !== workflow.name ? name : undefined,
@@ -1933,6 +1962,15 @@ export function UpdateWorkflowModal({
             style={{ background: d ? "rgba(245,158,11,0.10)" : "#fffbeb", borderColor: d ? "rgba(245,158,11,0.20)" : "#fcd34d", color: "var(--wf-fg)" }}
             placeholder="Describe what changed in this update..."
           />
+        </div>
+
+        {/* Files & dependencies — bundle only referenced files, install deps for downloaders. */}
+        <div className="rounded-2xl border p-5 space-y-3 shadow-sm" style={cardStyle}>
+          <div className="text-sm font-semibold wf-fg flex items-center gap-2">
+            <Package className="w-4 h-4 wf-accent-text" />
+            Files &amp; dependencies
+          </div>
+          <FilesReviewStep spec={newSpec} selection={bundleSelection} isDark={d} />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

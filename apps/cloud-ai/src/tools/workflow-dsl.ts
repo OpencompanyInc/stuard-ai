@@ -42,6 +42,90 @@ function resolveWorkflow(workflowId?: string | null): any | null {
   return null;
 }
 
+// ── mode="node": verbatim single-node read ────────────────────────────────────
+// window/full abbreviate long string args to `…(Nc)…`, and even un-abbreviated
+// they're JSON-escaped one-liners (\n as two chars) — so an anchor copied from
+// them won't match what edit_node_text compares against (the stored value has
+// REAL newlines). This renders the focused node(s) with each long/multi-line
+// string field shown verbatim, flush-left, tagged with the exact `path` to feed
+// edit_node_text. It's the native replacement for the workspace_read_file fallback.
+const VERBATIM_BLOCK_MIN = 80; // strings longer than this (or multi-line) get a block
+
+function inlineWireLine(w: any): string {
+  let s = `${w.from} -> ${w.to}`;
+  if (w.guard !== undefined && w.guard !== null) s += ` @guard ${JSON.stringify(w.guard)}`;
+  if (w.loop) s += ` @loop ${JSON.stringify(w.loop)}`;
+  if (w.loopBreak) s += ' @loopBreak';
+  if (w.callNode) s += ' @callNode';
+  if (w.stream) s += ` @stream ${JSON.stringify(w.stream)}`;
+  if (w.label) s += ` @label ${JSON.stringify(w.label)}`;
+  return s;
+}
+
+function renderArgField(out: string[], path: string, value: any): void {
+  if (typeof value === 'string') {
+    if (value.includes('\n') || value.length > VERBATIM_BLOCK_MIN) {
+      out.push(`  • ${path}  (${value.length} chars) — edit_node_text path:"${path}"`);
+      out.push(`  ┄┄┄ ${path} ┄┄┄`);
+      out.push(value); // verbatim, flush-left: copy an exact substring as old_string
+      out.push(`  ┄┄┄ /${path} ┄┄┄`);
+    } else {
+      out.push(`  • ${path}: ${JSON.stringify(value)}`);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    const json = JSON.stringify(value);
+    if (json.length <= 300) {
+      out.push(`  • ${path}: ${json}`); // compact config object/array — show inline
+    } else if (Array.isArray(value)) {
+      value.forEach((v, i) => renderArgField(out, `${path}[${i}]`, v));
+    } else {
+      for (const [k, v] of Object.entries(value)) renderArgField(out, `${path}.${k}`, v);
+    }
+    return;
+  }
+  out.push(`  • ${path}: ${JSON.stringify(value)}`);
+}
+
+function renderNodesVerbatim(wf: any, ids: string[]): string {
+  const out: string[] = [];
+  for (const id of ids) {
+    const node = (wf.nodes || []).find((n: any) => n.id === id);
+    const trig = (wf.triggers || []).find((t: any) => t.id === id);
+    const el = node || trig;
+    if (!el) {
+      out.push(`# ${id}: not found (run mode="outline" to list ids)`);
+      out.push('');
+      continue;
+    }
+
+    const flags: string[] = [];
+    if (el.waitForAll) flags.push('@waitForAll');
+    if (el.fallbackTo) flags.push(`@fallback(${el.fallbackTo})`);
+    if (el.label) flags.push(`@label ${JSON.stringify(el.label)}`);
+    const head = node ? `node ${id} = ${node.tool || 'noop'}` : `trigger ${id} = ${trig.type}`;
+    out.push(`${head}${flags.length ? '  ' + flags.join(' ') : ''}`);
+
+    const args = el.args || {};
+    if (Object.keys(args).length === 0) out.push('  (no args)');
+    else for (const [k, v] of Object.entries(args)) renderArgField(out, `args.${k}`, v);
+    if (Array.isArray(el.inputParams) && el.inputParams.length) {
+      out.push(`  • inputParams: ${JSON.stringify(el.inputParams)}`);
+    }
+
+    const wires = (wf.wires || []).filter((w: any) => w.from === id || w.to === id);
+    if (wires.length) {
+      out.push('  wires:');
+      for (const w of wires) out.push(`    ${inlineWireLine(w)}`);
+    }
+    out.push('');
+  }
+  out.push('# Verbatim view — edit a string field above in place with:');
+  out.push('#   modify_workflow edit_node_text { nodeId, path, old_string, new_string }');
+  return out.join('\n');
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // read_workflow
 // ════════════════════════════════════════════════════════════════════════════
@@ -51,13 +135,14 @@ export const readWorkflow = createTool({
     'Read the workflow as a compact DSL, and optionally validate it. The single read/inspect tool.\n' +
     '  mode="outline" → one line per node (id = tool) + all wires. The cheap MAP; start here.\n' +
     '  mode="window"  → full args for focusIds + 1-hop neighbours + incident wires. ~Flat cost on any size; read right before editing a node.\n' +
+    '  mode="node"    → the focusIds nodes with every string arg shown VERBATIM (real newlines, tagged with its edit_node_text path). Use this to see a custom_ui component / inline script / long prompt before editing it — no file fallback needed.\n' +
     '  mode="full"    → the entire DSL (small flows / full rewrite only).\n' +
     '  validate=true  → also return a topology check (cycles, orphans, dangling wires, missing tools) + labelled schematic. Use after structural edits or before deploy.\n' +
     '  stuardFile     → read a sub-workflow .stuard FILE from the workspace instead of the main flow.\n' +
-    'DSL: `id = tool {json-args} @label "x"`, wires `from -> to @guard {..} @loop {..}`. Data flows via {{stepId.field}}. Long string args show as `…(Nc)…` — edit with modify_workflow edit_node_text.',
+    'DSL: `id = tool {json-args} @label "x"`, wires `from -> to @guard {..} @loop {..}`. Data flows via {{stepId.field}}. Long string args show as `…(Nc)…` in window/full — switch to mode="node" to read them in full, then edit in place with modify_workflow edit_node_text.',
   inputSchema: z.object({
-    mode: z.enum(['outline', 'window', 'full']),
-    focusIds: z.array(z.string()).nullable().describe('Node/trigger ids shown in full (required for mode="window").'),
+    mode: z.enum(['outline', 'window', 'node', 'full']),
+    focusIds: z.array(z.string()).nullable().describe('Node/trigger ids shown in full (required for mode="window" and mode="node").'),
     validate: z.boolean().nullable().optional().describe('Also return topology validation + schematic.'),
     stuardFile: z.string().nullable().optional().describe('Sub-workflow .stuard file to read instead of the main flow.'),
     workflowId: z.string().nullable().describe('Explicit workflow id; defaults to the session workflow.'),
@@ -91,15 +176,17 @@ export const readWorkflow = createTool({
       wf = resolveWorkflow(workflowId);
     }
     if (!wf) return { ok: false, error: 'No workflow is loaded in this session.' };
-    if (mode === 'window' && focusIds.length === 0) {
-      return { ok: false, error: 'mode="window" needs focusIds (the node ids you want to see in detail). Use mode="outline" first to find them.' };
+    if ((mode === 'window' || mode === 'node') && focusIds.length === 0) {
+      return { ok: false, error: `mode="${mode}" needs focusIds (the node ids you want to see in detail). Use mode="outline" first to find them.` };
     }
 
-    const dsl = serializeWorkflow(wf, {
-      mode,
-      focusIds,
-      abbreviateOver: mode === 'window' ? 800 : (mode === 'full' ? 1200 : undefined),
-    });
+    const dsl = mode === 'node'
+      ? renderNodesVerbatim(wf, focusIds)
+      : serializeWorkflow(wf, {
+        mode,
+        focusIds,
+        abbreviateOver: mode === 'window' ? 800 : (mode === 'full' ? 1200 : undefined),
+      });
 
     // Topology validation folded in from the former inspect_workflow.
     let validation: any;

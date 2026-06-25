@@ -12,24 +12,26 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from ..storage.memory_db import (
-    get_memory_db,
-    MemoryDB,
-    Conversation,
-    Message,
-    ConversationSegment,
-    Project,
-    Memory,
-    JournalEntry,
-)
 from ..storage.crypto import hash_password, verify_password
+from ..storage.memory_db import (
+    Conversation,
+    ConversationSegment,
+    JournalEntry,
+    Memory,
+    MemoryDB,
+    Message,
+    Project,
+    get_memory_db,
+)
 
 logger = logging.getLogger("agent")
 
 
 def _fallback_title_from_text(text: str, max_words: int = 6, max_len: int = 60) -> str:
     """Derive a short title from the first user message (matches cloud-ai thread-title)."""
-    cleaned = " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+    cleaned = " ".join(
+        str(text or "").replace("\r", " ").replace("\n", " ").split()
+    ).strip()
     if not cleaned:
         return ""
     words = cleaned.split(" ")
@@ -41,7 +43,9 @@ def _fallback_title_from_text(text: str, max_words: int = 6, max_len: int = 60) 
     return title.rstrip(".,!?;:")
 
 
-def _ensure_conversation_title_from_message(db: MemoryDB, conversation_id: str, content: str) -> None:
+def _ensure_conversation_title_from_message(
+    db: MemoryDB, conversation_id: str, content: str
+) -> None:
     conv = db.get_conversation(conversation_id)
     if not conv or (conv.title or "").strip():
         return
@@ -53,6 +57,7 @@ def _ensure_conversation_title_from_message(db: MemoryDB, conversation_id: str, 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONVERSATION HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def conversation_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new conversation."""
@@ -73,7 +78,9 @@ async def conversation_create(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
-def _resolve_conversation_title(db: MemoryDB, conversation: Conversation) -> Conversation:
+def _resolve_conversation_title(
+    db: MemoryDB, conversation: Conversation
+) -> Conversation:
     """Ensure list/get responses never return a blank title when messages exist."""
     if (conversation.title or "").strip():
         return conversation
@@ -153,19 +160,19 @@ async def conversation_list(args: Dict[str, Any]) -> Dict[str, Any]:
         limit = min(int(args.get("limit", 50)), 200)
         offset = int(args.get("offset", 0))
         source = args.get("source")
-        
+
         conversations = db.list_conversations(
             status=status if status else None,
             limit=limit,
             offset=offset,
-            source=source if source else None
+            source=source if source else None,
         )
         conversations = [_resolve_conversation_title(db, c) for c in conversations]
-        
+
         return {
             "ok": True,
             "conversations": [c.to_dict() for c in conversations],
-            "count": len(conversations)
+            "count": len(conversations),
         }
     except Exception as e:
         logger.exception("conversation_list failed")
@@ -178,7 +185,7 @@ async def conversation_update(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id") or args.get("id")
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
-        
+
         db = get_memory_db()
         conv = db.update_conversation(
             conversation_id=conversation_id,
@@ -189,10 +196,10 @@ async def conversation_update(args: Dict[str, Any]) -> Dict[str, Any]:
             owner_type=args.get("owner_type"),
             owner_id=args.get("owner_id"),
         )
-        
+
         if not conv:
             return {"ok": False, "error": "not_found"}
-        
+
         return {"ok": True, "conversation": conv.to_dict()}
     except Exception as e:
         logger.exception("conversation_update failed")
@@ -205,10 +212,10 @@ async def conversation_delete(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id") or args.get("id")
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
-        
+
         db = get_memory_db()
         deleted = db.delete_conversation(conversation_id)
-        
+
         return {"ok": True, "deleted": deleted}
     except Exception as e:
         logger.exception("conversation_delete failed")
@@ -221,26 +228,26 @@ async def conversation_search(args: Dict[str, Any]) -> Dict[str, Any]:
         embedding = args.get("embedding")
         if not embedding or not isinstance(embedding, list):
             return {"ok": False, "error": "missing embedding vector"}
-        
+
         db = get_memory_db()
         limit = min(int(args.get("limit", 10)), 50)
         threshold = float(args.get("threshold", 0.6))
         status = args.get("status", "active")
-        
+
         results = db.search_conversations(
             query_vector=embedding,
             limit=limit,
             status=status if status else None,
-            threshold=threshold
+            threshold=threshold,
         )
-        
+
         return {
             "ok": True,
             "results": [
                 {"conversation": conv.to_dict(), "score": score}
                 for conv, score in results
             ],
-            "count": len(results)
+            "count": len(results),
         }
     except Exception as e:
         logger.exception("conversation_search failed")
@@ -250,6 +257,7 @@ async def conversation_search(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # MESSAGE HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def message_add(args: Dict[str, Any]) -> Dict[str, Any]:
     """Add a message to a conversation."""
@@ -278,12 +286,14 @@ async def message_add(args: Dict[str, Any]) -> Dict[str, Any]:
             tool_results=args.get("tool_results"),
             attachments=args.get("attachments"),
             metadata=args.get("metadata"),
-            embedding=args.get("embedding")
+            embedding=args.get("embedding"),
         )
 
         if role == "user":
-            _ensure_conversation_title_from_message(db, conversation_id, str(content or ""))
-        
+            _ensure_conversation_title_from_message(
+                db, conversation_id, str(content or "")
+            )
+
         return {"ok": True, "message": msg.to_dict()}
     except Exception as e:
         logger.exception("message_add failed")
@@ -296,19 +306,19 @@ async def message_list(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id")
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
-        
+
         db = get_memory_db()
         messages = db.get_messages(
             conversation_id=conversation_id,
             start_turn=args.get("start_turn"),
             end_turn=args.get("end_turn"),
-            limit=args.get("limit")
+            limit=args.get("limit"),
         )
-        
+
         return {
             "ok": True,
             "messages": [m.to_dict() for m in messages],
-            "count": len(messages)
+            "count": len(messages),
         }
     except Exception as e:
         logger.exception("message_list failed")
@@ -319,6 +329,7 @@ async def message_list(args: Dict[str, Any]) -> Dict[str, Any]:
 # SEGMENT HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def segment_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a conversation segment."""
     try:
@@ -326,14 +337,14 @@ async def segment_create(args: Dict[str, Any]) -> Dict[str, Any]:
         start_turn = args.get("start_turn")
         summary = args.get("summary")
         topics = args.get("topics", [])
-        
+
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
         if start_turn is None:
             return {"ok": False, "error": "missing start_turn"}
         if not summary:
             return {"ok": False, "error": "missing summary"}
-        
+
         db = get_memory_db()
         segment = db.create_segment(
             conversation_id=conversation_id,
@@ -341,9 +352,9 @@ async def segment_create(args: Dict[str, Any]) -> Dict[str, Any]:
             summary=summary,
             topics=topics if isinstance(topics, list) else [topics],
             embedding=args.get("embedding"),
-            end_turn=args.get("end_turn")
+            end_turn=args.get("end_turn"),
         )
-        
+
         return {"ok": True, "segment": segment.to_dict()}
     except Exception as e:
         logger.exception("segment_create failed")
@@ -356,19 +367,19 @@ async def segment_update(args: Dict[str, Any]) -> Dict[str, Any]:
         segment_id = args.get("segment_id") or args.get("id")
         if not segment_id:
             return {"ok": False, "error": "missing segment_id"}
-        
+
         db = get_memory_db()
         segment = db.update_segment(
             segment_id=segment_id,
             summary=args.get("summary"),
             topics=args.get("topics"),
             end_turn=args.get("end_turn"),
-            embedding=args.get("embedding")
+            embedding=args.get("embedding"),
         )
-        
+
         if not segment:
             return {"ok": False, "error": "not_found"}
-        
+
         return {"ok": True, "segment": segment.to_dict()}
     except Exception as e:
         logger.exception("segment_update failed")
@@ -381,14 +392,14 @@ async def segment_list(args: Dict[str, Any]) -> Dict[str, Any]:
         conversation_id = args.get("conversation_id")
         if not conversation_id:
             return {"ok": False, "error": "missing conversation_id"}
-        
+
         db = get_memory_db()
         segments = db.get_conversation_segments(conversation_id)
-        
+
         return {
             "ok": True,
             "segments": [s.to_dict() for s in segments],
-            "count": len(segments)
+            "count": len(segments),
         }
     except Exception as e:
         logger.exception("segment_list failed")
@@ -449,14 +460,13 @@ async def segment_search(args: Dict[str, Any]) -> Dict[str, Any]:
             owner_type=owner_type,
             owner_id=str(owner_id) if owner_id else None,
         )
-        
+
         return {
             "ok": True,
             "results": [
-                {"segment": seg.to_dict(), "score": score}
-                for seg, score in results
+                {"segment": seg.to_dict(), "score": score} for seg, score in results
             ],
-            "count": len(results)
+            "count": len(results),
         }
     except Exception as e:
         logger.exception("segment_search failed")
@@ -512,18 +522,21 @@ async def segment_search_drawers_by_embedding(args: Dict[str, Any]) -> Dict[str,
 
         # Group segments by topic and compute centroid
         import numpy as _np
+
         topic_vecs: Dict[str, list] = {}
         topic_meta: Dict[str, Dict[str, Any]] = {}
 
         for seg in segments:
             if not seg.embedding or not isinstance(seg.embedding, list):
                 continue
-            for t in (seg.topics if isinstance(seg.topics, list) else []):
+            for t in seg.topics if isinstance(seg.topics, list) else []:
                 t = str(t or "").strip()
                 if not t:
                     continue
                 topic_vecs.setdefault(t, []).append(seg.embedding)
-                meta = topic_meta.setdefault(t, {"count": 0, "latest": "", "earliest": ""})
+                meta = topic_meta.setdefault(
+                    t, {"count": 0, "latest": "", "earliest": ""}
+                )
                 meta["count"] += 1
                 ts = seg.created_at or ""
                 if not meta["latest"] or ts > meta["latest"]:
@@ -538,13 +551,15 @@ async def segment_search_drawers_by_embedding(args: Dict[str, Any]) -> Dict[str,
             norm = float(_np.linalg.norm(query_np) * _np.linalg.norm(centroid))
             score = float(_np.dot(query_np, centroid) / norm) if norm > 0 else 0.0
             meta = topic_meta.get(topic, {})
-            scored.append({
-                "topic": topic,
-                "score": round(score, 4),
-                "segment_count": meta.get("count", 0),
-                "latest_at": meta.get("latest", ""),
-                "earliest_at": meta.get("earliest", ""),
-            })
+            scored.append(
+                {
+                    "topic": topic,
+                    "score": round(score, 4),
+                    "segment_count": meta.get("count", 0),
+                    "latest_at": meta.get("latest", ""),
+                    "earliest_at": meta.get("earliest", ""),
+                }
+            )
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         # Also check pre-computed collection summaries
@@ -627,12 +642,13 @@ async def collection_summary_list(args: Dict[str, Any]) -> Dict[str, Any]:
 # SECURITY HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def security_get_settings(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get security settings."""
     try:
         db = get_memory_db()
         settings = db.get_security_settings()
-        
+
         return {
             "ok": True,
             "settings": {
@@ -643,7 +659,7 @@ async def security_get_settings(args: Dict[str, Any]) -> Dict[str, Any]:
                 "biometric_enabled": settings.biometric_enabled,
                 "sync_enabled": settings.sync_enabled,
                 "last_sync_at": settings.last_sync_at,
-            }
+            },
         }
     except Exception as e:
         logger.exception("security_get_settings failed")
@@ -655,24 +671,24 @@ async def security_set_password(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         password = args.get("password")
         current_password = args.get("current_password")
-        
+
         if not password:
             return {"ok": False, "error": "missing password"}
-        
+
         db = get_memory_db()
         settings = db.get_security_settings()
-        
+
         # Verify current password if one exists
         if settings.password_hash:
             if not current_password:
                 return {"ok": False, "error": "current_password_required"}
             if not verify_password(current_password, settings.password_hash):
                 return {"ok": False, "error": "invalid_current_password"}
-        
+
         # Set new password
         password_hash = hash_password(password)
         db.update_security_settings(password_hash=password_hash)
-        
+
         return {"ok": True}
     except Exception as e:
         logger.exception("security_set_password failed")
@@ -685,13 +701,13 @@ async def security_verify_password(args: Dict[str, Any]) -> Dict[str, Any]:
         password = args.get("password")
         if not password:
             return {"ok": False, "error": "missing password"}
-        
+
         db = get_memory_db()
         settings = db.get_security_settings()
-        
+
         if not settings.password_hash:
             return {"ok": True, "valid": True, "message": "no_password_set"}
-        
+
         valid = verify_password(password, settings.password_hash)
         return {"ok": True, "valid": valid}
     except Exception as e:
@@ -703,7 +719,7 @@ async def security_update_settings(args: Dict[str, Any]) -> Dict[str, Any]:
     """Update security settings."""
     try:
         db = get_memory_db()
-        
+
         updates = {}
         if "memory_lock_enabled" in args:
             updates["memory_lock_enabled"] = args["memory_lock_enabled"]
@@ -715,10 +731,10 @@ async def security_update_settings(args: Dict[str, Any]) -> Dict[str, Any]:
             updates["biometric_enabled"] = args["biometric_enabled"]
         if "sync_enabled" in args:
             updates["sync_enabled"] = args["sync_enabled"]
-        
+
         if updates:
             db.update_security_settings(**updates)
-        
+
         return {"ok": True}
     except Exception as e:
         logger.exception("security_update_settings failed")
@@ -729,22 +745,19 @@ async def security_remove_password(args: Dict[str, Any]) -> Dict[str, Any]:
     """Remove memory lock password."""
     try:
         current_password = args.get("current_password")
-        
+
         db = get_memory_db()
         settings = db.get_security_settings()
-        
+
         # Verify current password
         if settings.password_hash:
             if not current_password:
                 return {"ok": False, "error": "current_password_required"}
             if not verify_password(current_password, settings.password_hash):
                 return {"ok": False, "error": "invalid_password"}
-        
-        db.update_security_settings(
-            password_hash=None,
-            memory_lock_enabled=False
-        )
-        
+
+        db.update_security_settings(password_hash=None, memory_lock_enabled=False)
+
         return {"ok": True}
     except Exception as e:
         logger.exception("security_remove_password failed")
@@ -754,6 +767,7 @@ async def security_remove_password(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # STATS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def memory_stats(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get memory database statistics."""
@@ -769,6 +783,7 @@ async def memory_stats(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PLAINTEXT EXPORT (for VM sync)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
     """Export memory.db to a new file with all encrypted columns decrypted.
@@ -799,8 +814,8 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
     import shutil as _shutil
     import sqlite3 as _sqlite3
 
-    from ..storage.memory_db import get_memory_db
     from ..storage.crypto import PLAINTEXT_PREFIX
+    from ..storage.memory_db import get_memory_db
 
     output_path = args.get("output_path") or args.get("dest")
     if not output_path or not isinstance(output_path, str):
@@ -858,7 +873,13 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                     _c.close()
             except Exception:
                 pass
-            return {"ok": True, "output_path": output_path, "bytes": size, "mode": "copy", "max_updated_at": mx}
+            return {
+                "ok": True,
+                "output_path": output_path,
+                "bytes": size,
+                "mode": "copy",
+                "max_updated_at": mx,
+            }
         except Exception as e:
             logger.exception("memory_export_plaintext copy failed")
             return {"ok": False, "error": str(e)}
@@ -908,7 +929,12 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                             pass
 
                     def _copy_where(table: str, where_sql: str, params: tuple) -> int:
-                        cols = [r[1] for r in src_conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                        cols = [
+                            r[1]
+                            for r in src_conn.execute(
+                                f"PRAGMA table_info({table})"
+                            ).fetchall()
+                        ]
                         if not cols:
                             return 0
                         rows = src_conn.execute(
@@ -928,14 +954,18 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                     # add_message bumps conversations.updated_at, so a changed
                     # conversation always carries its new messages.
                     changed_conv_ids = [
-                        r[0] for r in src_conn.execute(
-                            "SELECT id FROM conversations WHERE updated_at >= ?", (since,)
+                        r[0]
+                        for r in src_conn.execute(
+                            "SELECT id FROM conversations WHERE updated_at >= ?",
+                            (since,),
                         ).fetchall()
                     ]
                     _copy_where("conversations", "updated_at >= ?", (since,))
                     for cid in changed_conv_ids:
                         _copy_where("messages", "conversation_id = ?", (cid,))
-                        _copy_where("conversation_segments", "conversation_id = ?", (cid,))
+                        _copy_where(
+                            "conversation_segments", "conversation_id = ?", (cid,)
+                        )
                     for _t in ("collection_summaries", "memories", "projects"):
                         try:
                             _copy_where(_t, "updated_at >= ?", (since,))
@@ -944,7 +974,11 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                     try:
                         # updated_at can be NULL for pre-migration rows; fall
                         # back to created_at so they still ride the cursor.
-                        _copy_where("journal_entries", "COALESCE(updated_at, created_at) >= ?", (since,))
+                        _copy_where(
+                            "journal_entries",
+                            "COALESCE(updated_at, created_at) >= ?",
+                            (since,),
+                        )
                     except Exception:
                         pass
                     dst_inc.commit()
@@ -957,15 +991,17 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
         dst = _sqlite3.connect(output_path)
         dst.row_factory = _sqlite3.Row
         try:
+
             def _recode(table: str, pk: str, columns: list[str]) -> int:
                 existing_cols = {
-                    r[1]
-                    for r in dst.execute(f"PRAGMA table_info({table})").fetchall()
+                    r[1] for r in dst.execute(f"PRAGMA table_info({table})").fetchall()
                 }
                 columns = [c for c in columns if c in existing_cols]
                 if pk not in existing_cols or not columns:
                     return 0
-                rows = dst.execute(f"SELECT {pk}, {', '.join(columns)} FROM {table}").fetchall()
+                rows = dst.execute(
+                    f"SELECT {pk}, {', '.join(columns)} FROM {table}"
+                ).fetchall()
                 count = 0
                 for row in rows:
                     updates = []
@@ -1000,22 +1036,44 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             msg_count = _recode(
                 "messages",
                 "id",
-                ["content_enc", "tool_calls_enc", "tool_results_enc", "attachments_enc", "metadata_enc"],
+                [
+                    "content_enc",
+                    "tool_calls_enc",
+                    "tool_results_enc",
+                    "attachments_enc",
+                    "metadata_enc",
+                ],
             )
 
             # Project Mode content — memories (the user's atomic facts/notes),
             # projects, and journal entries. These weren't recoded before, so
             # they reached the VM unreadable (encrypted) or not at all.
             try:
-                _recode("memories", "id", ["title_enc", "content_enc", "metadata_enc", "url_enc"])
+                _recode(
+                    "memories",
+                    "id",
+                    ["title_enc", "content_enc", "metadata_enc", "url_enc"],
+                )
             except Exception:
                 pass
             try:
-                _recode("projects", "id", ["name_enc", "description_enc", "goals_enc", "instructions_enc", "digest_enc"])
+                _recode(
+                    "projects",
+                    "id",
+                    [
+                        "name_enc",
+                        "description_enc",
+                        "goals_enc",
+                        "instructions_enc",
+                        "digest_enc",
+                    ],
+                )
             except Exception:
                 pass
             try:
-                _recode("journal_entries", "id", ["title_enc", "body_enc", "source_ref_enc"])
+                _recode(
+                    "journal_entries", "id", ["title_enc", "body_enc", "source_ref_enc"]
+                )
             except Exception:
                 pass
 
@@ -1051,7 +1109,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
                         continue
                     raw = msg_row["content_enc"]
                     if isinstance(raw, str) and raw.startswith(PLAINTEXT_PREFIX):
-                        text = raw[len(PLAINTEXT_PREFIX):]
+                        text = raw[len(PLAINTEXT_PREFIX) :]
                     else:
                         try:
                             text = crypto.decrypt_string(raw)
@@ -1076,7 +1134,11 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
             # schema becomes plaintext. (Projects/memories/journal are handled
             # by the main recode pass above.)
             try:
-                _recode("conversation_segments", "id", ["summary_enc", "topics_enc", "entity_ids_enc"])
+                _recode(
+                    "conversation_segments",
+                    "id",
+                    ["summary_enc", "topics_enc", "entity_ids_enc"],
+                )
             except Exception:
                 pass
 
@@ -1108,6 +1170,7 @@ async def memory_export_plaintext(args: Dict[str, Any]) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROJECT MODE HANDLERS (successor to Spaces — see memory_db.py PROJECTS section)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def project_create(args: Dict[str, Any]) -> Dict[str, Any]:
     """Create a new project. A project is a scoped container for memories,
@@ -1160,7 +1223,11 @@ async def project_list(args: Dict[str, Any]) -> Dict[str, Any]:
             include_archived=bool(args.get("include_archived", False)),
             limit=min(int(args.get("limit", 100)), 500),
         )
-        return {"ok": True, "projects": [p.to_dict() for p in projects], "count": len(projects)}
+        return {
+            "ok": True,
+            "projects": [p.to_dict() for p in projects],
+            "count": len(projects),
+        }
     except Exception as e:
         logger.exception("project_list failed")
         return {"ok": False, "error": str(e), "projects": []}
@@ -1203,6 +1270,13 @@ async def project_delete(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": "missing project_id"}
         db = get_memory_db()
         deleted = db.delete_project(pid)
+        if deleted:
+            try:
+                from ..storage import rag_db
+
+                rag_db.delete_project_pack(str(pid))
+            except Exception:
+                pass
         return {"ok": True, "deleted": deleted}
     except Exception as e:
         logger.exception("project_delete failed")
@@ -1233,7 +1307,9 @@ async def project_context_add(args: Dict[str, Any]) -> Dict[str, Any]:
         next_paths = list(project.pinned_paths or [])
         if path not in next_paths:
             next_paths.append(path)
-            project = db.update_project(str(project_id), pinned_paths=next_paths) or project
+            project = (
+                db.update_project(str(project_id), pinned_paths=next_paths) or project
+            )
 
         kind = "missing"
         root = None
@@ -1242,33 +1318,41 @@ async def project_context_add(args: Dict[str, Any]) -> Dict[str, Any]:
             kind = "folder"
             from . import file_scanner
 
-            add_result = await file_scanner.add_index_root({
-                "path": path,
-                "schedule": args.get("schedule", "daily"),
-            })
+            add_result = await file_scanner.add_index_root(
+                {
+                    "path": path,
+                    "schedule": args.get("schedule", "daily"),
+                }
+            )
             root = add_result.get("root") if isinstance(add_result, dict) else None
             if add_result.get("ok") and args.get("scan", True):
-                scan_result = await file_scanner.scan_index_root({
-                    "root_id": root.get("id") if root else None,
-                    "compute_hashes": bool(args.get("compute_hashes", False)),
-                    "max_files": args.get("max_files"),
-                })
+                scan_result = await file_scanner.scan_index_root(
+                    {
+                        "root_id": root.get("id") if root else None,
+                        "compute_hashes": bool(args.get("compute_hashes", False)),
+                        "max_files": args.get("max_files"),
+                    }
+                )
         elif os.path.isfile(path):
             kind = "file"
             from . import file_scanner
 
             parent = os.path.dirname(path)
-            add_result = await file_scanner.add_index_root({
-                "path": parent,
-                "schedule": args.get("schedule", "daily"),
-            })
+            add_result = await file_scanner.add_index_root(
+                {
+                    "path": parent,
+                    "schedule": args.get("schedule", "daily"),
+                }
+            )
             root = add_result.get("root") if isinstance(add_result, dict) else None
             if add_result.get("ok") and args.get("scan", True):
-                scan_result = await file_scanner.scan_index_root({
-                    "root_id": root.get("id") if root else None,
-                    "compute_hashes": bool(args.get("compute_hashes", False)),
-                    "max_files": args.get("max_files"),
-                })
+                scan_result = await file_scanner.scan_index_root(
+                    {
+                        "root_id": root.get("id") if root else None,
+                        "compute_hashes": bool(args.get("compute_hashes", False)),
+                        "max_files": args.get("max_files"),
+                    }
+                )
 
         return {
             "ok": True,
@@ -1348,7 +1432,11 @@ async def memory_list(args: Dict[str, Any]) -> Dict[str, Any]:
             pinned_only=bool(args.get("pinned_only", False)),
             limit=min(int(args.get("limit", 100)), 500),
         )
-        return {"ok": True, "memories": [m.to_dict() for m in memories], "count": len(memories)}
+        return {
+            "ok": True,
+            "memories": [m.to_dict() for m in memories],
+            "count": len(memories),
+        }
     except Exception as e:
         logger.exception("memory_list failed")
         return {"ok": False, "error": str(e), "memories": []}
@@ -1370,8 +1458,7 @@ async def memory_search(args: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "ok": True,
             "results": [
-                {"memory": m.to_dict(), "score": score}
-                for m, score in results
+                {"memory": m.to_dict(), "score": score} for m, score in results
             ],
             "count": len(results),
         }
@@ -1393,6 +1480,7 @@ async def memory_delete(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ── Journal entries ──────────────────────────────────────────────────────────
+
 
 async def journal_add(args: Dict[str, Any]) -> Dict[str, Any]:
     """Add an entry to a project's journal/timeline."""
@@ -1470,7 +1558,11 @@ async def journal_list(args: Dict[str, Any]) -> Dict[str, Any]:
             type=args.get("type"),
             limit=min(int(args.get("limit", 50)), 500),
         )
-        return {"ok": True, "entries": [e.to_dict() for e in entries], "count": len(entries)}
+        return {
+            "ok": True,
+            "entries": [e.to_dict() for e in entries],
+            "count": len(entries),
+        }
     except Exception as e:
         logger.exception("journal_list failed")
         return {"ok": False, "error": str(e), "entries": []}
@@ -1489,6 +1581,7 @@ async def journal_delete(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ── Conversation x Project linkage ───────────────────────────────────────────
+
 
 async def conversation_set_project(args: Dict[str, Any]) -> Dict[str, Any]:
     """Stamp a conversation with a project_id (or clear it via project_id=null).

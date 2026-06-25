@@ -613,7 +613,7 @@ function WireLoopSection({
 
         {/* Loop Fanout Mode - shown for non-loop wires when sibling has loop */}
         {!hasLoop && hasOutgoingLoopFromSameNode && (
-          <div className="pt-3 border-t border-slate-200/50">
+          <div className="pt-3 border-t wf-border-subtle">
             <label className="text-[10px] font-bold uppercase tracking-wider wf-fg-muted mb-1.5 block">
               When sibling loop is active
             </label>

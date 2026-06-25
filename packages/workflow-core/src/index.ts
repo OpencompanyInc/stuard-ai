@@ -4,3 +4,4 @@ export * from './compiler';
 export * from './guards';
 export * from './shortcuts';
 export * from './builder';
+export * from './dependencies';

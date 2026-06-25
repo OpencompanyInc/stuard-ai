@@ -77,7 +77,8 @@ DSL shape: \`id = tool {json-args} @waitForAll @label "x"\`; wires \`from -> to\
 with \`@guard {..}\`, \`@loop {..}\`, \`@loopBreak\`. Data flows via {{stepId.field}}
 inside args (keep the control wire). The json-args may be pretty-printed across
 multiple lines — write JSON however is natural; it parses. Long string args render
-as \`…(Nc)…\` — edit those with modify_workflow edit_node_text.
+as \`…(Nc)…\` in window/full — read them in full with read_workflow({ mode:"node",
+focusIds:[nodeId] }), then edit in place with modify_workflow edit_node_text.
 
 BUILDING A NEW / EMPTY FLOW — do it in ONE shot, not step-by-step:
 • A blank or just-created flow has nothing to read — do NOT call read_workflow on it.
@@ -167,9 +168,12 @@ TARGETING SUB-WORKFLOWS (studio only):
   applied, and saved back. Never hand-edit .stuard JSON with file_edit.
 
 EDITING LARGE TEXT ARGS (custom_ui component, inline scripts, long prompts):
+• Read the current text first with read_workflow({ mode:"node", focusIds:[nodeId] }) —
+  it prints the field VERBATIM (real newlines) with its exact edit_node_text path.
+  window/full abbreviate it to \`…(Nc)…\`, so anchors copied from them won't match.
+  Do NOT read the .stuard file to see it — mode="node" is the native path.
 • Use modify_workflow op "edit_node_text" (find/replace inside the string) —
   NEVER re-send the whole string via update_node for a small change.
-• Read the current text first with read_workflow({ mode: "window", focusIds:[nodeId] }).
 
 SEND HOTKEY — BUILT-IN REPEAT:
   send_hotkey has count and delayMs args for repeating without wire loops.
@@ -266,9 +270,11 @@ the whole flow just to confirm an edit — trust the tool result.
   (set guard/loop/loopBreak in place — the reliable path for loops), edit_node_text for long
   string args, stuardFile sub-workflow edits. NEVER pass the full workflow JSON — it loads from session.
 • read_workflow({ mode:"window", focusIds:[...] }) — ONLY when you need exact args you can't see.
+• read_workflow({ mode:"node", focusIds:[...] }) — when an arg shows as \`…(Nc)…\` and you need its
+  full text (custom_ui component, inline script, long prompt): prints it verbatim with its edit_node_text path.
 
 DSL shape: \`id = tool {json-args} @waitForAll @label "x"\`; wires \`from -> to @guard {..} @loop {..} @loopBreak\`.
-Data flows via {{stepId.field}} inside args. Long string args show as \`…(Nc)…\` — edit with modify_workflow edit_node_text.
+Data flows via {{stepId.field}} inside args. Long string args show as \`…(Nc)…\`; read them with mode:"node", then edit with modify_workflow edit_node_text.
 
 ══════════════════════════════════════════════════════════════════════════
 WIRE PROPERTIES — guards, loops, loopBreak (emit these shapes EXACTLY)

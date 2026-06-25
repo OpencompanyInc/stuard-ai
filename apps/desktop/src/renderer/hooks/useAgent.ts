@@ -8,6 +8,11 @@ import {
 } from '../utils/attachments';
 import { mergeStreamingText } from '../utils/streamMerge';
 import {
+  requestLiveSession,
+  registerLiveFeedbackHandler,
+  type LiveSessionFeedback,
+} from '../lib/liveSessionBus';
+import {
   displayConversationTitle,
   fallbackTitleFromMessage,
   isPlaceholderConversationTitle,
@@ -1791,6 +1796,24 @@ export function useAgent(options?: string | UseAgentOptions) {
               }
               // blocking=true: wait — user submits via ChatUIRenderer.onResult → submitToolOutput(tc.id)
               // which looks up chatUiBridgeMapRef and sends tool_result with the bridge id.
+              return;
+            }
+
+            // start_live_session opens the voice pill (optionally with a
+            // knowledge pack attached) — handled in the renderer via the live
+            // session bus, then we report success back to the agent.
+            if (tool === 'start_live_session') {
+              (async () => {
+                let result: any = { ok: false, error: 'voice_unavailable' };
+                try {
+                  result = await requestLiveSession(args || {});
+                } catch (err: any) {
+                  result = { ok: false, error: String(err?.message || err) };
+                }
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({ type: 'tool_result', id, result }));
+                }
+              })();
               return;
             }
 
@@ -3857,6 +3880,40 @@ export function useAgent(options?: string | UseAgentOptions) {
     [messages, activeTabId, tryDequeueAndSend, connect, syncQueuedMessages]
   );
   sendMessageRef.current = sendMessage;
+
+  // Close the live-voice loop: when a structured voice session ends via
+  // end_live_session, the model's wrap-up arrives here (published by
+  // useVoiceMode through the live session bus). Inject it as a SILENT turn so
+  // the orchestrator relays the feedback in chat and saves what matters —
+  // without a fake user bubble. Registered once; calls through the ref so it
+  // always uses the latest sendMessage. Lands in the active tab (the session's
+  // originating tab isn't threaded back through the cloud voice bridge yet).
+  useEffect(() => {
+    return registerLiveFeedbackHandler((feedback: LiveSessionFeedback) => {
+      const summary = String(feedback?.summary || '').trim();
+      if (!summary) return;
+
+      const lines: string[] = [
+        '[Live voice session ended]',
+        'A spoken session you started for the user just finished. Relay this wrap-up to them conversationally, and save anything worth remembering (e.g. weak areas to revisit) if appropriate.',
+        '',
+      ];
+      if (feedback.outcome) lines.push(`Outcome: ${feedback.outcome}`);
+      lines.push(`Summary: ${summary}`);
+      if (Array.isArray(feedback.highlights) && feedback.highlights.length > 0) {
+        lines.push('', 'Highlights:', ...feedback.highlights.map((h) => `- ${h}`));
+      }
+      if (Array.isArray(feedback.followUps) && feedback.followUps.length > 0) {
+        lines.push('', 'What to review:', ...feedback.followUps.map((f) => `- ${f}`));
+      }
+
+      try {
+        sendMessageRef.current?.({ text: lines.join('\n'), silent: true });
+      } catch (e) {
+        console.warn('[agent] Failed to inject live-session feedback turn:', e);
+      }
+    });
+  }, []);
 
   const newChat = useCallback(() => {
     addTab();

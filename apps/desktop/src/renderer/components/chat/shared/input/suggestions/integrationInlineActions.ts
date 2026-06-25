@@ -142,6 +142,17 @@ export async function installLocalTool(slug: string, ctx: ActionContext = {}): P
     return { ok: false, error: 'No coding CLI found. Install Codex, Claude Code, or Cursor and retry.' };
   }
 
+  // Browser Connector: extension must be loaded manually in chrome://extensions.
+  if (slug === 'browser-extension') {
+    ctx.onProgress?.('Checking browser connector…');
+    const res = await execTool('browser_ext_status', {});
+    if (res && res.connected) return finish();
+    return {
+      ok: false,
+      error: 'Open Integrations → Browser Connector, load the extension folder, and paste the pairing key.',
+    };
+  }
+
   const tool = INSTALL_TOOL[slug];
   if (!tool) return { ok: false, error: `Don't know how to install "${slug}".` };
 

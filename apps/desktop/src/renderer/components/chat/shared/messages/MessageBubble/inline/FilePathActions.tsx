@@ -58,21 +58,21 @@ export const FilePathActions: React.FC<{ filePath: string }> = ({ filePath }) =>
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         <button
           onClick={openFile}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-fg-soft transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Open file"
         >
           <ExternalLink className="h-3 w-3" />
         </button>
         <button
           onClick={revealInFolder}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-fg-soft transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Show in folder"
         >
           <Folder className="h-3 w-3" />
         </button>
         <button
           onClick={copyPath}
-          className="rounded p-0.5 text-theme-muted transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
+          className="rounded p-0.5 text-theme-fg-soft transition-colors hover:bg-[color:color-mix(in_srgb,var(--foreground)_10%,transparent)] hover:text-theme-fg"
           title="Copy path"
         >
           {copied

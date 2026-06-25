@@ -24,6 +24,8 @@ interface NotificationProviderProps {
     defaultDuration?: number;
     defaultPosition?: NotificationPosition;
     maxNotifications?: number;
+    /** Extra top inset (px) for top-positioned stacks — clears the compact bar. */
+    topInset?: number;
 }
 
 export const NotificationProvider: React.FC<NotificationProviderProps> = ({
@@ -31,6 +33,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
     defaultDuration = 5000,
     defaultPosition = 'bottom-left',
     maxNotifications = 5,
+    topInset = 0,
 }) => {
     const [notifications, setNotifications] = useState<NotificationState[]>([]);
     const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -223,7 +226,7 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
                         if (items.length === 0) return null;
 
                         return (
-                            <NotificationContainer key={position} position={position}>
+                            <NotificationContainer key={position} position={position} topInset={topInset}>
                                 {items.map((notification) => (
                                     <NotificationItem
                                         key={notification.id}
@@ -243,27 +246,28 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({
 
 interface NotificationContainerProps {
     position: NotificationPosition;
+    topInset?: number;
     children: React.ReactNode;
 }
 
-const NotificationContainer: React.FC<NotificationContainerProps> = ({ position, children }) => {
+const NotificationContainer: React.FC<NotificationContainerProps> = ({ position, topInset = 0, children }) => {
     const positionStyles: React.CSSProperties = {
         position: 'fixed',
         zIndex: 99999,
         display: 'flex',
         flexDirection: 'column',
-        gap: '8px',
-        padding: '12px',
+        gap: '12px',
+        padding: '16px 20px',
         pointerEvents: 'none',
-        maxWidth: '420px',
-        maxHeight: 'calc(100vh - 24px)',
+        maxWidth: '388px',
+        maxHeight: 'calc(100vh - 32px)',
         overflowY: 'auto',
         overflowX: 'hidden',
     };
 
     const positionMap: Record<NotificationPosition, React.CSSProperties> = {
-        'top-left': { top: 0, left: 0 },
-        'top-right': { top: 0, right: 0 },
+        'top-left': { top: topInset, left: 0 },
+        'top-right': { top: topInset, right: 0 },
         'bottom-left': { bottom: 0, left: 0 },
         'bottom-right': { bottom: 0, right: 0 },
     };

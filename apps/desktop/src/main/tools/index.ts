@@ -7,6 +7,7 @@ import { execCustomUi, execCloseCustomUi, execPlayAudio, execLog, execWait, exec
 import { execUiPackagesInstall, execUiPackagesStatus, execUiPackagesList, execUiPackagesRemove } from './handlers/ui-packages';
 import { execAskUserViaNotification } from './handlers/ask-user-notification';
 import { execAskUserInApp } from './handlers/ask-user-inapp';
+import { execStartLiveSession } from './handlers/live-session';
 import { execSetVariable, execGetVariable, execToggleVariable, execIncrementVariable, execAppendToList, execListVariables, execDeleteVariable } from './handlers/variables';
 import { execTerminalCreate, execTerminalList, execTerminalGet, execTerminalSendInput, execTerminalSendRaw, execTerminalSendKeys, execTerminalRead, execTerminalWaitFor, execTerminalDestroy } from './handlers/terminal';
 import { execCliAgentDetect, execCliAgentStart, execCliAgentSend, execCliAgentRead, execCliAgentStatus, execCliAgentWaitFor, execCliAgentWaitIdle, execCliAgentStop } from './handlers/cli-agent';
@@ -20,6 +21,7 @@ import { execWakewordStart, execWakewordStop, execWakewordStatus } from './handl
 import { skills_save, skills_list } from '../skills';
 import { execOllamaStatus, execOllamaStart, execOllamaAgent, execOllamaChat, execOllamaGenerate, execOllamaVision, execOllamaEmbeddings, execOllamaModels } from './handlers/ollama';
 import { execBrowserUseStatus, execBrowserUseConfigure, execBrowserUseTask, execBrowserUseExecuteScript, execBrowserUseNavigate, execBrowserUseClick, execBrowserUseType, execBrowserUsePressKey, execBrowserUseScreenshot, execBrowserUseContent, execBrowserUseScroll, execBrowserUseTabs, execBrowserUseCookies, execBrowserUseHover, execBrowserUseSelectOption, execBrowserUseGetDropdownOptions, execBrowserUseGetInteractiveElements, execBrowserUseFillForm, execBrowserUseUploadFile, execBrowserUseWaitFor, startBrowserUseServer, stopBrowserUseServer, setupBrowserUse, installBrowserUse, uninstallBrowserUse, shutdownAllBrowserUseServers } from './handlers/browser-use';
+import { execBrowserExtStatus, execBrowserExtGetPage, execBrowserExtExtract, execBrowserExtRunScript, execBrowserExtTabs, execBrowserExtCaptureScreenshot, execBrowserExtServiceList, execBrowserExtServiceSave, execBrowserExtServiceRun, execBrowserExtServiceDelete } from './handlers/browser-extension';
 import { captureToolMedia, getMediaLibrarySourceDir, registerLocalMedia } from '../services/media-library';
 import { isRustFileTool, execRustFileTool } from './handlers/file-indexer';
 
@@ -201,6 +203,7 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'run_ui_script') return execRunUiScript(args, ctx);
       if (toolName === 'list_custom_ui_windows') return execListCustomUiWindows(args, ctx);
       if (toolName === 'play_audio') return execPlayAudio(args, ctx);
+      if (toolName === 'start_live_session') return execStartLiveSession(args);
       if (toolName === 'log') return execLog(args, ctx);
       if (toolName === 'wait') return execWait(args, ctx);
       if (toolName === 'end') return execEnd(args, ctx);
@@ -302,6 +305,16 @@ export async function execTool(toolName: string, args: any, ctx: RouterContext):
       if (toolName === 'browser_use_fill_form') return execBrowserUseFillForm(args, ctx);
       if (toolName === 'browser_use_upload_file') return execBrowserUseUploadFile(args, ctx);
       if (toolName === 'browser_use_wait_for') return execBrowserUseWaitFor(args, ctx);
+      if (toolName === 'browser_ext_status') return execBrowserExtStatus(args, ctx);
+      if (toolName === 'browser_ext_get_page') return execBrowserExtGetPage(args, ctx);
+      if (toolName === 'browser_ext_extract') return execBrowserExtExtract(args, ctx);
+      if (toolName === 'browser_ext_run_script') return execBrowserExtRunScript(args, ctx);
+      if (toolName === 'browser_ext_tabs') return execBrowserExtTabs(args, ctx);
+      if (toolName === 'browser_ext_capture_screenshot') return execBrowserExtCaptureScreenshot(args, ctx);
+      if (toolName === 'browser_ext_service_list') return execBrowserExtServiceList(args, ctx);
+      if (toolName === 'browser_ext_service_save') return execBrowserExtServiceSave(args, ctx);
+      if (toolName === 'browser_ext_service_run') return execBrowserExtServiceRun(args, ctx);
+      if (toolName === 'browser_ext_service_delete') return execBrowserExtServiceDelete(args, ctx);
       if (toolName === 'proactive_task_list') return execProactiveTaskList(args, ctx);
       if (toolName === 'proactive_task_update') return execProactiveTaskUpdate(args, ctx);
       if (toolName === 'proactive_task_create') return execProactiveTaskCreate(args, ctx);

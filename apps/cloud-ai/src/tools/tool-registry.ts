@@ -141,14 +141,54 @@ const WORKFLOW_ONLY_CATEGORIES = new Set<string>(['Variables', 'Workspace', 'Wor
 // (chat_ui renders in the chat bubble; name_conversation renames the chat.)
 const CHAT_ONLY_TOOLS = new Set<string>(['chat_ui', 'name_conversation']);
 
+// Categories that are app/chat actions, not workflow building blocks → hidden
+// from workflow node search. 'Feedback' (submit_feedback) files a bug/feature
+// report from the live app — it makes no sense as an automation node.
+const CHAT_ONLY_CATEGORIES = new Set<string>(['Feedback']);
+
+// Internal / system-managed plumbing the agent must NEVER discover or call.
+// These run the file index under the hood: roots are added + folders scanned
+// automatically when the user pins project context (pin_file / add_project_context)
+// or configures indexing in Settings; pending files are embedded by the
+// background processor; *_update / *_mark_error are cloud-processing callbacks.
+// Surfacing them as callable tools only invited the model to hand-crank the
+// indexer and leaked "chunking / pending / embedding" internals into the trace.
+// The user-facing SEARCH tools (file_search, semantic_file_search, …) stay
+// discoverable — only the index-management/plumbing layer is hidden. The
+// file-indexing service still calls these directly over the desktop bridge
+// (execLocalTool), which does not go through this registry, so hiding them here
+// has no effect on the automatic pipeline.
+const INTERNAL_TOOLS = new Set<string>([
+  'file_index_add_root',
+  'file_index_remove_root',
+  'file_index_list_roots',
+  'file_index_scan',
+  'file_index_get_pending',
+  'file_index_stats',
+  'file_index_update',
+  'file_index_mark_error',
+  'process_pending_file_index',
+  'process_pending_file_index_batch',
+  'sync_file_index_batch_jobs',
+]);
+
+/** Internal/system-managed tool the agent should never discover or execute directly. */
+export function isInternalTool(name: string): boolean {
+  return INTERNAL_TOOLS.has(name);
+}
+
 /** Whether a tool should surface in a given discovery surface's search results. */
 export function isToolDiscoverableForSurface(name: string, surface: ToolSurface): boolean {
+  // Internal plumbing is never agent-discoverable on any surface.
+  if (INTERNAL_TOOLS.has(name)) return false;
+  const category = TOOL_METADATA.get(name)?.category;
   if (surface === 'workflow') {
-    return !CHAT_ONLY_TOOLS.has(name);
+    // workflow surface: hide chat-only tools + chat-only (app-action) categories.
+    if (CHAT_ONLY_TOOLS.has(name)) return false;
+    return !(category && CHAT_ONLY_CATEGORIES.has(category));
   }
   // chat surface: chat-only tools belong here; workflow-only categories do not.
   if (CHAT_ONLY_TOOLS.has(name)) return true;
-  const category = TOOL_METADATA.get(name)?.category;
   return !(category && WORKFLOW_ONLY_CATEGORIES.has(category));
 }
 

@@ -819,6 +819,10 @@ const flowRuntimes = new Map<string, FlowRuntime>();
 // Map of flowId -> triggerId for webhook-enabled flows
 const webhookEnabledFlows = new Map<string, string>();
 const cloudWebhookEnabledFlows = new Map<string, string>();
+/** flowId -> triggerId for deployed live.session.end triggers */
+const liveSessionEndFlows = new Map<string, string>();
+/** sessionId -> workflow that started the session (for end-trigger routing). */
+const liveSessionBindings = new Map<string, { sessionId: string; workflowId: string; endTriggerId?: string }>();
 const simRuns = new Map<string, NodeJS.Timeout>();
 const runningFlows = new Map<string, NodeJS.Timeout>();
 const runCounts = new Map<string, number>();
@@ -832,6 +836,62 @@ export function getLocalWebhookPort() {
 
 export function safeFlowId(id: string): string {
   return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+/** Bind a live voice session to a workflow. Returns ids for tool output and end-trigger matching. */
+export function bindLiveSessionToWorkflow(
+  workflowId: string,
+  requestedSessionId?: string,
+): { sessionId: string; workflowId: string } | null {
+  const safe = safeFlowId(workflowId);
+  if (!safe) return null;
+
+  const custom = String(requestedSessionId || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_\-:.]/g, '')
+    .slice(0, 120);
+  const sessionId = custom
+    || `ls_${safe}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const model = readWorkflowModel(safe);
+  const endTrig = Array.isArray(model?.triggers)
+    ? model.triggers.find((t: any) => String(t?.type || '') === 'live.session.end')
+    : null;
+
+  liveSessionBindings.set(sessionId, {
+    sessionId,
+    workflowId: safe,
+    endTriggerId: endTrig?.id ? String(endTrig.id) : undefined,
+  });
+  console.log('[Workflows] Live session bound:', { sessionId, workflowId: safe });
+  return { sessionId, workflowId: safe };
+}
+
+function releaseLiveSessionBinding(sessionId: string): void {
+  if (sessionId) liveSessionBindings.delete(sessionId);
+}
+
+type LiveSessionEndMatch = 'own' | 'sessionId' | 'any';
+
+function shouldFireLiveSessionEndTrigger(
+  flowId: string,
+  triggerId: string,
+  data: { sessionId: string; workflowId: string },
+): boolean {
+  const model = readWorkflowModel(flowId);
+  const trigger = Array.isArray(model?.triggers)
+    ? model.triggers.find((t: any) => String(t?.id || '') === triggerId)
+    : null;
+  const args = trigger?.args && typeof trigger.args === 'object' ? trigger.args : {};
+  const match = String(args.match || 'own').trim() as LiveSessionEndMatch;
+  const filterSessionId = String(args.sessionId || '').trim();
+
+  if (match === 'any') return true;
+  if (match === 'sessionId') {
+    return filterSessionId !== '' && filterSessionId === data.sessionId;
+  }
+  // default: only sessions started by this workflow
+  return data.workflowId !== '' && data.workflowId === flowId;
 }
 
 /** Default subdirectories created in every new workflow workspace */
@@ -1027,6 +1087,61 @@ export async function executeWorkflowFromTrigger(flowId: string, origin: string,
   void runWorkflowFromTrigger(flowId, origin, payload, triggerId).catch((e: any) => {
     console.error('[Workflows] executeWorkflowFromTrigger error:', e);
   });
+}
+
+/** Fires deployed workflows whose live.session.end trigger matches the session. */
+export function handleLiveSessionEnded(payload: {
+  sessionId?: string;
+  workflowId?: string;
+  structured?: boolean;
+  summary?: string;
+  outcome?: string;
+  highlights?: string[];
+  followUps?: string[];
+  transcript?: string;
+  transcripts?: Array<{ role: string; text: string; timestamp?: number }>;
+}) {
+  const sessionId = String(payload?.sessionId || '').trim();
+  const originWorkflowId = safeFlowId(String(payload?.workflowId || ''));
+
+  const data = {
+    event: 'live.session.end',
+    sessionId,
+    workflowId: originWorkflowId,
+    structured: Boolean(payload?.structured),
+    summary: payload?.summary || '',
+    outcome: payload?.outcome || '',
+    highlights: Array.isArray(payload?.highlights) ? payload.highlights : [],
+    followUps: Array.isArray(payload?.followUps) ? payload.followUps : [],
+    transcript: String(payload?.transcript || ''),
+    transcripts: Array.isArray(payload?.transcripts) ? payload.transcripts : [],
+  };
+
+  const fired = new Set<string>();
+  const fire = (flowId: string, triggerId: string) => {
+    const key = `${flowId}:${triggerId}`;
+    if (fired.has(key)) return;
+    if (!flowRuntimes.has(flowId)) return;
+    if (!shouldFireLiveSessionEndTrigger(flowId, triggerId, data)) return;
+    fired.add(key);
+    try {
+      executeWorkflowFromTrigger(flowId, 'live.session.end', data, triggerId);
+    } catch (e) {
+      console.error('[Workflows] live.session.end trigger failed:', flowId, e);
+    }
+  };
+
+  if (sessionId) {
+    const binding = liveSessionBindings.get(sessionId);
+    if (binding?.endTriggerId) {
+      fire(binding.workflowId, binding.endTriggerId);
+    }
+    releaseLiveSessionBinding(sessionId);
+  }
+
+  for (const [flowId, triggerId] of liveSessionEndFlows.entries()) {
+    fire(flowId, triggerId);
+  }
 }
 
 export function handleCloudWebhookEvent(msg: any) {
@@ -1408,6 +1523,10 @@ export function startFlowRuntime(id: string, options: StartFlowRuntimeOptions = 
       } catch (e) {
         console.error('[Workflows] Failed to register clipboard.change trigger:', e);
       }
+    } else if (type === 'live.session.end') {
+      liveSessionEndFlows.set(safe, triggerId);
+      started++;
+      console.log('[Workflows] Live session end trigger registered (deployed):', safe, triggerId);
     } else if (type === 'schedule.cron' && nodeCron && typeof nodeCron.schedule === 'function') {
       try {
         const cronExp = String(args?.cron || '*/5 * * * *');
@@ -1704,6 +1823,7 @@ export function stopFlowRuntime(id: string) {
   try { for (const p of rt.procs) { try { if (p && !p.killed) { if (process.platform === 'win32') { try { process.kill((p as any).pid); } catch { } } else { try { p.kill('SIGTERM'); } catch { } } } } catch { } } } catch { }
   webhookEnabledFlows.delete(safe);
   cloudWebhookEnabledFlows.delete(safe);
+  liveSessionEndFlows.delete(safe);
   flowRuntimes.delete(safe);
 
   // Cleanup workflow variables (only non-persistent ones)

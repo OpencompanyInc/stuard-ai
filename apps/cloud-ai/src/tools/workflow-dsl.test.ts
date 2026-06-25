@@ -245,6 +245,39 @@ describe('edit_workflow / read_workflow tools', () => {
     expect(out.dsl).toContain('n2 = transform');
   });
 
+  it('read_workflow window abbreviates a long string arg to the …(Nc)… sentinel', async () => {
+    setSessionWorkflow(fixture());
+    // make the component longer than the 800-char window threshold
+    const wf = fixture();
+    wf.nodes.find((n: any) => n.id === 'ui').args.component = 'x'.repeat(900);
+    setSessionWorkflow(wf);
+    const out: any = await (readWorkflow as any).execute({ mode: 'window', focusIds: ['ui'], workflowId: null }, {});
+    expect(out.dsl).toContain('…(900c)…');
+    expect(out.dsl).not.toContain('xxxxxxxxxx');
+  });
+
+  it('read_workflow mode="node" prints a long string arg VERBATIM with real newlines + its edit path', async () => {
+    setSessionWorkflow(fixture());
+    const out: any = await (readWorkflow as any).execute({ mode: 'node', focusIds: ['ui'], workflowId: null }, {});
+    expect(out.ok).toBe(true);
+    expect(out.dsl).toContain('node ui = custom_ui');
+    // the multi-line component is shown verbatim (a REAL newline, not the escaped \n)
+    expect(out.dsl).toContain("</h1>\n<button onclick=\"stuard.callNode('go',{})\">Go</button>");
+    expect(out.dsl).not.toContain('…(');
+    // the exact path to feed edit_node_text is surfaced
+    expect(out.dsl).toContain('edit_node_text path:"args.component"');
+    // short scalar args stay inline
+    expect(out.dsl).toContain('args.title: "T"');
+    expect(out.dsl).toContain('args.height: 480');
+  });
+
+  it('read_workflow mode="node" requires focusIds', async () => {
+    setSessionWorkflow(fixture());
+    const out: any = await (readWorkflow as any).execute({ mode: 'node', focusIds: null, workflowId: null }, {});
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain('focusIds');
+  });
+
   it('edit_workflow commits a surgical change and repaints the canvas by id with positions intact', async () => {
     setSessionWorkflow(fixture());
     const out: any = await (editWorkflow as any).execute(

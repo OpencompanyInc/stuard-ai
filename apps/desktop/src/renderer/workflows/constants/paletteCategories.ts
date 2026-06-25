@@ -13,7 +13,7 @@ import {
   MessageSquare, ListChecks, GitPullRequest, Play, Inbox,
   Send, User, Activity, Radio, Bot, Phone, PhoneCall,
   HardDrive, Scan, Binary,
-  Film, Upload, Share2, Copy, Scissors, SortAsc, Settings2,
+  Film, Upload, Share2, Copy, Scissors, SortAsc, Settings2, Puzzle,
   Bluetooth, BluetoothOff, Sun, Battery, Image as ImageIcon,
   type LucideIcon
 } from "lucide-react";
@@ -79,6 +79,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'trigger', t: 'schedule.cron', label: 'Schedule', icon: Clock, args: { cron: '*/5 * * * *' } },
       { k: 'trigger', t: 'fs.watch', label: 'File/Folder Watch', icon: Folder, args: { path: '', pattern: '*.*', recursive: true } },
       { k: 'trigger', t: 'clipboard.change', label: 'On Clipboard Change', icon: Clipboard, args: { types: [], pollMs: 600 } },
+      { k: 'trigger', t: 'live.session.end', label: 'On Live Session End', icon: PhoneCall, args: { match: 'own', sessionId: '' } },
       { k: 'trigger', t: 'command.watch', label: 'Custom Script (watch)', icon: FileCode, args: { cmd: 'python', args: ['script.py'] } },
     ],
   },
@@ -413,6 +414,22 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'local.tool', t: 'browser_use_sync_chrome', label: 'Sync Chrome Cookies', icon: Download, args: {} },
     ],
   },
+  {
+    id: 'browser_extension',
+    label: 'My Browser',
+    icon: Puzzle,
+    color: 'rose',
+    items: [
+      { k: 'local.tool', t: 'browser_ext_status', label: 'Extension Status', icon: Activity, args: {} },
+      { k: 'local.tool', t: 'browser_ext_get_page', label: 'Read Current Tab', icon: FileText, args: { max_chars: 12000 } },
+      { k: 'local.tool', t: 'browser_ext_extract', label: 'Extract from Page', icon: Search, args: { spec: { selector: '', fields: { text: 'innerText' }, limit: 50 } } },
+      { k: 'local.tool', t: 'browser_ext_run_script', label: 'Run Script in Tab', icon: FileCode, args: { script: 'return document.title;' } },
+      { k: 'local.tool', t: 'browser_ext_tabs', label: 'Manage My Tabs', icon: Layout, args: { action: 'list' } },
+      { k: 'local.tool', t: 'browser_ext_capture_screenshot', label: 'Screenshot Tab', icon: Camera, args: { format: 'jpeg' } },
+      { k: 'local.tool', t: 'browser_ext_service_run', label: 'Run Saved Script', icon: Play, args: { name: 'study-mode' } },
+      { k: 'local.tool', t: 'browser_ext_service_list', label: 'List Saved Scripts', icon: List, args: {} },
+    ],
+  },
 
   // ── Media tooling + local AI ──────────────────────────────────────────────
   {
@@ -469,6 +486,7 @@ export const PALETTE_CATEGORIES: PaletteCategory[] = [
       { k: 'cloud.tool', t: 'get_tts_models', label: 'Get TTS Models', icon: List, args: {} },
       { k: 'cloud.tool', t: 'elevenlabs_list_agents', label: 'List Live Agents', icon: Bot, args: { search: '', archived: false, show_only_owned_agents: true, page_size: 20 } },
       { k: 'cloud.tool', t: 'elevenlabs_get_signed_conversation_url', label: 'Get Live Session URL', icon: Radio, args: { agent_id: '', include_conversation_id: true, branch_id: '' } },
+      { k: 'local.tool', t: 'start_live_session', label: 'Start Live Voice Session', icon: Mic, args: { sessionId: '', knowledgePackIds: [], persona: '', initialMessage: '', provider: '' } },
       { k: 'cloud.tool', t: 'elevenlabs_get_webrtc_token', label: 'Get WebRTC Token', icon: Mic, args: { agent_id: '', participant_name: '', branch_id: '' } },
       { k: 'cloud.tool', t: 'elevenlabs_list_conversations', label: 'List Voice Sessions', icon: ListChecks, args: { agent_id: '', search: '', branch_id: '', page_size: 20 } },
     ],
@@ -741,7 +759,7 @@ export const PALETTE_GROUPS: { id: string; label: string; categoryIds: string[] 
   { id: 'core', label: 'Core', categoryIds: ['installed', 'triggers', 'flow', 'variables'] },
   { id: 'ai', label: 'AI', categoryIds: ['agent', 'ai', 'search'] },
   { id: 'local', label: 'Local Actions', categoryIds: ['input', 'media', 'files', 'scripts', 'utils', 'math'] },
-  { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use'] },
+  { id: 'system', label: 'Network · Data · System', categoryIds: ['http', 'database', 'cloud_storage', 'ui', 'windows', 'desktop_controls', 'browser_use', 'browser_extension'] },
   { id: 'media_ai', label: 'Media Tooling & Local AI', categoryIds: ['ffmpeg', 'mediapipe', 'ollama', 'tts'] },
   { id: 'google', label: 'Google', categoryIds: ['gmail', 'google_drive', 'google_calendar', 'google_sheets', 'google_docs', 'google_tasks'] },
   { id: 'integrations', label: 'Integrations', categoryIds: ['github', 'notion', 'telnyx', 'x', 'maps'] },

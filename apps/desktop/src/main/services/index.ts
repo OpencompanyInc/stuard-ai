@@ -8,6 +8,16 @@ export * from "./offline-calendar";
 export { startReminderScheduler, stopReminderScheduler, clearFiredReminder } from "./reminder-scheduler";
 export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
 export { startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
+export { startMcpLocalServer, stopMcpLocalServer, getMcpLocalServerInfo } from "./mcp-local-server";
+export {
+  startExtensionBridge,
+  stopExtensionBridge,
+  getExtensionBridgeInfo,
+  getExtensionDistPath,
+  isExtensionConnected,
+  sendExtensionCommand,
+} from "./extension-bridge";
+export type { ExtensionBridgeInfo } from "./extension-bridge";
 export { proactiveService } from "./proactive-service";
 export {
   startProactiveScheduler,

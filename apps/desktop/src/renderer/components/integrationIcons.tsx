@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Globe, Mail, Phone, ScanFace, Table, Terminal, Webhook } from 'lucide-react';
+import { Box, Globe, Mail, Phone, Puzzle, ScanFace, Table, Terminal, Webhook } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { IntegrationLogo } from './IntegrationLogo';
@@ -79,6 +79,8 @@ function LucideFallback({ slug, className }: { slug: string; className: string }
     case 'browser':
     case 'browser-use':
       return <Globe className={className} strokeWidth={1.25} />;
+    case 'browser-extension':
+      return <Puzzle className={className} strokeWidth={1.25} />;
     case 'webhooks':
       return <Webhook className={className} strokeWidth={1.25} />;
     case 'outlook':

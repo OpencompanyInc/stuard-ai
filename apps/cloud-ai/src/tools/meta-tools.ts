@@ -41,7 +41,7 @@ import { searchWorkflowDocs } from '../agents/workflow-agent/docs';
 import { resolveEmbedder, cosineSimilarity } from '../utils/embeddings';
 import { embedMany } from 'ai';
 import { getSupabaseService } from '../supabase';
-import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory, isToolDiscoverableForSurface, type ToolSurface } from './tool-registry';
+import { registerTool, getToolRegistry, getToolCategories, getTool, getToolMetadata, getDefaultLocationForCategory, isToolDiscoverableForSurface, isInternalTool, type ToolSurface } from './tool-registry';
 import { execLocalTool, hasClientBridge, getBridgeSecrets } from './bridge';
 import { zodToJsonSchema } from './zod-utils';
 import { variablesTool, conversationKeyFromSecrets, resolveVarRefs, captureLargeOutputs } from './chat-variables';
@@ -570,6 +570,10 @@ Object.values(deviceTools).forEach(t => {
         registerTool(t, 'Core');
     } else if (name.startsWith('math_')) {
         registerTool(t, 'Math');
+    } else if (name.startsWith('browser_ext_')) {
+        // Acts on the user's real browser via the paired connector extension.
+        // Not in WORKFLOW_ONLY/CHAT_ONLY sets → discoverable in chat AND workflows.
+        registerTool(t, 'BrowserExtension');
     } else {
         registerTool(t, 'Other');
     }
@@ -1304,6 +1308,19 @@ export const execute_tool = createTool({
         // handles instead of dumped into context.
         const convKey = conversationKeyFromSecrets();
         const toolArgs = resolveVarRefs(convKey, rawArgs);
+
+        // Internal/system-managed plumbing (file-index roots/scan/pending/
+        // embedding callbacks) is run automatically by the indexing pipeline and
+        // Settings — never by the agent. Refuse with a pointer to the real path
+        // so the model self-corrects instead of hand-cranking the indexer.
+        if (isInternalTool(tool_name)) {
+            return {
+                success: false,
+                tool: tool_name,
+                error: `'${tool_name}' is internal and not callable. File indexing runs automatically when files are pinned to a project (pin_file / add_project_context) or configured in Settings. To query indexed content use project_search or semantic_file_search.`,
+            };
+        }
+
         const tool = getToolRegistry().get(tool_name);
 
         if (tool) {

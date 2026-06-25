@@ -2,9 +2,9 @@
  * SelectInput - Searchable dropdown select
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { ChevronDown, Check } from 'lucide-react';
 import type { ArgOption } from '../../../constants/tool-schemas';
+import { WorkflowPortal } from '../../../WorkflowThemeContext';
 
 interface SelectInputProps {
   value: any;
@@ -79,7 +79,8 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
         <ChevronDown className={`w-4 h-4 wf-fg-faint transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && dropdownPos && createPortal(
+      {open && dropdownPos && (
+        <WorkflowPortal>
         <div
           ref={dropdownRef}
           style={{
@@ -141,8 +142,8 @@ export function SelectInput({ value, onChange, options, placeholder, allowFreefo
               <div className="px-3 py-8 text-sm wf-fg-faint text-center">No matching options</div>
             )}
           </div>
-        </div>,
-        document.body
+        </div>
+        </WorkflowPortal>
       )}
     </div>
   );

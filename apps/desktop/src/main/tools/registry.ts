@@ -38,6 +38,7 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'deploy_local_workflow': { kind: 'electron' },  // Deploy/undeploy a saved workflow locally
   'list_local_stuards': { kind: 'electron' },  // List saved stuards
   'play_audio': { kind: 'electron' },
+  'start_live_session': { kind: 'electron' },
   'get_clipboard_content': { kind: 'electron' },
   'set_clipboard_content': { kind: 'electron' },
   'proactive_task_list': { kind: 'electron' },
@@ -363,6 +364,18 @@ export const TOOL_REGISTRY: Record<string, { kind: ToolKind; handler?: string }>
   'browser_use_fill_form': { kind: 'electron' },
   'browser_use_upload_file': { kind: 'electron' },
   'browser_use_wait_for': { kind: 'electron' },
+
+  // Browser Extension — act on the user's REAL browser via the paired connector
+  'browser_ext_status': { kind: 'electron' },
+  'browser_ext_get_page': { kind: 'electron' },
+  'browser_ext_extract': { kind: 'electron' },
+  'browser_ext_run_script': { kind: 'electron' },
+  'browser_ext_tabs': { kind: 'electron' },
+  'browser_ext_capture_screenshot': { kind: 'electron' },
+  'browser_ext_service_list': { kind: 'electron' },
+  'browser_ext_service_save': { kind: 'electron' },
+  'browser_ext_service_run': { kind: 'electron' },
+  'browser_ext_service_delete': { kind: 'electron' },
 
   // Cloud Storage (GCS upload/download with public/private visibility)
   'cloud_storage_upload': { kind: 'cloud' },

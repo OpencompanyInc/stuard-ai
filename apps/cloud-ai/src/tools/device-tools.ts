@@ -179,6 +179,14 @@ export {
   run_workflow,
 } from './device/workflows';
 
+// Knowledge Packs (sandboxed, attachable RAG namespaces)
+export {
+  create_knowledge_pack,
+  list_knowledge_packs,
+  query_knowledge_pack,
+  start_live_session,
+} from './device/rag-packs';
+
 // File System Operations
 export {
   read_file,
@@ -299,6 +307,22 @@ export {
   browser_use_upload_file,
   browser_use_wait_for,
 } from './device/browser-use';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BROWSER EXTENSION — act on the user's REAL browser via the paired connector
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  browser_ext_status,
+  browser_ext_get_page,
+  browser_ext_extract,
+  browser_ext_run_script,
+  browser_ext_tabs,
+  browser_ext_capture_screenshot,
+  browser_ext_service_list,
+  browser_ext_service_save,
+  browser_ext_service_run,
+  browser_ext_service_delete,
+} from './device/browser-extension';
 
 // ============================================================================
 // Workspace File Management — Read/write/list files in workflow workspace

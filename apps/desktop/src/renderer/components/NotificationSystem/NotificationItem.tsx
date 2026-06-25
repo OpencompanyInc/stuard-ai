@@ -24,11 +24,8 @@ interface NotificationItemProps {
 function resolveNotificationImageSrc(image?: string): string | undefined {
     const raw = String(image || '').trim();
     if (!raw) return undefined;
-    // Web URLs and data URIs pass through
     if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
-    // Already using local-file protocol
     if (/^local-file:/i.test(raw)) return raw;
-    // Convert file:// to local-file:// (bypassCSP custom protocol)
     if (/^file:/i.test(raw)) return raw.replace(/^file:/i, 'local-file:');
 
     const encodePath = (inputPath: string, preserveDrive: boolean) => {
@@ -41,17 +38,62 @@ function resolveNotificationImageSrc(image?: string): string | undefined {
             .join('/');
     };
 
-    // Windows paths (C:\... or C:/...)
     const normalized = raw.replace(/\\/g, '/');
     if (/^[a-zA-Z]:\//.test(normalized)) {
         return `local-file:///${encodePath(normalized, true)}`;
     }
-    // Unix absolute paths
     if (normalized.startsWith('/')) {
         return `local-file://${encodePath(normalized, false)}`;
     }
     return raw;
 }
+
+const stuardMarkdownComponents = {
+    p: ({ node, ...props }: any) => <p {...props} className="m-0 mb-1.5 last:mb-0" />,
+    strong: ({ node, ...props }: any) => <strong {...props} />,
+    em: ({ node, ...props }: any) => <em {...props} className="italic" />,
+    h1: ({ node, ...props }: any) => <h1 {...props} className="text-[13px] font-semibold mt-2 mb-1" />,
+    h2: ({ node, ...props }: any) => <h2 {...props} className="text-[12px] font-semibold mt-2 mb-1" />,
+    h3: ({ node, ...props }: any) => <h3 {...props} className="text-[12px] font-medium mt-1.5 mb-0.5" />,
+    blockquote: ({ node, ...props }: any) => (
+        <blockquote {...props} className="border-l-2 border-[rgb(var(--compact-pill-fg)/0.15)] pl-2.5 my-1.5 italic opacity-80" />
+    ),
+    hr: ({ node, ...props }: any) => <hr {...props} className="border-[rgb(var(--compact-pill-fg)/0.1)] my-2" />,
+    ul: ({ node, ...props }: any) => <ul {...props} className="m-0 ml-4 list-disc" />,
+    ol: ({ node, ...props }: any) => <ol {...props} className="m-0 ml-4 list-decimal" />,
+    li: ({ node, ...props }: any) => <li {...props} className="mb-0.5" />,
+    pre: ({ node, children, ...props }: any) => <pre {...props}>{children}</pre>,
+    code: ({ node, inline, className, children, ...props }: any) => {
+        return inline ? (
+            <code {...props}>{children}</code>
+        ) : (
+            <code className={clsx('block font-mono whitespace-pre', className)} {...props}>
+                {children}
+            </code>
+        );
+    },
+    a: ({ node, ...props }: any) => <a {...props} target="_blank" rel="noopener noreferrer" className="stuard-notification-link" />,
+    img: ({ node, src, ...props }: any) => (
+        <img
+            {...props}
+            src={resolveNotificationImageSrc(src) || src}
+            className="max-w-full h-auto rounded-[12px] my-1.5"
+            loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        />
+    ),
+    table: ({ node, ...props }: any) => (
+        <div className="overflow-x-auto my-1.5">
+            <table {...props} className="w-full text-[11px] border-collapse" />
+        </div>
+    ),
+    th: ({ node, ...props }: any) => (
+        <th {...props} className="text-left font-semibold px-2 py-1 border-b border-[rgb(var(--compact-pill-fg)/0.1)]" />
+    ),
+    td: ({ node, ...props }: any) => (
+        <td {...props} className="px-2 py-1 border-b border-[rgb(var(--compact-pill-fg)/0.06)]" />
+    ),
+};
 
 export const NotificationItem: React.FC<NotificationItemProps> = ({
     notification,
@@ -73,13 +115,11 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         [messageText, messageLineCount]
     );
 
-    // Handle dismiss with exit animation
     const handleDismiss = useCallback(() => {
         setIsExiting(true);
-        setTimeout(onDismiss, 250);
+        setTimeout(onDismiss, 220);
     }, [onDismiss]);
 
-    // Handle input submit
     const handleInputSubmit = useCallback(() => {
         if (notification.input?.onSubmit) {
             notification.input.onSubmit(inputValue);
@@ -91,7 +131,6 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         }
     }, [inputValue, notification.input, handleDismiss]);
 
-    // Handle input cancel
     const handleInputCancel = useCallback(() => {
         if (notification.input?.onCancel) {
             notification.input.onCancel();
@@ -99,19 +138,14 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         handleDismiss();
     }, [notification.input, handleDismiss]);
 
-    // Handle key press in input
     const handleKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
-            if (e.key === 'Enter') {
-                handleInputSubmit();
-            } else if (e.key === 'Escape') {
-                handleInputCancel();
-            }
+            if (e.key === 'Enter') handleInputSubmit();
+            else if (e.key === 'Escape') handleInputCancel();
         },
         [handleInputSubmit, handleInputCancel]
     );
 
-    // Auto-focus input when present
     useEffect(() => {
         if (notification.input && inputRef.current) {
             inputRef.current.focus();
@@ -122,7 +156,6 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         setImageFailed(false);
     }, [imageSrc]);
 
-    // Progress animation for auto-dismiss
     useEffect(() => {
         if (notification.duration > 0 && progressRef.current && !isHovered) {
             progressRef.current.style.transition = `width ${notification.duration}ms linear`;
@@ -130,7 +163,6 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         }
     }, [notification.duration, isHovered]);
 
-    // Pause progress on hover
     useEffect(() => {
         if (progressRef.current) {
             if (isHovered) {
@@ -149,86 +181,17 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
     const isStuardNotification = notification.className?.includes('stuard-notification');
 
     const variantConfig = {
-        info: {
-            icon: Bell,
-            accentColor: 'var(--border)',
-            iconBg: 'bg-theme-hover',
-            iconText: 'text-theme-muted',
-            progressBg: 'bg-theme-muted/40',
-            label: 'Information',
-        },
-        success: {
-            icon: CheckCircle,
-            accentColor: '#10b981',
-            iconBg: 'bg-emerald-500/10',
-            iconText: 'text-emerald-600 dark:text-emerald-400',
-            progressBg: 'bg-emerald-500/50',
-            label: 'Success',
-        },
-        warning: {
-            icon: AlertTriangle,
-            accentColor: '#f59e0b',
-            iconBg: 'bg-amber-500/10',
-            iconText: 'text-amber-600 dark:text-amber-400',
-            progressBg: 'bg-amber-500/50',
-            label: 'Warning',
-        },
-        error: {
-            icon: AlertOctagon,
-            accentColor: '#ef4444',
-            iconBg: 'bg-red-500/10',
-            iconText: 'text-red-600 dark:text-red-400',
-            progressBg: 'bg-red-500/50',
-            label: 'Error',
-        },
-        neutral: {
-            icon: Bell,
-            accentColor: 'var(--border)',
-            iconBg: 'bg-theme-hover',
-            iconText: 'text-theme-muted',
-            progressBg: 'bg-theme-muted/40',
-            label: 'Notification',
-        },
+        info: { icon: Bell, accentColor: 'var(--border)', iconBg: 'bg-theme-hover', iconText: 'text-theme-muted', progressBg: 'bg-theme-muted/40' },
+        success: { icon: CheckCircle, accentColor: '#10b981', iconBg: 'bg-emerald-500/10', iconText: 'text-emerald-600 dark:text-emerald-400', progressBg: 'bg-emerald-500/50' },
+        warning: { icon: AlertTriangle, accentColor: '#f59e0b', iconBg: 'bg-amber-500/10', iconText: 'text-amber-600 dark:text-amber-400', progressBg: 'bg-amber-500/50' },
+        error: { icon: AlertOctagon, accentColor: '#ef4444', iconBg: 'bg-red-500/10', iconText: 'text-red-600 dark:text-red-400', progressBg: 'bg-red-500/50' },
+        neutral: { icon: Bell, accentColor: 'var(--border)', iconBg: 'bg-theme-hover', iconText: 'text-theme-muted', progressBg: 'bg-theme-muted/40' },
     };
 
-    // Agent-done is a brand moment — red-tinted check that ties the completion
-    // back to Stuard. Plain success stays green; warning/error keep their hues.
-    const stuardIconClass = notification.orchestratorDone
-        ? 'stuard-notification-icon stuard-notification-icon--brand'
-        : notification.variant === 'success'
-            ? 'stuard-notification-icon stuard-notification-icon--success'
-            : notification.variant === 'warning'
-                ? 'stuard-notification-icon stuard-notification-icon--warning'
-                : notification.variant === 'error'
-                    ? 'stuard-notification-icon stuard-notification-icon--error'
-                    : 'stuard-notification-icon';
-
-    // Brand source label shown above the title for Stuard-styled toasts.
-    // Defaults to "Stuard"; callers can override or pass '' to hide it.
-    const eyebrowText = notification.eyebrow !== undefined
-        ? notification.eyebrow
-        : (isStuardNotification ? 'Stuard' : '');
-
     const config = variantConfig[notification.variant];
-    const Icon = (isStuardNotification && (notification.orchestratorDone || notification.variant === 'success'))
-        ? CheckCircle
-        : config.icon;
+    const Icon = config.icon;
 
     const getButtonStyles = (variant: NotificationAction['variant'] = 'secondary') => {
-        if (isStuardNotification) {
-            return {
-                className: clsx(
-                    'stuard-notification-btn',
-                    variant === 'primary'
-                        ? 'stuard-notification-btn-primary'
-                        : variant === 'danger'
-                            ? 'bg-red-500 text-white hover:bg-red-600'
-                            : 'stuard-notification-btn-secondary',
-                ),
-                style: undefined,
-            };
-        }
-
         const base = 'px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150 active:scale-[0.97]';
         switch (variant) {
             case 'primary':
@@ -240,165 +203,187 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
         }
     };
 
+    const stuardBtnClass = (variant: NotificationAction['variant'] = 'secondary') => clsx(
+        'stuard-notification-btn',
+        variant === 'primary'
+            ? 'stuard-notification-btn-primary'
+            : variant === 'danger'
+                ? 'stuard-notification-btn-primary !bg-[#ef4444] !text-white'
+                : 'stuard-notification-btn-secondary',
+    );
+
+    const exitStyle: React.CSSProperties = {
+        transform: isExiting ? 'translateY(-8px) scale(0.98)' : 'translateY(0) scale(1)',
+        opacity: isExiting ? 0 : 1,
+        transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease',
+    };
+
+    const messageBlock = messageText ? (
+        <div className={isStuardNotification ? 'stuard-notification-body' : 'mt-1 text-[12.5px] text-theme-muted leading-snug'}>
+            <div className={clsx(!expandedMessage && shouldShowExpand && 'max-h-[88px] overflow-hidden')}>
+                <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+                    components={isStuardNotification ? stuardMarkdownComponents : undefined}
+                >
+                    {notification.message}
+                </ReactMarkdown>
+            </div>
+            {shouldShowExpand && (
+                <button
+                    type="button"
+                    onClick={() => setExpandedMessage(v => !v)}
+                    className={isStuardNotification ? 'stuard-notification-expand' : 'mt-1 text-[11px] font-medium text-theme-muted hover:text-theme-fg transition-colors'}
+                >
+                    {expandedMessage ? 'Show less' : 'Show more'}
+                </button>
+            )}
+        </div>
+    ) : null;
+
+    if (isStuardNotification) {
+        return (
+            <div
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+                style={exitStyle}
+                className={clsx(
+                    'stuard-notification-card relative w-full min-w-[300px] max-w-[372px] pointer-events-auto',
+                    notification.duration > 0 && 'stuard-notification-has-progress',
+                    notification.className,
+                )}
+            >
+                {notification.duration > 0 && (
+                    <div className="stuard-notification-progress-track">
+                        <div ref={progressRef} className="stuard-notification-progress w-full" />
+                    </div>
+                )}
+
+                <div className="stuard-notification-inner">
+                    <div className="stuard-notification-header">
+                        <h4 className="stuard-notification-title">{notification.title}</h4>
+                        {notification.dismissible && (
+                            <button type="button" onClick={handleDismiss} className="stuard-notification-dismiss" aria-label="Dismiss">
+                                <X className="w-3.5 h-3.5" strokeWidth={2} />
+                            </button>
+                        )}
+                    </div>
+
+                    {imageSrc && !imageFailed && (
+                        <div className="mt-2.5 rounded-[14px] overflow-hidden">
+                            <img
+                                src={imageSrc}
+                                alt=""
+                                className="w-full max-h-[140px] object-cover"
+                                onError={() => setImageFailed(true)}
+                            />
+                        </div>
+                    )}
+
+                    {messageBlock}
+
+                    {notification.structuredContent && (
+                        <div className="stuard-notification-embed custom-scrollbar">
+                            <GenUIErrorBoundary componentName={notification.structuredContent.toolName}>
+                                <GenUIContainer
+                                    toolName={notification.structuredContent.toolName}
+                                    args={notification.structuredContent.args}
+                                    isCompleted={true}
+                                    result={{ displayed: true }}
+                                    onResult={() => { }}
+                                />
+                            </GenUIErrorBoundary>
+                        </div>
+                    )}
+
+                    {typeof notification.progress === 'number' && (
+                        <div className="mt-3 h-1 rounded-full bg-[rgb(var(--compact-pill-fg)/0.08)] overflow-hidden">
+                            <div
+                                className="h-full rounded-full bg-[rgb(var(--compact-pill-fg)/0.28)] transition-all duration-300"
+                                style={{ width: `${Math.min(100, Math.max(0, notification.progress))}%` }}
+                            />
+                        </div>
+                    )}
+
+                    {notification.input && (
+                        <div className="stuard-notification-input-row">
+                            <input
+                                ref={inputRef}
+                                type={notification.input.type || 'text'}
+                                value={inputValue}
+                                onChange={(e) => setInputValue(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder={notification.input.placeholder || 'Type here...'}
+                                className="stuard-notification-input"
+                            />
+                            <button
+                                type="button"
+                                onClick={handleInputSubmit}
+                                className={clsx('stuard-notification-btn stuard-notification-btn-primary stuard-notification-input-submit')}
+                            >
+                                {submitText || <Send className="w-3.5 h-3.5" />}
+                            </button>
+                        </div>
+                    )}
+
+                    {notification.actions && notification.actions.length > 0 && (
+                        <div className="stuard-notification-actions">
+                            {notification.actions.map((action, index) => (
+                                <button
+                                    key={index}
+                                    type="button"
+                                    onClick={() => {
+                                        action.onClick();
+                                        if (!action.keepNotification) handleDismiss();
+                                    }}
+                                    className={stuardBtnClass(action.variant)}
+                                >
+                                    {action.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // Legacy / non-Stuard notification styling
     return (
         <div
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
-            style={{
-                ...(isStuardNotification ? {} : { borderLeftColor: config.accentColor }),
-                transform: isExiting ? 'translateX(110%)' : 'translateX(0)',
-                opacity: isExiting ? 0 : 1,
-                transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease',
-            }}
+            style={{ ...exitStyle, borderLeftColor: config.accentColor }}
             className={clsx(
                 'relative w-full min-w-[340px] max-w-[400px] pointer-events-auto overflow-hidden',
-                isStuardNotification
-                    ? 'stuard-notification-card'
-                    : 'bg-theme-card rounded-lg border border-theme border-l-[4px] shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
-                notification.className
+                'bg-theme-card rounded-lg border border-theme border-l-[4px]',
+                'shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.08)]',
+                notification.className,
             )}
         >
-            {/* Auto-dismiss progress bar */}
             {notification.duration > 0 && (
                 <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-theme-hover">
-                    <div
-                        ref={progressRef}
-                        className={clsx(
-                            'h-full w-full rounded-full',
-                            isStuardNotification ? 'stuard-notification-progress' : config.progressBg,
-                        )}
-                        style={{ opacity: isStuardNotification ? 1 : 0.7 }}
-                    />
+                    <div ref={progressRef} className={clsx('h-full w-full rounded-full', config.progressBg)} style={{ opacity: 0.7 }} />
                 </div>
             )}
 
-            {/* Main content */}
             <div className="px-4 py-3">
                 <div className="flex items-start gap-3">
-                    {/* Icon or Image */}
                     {imageSrc && !imageFailed ? (
                         <div className="shrink-0 w-10 h-10 rounded-lg overflow-hidden ring-1 ring-theme/30">
-                            <img
-                                src={imageSrc}
-                                alt=""
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                    setImageFailed(true);
-                                }}
-                            />
+                            <img src={imageSrc} alt="" className="w-full h-full object-cover" onError={() => setImageFailed(true)} />
                         </div>
                     ) : (
-                        <div
-                            className={clsx(
-                                'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center',
-                                isStuardNotification ? stuardIconClass : clsx(config.iconBg, config.iconText),
-                            )}
-                        >
+                        <div className={clsx('shrink-0 w-8 h-8 rounded-lg flex items-center justify-center', config.iconBg, config.iconText)}>
                             {notification.icon || <Icon className="w-4 h-4" strokeWidth={2} />}
                         </div>
                     )}
 
-                    {/* Text content */}
                     <div className="flex-1 min-w-0 max-h-[68vh] overflow-y-auto custom-scrollbar pr-1">
-                        {eyebrowText && (
-                            <div className="stuard-notification-eyebrow">
-                                <span className="stuard-notification-dot" />
-                                <span>{eyebrowText}</span>
-                            </div>
-                        )}
-                        <h4 className={clsx(
-                            'font-medium text-[13px] text-theme-fg leading-tight truncate',
-                            isStuardNotification && 'font-stuard tracking-tight'
-                        )}>
+                        <h4 className="font-medium text-[13px] text-theme-fg leading-tight truncate font-stuard tracking-tight">
                             {notification.title}
                         </h4>
-                        {notification.message && (
-                            <div className="mt-0.5">
-                                <div
-                                    className={clsx(
-                                        'text-[12.5px] text-theme-muted leading-snug transition-[max-height] duration-200',
-                                        !expandedMessage && shouldShowExpand && 'max-h-[92px] overflow-hidden'
-                                    )}
-                                >
-                                    <ReactMarkdown
-                                        remarkPlugins={[remarkGfm, remarkMath]}
-                                        rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
-                                        components={{
-                                            p: ({ node, ...props }) => <p {...props} className="m-0 mb-1.5 last:mb-0" />,
-                                            strong: ({ node, ...props }) => <strong {...props} className="font-bold text-theme-fg" />,
-                                            em: ({ node, ...props }) => <em {...props} className="italic" />,
-                                            h1: ({ node, ...props }) => <h1 {...props} className="text-[14px] font-bold text-theme-fg mt-2 mb-1" />,
-                                            h2: ({ node, ...props }) => <h2 {...props} className="text-[13px] font-bold text-theme-fg mt-2 mb-1" />,
-                                            h3: ({ node, ...props }) => <h3 {...props} className="text-[12.5px] font-semibold text-theme-fg mt-1.5 mb-0.5" />,
-                                            blockquote: ({ node, ...props }) => (
-                                                <blockquote {...props} className="border-l-2 border-theme/30 pl-2.5 my-1.5 text-theme-muted italic" />
-                                            ),
-                                            hr: ({ node, ...props }) => <hr {...props} className="border-theme/30 my-2" />,
-                                            ul: ({ node, ...props }) => <ul {...props} className="m-0 ml-4 list-disc" />,
-                                            ol: ({ node, ...props }) => <ol {...props} className="m-0 ml-4 list-decimal" />,
-                                            li: ({ node, ...props }) => <li {...props} className="mb-0.5" />,
-                                            pre: ({ node, children, ...props }) => (
-                                                <pre {...props} className="my-1.5 p-2.5 rounded-lg bg-theme-hover border border-theme/20 overflow-x-auto text-[11px] leading-relaxed">
-                                                    {children}
-                                                </pre>
-                                            ),
-                                            code: ({ node, inline, className, children, ...props }: any) => {
-                                                return inline ? (
-                                                    <code className="bg-theme-hover text-theme-fg px-[5px] py-[1px] rounded text-[85%] font-mono font-medium border border-theme/20" {...props}>
-                                                        {children}
-                                                    </code>
-                                                ) : (
-                                                    <code className={clsx(
-                                                        'block text-[11px] text-theme-fg font-mono whitespace-pre leading-[1.6]',
-                                                        className
-                                                    )} {...props}>
-                                                        {children}
-                                                    </code>
-                                                )
-                                            },
-                                            a: ({ node, ...props }) => (
-                                                <a
-                                                    {...props}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className={isStuardNotification ? 'stuard-notification-link' : 'text-blue-600 hover:underline underline-offset-2'}
-                                                />
-                                            ),
-                                            img: ({ node, src, ...props }) => (
-                                                <img
-                                                    {...props}
-                                                    src={resolveNotificationImageSrc(src) || src}
-                                                    className="max-w-full h-auto rounded-md my-1.5 border border-theme/20"
-                                                    loading="lazy"
-                                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                                />
-                                            ),
-                                            table: ({ node, ...props }) => (
-                                                <div className="overflow-x-auto my-1.5">
-                                                    <table {...props} className="w-full text-[11px] border-collapse" />
-                                                </div>
-                                            ),
-                                            th: ({ node, ...props }) => (
-                                                <th {...props} className="text-left font-semibold text-theme-fg px-2 py-1 border-b border-theme/30 bg-theme-hover/50" />
-                                            ),
-                                            td: ({ node, ...props }) => (
-                                                <td {...props} className="px-2 py-1 border-b border-theme/10 text-theme-muted" />
-                                            ),
-                                        }}
-                                    >
-                                        {notification.message}
-                                    </ReactMarkdown>
-                                </div>
-                                {shouldShowExpand && (
-                                    <button
-                                        onClick={() => setExpandedMessage(v => !v)}
-                                        className="mt-1 text-[11px] font-medium text-theme-muted hover:text-theme-fg transition-colors"
-                                    >
-                                        {expandedMessage ? 'Show less' : 'Show more'}
-                                    </button>
-                                )}
-                            </div>
-                        )}
+                        {messageBlock}
 
                         {notification.structuredContent && (
                             <div className="mt-2.5 max-h-[320px] overflow-y-auto custom-scrollbar rounded-lg border border-theme/20 bg-theme-hover/50 p-2">
@@ -414,17 +399,12 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                             </div>
                         )}
 
-                        {/* Custom progress bar (for progress notifications) */}
                         {typeof notification.progress === 'number' && (
                             <div className="mt-2.5 h-1.5 bg-theme-hover rounded-full overflow-hidden">
-                                <div
-                                    className={clsx('h-full rounded-full transition-all duration-300', config.progressBg)}
-                                    style={{ width: `${Math.min(100, Math.max(0, notification.progress))}%` }}
-                                />
+                                <div className={clsx('h-full rounded-full transition-all duration-300', config.progressBg)} style={{ width: `${Math.min(100, Math.max(0, notification.progress))}%` }} />
                             </div>
                         )}
 
-                        {/* Input field */}
                         {notification.input && (
                             <div className="mt-2.5">
                                 <div className="flex items-center gap-2">
@@ -435,40 +415,20 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                         onChange={(e) => setInputValue(e.target.value)}
                                         onKeyDown={handleKeyDown}
                                         placeholder={notification.input.placeholder || 'Type here...'}
-                                        className={clsx(
-                                            'flex-1 px-2.5 py-1.5 text-xs rounded-md transition-all',
-                                            isStuardNotification
-                                                ? 'stuard-notification-input'
-                                                : 'bg-theme-input border border-theme/30 text-theme-fg placeholder:text-theme-muted focus:outline-none focus:ring-2 focus:ring-offset-0',
-                                        )}
-                                        style={isStuardNotification ? undefined : ({ '--tw-ring-color': config.accentColor + '40' } as React.CSSProperties)}
+                                        className="flex-1 px-2.5 py-1.5 text-xs rounded-md bg-theme-input border border-theme/30 text-theme-fg placeholder:text-theme-muted focus:outline-none focus:ring-2 focus:ring-offset-0"
+                                        style={{ '--tw-ring-color': config.accentColor + '40' } as React.CSSProperties}
                                     />
                                     <button
                                         onClick={handleInputSubmit}
-                                        className={clsx(
-                                            isStuardNotification
-                                                ? 'stuard-notification-btn stuard-notification-btn-primary'
-                                                : 'rounded-md text-white hover:opacity-90 active:scale-95 transition-all',
-                                            !isStuardNotification && (submitText ? 'px-2.5 py-1.5 text-[11px] font-semibold leading-none min-w-[52px]' : 'p-1.5'),
-                                            isStuardNotification && (submitText ? 'min-w-[52px]' : 'p-1.5'),
-                                        )}
-                                        style={isStuardNotification ? undefined : { backgroundColor: config.accentColor }}
+                                        className={clsx('rounded-md text-white hover:opacity-90 active:scale-95 transition-all', submitText ? 'px-2.5 py-1.5 text-[11px] font-semibold min-w-[52px]' : 'p-1.5')}
+                                        style={{ backgroundColor: config.accentColor }}
                                     >
-                                        {submitText ? submitText : <Send className="w-3.5 h-3.5" />}
+                                        {submitText || <Send className="w-3.5 h-3.5" />}
                                     </button>
                                 </div>
-                                {(notification.input.cancelText) && (
-                                    <button
-                                        onClick={handleInputCancel}
-                                        className="mt-1.5 text-[11px] text-theme-muted hover:text-theme-fg transition-colors"
-                                    >
-                                        {notification.input.cancelText || 'Cancel'}
-                                    </button>
-                                )}
                             </div>
                         )}
 
-                        {/* Action buttons */}
                         {notification.actions && notification.actions.length > 0 && (
                             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
                                 {notification.actions.map((action, index) => {
@@ -478,9 +438,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                                             key={index}
                                             onClick={() => {
                                                 action.onClick();
-                                                if (!action.keepNotification) {
-                                                    handleDismiss();
-                                                }
+                                                if (!action.keepNotification) handleDismiss();
                                             }}
                                             className={btnStyles.className}
                                             style={btnStyles.style}
@@ -493,16 +451,10 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({
                         )}
                     </div>
 
-                    {/* Dismiss button */}
                     {notification.dismissible && (
                         <button
                             onClick={handleDismiss}
-                            className={clsx(
-                                'shrink-0 p-1 rounded-md',
-                                'text-theme-muted hover:text-theme-fg',
-                                'hover:bg-theme-hover active:bg-theme-active',
-                                'transition-all duration-150'
-                            )}
+                            className="shrink-0 p-1 rounded-md text-theme-muted hover:text-theme-fg hover:bg-theme-hover transition-all duration-150"
                         >
                             <X className="w-3.5 h-3.5" />
                         </button>

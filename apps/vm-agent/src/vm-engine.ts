@@ -60,6 +60,10 @@ import {
   type ExecuteStepResult as CoreExecuteStepResult,
 } from '@stuardai/workflow-core/runtime';
 
+// Declared-dependency extraction — single-sourced with the desktop installer so
+// the VM provisions the same pip packages a workflow needs (see ensureDependencies).
+import { collectWorkflowDependencies } from '@stuardai/workflow-core/dependencies';
+
 // Platform-specific wiring (tool transports, auth, on-disk dirs) stays VM-local.
 export interface RouterContext {
   agentWsUrl: string;
@@ -1645,11 +1649,86 @@ export interface VMEngineEvents {
   on(event: 'log', listener: (msg: string) => void): void;
 }
 
+/**
+ * Resolve the pip dependencies a deployed workflow declares. Prefers the
+ * `__install` manifest the desktop attaches at deploy/publish time (exact, cheap);
+ * falls back to scanning the spec for older payloads that predate the manifest.
+ */
+function resolveInstallDeps(payload: any): { packages: string[]; requirementsTxt?: string } {
+  const manifest = payload?.__install?.python;
+  if (manifest && typeof manifest === 'object') {
+    const packages = Array.isArray(manifest.packages) ? manifest.packages.map((p: any) => String(p)) : [];
+    const requirementsTxt = typeof manifest.requirementsTxt === 'string' ? manifest.requirementsTxt : undefined;
+    if (packages.length || (requirementsTxt && requirementsTxt.trim())) return { packages, requirementsTxt };
+  }
+  return collectWorkflowDependencies(payload).python;
+}
+
 export class VMWorkflowEngine extends EventEmitter {
   private running = new Map<string, AbortController>();
 
   isRunning(deployId: string): boolean {
     return this.running.has(deployId);
+  }
+
+  /**
+   * Pre-install a deployed workflow's declared pip dependencies into the VM's
+   * Python runtime BEFORE its first run, mirroring the desktop installer. Runs
+   * through the Python agent (`python_install` over the agent WS) so packages
+   * land in the SAME managed venv `run_python_script` executes in — a plain
+   * `pip3 install` would target system Python, which the runtime venv can't see.
+   *
+   * Best-effort: if the agent isn't up or a package fails, it logs and returns —
+   * the runtime still lazy-installs on first node run (warn + continue parity).
+   */
+  async ensureDependencies(
+    deployId: string,
+    payload: any,
+    deployDir: string,
+    opts: { agentWsUrl?: string; cloudAiUrl: string; userId: string; vmTokenSecret: string; timezone?: string },
+  ): Promise<void> {
+    const deps = resolveInstallDeps(payload);
+    const hasDeps = deps.packages.length > 0 || Boolean(deps.requirementsTxt && deps.requirementsTxt.trim());
+    if (!hasDeps) return;
+
+    const logFn = (msg: string) => {
+      const line = `[${new Date().toISOString()}] ${msg}`;
+      this.emit('log', { deployId, message: line });
+      try {
+        fs.appendFileSync(path.join(deployDir, 'deploy.log'), line + '\n');
+      } catch { /* ignore */ }
+    };
+
+    const ctx: RouterContext = {
+      agentWsUrl: opts.agentWsUrl || 'ws://127.0.0.1:8765/ws',
+      cloudAiUrl: opts.cloudAiUrl,
+      logFn,
+      userId: opts.userId,
+      vmTokenSecret: opts.vmTokenSecret,
+      timezone: opts.timezone,
+    };
+
+    const label = deps.packages.length
+      ? `${deps.packages.length} package(s)${deps.requirementsTxt ? ' + requirements.txt' : ''}`
+      : 'requirements.txt';
+    logFn(`[deps] Pre-installing ${label} into the workflow runtime...`);
+    try {
+      const res = await execLocalTool(
+        'python_install',
+        { packages: deps.packages, requirementsTxt: deps.requirementsTxt },
+        ctx,
+        180_000,
+      );
+      if (res && res.ok) {
+        const installed = Array.isArray(res.packagesInstalled) ? res.packagesInstalled.length : 0;
+        const cached = Array.isArray(res.packagesSkipped) ? res.packagesSkipped.length : 0;
+        logFn(`[deps] Dependencies ready (${installed} installed, ${cached} already present)`);
+      } else {
+        logFn(`[deps] Pre-install skipped: ${res?.error || 'unknown error'} — will install on first run`);
+      }
+    } catch (e: any) {
+      logFn(`[deps] Pre-install error: ${String(e?.message || e)} — will install on first run`);
+    }
   }
 
   stop(deployId: string): boolean {

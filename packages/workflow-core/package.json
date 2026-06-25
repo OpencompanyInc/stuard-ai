@@ -13,6 +13,7 @@
     "./guards": "./src/guards.ts",
     "./shortcuts": "./src/shortcuts.ts",
     "./builder": "./src/builder.ts",
+    "./dependencies": "./src/dependencies.ts",
     "./runtime": "./src/runtime/index.ts"
   },
   "scripts": {

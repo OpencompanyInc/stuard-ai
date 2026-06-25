@@ -34,6 +34,7 @@ import { handleMemoryRoutes } from './memory-routes';
 import { handleModelsRoutes } from './models';
 import { handleProjectsNotionRoutes } from './projects-notion';
 import { handleMCPRoutes } from './mcp';
+import { handleMcpServerRoutes } from './mcp-server';
 import { handleFileIndexRoutes } from './file-index';
 import { handlePreferencesRoutes } from './preferences';
 import { handleCloudEngineRoutes } from './cloud-engine';
@@ -93,6 +94,7 @@ export async function handleHttpRoutes(req: IncomingMessage, res: ServerResponse
   if (await handleKnowledgeRoutes(req, res, parsedUrl)) return true;
   if (await handleMemoryRoutes(req, res, parsedUrl)) return true;
   if (await handleProjectsNotionRoutes(req, res, parsedUrl)) return true;
+  if (await handleMcpServerRoutes(req, res, parsedUrl)) return true;
   if (await handleMCPRoutes(req, res, parsedUrl)) return true;
   if (await handleFileIndexRoutes(req, res, parsedUrl)) return true;
   if (await handlePreferencesRoutes(req, res, parsedUrl)) return true;

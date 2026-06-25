@@ -6,11 +6,18 @@
  * token usage for most conversations.
  */
 
-import { Agent } from '@mastra/core/agent';
-import os from 'node:os';
-import { getModel, getModelForUser, getAgentName } from '../agents/stuard/models';
-import type { ModelSourcePreference } from '../utils/models';
-import { buildAvailableSkillsPromptSection, type SkillSummary } from '../tools/skill-tools';
+import { Agent } from "@mastra/core/agent";
+import os from "node:os";
+import {
+  getModel,
+  getModelForUser,
+  getAgentName,
+} from "../agents/stuard/models";
+import type { ModelSourcePreference } from "../utils/models";
+import {
+  buildAvailableSkillsPromptSection,
+  type SkillSummary,
+} from "../tools/skill-tools";
 import {
   buildConversationBlock,
   buildProjectContextBlock,
@@ -20,25 +27,33 @@ import {
   type ProjectContextPayload,
   type JournalEntryPayload,
   type ProjectRetrievedContextPayload,
-} from '../agents/stuard/prompts';
+} from "../agents/stuard/prompts";
 import {
   buildResearchModeSystemPrompt,
   RESEARCH_MODE_GUIDANCE,
-} from '../agents/stuard/research-prompts';
-import { RESEARCH_MODE_TOOLS, type ResearchSessionView } from '../tools/research-mode';
-import type { ModelChoice } from '../router/model-router';
+} from "../agents/stuard/research-prompts";
+import {
+  RESEARCH_MODE_TOOLS,
+  type ResearchSessionView,
+} from "../tools/research-mode";
+import type { ModelChoice } from "../router/model-router";
 import {
   DISCORD_INTEGRATION_ENABLED,
   META_INTEGRATION_ENABLED,
   OUTLOOK_INTEGRATION_ENABLED,
   REDDIT_INTEGRATION_ENABLED,
   WHATSAPP_INTEGRATION_ENABLED,
-} from '../../../../shared/integration-flags';
-import { ORCHESTRATOR_DELEGATION_TOOLS } from './delegation-tools';
-import { wrapToolWithBridge } from './subagent-runtime';
+} from "../../../../shared/integration-flags";
+import { ORCHESTRATOR_DELEGATION_TOOLS } from "./delegation-tools";
+import { wrapToolWithBridge } from "./subagent-runtime";
 
 // Re-use meta tools from the existing registry
-import { search_tools, get_tool_schema, execute_tool, chatUiTool } from '../tools/meta-tools';
+import {
+  search_tools,
+  get_tool_schema,
+  execute_tool,
+  chatUiTool,
+} from "../tools/meta-tools";
 import {
   list_projects,
   create_project,
@@ -53,51 +68,68 @@ import {
   pin_file,
   add_project_context,
   unpin_file,
-} from '../tools/device/projects';
-import { task_crud, task_reminders } from '../tools/device/productivity';
-import { ask_user } from '../tools/ask-user';
-import { waitTool } from '../tools/wait';
-import { runSequentialTool, runParallelTool } from '../tools/workflow-system';
-import { web_search } from '../tools/perplexity-tools';
-import { scrape_url } from '../tools/tavily-tools';
-import { analyzeMediaTool } from '../tools/analyze-media';
-import { get_skill_info } from '../tools/skill-tools';
+} from "../tools/device/projects";
+import { task_crud, task_reminders } from "../tools/device/productivity";
+import { ask_user } from "../tools/ask-user";
+import { waitTool } from "../tools/wait";
+import { runSequentialTool, runParallelTool } from "../tools/workflow-system";
+import { web_search } from "../tools/perplexity-tools";
+import { scrape_url } from "../tools/tavily-tools";
+import { analyzeMediaTool } from "../tools/analyze-media";
+import { get_skill_info } from "../tools/skill-tools";
 import {
   search_past_conversations,
   get_conversation_context,
   agent_todo,
   search_local_workflows,
   run_workflow,
-} from '../tools/device-tools';
+  create_knowledge_pack,
+  list_knowledge_packs,
+  query_knowledge_pack,
+  start_live_session,
+} from "../tools/device-tools";
 // Mobile/phone-mode media-send tools — lifted inline when the turn originates
 // from a phone (SMS/MMS/WhatsApp) so the orchestrator can reply with a voice
 // note or image without the search_tools discovery dance.
-import { telnyx_send_voice_note, telnyx_send_mms } from '../tools/telnyx-tools';
-import { whatsapp_send_voice_note, whatsapp_send_media } from '../tools/whatsapp-tools';
-import { hasClientBridge, getBridgeWs, getBridgeSecrets } from '../tools/bridge';
-import { createVariablesTool, wrapToolWithVariables, conversationKeyFromSecrets } from '../tools/chat-variables';
+import { telnyx_send_voice_note, telnyx_send_mms } from "../tools/telnyx-tools";
+import {
+  whatsapp_send_voice_note,
+  whatsapp_send_media,
+} from "../tools/whatsapp-tools";
+import {
+  hasClientBridge,
+  getBridgeWs,
+  getBridgeSecrets,
+} from "../tools/bridge";
+import {
+  createVariablesTool,
+  wrapToolWithVariables,
+  conversationKeyFromSecrets,
+} from "../tools/chat-variables";
 
 // Resolved at startup via execution-tools-resolver to break the circular
 // dependency: orchestrator-agent → stuard/tools → meta-tools → workflow-subagent → orchestrator.
-import { resolveExecutionTools } from './execution-tools-resolver';
-function getExecutionToolsLazy(mcpTools: Record<string, any> = {}): Record<string, any> {
+import { resolveExecutionTools } from "./execution-tools-resolver";
+function getExecutionToolsLazy(
+  mcpTools: Record<string, any> = {},
+): Record<string, any> {
   return resolveExecutionTools(mcpTools);
 }
 
 const DEFAULT_USER_HOME_DIR = (() => {
   const envHome = process.env.USERPROFILE || os.homedir();
-  return envHome.replace(/\\/g, '/');
+  return envHome.replace(/\\/g, "/");
 })();
 
 const DELEGATED_AGENT_TOOL_NAMES = new Set([
-  'bot_list',
-  'agent_list',
-  'ask_bot',
-  'ask_agent',
-  'bot_ask',
-  'agent_ask',
-  'bot_get_status',
-  'agent_get_status',
+  "bot_list",
+  "agent_list",
+  "ask_bot",
+  "ask_agent",
+  "bot_ask",
+  "agent_ask",
+  "bot_get_status",
+  "agent_get_status",
 ]);
 
 // Research tools split: `enter_research_mode` is the always-visible "door"; the
@@ -105,19 +137,24 @@ const DELEGATED_AGENT_TOOL_NAMES = new Set([
 // turn that enters research mode there's no session yet, so the loop is re-armed
 // mid-turn via prepareStep (see __rearmOnResearch + stream-runner). On later
 // turns the session is known at turn start, so they're surfaced natively.
-const { enter_research_mode: ENTER_RESEARCH_MODE, ...RESEARCH_SESSION_TOOLS } = RESEARCH_MODE_TOOLS;
+const { enter_research_mode: ENTER_RESEARCH_MODE, ...RESEARCH_SESSION_TOOLS } =
+  RESEARCH_MODE_TOOLS;
 const RESEARCH_SESSION_TOOL_NAMES = Object.keys(RESEARCH_SESSION_TOOLS);
 
-function withoutDelegatedAgentTools(tools: Record<string, any>): Record<string, any> {
+function withoutDelegatedAgentTools(
+  tools: Record<string, any>,
+): Record<string, any> {
   return Object.fromEntries(
-    Object.entries(tools).filter(([name]) => !DELEGATED_AGENT_TOOL_NAMES.has(name)),
+    Object.entries(tools).filter(
+      ([name]) => !DELEGATED_AGENT_TOOL_NAMES.has(name),
+    ),
   );
 }
 
 export interface BotPromptSummary {
   id?: string;
   name?: string;
-  kind?: 'bot' | 'agent';
+  kind?: "bot" | "agent";
   status?: string;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
@@ -127,25 +164,28 @@ export interface BotPromptSummary {
 function formatAgentRosterSection(agents: BotPromptSummary[] = []): string {
   const lines = agents
     .map((entry) => {
-      const name = String(entry?.name || '').trim();
-      const id = String(entry?.id || '').trim();
-      if (!name && !id) return '';
-      const kind = entry?.kind === 'agent' ? 'agent' : 'bot';
+      const name = String(entry?.name || "").trim();
+      const id = String(entry?.id || "").trim();
+      if (!name && !id) return "";
+      const kind = entry?.kind === "agent" ? "agent" : "bot";
       const details = [
         `type=${kind}`,
-        id ? `id=${id}` : '',
-        entry?.status ? `status=${entry.status}` : '',
-        entry?.lastRunAt ? `lastRunAt=${entry.lastRunAt}` : '',
-        entry?.nextRunAt ? `nextRunAt=${entry.nextRunAt}` : '',
-        entry?.vmDeployedAt ? 'vm=deployed' : '',
-      ].filter(Boolean).join(', ');
-      return `- @${name || id}${details ? ` (${details})` : ''}`;
+        id ? `id=${id}` : "",
+        entry?.status ? `status=${entry.status}` : "",
+        entry?.lastRunAt ? `lastRunAt=${entry.lastRunAt}` : "",
+        entry?.nextRunAt ? `nextRunAt=${entry.nextRunAt}` : "",
+        entry?.vmDeployedAt ? "vm=deployed" : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      return `- @${name || id}${details ? ` (${details})` : ""}`;
     })
     .filter(Boolean);
 
-  const roster = lines.length > 0
-    ? `\n\nKnown configured agents/bots from context (use these ids when delegating):\n${lines.join('\n')}`
-    : '';
+  const roster =
+    lines.length > 0
+      ? `\n\nKnown configured agents/bots from context (use these ids when delegating):\n${lines.join("\n")}`
+      : "";
 
   return `\n\n## Configured Agents - Delegated Status / Ask
 
@@ -154,7 +194,6 @@ The top-level orchestrator does not call ask_bot/ask_agent or list bots directly
 - For legacy bot entries, call \`delegate\` with subagent \`bot\` and pass \`bot_id\` or \`bot_name\`.
 - To create, deploy, pause, or wake a proactive agent/bot, delegate that workflow to \`agent\` or \`bot\`.
 - If no matching id/name is present in the roster or user context, ask the user which agent they mean instead of calling a list tool.${roster}`;
-
 }
 
 export interface OrchestratorPromptOptions {
@@ -174,15 +213,19 @@ export interface OrchestratorPromptOptions {
    * media-send tools (voice note / image+file) are lifted into the native tool
    * set so the AI can reply with media directly.
    */
-  mobileMessaging?: { provider: 'telnyx' | 'whatsapp' } | null;
+  mobileMessaging?: { provider: "telnyx" | "whatsapp" } | null;
 }
 
-function buildMobileMessagingSection(mobile: { provider: 'telnyx' | 'whatsapp' }): string {
-  const isWa = mobile.provider === 'whatsapp';
-  const channel = isWa ? 'WhatsApp' : 'SMS/MMS';
-  const voiceTool = isWa ? 'whatsapp_send_voice_note' : 'telnyx_send_voice_note';
-  const mediaTool = isWa ? 'whatsapp_send_media' : 'telnyx_send_mms';
-  const urlArg = isWa ? 'a public URL' : 'a public `media_url`';
+function buildMobileMessagingSection(mobile: {
+  provider: "telnyx" | "whatsapp";
+}): string {
+  const isWa = mobile.provider === "whatsapp";
+  const channel = isWa ? "WhatsApp" : "SMS/MMS";
+  const voiceTool = isWa
+    ? "whatsapp_send_voice_note"
+    : "telnyx_send_voice_note";
+  const mediaTool = isWa ? "whatsapp_send_media" : "telnyx_send_mms";
+  const urlArg = isWa ? "a public URL" : "a public `media_url`";
   return `
 
 ## You're texting (${channel} mode)
@@ -197,9 +240,14 @@ Any media the user sent you was downloaded to this device and its local path is 
 }
 
 function buildQuickResponsePrompt(): string {
-  const now = new Date().toLocaleString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  const now = new Date().toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
   return `You are Stuard — a helpful assistant in **quick-response mode**.
 
@@ -239,30 +287,43 @@ export function buildOrchestratorPrompt(
       retrievedContext: promptOptions.retrievedContext,
       enabledIntegrations,
       skills,
-      bots: bots.map((b) => ({ id: b.id, name: b.name, kind: b.kind, status: b.status })),
+      bots: bots.map((b) => ({
+        id: b.id,
+        name: b.name,
+        kind: b.kind,
+        status: b.status,
+      })),
       homeDir: DEFAULT_USER_HOME_DIR,
     });
   }
 
-  const now = new Date().toLocaleString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  const now = new Date().toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
-  const integrationLine = enabledIntegrations.length > 0
-    ? `\nConnected integrations: ${enabledIntegrations.join(', ')}`
-    : '';
+  const integrationLine =
+    enabledIntegrations.length > 0
+      ? `\nConnected integrations: ${enabledIntegrations.join(", ")}`
+      : "";
 
   const skillsSection = buildAvailableSkillsPromptSection(skills);
-  const skillLine = skillsSection ? `\n\n${skillsSection}` : '';
+  const skillLine = skillsSection ? `\n\n${skillsSection}` : "";
   const botSection = formatAgentRosterSection(bots);
 
-  const conversationBlock = buildConversationBlock(promptOptions.conversationId);
-  const projectBlock = '';
-  const projectModeIntroLine = '';
+  const conversationBlock = buildConversationBlock(
+    promptOptions.conversationId,
+  );
+  const projectBlock = "";
+  const projectModeIntroLine = "";
   const toolDatabaseSection = buildOrchestratorToolDatabaseSection();
   const mobileSection = promptOptions.mobileMessaging
     ? buildMobileMessagingSection(promptOptions.mobileMessaging)
-    : '';
+    : "";
 
   return `You are Stuard — a proactive, warm AI orchestrator. You coordinate specialized subagents to complete the user's request efficiently.
 
@@ -289,9 +350,9 @@ Use the **delegate** tool to hand off work to specialized subagents. Pass a \`ta
 | bot         | Legacy proactive bot status/ask workflows, including bot ids/names and manual wake-ups |
 | custom      | An ad-hoc subagent you define on the fly. Pass \`tools\` (exact tool names it may use) and \`system_prompt\` (its role/instructions) alongside \`instruction\`. Use when no built-in subagent fits the job. |
 | google      | Gmail, Calendar, Drive, Sheets, Docs, Tasks |
-${OUTLOOK_INTEGRATION_ENABLED ? '| outlook     | Outlook mail & calendar |\n' : ''}| github      | Repos, issues, PRs, branches, actions |
-${META_INTEGRATION_ENABLED ? '| meta        | Facebook, Instagram, Threads |\n' : ''}${WHATSAPP_INTEGRATION_ENABLED ? '| whatsapp    | WhatsApp messaging |\n' : ''}| telnyx      | SMS, voice calls |
-${REDDIT_INTEGRATION_ENABLED ? '| reddit      | Subreddits, posts, comments |\n' : ''}${DISCORD_INTEGRATION_ENABLED ? '| discord     | Discord bot operations |\n' : ''}| x           | X/Twitter tweets, timelines, users, DMs |
+${OUTLOOK_INTEGRATION_ENABLED ? "| outlook     | Outlook mail & calendar |\n" : ""}| github      | Repos, issues, PRs, branches, actions |
+${META_INTEGRATION_ENABLED ? "| meta        | Facebook, Instagram, Threads |\n" : ""}${WHATSAPP_INTEGRATION_ENABLED ? "| whatsapp    | WhatsApp messaging |\n" : ""}| telnyx      | SMS, voice calls |
+${REDDIT_INTEGRATION_ENABLED ? "| reddit      | Subreddits, posts, comments |\n" : ""}${DISCORD_INTEGRATION_ENABLED ? "| discord     | Discord bot operations |\n" : ""}| x           | X/Twitter tweets, timelines, users, DMs |
 | notion      | Notion pages, databases, blocks, comments — search, read, create, update |
 
 Each subagent can call **ask_orchestrator** when it needs information or a decision. When that happens, **delegate** returns early with the question and a **questionId**.
@@ -345,6 +406,12 @@ DEFAULT for structured data (tables, stats, lists, dashboards, search results) �
 ## Local Workflows — search_local_workflows / run_workflow
 
 The user's saved Stuard workflows act as custom tools — when a request matches one they've automated, \`search_local_workflows\` to find it (and check its \`inputSchema\`), then \`run_workflow\` with matching \`args\`, instead of reinventing the steps. For workflow **authoring / editing**, delegate to the \`workflow\` subagent instead.
+
+## Document context
+
+When the user wants to study, quiz on, prep for an interview from, or repeatedly ask about a set of documents outside Project Mode, use the document-context tools: \`create_knowledge_pack\` ingests sources (inline text or local files — PDFs/DOCX/XLSX included) and returns an internal id; \`query_knowledge_pack\` retrieves relevant passages to ground answers/questions. Do not mention "RAG", "packs", or internal ids unless the user explicitly asks how it works — present it as Stuard using their documents.
+
+For a **spoken** session (quiz me out loud, mock interview, voice tutoring), call \`start_live_session\` with the relevant document context ids. It opens the voice pill and the live assistant can retrieve passages from those documents. The conversation then continues live by voice, not in chat — don't keep waiting on the tool. When that session ends, its summary and feedback come back to you as a follow-up message (prefixed \`[Live voice session ended]\`); relay that wrap-up to the user and save anything worth remembering.
 
 ## Skills — when to delegate to \`skills\`
 
@@ -431,6 +498,12 @@ function getOrchestratorActiveTools(
     tools.chat_ui = chatUiTool;
     tools.search_local_workflows = search_local_workflows;
     tools.run_workflow = run_workflow;
+    // Document context tools. Native so the AI can prepare/query user documents
+    // without the search_tools discovery dance.
+    tools.create_knowledge_pack = create_knowledge_pack;
+    tools.list_knowledge_packs = list_knowledge_packs;
+    tools.query_knowledge_pack = query_knowledge_pack;
+    tools.start_live_session = start_live_session;
     // Project Mode entry points — always native so the AI can discover / create /
     // enter a project from a cold start without the search_tools discovery dance.
     tools.list_projects = list_projects;
@@ -465,7 +538,10 @@ function getOrchestratorActiveTools(
   // would double-send). These don't require the bridge — voice notes are
   // generated server-side and media can be sent from a path, URL, or base64.
   if (promptOptions.mobileMessaging) {
-    if (promptOptions.mobileMessaging.provider === 'whatsapp' && WHATSAPP_INTEGRATION_ENABLED) {
+    if (
+      promptOptions.mobileMessaging.provider === "whatsapp" &&
+      WHATSAPP_INTEGRATION_ENABLED
+    ) {
       tools.whatsapp_send_voice_note = whatsapp_send_voice_note;
       tools.whatsapp_send_media = whatsapp_send_media;
     } else {
@@ -490,7 +566,10 @@ export function getOrchestratorAgent(
 ): Agent {
   const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
   // Full execution universe so meta-tools (execute_tool) still work
-  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
+  const executionTools = withoutDelegatedAgentTools({
+    ...getExecutionToolsLazy(mcpTools),
+    ...activeTools,
+  });
   // The orchestrator's OWN registry must hold the full research tool set so
   // prepareStep can re-arm the gather/compile loop mid-turn (the entry turn has
   // no active session yet, so getOrchestratorActiveTools only exposed the door).
@@ -508,7 +587,11 @@ export function getOrchestratorAgent(
   const bridgeSecrets = getBridgeSecrets();
   if (bridgeWs) {
     for (const toolName of Object.keys(executionTools)) {
-      executionTools[toolName] = wrapToolWithBridge(executionTools[toolName], bridgeWs, bridgeSecrets);
+      executionTools[toolName] = wrapToolWithBridge(
+        executionTools[toolName],
+        bridgeWs,
+        bridgeSecrets,
+      );
     }
   }
   // Variable layer — OUTERMOST wrap (after bridge): rehydrate {{var:…}} handles
@@ -517,16 +600,24 @@ export function getOrchestratorAgent(
   {
     const convKey = conversationKeyFromSecrets(bridgeSecrets);
     for (const toolName of Object.keys(executionTools)) {
-      executionTools[toolName] = wrapToolWithVariables(executionTools[toolName], convKey);
+      executionTools[toolName] = wrapToolWithVariables(
+        executionTools[toolName],
+        convKey,
+      );
     }
   }
 
   const instructions = [
     {
-      role: 'system',
-      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots, promptOptions),
+      role: "system",
+      content: buildOrchestratorPrompt(
+        enabledIntegrations,
+        skills,
+        bots,
+        promptOptions,
+      ),
       providerOptions: {
-        anthropic: { cacheControl: { type: 'ephemeral' } },
+        anthropic: { cacheControl: { type: "ephemeral" } },
       },
     },
   ];
@@ -552,7 +643,7 @@ export function getOrchestratorAgent(
     toolNames: RESEARCH_SESSION_TOOL_NAMES,
   };
   (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
-  (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
+  (agent as any).__billingExcluded = !!((selectedModel as any)?.__stuardBillingExcluded);
   return agent;
 }
 
@@ -567,16 +658,21 @@ export async function getOrchestratorAgentForUser(
   modelSource?: ModelSourcePreference | string | null,
   promptOptions: OrchestratorPromptOptions = {},
 ): Promise<Agent> {
-  const selectedModel = await getModelForUser(model, modelId, userId, modelSource);
+  const selectedModel = await getModelForUser(
+    model,
+    modelId,
+    userId,
+    modelSource,
+  );
   const name = getAgentName(model);
 
   if (promptOptions.quickResponse) {
     const instructions = [
       {
-        role: 'system',
+        role: "system",
         content: buildQuickResponsePrompt(),
         providerOptions: {
-          anthropic: { cacheControl: { type: 'ephemeral' } },
+          anthropic: { cacheControl: { type: "ephemeral" } },
         },
       },
     ];
@@ -593,13 +689,18 @@ export async function getOrchestratorAgentForUser(
     (agent as any).__diagInstructions = instructions;
     (agent as any).__activeToolNames = undefined;
     (agent as any).__executionToolNames = [];
-    (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
-    (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
+    (agent as any).__modelSource = (
+      selectedModel as any
+    )?.__stuardResolvedSource;
+    (agent as any).__billingExcluded = !!((selectedModel as any)?.__stuardBillingExcluded);
     return agent;
   }
 
   const activeTools = getOrchestratorActiveTools(mcpTools, promptOptions);
-  const executionTools = withoutDelegatedAgentTools({ ...getExecutionToolsLazy(mcpTools), ...activeTools });
+  const executionTools = withoutDelegatedAgentTools({
+    ...getExecutionToolsLazy(mcpTools),
+    ...activeTools,
+  });
   // The orchestrator's OWN registry must hold the full research tool set so
   // prepareStep can re-arm the gather/compile loop mid-turn (the entry turn has
   // no active session yet, so getOrchestratorActiveTools only exposed the door).
@@ -611,7 +712,11 @@ export async function getOrchestratorAgentForUser(
   const bridgeSecrets = getBridgeSecrets();
   if (bridgeWs) {
     for (const toolName of Object.keys(executionTools)) {
-      executionTools[toolName] = wrapToolWithBridge(executionTools[toolName], bridgeWs, bridgeSecrets);
+      executionTools[toolName] = wrapToolWithBridge(
+        executionTools[toolName],
+        bridgeWs,
+        bridgeSecrets,
+      );
     }
   }
   // Variable layer — OUTERMOST wrap (after bridge): rehydrate {{var:…}} handles
@@ -620,16 +725,24 @@ export async function getOrchestratorAgentForUser(
   {
     const convKey = conversationKeyFromSecrets(bridgeSecrets);
     for (const toolName of Object.keys(executionTools)) {
-      executionTools[toolName] = wrapToolWithVariables(executionTools[toolName], convKey);
+      executionTools[toolName] = wrapToolWithVariables(
+        executionTools[toolName],
+        convKey,
+      );
     }
   }
 
   const instructions = [
     {
-      role: 'system',
-      content: buildOrchestratorPrompt(enabledIntegrations, skills, bots, promptOptions),
+      role: "system",
+      content: buildOrchestratorPrompt(
+        enabledIntegrations,
+        skills,
+        bots,
+        promptOptions,
+      ),
       providerOptions: {
-        anthropic: { cacheControl: { type: 'ephemeral' } },
+        anthropic: { cacheControl: { type: "ephemeral" } },
       },
     },
   ];
@@ -655,6 +768,6 @@ export async function getOrchestratorAgentForUser(
     toolNames: RESEARCH_SESSION_TOOL_NAMES,
   };
   (agent as any).__modelSource = (selectedModel as any)?.__stuardResolvedSource;
-  (agent as any).__billingExcluded = !!(selectedModel as any)?.__stuardBillingExcluded;
+  (agent as any).__billingExcluded = !!((selectedModel as any)?.__stuardBillingExcluded);
   return agent;
 }

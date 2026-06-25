@@ -141,7 +141,7 @@ function InlineSelect({ value, onChange, options, className }: {
         <ChevronDown className={`w-3 h-3 wf-fg-faint transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="absolute z-50 left-0 mt-1 min-w-[160px] wf-bg-overlay border border-white/[0.04] rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute z-50 left-0 mt-1 min-w-[160px] wf-bg-elevated border wf-border-subtle rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="p-1 max-h-48 overflow-y-auto">
             {options.map(opt => (
               <button

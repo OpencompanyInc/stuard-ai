@@ -31,6 +31,8 @@ import { withClientBridge } from '../tools/bridge';
 import {
   VOICE_TOOL_DEFINITIONS,
   loadVoiceRuntimeMemorySummary,
+  buildKnowledgePackVoiceTool,
+  END_LIVE_SESSION_TOOL,
 } from './voice-runtime-tools';
 import {
   DISCORD_INTEGRATION_ENABLED,
@@ -59,9 +61,10 @@ function buildVoiceSystemPrompt(opts: {
   identityFacts?: Fact[];
   directiveFacts?: Fact[];
   bioFacts?: Fact[];
+  knowledgePacks?: Array<{ id: string; title?: string }>;
 }): string {
   const { userName, direction, callerNumber, recentContext, runtimeMemorySummary, runtimeMemorySource, customPrompt,
-    enableTools = true, identityFacts, directiveFacts, bioFacts } = opts;
+    enableTools = true, identityFacts, directiveFacts, bioFacts, knowledgePacks } = opts;
 
   const userRef = userName ? `The user's name is ${userName}.` : '';
   const directionCtx = direction === 'inbound'
@@ -165,6 +168,29 @@ function buildVoiceSystemPrompt(opts: {
       '- Live tools are unavailable on this call, so do not claim to look things up, send texts, or complete external actions in real time.',
       '- If the user asks for something that would normally require tools, explain that this call is currently conversation-only and offer the best verbal help you can.',
       '- Ask follow-up questions verbally instead of referring to any UI or external workflow.',
+    );
+  }
+
+  if (enableTools && knowledgePacks && knowledgePacks.length > 0) {
+    parts.push(
+      '',
+      'Attached knowledge packs (sandboxed RAG over the user\'s documents):',
+      ...knowledgePacks.map((p) => `- "${p.title || 'pack'}" — packId: ${p.id}`),
+      'Use the query_knowledge_pack tool with the relevant packId to retrieve passages before answering, quizzing, or asking interview questions. Ground what you say in what you retrieve and cite the source labels — don\'t invent facts that aren\'t in the pack.',
+    );
+  }
+
+  // Structured sessions (a persona and/or attached packs) are agent-initiated
+  // — a quiz, interview, or tutoring run. Tell the model to close the loop with
+  // end_live_session so its wrap-up flows back to the chat assistant.
+  const isStructuredSession = enableTools && (!!customPrompt || (knowledgePacks?.length || 0) > 0);
+  if (isStructuredSession) {
+    parts.push(
+      '',
+      'Ending the session:',
+      '- This is a structured session the chat assistant started for the user. When the quiz/interview/session is finished — or the user asks to stop — call end_live_session.',
+      '- Pass a thorough summary plus feedback: how they did, what they got right or wrong, strengths, and what to review (use highlights for a score or standout points, follow_ups for what to study next).',
+      '- end_live_session delivers your wrap-up to the chat assistant, which relays it to the user and saves what matters — so be complete. After calling it, give a brief spoken sign-off; the session then closes.',
     );
   }
 
@@ -348,8 +374,10 @@ export async function buildVoiceContext(opts: {
   customPrompt?: string;
   bridgeWs?: WebSocket;
   enableTools?: boolean;
+  /** Knowledge packs attached to this session — adds a scoped query tool + prompt. */
+  knowledgePacks?: Array<{ id: string; title?: string }>;
 }): Promise<VoiceContext> {
-  const { userId, direction, callerNumber, customPrompt, bridgeWs, enableTools = true } = opts;
+  const { userId, direction, callerNumber, customPrompt, bridgeWs, enableTools = true, knowledgePacks } = opts;
 
   // Load recent context + knowledge graph + configured runtime memory in parallel.
   const [recentMessages, userName, knowledge, runtimeMemory] = await Promise.all([
@@ -376,11 +404,24 @@ export async function buildVoiceContext(opts: {
     identityFacts,
     directiveFacts,
     bioFacts,
+    knowledgePacks,
   });
+
+  const tools = enableTools ? [...VOICE_TOOLS] : [];
+  if (enableTools && knowledgePacks && knowledgePacks.length > 0) {
+    tools.push(buildKnowledgePackVoiceTool(knowledgePacks));
+  }
+  // Structured (agent-initiated) sessions get the wrap-up tool so they can hand
+  // feedback back to the chat orchestrator. Gated so casual wake-word voice
+  // (no persona, no packs) never injects a feedback turn into chat.
+  const isStructuredSession = enableTools && (!!customPrompt || (knowledgePacks?.length || 0) > 0);
+  if (isStructuredSession) {
+    tools.push(END_LIVE_SESSION_TOOL);
+  }
 
   return {
     systemPrompt,
-    tools: enableTools ? VOICE_TOOLS : [],
+    tools,
     userId,
     userName: effectiveName,
   };

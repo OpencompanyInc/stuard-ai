@@ -806,7 +806,18 @@ export class DeployExecutor extends EventEmitter {
       timezone: runtimeTimezone,
     };
 
+    // Pre-install the workflow's declared pip dependencies into the runtime venv
+    // (mirrors the desktop installer) so the first run doesn't stall on pip. This
+    // is best-effort and runs in the BACKGROUND — the deploy response returns
+    // immediately and the runtime lazy-installs if this can't complete.
+    const ensureDeps = () =>
+      this.engine
+        .ensureDependencies(config.deployId, payload, deployDir, runOpts)
+        .catch((e: any) => this.appendLog(deployDir, `[deps] ensureDependencies failed: ${String(e?.message || e)}`));
+
     if (usesTriggerRuntime) {
+      // Warm deps in the background so the first trigger fires without a pip delay.
+      void ensureDeps();
       if (scheduleRuntime) {
         this.armCronSchedule(deploy, payload, scheduleRuntime, runOpts);
       }
@@ -841,8 +852,12 @@ export class DeployExecutor extends EventEmitter {
       },
     });
 
-    // Start async (don't await — caller gets back immediately with deploy info)
-    runOnce();
+    // Install deps first, THEN run — but don't block the deploy response on it.
+    void ensureDeps().then(() => {
+      if (this.running.has(config.deployId) && deploy.status !== 'stopped') {
+        runOnce();
+      }
+    });
 
     return { pid: null, dir: deployDir };
   }

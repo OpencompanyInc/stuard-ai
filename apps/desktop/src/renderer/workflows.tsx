@@ -33,6 +33,7 @@ import type { DesignerModel } from "./workflows/types";
 import { calculateAutoLayout } from "./workflows/utils/alignment";
 import { WorkflowMainContent } from "./workflows/layout/WorkflowMainContent";
 import { WorkflowOverlays } from "./workflows/layout/WorkflowOverlays";
+import { InstallProgressModal } from "./workflows/components/InstallProgressModal";
 import { IntegrationBuilderModal } from "./workflows/components/IntegrationBuilderModal";
 import { ConfirmDialogHost } from "./workflows/components/ConfirmDialog";
 import { PanelErrorBoundary } from "./workflows/layout/PanelErrorBoundary";
@@ -572,6 +573,8 @@ function WorkflowsApp() {
     importFromMarketplace,
     handleUpdateWorkflow,
     executeWorkflowUpdate,
+    installState,
+    dismissInstall,
   } = useWorkflowMarketplace({ selectedId, refresh, load });
 
   // Custom-integration builder (test phase — drafts in localStorage, executor on cloud-ai)
@@ -1544,6 +1547,8 @@ function WorkflowsApp() {
           />
         )}
 
+        <InstallProgressModal state={installState} onClose={dismissInstall} />
+
         <WorkflowOverlays
           contextMenu={null}
           model={null as any}
@@ -1869,6 +1874,8 @@ function WorkflowsApp() {
           </button>
         </div>
       )}
+
+      <InstallProgressModal state={installState} onClose={dismissInstall} />
 
       <WorkflowOverlays
         contextMenu={contextMenu}
