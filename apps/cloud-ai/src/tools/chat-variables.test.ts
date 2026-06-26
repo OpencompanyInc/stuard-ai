@@ -115,4 +115,47 @@ describe('captureLargeOutputs', () => {
     const small = { ok: true, text: 'short answer' };
     expect(captureLargeOutputs(CONV_A, small)).toEqual(small);
   });
+
+  it('captures an oversized text content field (long file read) as a text handle', () => {
+    const longText = 'The quick brown fox. '.repeat(2000); // ~42k chars
+    const captured: any = captureLargeOutputs(CONV_A, {
+      ok: true,
+      content: longText,
+      total_lines: 1,
+    });
+    // metadata preserved, raw text replaced by a handle + generous preview
+    expect(captured.total_lines).toBe(1);
+    expect(captured.content._ref).toMatch(/^\{\{var:text_\d+\}\}$/);
+    expect(captured.content.chars).toBe(longText.length);
+    expect(typeof captured.content.preview).toBe('string');
+    expect(captured.content.preview.length).toBeLessThan(longText.length);
+    // full text round-trips via the handle
+    const rehydrated = resolveVarRefs(CONV_A, captured.content._ref);
+    expect(rehydrated).toBe(longText);
+  });
+
+  it('captures a subagent result string (delegate boundary) as a text handle', () => {
+    const bigResult = 'Findings: '.repeat(1500); // ~15k chars
+    const captured: any = captureLargeOutputs(CONV_A, {
+      ok: true,
+      subagentId: 'sub_1',
+      result: bigResult,
+      completed: true,
+    });
+    expect(captured.subagentId).toBe('sub_1');
+    expect(captured.result._ref).toMatch(/^\{\{var:text_\d+\}\}$/);
+    expect(resolveVarRefs(CONV_A, captured.result._ref)).toBe(bigResult);
+  });
+
+  it('does not capture medium text below the threshold', () => {
+    const mediumText = 'hello world. '.repeat(300); // ~3.9k chars, not base64-shaped
+    const captured: any = captureLargeOutputs(CONV_A, { ok: true, content: mediumText });
+    expect(captured.content).toBe(mediumText);
+  });
+
+  it('does not sweep up non-payload string fields like error/preview', () => {
+    const longErr = 'boom '.repeat(3000); // ~15k chars, but not a payload key
+    const captured: any = captureLargeOutputs(CONV_A, { ok: false, error: longErr });
+    expect(captured.error).toBe(longErr);
+  });
 });

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 import webbrowser
 from typing import Any, Dict, Callable, Awaitable, Optional, List
 from datetime import datetime
@@ -704,29 +708,167 @@ async def get_local_time(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "iso": iso, "tzName": tz_name, "offsetMinutes": offset_minutes, "epochMs": epoch_ms}
 
 
-def _get_system_python() -> str:
-    """Return a real Python interpreter path, handling frozen/PyInstaller builds.
+# CREATE_NO_WINDOW so probing helper interpreters from the frozen GUI agent
+# doesn't flash console windows on Windows.
+_NO_WINDOW_FLAG = 0x08000000 if sys.platform.startswith("win") else 0
 
-    In dev mode ``sys.executable`` already points at the interpreter.  In a
-    PyInstaller-frozen build it points at the packaged ``.exe`` which cannot
-    create venvs or run ``-m pip`` — invoking it just re-spawns the agent.
-    In that case we look up Python on PATH and refuse to fall back to the
-    frozen exe (returns ``""`` if none found, so callers can surface a clear
-    "install Python" error rather than hanging).
+
+def _no_window_kwargs() -> Dict[str, Any]:
+    return {"creationflags": _NO_WINDOW_FLAG} if _NO_WINDOW_FLAG else {}
+
+
+def _is_windows_store_python_stub(path: str) -> bool:
+    """Detect the Microsoft Store "App execution alias" python.exe.
+
+    Windows ships a 0-byte reparse-point stub at
+    ``%LOCALAPPDATA%\\Microsoft\\WindowsApps\\python.exe`` that opens the Store
+    instead of running Python. ``shutil.which('python')`` happily returns it, so
+    naive status checks report "Python installed" while every venv/script
+    invocation fails. This is the "it's from Microsoft's own thing" interpreter
+    users hit on a fresh laptop with no real Python — we must reject it.
+    """
+    if not path or not sys.platform.startswith("win"):
+        return False
+    try:
+        norm = os.path.normcase(os.path.abspath(path))
+    except Exception:
+        norm = os.path.normcase(path)
+    if os.path.join("microsoft", "windowsapps") in norm:
+        return True
+    try:
+        # App execution aliases are 0-byte reparse points.
+        if os.path.getsize(path) == 0:
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _python_interpreter_works(path: str) -> bool:
+    """True only when ``path`` is a real interpreter that actually executes code.
+
+    Guards against the Store stub (which errors / opens the Store) and any other
+    broken shim that exists on disk but can't run.
+    """
+    if not path or not os.path.exists(path):
+        return False
+    if _is_windows_store_python_stub(path):
+        return False
+    try:
+        proc = subprocess.run(
+            [path, "-c", "import sys; sys.stdout.write(sys.executable or sys.version)"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            **_no_window_kwargs(),
+        )
+    except Exception:
+        return False
+    return proc.returncode == 0 and bool((proc.stdout or "").strip())
+
+
+def _windows_python_search_roots() -> List[str]:
+    roots: List[str] = []
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if localappdata:
+        roots.append(os.path.join(localappdata, "Programs", "Python"))
+    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(var)
+        if base:
+            roots.append(base)
+    roots.append(os.environ.get("SystemDrive", "C:") + os.sep)
+    return roots
+
+
+def _candidate_system_pythons() -> List[str]:
+    """Ordered list of plausible real interpreters (Store stubs already filtered)."""
+    candidates: List[str] = []
+
+    def _add(path: Optional[str]) -> None:
+        if path and not _is_windows_store_python_stub(path):
+            candidates.append(path)
+
+    if sys.platform.startswith("win"):
+        # The `py` launcher is the most reliable resolver on Windows.
+        py_launcher = shutil.which("py")
+        if py_launcher and not _is_windows_store_python_stub(py_launcher):
+            for ver_arg in ("-3.12", "-3.11", "-3"):
+                try:
+                    proc = subprocess.run(
+                        [py_launcher, ver_arg, "-c", "import sys;print(sys.executable)"],
+                        capture_output=True, text=True, timeout=15,
+                        **_no_window_kwargs(),
+                    )
+                except Exception:
+                    continue
+                if proc.returncode == 0:
+                    out = (proc.stdout or "").strip().splitlines()
+                    if out:
+                        _add(out[-1].strip())
+                        break
+
+    for name in ("python3", "python"):
+        _add(shutil.which(name))
+
+    if sys.platform.startswith("win"):
+        for root in _windows_python_search_roots():
+            try:
+                for entry in sorted(glob.glob(os.path.join(root, "Python3*", "python.exe")), reverse=True):
+                    _add(entry)
+            except Exception:
+                pass
+    else:
+        for base in ("/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"):
+            for name in ("python3", "python"):
+                p = os.path.join(base, name)
+                if os.path.exists(p):
+                    _add(p)
+
+    # De-dup, preserve order.
+    seen: set[str] = set()
+    unique: List[str] = []
+    for cand in candidates:
+        try:
+            key = os.path.normcase(os.path.abspath(cand))
+        except Exception:
+            key = cand
+        if key not in seen:
+            seen.add(key)
+            unique.append(cand)
+    return unique
+
+
+def _get_system_python() -> str:
+    """Return a real, working Python interpreter path.
+
+    In dev mode ``sys.executable`` is already a real interpreter. In a
+    PyInstaller-frozen build it's the packaged agent ``.exe`` (which cannot
+    create venvs or run ``-m pip``), so we discover a system Python — rejecting
+    the Microsoft Store stub — and fall back to a Stuard-managed runtime that
+    was provisioned previously. Returns ``""`` when nothing usable exists so
+    callers surface a clear "install Python" error instead of looping on
+    failures (which silently burns credits).
     """
     global _cached_python_bin
     if _cached_python_bin:
         return _cached_python_bin
+
     is_frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
-    if is_frozen:
-        found = shutil.which("python3") or shutil.which("python") or shutil.which("py")
-        if found:
-            _cached_python_bin = found
-            return found
-        # No system Python available — caller must report this to the user.
-        return ""
-    _cached_python_bin = sys.executable
-    return sys.executable
+    if not is_frozen:
+        _cached_python_bin = sys.executable
+        return sys.executable
+
+    for candidate in _candidate_system_pythons():
+        if _python_interpreter_works(candidate):
+            _cached_python_bin = candidate
+            return candidate
+
+    managed = _managed_python_bin()
+    if managed and _python_interpreter_works(managed):
+        _cached_python_bin = managed
+        return managed
+
+    return ""
 
 
 def _envs_base_dir() -> str:
@@ -737,6 +879,148 @@ def _envs_base_dir() -> str:
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     return os.path.join(base, "StuardAI", "python", "envs")
+
+
+# ── Stuard-managed Python runtime ────────────────────────────────────────────
+# When no system Python exists (e.g. a fresh laptop that only has the Microsoft
+# Store stub), Stuard provisions its own relocatable CPython from
+# python-build-standalone so scripts "just work" without a manual install.
+# The runtime lives beside the managed venvs and is the base interpreter the
+# default venv is created from.
+_PBS_RELEASE_API = "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
+_PBS_PREFERRED_PYVERS = ("3.12.", "3.11.", "3.13.")
+_managed_python_lock = threading.Lock()
+
+
+def _managed_python_root() -> str:
+    return os.path.join(os.path.dirname(_envs_base_dir()), "runtime")
+
+
+def _managed_python_bin() -> str:
+    root = _managed_python_root()
+    if sys.platform.startswith("win"):
+        return os.path.join(root, "python", "python.exe")
+    return os.path.join(root, "python", "bin", "python3")
+
+
+def _platform_pbs_triple() -> Optional[str]:
+    machine = (platform.machine() or "").lower()
+    if sys.platform.startswith("win"):
+        if machine in ("amd64", "x86_64", "x64"):
+            return "x86_64-pc-windows-msvc"
+        if machine in ("arm64", "aarch64"):
+            return "aarch64-pc-windows-msvc"
+        return None
+    if sys.platform == "darwin":
+        return "aarch64-apple-darwin" if machine in ("arm64", "aarch64") else "x86_64-apple-darwin"
+    if machine in ("x86_64", "amd64"):
+        return "x86_64-unknown-linux-gnu"
+    if machine in ("aarch64", "arm64"):
+        return "aarch64-unknown-linux-gnu"
+    return None
+
+
+def _select_pbs_asset_url(assets: list, triple: str) -> Optional[str]:
+    suffix = f"{triple}-install_only.tar.gz"
+    matches = [
+        a for a in assets
+        if isinstance(a, dict)
+        and isinstance(a.get("name"), str)
+        and a["name"].endswith(suffix)
+    ]
+
+    def _score(name: str) -> tuple:
+        for i, pref in enumerate(_PBS_PREFERRED_PYVERS):
+            if f"cpython-{pref}" in name:
+                return (0, i, name)
+        return (1, 0, name)
+
+    matches.sort(key=lambda a: _score(a["name"]))
+    for a in matches:
+        url = a.get("browser_download_url")
+        if isinstance(url, str) and url:
+            return url
+    return None
+
+
+def _download_and_extract_pbs(url: str, dest_root: str) -> str:
+    os.makedirs(dest_root, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="stuard-py-", suffix=".tar.gz")
+    os.close(tmp_fd)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "StuardAI"})
+        with urllib.request.urlopen(req, timeout=180) as resp, open(tmp_path, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        # python-build-standalone "install_only" archives extract to a top-level
+        # ``python/`` dir → dest_root/python/python.exe (win) or bin/python3 (unix).
+        with tarfile.open(tmp_path, "r:gz") as tf:
+            try:
+                tf.extractall(dest_root, filter="data")  # type: ignore[call-arg]
+            except TypeError:
+                tf.extractall(dest_root)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+    return _managed_python_bin()
+
+
+async def _provision_managed_python(
+    emit: Callable[[str, Dict[str, Any] | None], Awaitable[None]] | None = None,
+) -> str:
+    """Provision (or reuse) a Stuard-managed CPython. Returns "" on failure."""
+    existing = _managed_python_bin()
+    if existing and await asyncio.to_thread(_python_interpreter_works, existing):
+        return existing
+
+    if os.environ.get("STUARD_DISABLE_MANAGED_PYTHON") == "1":
+        return ""
+
+    triple = _platform_pbs_triple()
+    if not triple:
+        return ""
+
+    def _provision() -> str:
+        with _managed_python_lock:
+            current = _managed_python_bin()
+            if current and _python_interpreter_works(current):
+                return current
+            try:
+                req = urllib.request.Request(
+                    _PBS_RELEASE_API,
+                    headers={"User-Agent": "StuardAI", "Accept": "application/vnd.github+json"},
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    release = json.loads(resp.read().decode("utf-8"))
+            except Exception:
+                return ""
+            assets = release.get("assets") if isinstance(release, dict) else None
+            if not isinstance(assets, list):
+                return ""
+            url = _select_pbs_asset_url(assets, triple)
+            if not url:
+                return ""
+            root = _managed_python_root()
+            # Clear a half-extracted dir from a previous failed attempt.
+            py_dir = os.path.join(root, "python")
+            if os.path.isdir(py_dir):
+                shutil.rmtree(py_dir, ignore_errors=True)
+            try:
+                return _download_and_extract_pbs(url, root)
+            except Exception:
+                return ""
+
+    if emit:
+        await emit("provisioning_python", {"runtime": "managed", "note": "Setting up Python (first run)…"})
+    py_bin = await asyncio.to_thread(_provision)
+    if py_bin and await asyncio.to_thread(_python_interpreter_works, py_bin):
+        global _cached_python_bin
+        _cached_python_bin = py_bin
+        if emit:
+            await emit("python_provisioned", {"python": py_bin})
+        return py_bin
+    return ""
 
 
 def _resolve_python_env_id(env_id: Any) -> str:
@@ -1091,6 +1375,11 @@ async def _ensure_python_env(
             await emit("creating_env", {"envId": resolved_env_id, "path": env_dir})
         system_python = await asyncio.to_thread(_get_system_python)
         if not system_python:
+            # No real system Python (the Store stub doesn't count) — provision a
+            # sandboxed Stuard-managed CPython so the user never has to install
+            # one by hand. Only raises if that also fails (e.g. offline).
+            system_python = await _provision_managed_python(emit)
+        if not system_python:
             raise RuntimeError("python_not_installed")
         create_cmd = [system_python, "-m", "venv", "--without-pip", env_dir]
         proc = await asyncio.to_thread(subprocess.run, create_cmd, capture_output=True, text=True)
@@ -1137,6 +1426,20 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
         # In a frozen build, sys.executable is the agent .exe itself, which is
         # NOT a usable Python interpreter. Only the resolved system_python is.
         usable_python = system_python if is_frozen else (system_python or sys.executable or "")
+        # Can we auto-provision a managed CPython if no real system Python exists?
+        can_auto_provision = (
+            bool(_platform_pbs_triple())
+            and os.environ.get("STUARD_DISABLE_MANAGED_PYTHON") != "1"
+        )
+        managed_python = _managed_python_bin()
+        managed_ready = os.path.exists(managed_python)
+        # Diagnostic: did we only find the Microsoft Store stub (and no real one)?
+        store_stub_detected = False
+        if is_frozen and not system_python and sys.platform.startswith("win"):
+            for _probe in (shutil.which("python"), shutil.which("python3"), shutil.which("py")):
+                if _probe and _is_windows_store_python_stub(_probe):
+                    store_stub_detected = True
+                    break
         envs_root = _envs_base_dir()
         default_env_id = DEFAULT_PYTHON_ENV_ID
         active_env_id = _resolve_python_env_id(args.get("envId") if isinstance(args, dict) and args.get("envId") else None)
@@ -1155,7 +1458,10 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
             envs = []
         default_ready = os.path.exists(default_python)
         active_ready = os.path.exists(active_python)
-        needs_install = is_frozen and not system_python
+        # Only ask the user to install Python by hand when we genuinely can't
+        # help (unknown platform / managed runtime disabled). Otherwise Stuard
+        # provisions a sandboxed CPython automatically on first script run.
+        needs_install = is_frozen and not system_python and not can_auto_provision
         package_count = 0
         if active_ready:
             try:
@@ -1165,9 +1471,25 @@ async def python_status(args: Dict[str, Any]) -> Dict[str, Any]:
                 package_count = 0
         return {
             "ok": True,
-            "available": bool(usable_python),
+            # "available" reflects whether Python will run — now or via on-demand
+            # provisioning — so the UI doesn't nag about a manual install we can
+            # handle ourselves.
+            "available": bool(usable_python) or (is_frozen and can_auto_provision),
+            "ready": bool(usable_python) or managed_ready,
+            "autoProvision": is_frozen and not bool(usable_python) and can_auto_provision,
+            "storeStubDetected": store_stub_detected,
             "needsInstall": needs_install,
             "installUrl": "https://www.python.org/downloads/" if needs_install else None,
+            "message": (
+                "A Microsoft Store placeholder for Python was found, but it isn't a real "
+                "interpreter. Stuard will set up its own Python automatically on first use."
+                if store_stub_detected and can_auto_provision else
+                "No Python found. Stuard will set up its own Python automatically on first use."
+                if is_frozen and not bool(usable_python) and can_auto_provision else
+                "Python isn't installed. Install it from python.org to run Python scripts."
+                if needs_install else None
+            ),
+            "managedPython": managed_python if managed_ready else None,
             "python": usable_python,
             "version": sys.version.split("\n")[0] if not is_frozen else None,
             "envsRoot": envs_root,

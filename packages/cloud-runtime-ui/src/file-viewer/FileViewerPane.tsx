@@ -156,6 +156,10 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
   const [error, setError] = React.useState<string | null>(null);
   const [data, setData] = React.useState<FetchedContent | null>(null);
   const [serveUrl, setServeUrl] = React.useState<string | null>(null);
+  // When the host returns extracted UTF-8 text for a file the extension would
+  // otherwise classify as binary (e.g. .docx, which the desktop extracts), show
+  // it as text instead of the "binary — download" fallback.
+  const [textOverride, setTextOverride] = React.useState(false);
 
   // Cleanup blob URL on unmount / tab change.
   React.useEffect(() => {
@@ -167,6 +171,7 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
       setError(null);
       setData(null);
       setServeUrl(null);
+      setTextOverride(false);
 
       // Local-source files don't go through the fetcher — assume the host can
       // serve them directly via local-file:// (Electron). Not the focus here.
@@ -230,6 +235,8 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
             setLoading(false);
             return;
           }
+          // Host handed us text for a non-text extension → render it as text.
+          if (kind !== 'text' && kind !== 'html') setTextOverride(true);
           setData({ text: res.content, size: res.size });
         }
         setLoading(false);
@@ -254,7 +261,7 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
         {loading && <CenteredSpinner />}
         {!loading && error && <CenteredError message={error} />}
         {!loading && !error && (data || serveUrl) && (
-          <RendererSwitch tab={tab} kind={kind} data={data} mime={mime} serveUrl={serveUrl} />
+          <RendererSwitch tab={tab} kind={textOverride ? 'text' : kind} data={data} mime={mime} serveUrl={serveUrl} />
         )}
       </div>
     </div>

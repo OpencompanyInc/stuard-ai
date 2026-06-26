@@ -2,6 +2,7 @@ import { dialog } from "electron";
 import * as fs from "fs";
 import path from "path";
 import os from "os";
+import zlib from "zlib";
 
 export interface DirectoryEntry {
   name: string;
@@ -66,6 +67,79 @@ export interface PreviewReadResult {
   error?: string;
 }
 
+// Word (Office Open XML) documents — text-extracted for preview, no deps.
+const WORD_DOC_EXTS = new Set(['docx', 'docm', 'dotx', 'dotm']);
+
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Extract one entry's bytes from a ZIP buffer via its central directory.
+ * Reading the central directory (not local headers) keeps this correct even
+ * when entries use streaming data descriptors.
+ */
+function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
+  const EOCD_SIG = 0x06054b50;
+  let eocd = -1;
+  const minPos = Math.max(0, buf.length - 22 - 0xffff);
+  for (let i = buf.length - 22; i >= minPos; i--) {
+    if (buf.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const cdEntries = buf.readUInt16LE(eocd + 10);
+  const cdOffset = buf.readUInt32LE(eocd + 16);
+
+  const CEN_SIG = 0x02014b50;
+  const LOC_SIG = 0x04034b50;
+  let p = cdOffset;
+  for (let n = 0; n < cdEntries; n++) {
+    if (p + 46 > buf.length || buf.readUInt32LE(p) !== CEN_SIG) break;
+    const method = buf.readUInt16LE(p + 10);
+    const compSize = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const localOffset = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    if (name === entryName) {
+      if (buf.readUInt32LE(localOffset) !== LOC_SIG) return null;
+      const locNameLen = buf.readUInt16LE(localOffset + 26);
+      const locExtraLen = buf.readUInt16LE(localOffset + 28);
+      const dataStart = localOffset + 30 + locNameLen + locExtraLen;
+      const data = buf.subarray(dataStart, dataStart + compSize);
+      if (method === 0) return Buffer.from(data);
+      if (method === 8) {
+        try { return zlib.inflateRawSync(data); } catch { return null; }
+      }
+      return null;
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}
+
+/** Extract readable plain text from a .docx buffer (paragraphs, tabs, breaks). */
+export function extractDocxText(buf: Buffer): string {
+  const docXml = readZipEntry(buf, 'word/document.xml');
+  if (!docXml) throw new Error('not a valid .docx (missing word/document.xml)');
+  let s = docXml.toString('utf8');
+  s = s.replace(/<w:p\b[^>]*\/>/g, '\n');
+  s = s.replace(/<\/w:p>/g, '\n');
+  s = s.replace(/<w:tab\b[^>]*\/?>/g, '\t');
+  s = s.replace(/<w:(?:br|cr)\b[^>]*\/?>/g, '\n');
+  s = s.replace(/<[^>]+>/g, '');
+  s = decodeXmlEntities(s);
+  return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 /**
  * Reads a local file for the Workspace file-preview pane. Text-like files come
  * back as UTF-8; everything else as base64 (the renderer turns it into a Blob
@@ -86,6 +160,15 @@ export async function readFileForPreview(filePath: string): Promise<PreviewReadR
     const extMatch = /\.([a-z0-9]+)$/i.exec(path.basename(resolved).toLowerCase());
     const ext = extMatch ? extMatch[1] : '';
     const baseName = path.basename(resolved).toLowerCase();
+    if (WORD_DOC_EXTS.has(ext)) {
+      try {
+        const buf = await fs.promises.readFile(resolved);
+        const text = extractDocxText(buf);
+        return { content: text, encoding: 'utf-8', size: stat.size };
+      } catch {
+        // Fall through to base64 so the UI can still offer "open externally".
+      }
+    }
     const isText = PREVIEW_TEXT_EXTS.has(ext) || PREVIEW_TEXT_EXTS.has(baseName);
     if (isText) {
       const content = await fs.promises.readFile(resolved, { encoding: 'utf-8' });

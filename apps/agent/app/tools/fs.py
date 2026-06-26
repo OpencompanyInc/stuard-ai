@@ -147,6 +147,8 @@ CHECKPOINT_DIR = os.environ.get(
 PDF_EXTENSIONS = {".pdf"}
 OPENXML_SPREADSHEET_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
 LEGACY_SPREADSHEET_EXTENSIONS = {".xls"}
+# Word / Office Open XML documents — text extracted via zipfile, no deps.
+OPENXML_DOCUMENT_EXTENSIONS = {".docx", ".docm", ".dotx", ".dotm"}
 
 
 def _split_content_lines(content: str) -> list[str]:
@@ -614,6 +616,67 @@ def _extract_pdf_text(path: str) -> tuple[str, Dict[str, Any]]:
     )
 
 
+def _extract_docx_text(path: str) -> tuple[str, Dict[str, Any]]:
+    """Extract readable text from a Word (.docx) file with zero dependencies.
+
+    .docx is an Office Open XML zip; the body lives in ``word/document.xml``.
+    We walk paragraphs in document order, preserving paragraph breaks, tabs and
+    line breaks, and join table-cell text with tabs. Headers/footers/footnotes
+    are appended after the body so nothing is silently dropped.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = set(zf.namelist())
+            doc_part = "word/document.xml"
+            if doc_part not in names:
+                raise ValueError("missing word/document.xml (not a Word document)")
+            root = ET.fromstring(zf.read(doc_part))
+            extra_parts = sorted(
+                n for n in names
+                if (n.startswith("word/header") or n.startswith("word/footer") or n == "word/footnotes.xml" or n == "word/endnotes.xml")
+                and n.endswith(".xml")
+            )
+            extra_roots = []
+            for part in extra_parts:
+                try:
+                    extra_roots.append(ET.fromstring(zf.read(part)))
+                except Exception:
+                    continue
+    except zipfile.BadZipFile:
+        raise ValueError("not a valid .docx file (corrupt or not Office Open XML)")
+
+    def _paragraph_text(node: ET.Element) -> str:
+        parts: list[str] = []
+        for item in node.iter():
+            local = _xml_local_name(item.tag)
+            if local == "t" and item.text:
+                parts.append(item.text)
+            elif local == "tab":
+                parts.append("\t")
+            elif local in ("br", "cr"):
+                parts.append("\n")
+        return "".join(parts)
+
+    def _collect(node: ET.Element) -> list[str]:
+        out: list[str] = []
+        for el in node.iter():
+            if _xml_local_name(el.tag) == "p":
+                out.append(_paragraph_text(el))
+        return out
+
+    body = next((el for el in root.iter() if _xml_local_name(el.tag) == "body"), root)
+    paragraphs = _collect(body)
+    for extra_root in extra_roots:
+        paragraphs.extend(_collect(extra_root))
+
+    content = "\n".join(paragraphs).strip("\n")
+    metadata = {
+        "document_type": "word",
+        "paragraph_count": len(paragraphs),
+    }
+    return content, metadata
+
+
 def _read_text_like_file(path: str) -> Dict[str, Any]:
     ext = os.path.splitext(path)[1].lower()
     metadata: Dict[str, Any] = {
@@ -621,12 +684,18 @@ def _read_text_like_file(path: str) -> Dict[str, Any]:
         "mime_type": mimetypes.guess_type(path)[0] or "application/octet-stream",
     }
 
-    if ext in PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS:
+    if ext in PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS | OPENXML_DOCUMENT_EXTENSIONS:
         size = os.path.getsize(path)
         if size > MAX_READ_FILE_DOCUMENT_BYTES:
             raise ValueError(
                 f"file is too large to extract text ({size} bytes > {MAX_READ_FILE_DOCUMENT_BYTES} bytes)"
             )
+
+    if ext in OPENXML_DOCUMENT_EXTENSIONS:
+        content, doc_meta = _extract_docx_text(path)
+        metadata.update(doc_meta)
+        lines = _split_content_lines(content)
+        return {"content": content, "lines": lines, **metadata}
 
     if ext in PDF_EXTENSIONS:
         content, doc_meta = _extract_pdf_text(path)
@@ -1704,7 +1773,7 @@ async def grep(args: Dict[str, Any]) -> Dict[str, Any]:
                     continue
                 files.append(os.path.join(root, name))
 
-    document_extensions = PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS
+    document_extensions = PDF_EXTENSIONS | OPENXML_SPREADSHEET_EXTENSIONS | LEGACY_SPREADSHEET_EXTENSIONS | OPENXML_DOCUMENT_EXTENSIONS
 
     results = []
     truncated = False

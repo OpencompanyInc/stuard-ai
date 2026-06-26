@@ -29,6 +29,18 @@ import { geminiSafeJsonValue } from './zod-utils';
 
 /** A string/field this long (and base64/data-URL-shaped) is captured to a handle. */
 const BLOB_MIN_CHARS = 2000;
+/**
+ * A plain-text string/field at least this long is captured to a handle too.
+ * This is the fix for the documented subagent context-blowup: a subagent that
+ * reads a long file (or returns one) otherwise dumps the whole thing into the
+ * orchestrator context, which is then re-sent every step → huge token/credit
+ * cost. Above this size we stash the text and hand back a generous preview plus
+ * a `{{var:…}}` handle the model can pass onward instead. Tuned high so normal
+ * reads/edits pass through untouched.
+ */
+const TEXT_MIN_CHARS = 8000;
+const TEXT_PREVIEW_HEAD = 2000;
+const TEXT_PREVIEW_TAIL = 600;
 /** Cap entries per conversation so a runaway agent can't grow the store unbounded. */
 const MAX_VARS_PER_CONV = 256;
 const PREVIEW_LEN = 96;
@@ -36,6 +48,12 @@ const PREVIEW_LEN = 96;
 /** Field names that conventionally carry binary payloads (mirrors meta-tools BINARY_PAYLOAD_KEYS). */
 const BINARY_PAYLOAD_KEYS = new Set([
   '_b64', 'b64', 'base64', 'base64Data', 'data', 'imageB64', 'audioData', 'content',
+]);
+
+/** Field names that conventionally carry large text payloads worth capturing. */
+const TEXT_PAYLOAD_KEYS = new Set([
+  'content', 'text', 'stdout', 'stderr', 'output', 'body', 'markdown', 'md',
+  'html', 'result', 'data', 'transcript', 'summary', 'extracted_text', 'page_text',
 ]);
 
 /** Matches a variable handle. Captures the name. */
@@ -220,19 +238,50 @@ function makeHandleRef(convKey: string, kind: string, value: string) {
   };
 }
 
+function isBigText(str: string): boolean {
+  return str.length >= TEXT_MIN_CHARS && !isBigBase64(str) && !isBigDataUrl(str);
+}
+
+/** Head+tail snippet of a long string so the model keeps useful context. */
+function textPreview(value: string): string {
+  if (value.length <= TEXT_PREVIEW_HEAD + TEXT_PREVIEW_TAIL) return value;
+  const omitted = value.length - TEXT_PREVIEW_HEAD - TEXT_PREVIEW_TAIL;
+  return `${value.slice(0, TEXT_PREVIEW_HEAD)}\n\n…[${omitted} more characters stored — see note]…\n\n${value.slice(-TEXT_PREVIEW_TAIL)}`;
+}
+
+function makeTextHandleRef(convKey: string, value: string) {
+  const name = nextHandle(convKey, 'text');
+  const entry = setVar(convKey, name, value, 'text');
+  return {
+    _ref: `{{var:${name}}}`,
+    kind: 'text',
+    chars: value.length,
+    bytes: entry.bytes,
+    preview: textPreview(value),
+    note: `Full text (${value.length} chars) is stored as {{var:${name}}}. Pass this handle to another tool or subagent (e.g. write_file content, a message body) instead of pasting the text back — it is rehydrated to the full value right before that tool runs, keeping it out of the chat context. Call variables get {name:"${name}"} only if you must load the entire text.`,
+  };
+}
+
 /**
  * Walk a tool result and swap oversized base64/data-URL payloads for reusable
  * handles. Non-oversized data passes through untouched. This both shrinks the
  * model's context AND keeps the payload retrievable via its `{{var:…}}` handle.
  */
-export function captureLargeOutputs(convKey: string, value: any): any {
+export function captureLargeOutputs(convKey: string, value: any, topLevel = true): any {
   if (typeof value === 'string') {
     if (isBigBase64(value) || isBigDataUrl(value)) {
       return makeHandleRef(convKey, kindFromHint('', value), value);
     }
+    // Top-level big strings (e.g. a tool that returns a raw string, or a
+    // subagent's returned result) are captured as text. We don't do this for
+    // arbitrary nested string fields — only the known TEXT_PAYLOAD_KEYS below —
+    // so previews/notes/error messages aren't swept up.
+    if (topLevel && isBigText(value)) {
+      return makeTextHandleRef(convKey, value);
+    }
     return value;
   }
-  if (Array.isArray(value)) return value.map((item) => captureLargeOutputs(convKey, item));
+  if (Array.isArray(value)) return value.map((item) => captureLargeOutputs(convKey, item, false));
   if (!value || typeof value !== 'object') return value;
 
   const out: Record<string, any> = {};
@@ -241,7 +290,11 @@ export function captureLargeOutputs(convKey: string, value: any): any {
       out[key] = makeHandleRef(convKey, kindFromHint(key, child), child);
       continue;
     }
-    out[key] = captureLargeOutputs(convKey, child);
+    if (TEXT_PAYLOAD_KEYS.has(key) && typeof child === 'string' && isBigText(child)) {
+      out[key] = makeTextHandleRef(convKey, child);
+      continue;
+    }
+    out[key] = captureLargeOutputs(convKey, child, false);
   }
   return out;
 }
