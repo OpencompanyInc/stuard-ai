@@ -236,7 +236,8 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
             return;
           }
           // Host handed us text for a non-text extension → render it as text.
-          if (kind !== 'text' && kind !== 'html') setTextOverride(true);
+          // ('html' already returned above via serveUrlBuilder — no need to re-check.)
+          if (kind !== 'text') setTextOverride(true);
           setData({ text: res.content, size: res.size });
         }
         setLoading(false);
