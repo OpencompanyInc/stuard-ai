@@ -17,6 +17,18 @@ import { startExtensionBridge, stopExtensionBridge } from "./services/index";
 
 initEnv();
 
+// ── Main-process V8 memory tuning ─────────────────────────────────────────────
+// Conservative flags that lower the main process's resident heap with no UX
+// impact (the main process is I/O/IPC-bound, not a JS hot path):
+//   --max-semi-space-size=8  shrinks V8's young-generation (new-space) reservation,
+//                            the main lever on steady-state RSS. Trade-off is
+//                            slightly more frequent minor GCs — invisible here.
+//   --max-old-space-size=512 a safe ceiling well above the ~100MB the main heap
+//                            actually uses; caps runaway growth, never triggers
+//                            OOM at normal usage.
+// Must be set before app `ready`. Applies to the Electron main process V8 isolate.
+try { app.commandLine.appendSwitch("js-flags", "--max-semi-space-size=8 --max-old-space-size=512"); } catch { }
+
 // Force consistent userData path in dev mode (package.json name is @stuardai/desktop, but we want "Stuard AI")
 // app.setName only affects display, we need app.setPath to change actual userData location
 app.setName("Stuard AI");

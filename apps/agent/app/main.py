@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+# CRITICAL: Cap BLAS/OpenMP thread pools BEFORE numpy (and its bundled OpenBLAS)
+# loads anywhere. OpenBLAS reserves a per-thread memory buffer pool sized to the
+# machine's logical CPU count — on a many-core box that commits ~500-700MB of
+# address space it never actually uses (shows up as huge "private/commit" memory
+# in Task Manager while the real working set stays small, then balloons the
+# working set once numpy touches it). The agent only does tiny vector math
+# (embedding similarity), so a single BLAS thread costs nothing in practice and
+# drops the agent's committed memory by hundreds of MB. setdefault so an operator
+# can still override via the environment.
+import os as _os
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+             "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    _os.environ.setdefault(_var, "1")
+# Free OpenBLAS's main-thread buffer when idle instead of holding it resident.
+_os.environ.setdefault("OPENBLAS_MAIN_FREE", "1")
+
 # CRITICAL: Suppress pydantic warnings BEFORE any imports that might trigger them
 # This must be at the very top before importing lancedb or any ML libraries
 import warnings

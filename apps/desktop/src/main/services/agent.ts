@@ -105,6 +105,17 @@ export async function startAgent(id: string = 'default', port?: number): Promise
   }
 
   const env = { ...process.env } as NodeJS.ProcessEnv;
+
+  // Cap BLAS/OpenMP thread pools for the Python agent. numpy bundles OpenBLAS,
+  // which reserves a per-thread buffer pool sized to the logical CPU count and
+  // commits hundreds of MB it never touches (the bulk of the agent's reported
+  // RAM). The agent only does small vector math, so 1 thread is plenty. Don't
+  // clobber an explicit override from the parent environment.
+  for (const v of ["OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"]) {
+    if (!env[v]) env[v] = "1";
+  }
+  if (!env.OPENBLAS_MAIN_FREE) env.OPENBLAS_MAIN_FREE = "1";
+
   syncAgentMediaPathConfig();
   env.STUARD_MEDIA_DIR = getMediaLibraryRoot();
   env.STUARD_AI_MEDIA_DIR = env.STUARD_MEDIA_DIR;

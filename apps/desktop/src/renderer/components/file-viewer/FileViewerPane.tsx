@@ -247,8 +247,9 @@ const FetchedFileContent: React.FC<{ tab: FileTab }> = ({ tab }) => {
             return;
           }
           // Host handed us text for a non-text extension (e.g. .docx) → show it
-          // as text rather than the binary download fallback.
-          if (kind !== 'text' && kind !== 'html' && kind !== 'sheet') setTextOverride(true);
+          // as text rather than the binary download fallback. ('sheet' already
+          // returned above, so it can't reach here — no need to re-check it.)
+          if (kind !== 'text' && kind !== 'html') setTextOverride(true);
           setData({ text: res.content, size: res.size });
         }
         setLoading(false);
