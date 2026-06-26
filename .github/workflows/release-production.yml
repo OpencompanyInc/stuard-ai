@@ -378,14 +378,14 @@ jobs:
         include:
           - os: windows-latest
             artifact-ext: exe
-          - os: macos-13
-            artifact-ext: dmg
-            arch: x64
-          - os: macos-latest
-            artifact-ext: dmg
-            arch: arm64
-          - os: ubuntu-latest
-            artifact-ext: AppImage
+          # - os: macos-13
+          #   artifact-ext: dmg
+          #   arch: x64
+          # - os: macos-latest
+          #   artifact-ext: dmg
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   artifact-ext: AppImage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

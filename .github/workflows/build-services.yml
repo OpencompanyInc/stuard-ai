@@ -38,17 +38,17 @@ jobs:
           - os: windows-latest
             platform: windows
             artifact-suffix: windows
-          - os: macos-13
-            platform: macos
-            artifact-suffix: mac-intel
-            arch: x64
-          - os: macos-latest
-            platform: macos
-            artifact-suffix: mac-silicon
-            arch: arm64
-          - os: ubuntu-latest
-            platform: linux
-            artifact-suffix: linux
+          # - os: macos-13
+          #   platform: macos
+          #   artifact-suffix: mac-intel
+          #   arch: x64
+          # - os: macos-latest
+          #   platform: macos
+          #   artifact-suffix: mac-silicon
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   platform: linux
+          #   artifact-suffix: linux
     runs-on: ${{ matrix.os }}
 
     steps:

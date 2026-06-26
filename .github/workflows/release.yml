@@ -354,14 +354,14 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-          - os: macos-13
-            platform: mac
-            arch: x64
-          - os: macos-latest
-            platform: mac
-            arch: arm64
-          - os: ubuntu-latest
-            platform: linux
+          # - os: macos-13
+          #   platform: mac
+          #   arch: x64
+          # - os: macos-latest
+          #   platform: mac
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   platform: linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

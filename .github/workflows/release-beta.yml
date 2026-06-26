@@ -410,17 +410,17 @@ jobs:
           - os: windows-latest
             artifact-name: stuard-desktop-beta-windows
             artifact-ext: exe
-          - os: macos-13
-            artifact-name: stuard-desktop-beta-mac-intel
-            artifact-ext: dmg
-            arch: x64
-          - os: macos-latest
-            artifact-name: stuard-desktop-beta-mac-silicon
-            artifact-ext: dmg
-            arch: arm64
-          - os: ubuntu-latest
-            artifact-name: stuard-desktop-beta-linux
-            artifact-ext: AppImage
+          # - os: macos-13
+          #   artifact-name: stuard-desktop-beta-mac-intel
+          #   artifact-ext: dmg
+          #   arch: x64
+          # - os: macos-latest
+          #   artifact-name: stuard-desktop-beta-mac-silicon
+          #   artifact-ext: dmg
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   artifact-name: stuard-desktop-beta-linux
+          #   artifact-ext: AppImage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

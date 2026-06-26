@@ -73,12 +73,12 @@ jobs:
           - os: windows-latest
             platform: windows
             artifact: desktop-windows
-          - os: macos-latest
-            platform: macos
-            artifact: desktop-macos
-          - os: ubuntu-latest
-            platform: linux
-            artifact: desktop-linux
+          # - os: macos-latest
+          #   platform: macos
+          #   artifact: desktop-macos
+          # - os: ubuntu-latest
+          #   platform: linux
+          #   artifact: desktop-linux
     runs-on: ${{ matrix.os }}
 
     steps:
