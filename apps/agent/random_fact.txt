@@ -1,0 +1,3 @@
+Fact: A day on Venus lasts longer than a year on Venus.
+
+Explanation: Venus rotates on its axis very slowly, taking about 243 Earth days to complete one full rotation. However, it orbits the Sun much faster, completing a full revolution in about 225 Earth days. This means that a single day on Venus (the time it takes for the planet to rotate once) is longer than the time it takes for the planet to complete one orbit around the Sun.

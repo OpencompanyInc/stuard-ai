@@ -1,0 +1,72 @@
+{
+  "id": "flow_quick_text_tools",
+  "name": "Quick Text Tools",
+  "version": "1",
+  "description": "Transform selected text with various tools - AI rewrite, translate, format, and more",
+  "triggers": [
+    {
+      "id": "trig_hotkey",
+      "type": "hotkey",
+      "label": "Open Text Tools",
+      "args": { "hotkey": "Ctrl+Shift+T" },
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "copy_selection",
+      "tool": "send_hotkey",
+      "label": "Copy Selection",
+      "args": { "keys": ["Control", "c"] },
+      "position": { "x": 150, "y": 50 }
+    },
+    {
+      "id": "wait_copy",
+      "tool": "wait",
+      "args": { "ms": 100 },
+      "position": { "x": 250, "y": 50 }
+    },
+    {
+      "id": "get_text",
+      "tool": "get_clipboard_content",
+      "label": "Get Selected Text",
+      "position": { "x": 350, "y": 50 }
+    },
+    {
+      "id": "text_tools_ui",
+      "tool": "custom_ui",
+      "label": "Text Tools",
+      "args": {
+        "id": "text_tools",
+        "title": "Quick Text Tools",
+        "selectedText": "{{get_text.text}}",
+        "window": {
+          "width": 500,
+          "height": 450,
+          "position": "center",
+          "borderRadius": 12,
+          "alwaysOnTop": true
+        },
+        "html": "<div class=\"flex flex-col h-screen bg-slate-900 p-4\"><div class=\"mb-3\"><label class=\"text-xs text-slate-400 uppercase tracking-wide\">Original Text</label><textarea id=\"input\" class=\"w-full h-20 mt-1 text-sm resize-none\" placeholder=\"No text selected...\"></textarea></div><div class=\"grid grid-cols-4 gap-2 mb-3\"><button data-tool=\"uppercase\" class=\"btn btn-secondary text-xs py-2\">UPPER</button><button data-tool=\"lowercase\" class=\"btn btn-secondary text-xs py-2\">lower</button><button data-tool=\"titlecase\" class=\"btn btn-secondary text-xs py-2\">Title</button><button data-tool=\"reverse\" class=\"btn btn-secondary text-xs py-2\">esreveR</button><button data-tool=\"trim\" class=\"btn btn-secondary text-xs py-2\">Trim</button><button data-tool=\"slug\" class=\"btn btn-secondary text-xs py-2\">slug-it</button><button data-tool=\"count\" class=\"btn btn-secondary text-xs py-2\">Count</button><button data-tool=\"json\" class=\"btn btn-secondary text-xs py-2\">{JSON}</button></div><div class=\"flex gap-2 mb-3\"><button data-tool=\"ai_rewrite\" class=\"btn btn-primary flex-1 text-sm\">AI Rewrite</button><button data-tool=\"ai_summarize\" class=\"btn btn-primary flex-1 text-sm\">AI Summarize</button></div><div class=\"flex-1 flex flex-col\"><label class=\"text-xs text-slate-400 uppercase tracking-wide\">Result</label><textarea id=\"output\" class=\"w-full flex-1 mt-1 text-sm resize-none bg-slate-800\" readonly></textarea></div><div class=\"flex justify-between mt-3\"><span id=\"status\" class=\"text-xs text-slate-500\">Ready</span><div class=\"flex gap-2\"><button id=\"copy-result\" class=\"btn btn-secondary text-sm\">Copy Result</button><button id=\"replace\" class=\"btn btn-primary text-sm\">Replace & Close</button></div></div></div>",
+        "script": "const input = document.getElementById('input');\nconst output = document.getElementById('output');\nconst status = document.getElementById('status');\n\n// Load selected text\nconst selectedText = formData.selectedText || '';\ninput.value = selectedText;\n\n// Tool handlers\nconst tools = {\n  uppercase: (t) => t.toUpperCase(),\n  lowercase: (t) => t.toLowerCase(),\n  titlecase: (t) => t.replace(/\\w\\S*/g, txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()),\n  reverse: (t) => t.split('').reverse().join(''),\n  trim: (t) => t.trim().replace(/\\s+/g, ' '),\n  slug: (t) => t.toLowerCase().trim().replace(/[^\\w\\s-]/g, '').replace(/\\s+/g, '-'),\n  count: (t) => `Characters: ${t.length}\\nWords: ${t.split(/\\s+/).filter(Boolean).length}\\nLines: ${t.split('\\n').length}`,\n  json: (t) => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return 'Invalid JSON'; } },\n};\n\n// AI tools\nasync function aiTool(prompt, text) {\n  status.textContent = 'Processing with AI...';\n  try {\n    const result = await stuard.callTool('ai_inference', {\n      prompt: `${prompt}:\\n\\n${text}`,\n      maxTokens: 500\n    });\n    if (result.ok) {\n      return result.text || result.response || 'No response';\n    }\n    return 'Error: ' + (result.error || 'AI request failed');\n  } catch (e) {\n    return 'Error: ' + e.message;\n  } finally {\n    status.textContent = 'Ready';\n  }\n}\n\n// Handle tool clicks\ndocument.querySelectorAll('[data-tool]').forEach(btn => {\n  btn.addEventListener('click', async () => {\n    const tool = btn.dataset.tool;\n    const text = input.value;\n    \n    if (!text.trim()) {\n      output.value = 'No text to process';\n      return;\n    }\n    \n    if (tool === 'ai_rewrite') {\n      output.value = await aiTool('Rewrite the following text to be clearer and more professional', text);\n    } else if (tool === 'ai_summarize') {\n      output.value = await aiTool('Summarize the following text in 2-3 sentences', text);\n    } else if (tools[tool]) {\n      output.value = tools[tool](text);\n    }\n  });\n});\n\n// Copy result\ndocument.getElementById('copy-result').addEventListener('click', async () => {\n  if (output.value) {\n    await stuard.copyToClipboard(output.value);\n    status.textContent = 'Copied!';\n    setTimeout(() => status.textContent = 'Ready', 1500);\n  }\n});\n\n// Replace and close\ndocument.getElementById('replace').addEventListener('click', async () => {\n  if (output.value) {\n    await stuard.copyToClipboard(output.value);\n    stuard.close({ action: 'replace', result: output.value });\n  }\n});\n\n// Escape to close\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'Escape') stuard.close();\n});",
+        "data": {}
+      },
+      "position": { "x": 500, "y": 50 }
+    },
+    {
+      "id": "paste_result",
+      "tool": "send_hotkey",
+      "label": "Paste Result",
+      "condition": "{{text_tools_ui.action}} == 'replace'",
+      "args": { "keys": ["Control", "v"] },
+      "position": { "x": 650, "y": 50 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_hotkey", "to": "copy_selection" },
+    { "from": "copy_selection", "to": "wait_copy" },
+    { "from": "wait_copy", "to": "get_text" },
+    { "from": "get_text", "to": "text_tools_ui" },
+    { "from": "text_tools_ui", "to": "paste_result" }
+  ]
+}

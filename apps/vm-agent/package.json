@@ -1,0 +1,31 @@
+{
+  "name": "@stuardai/vm-agent",
+  "version": "0.1.6",
+  "private": true,
+  "type": "commonjs",
+  "description": "Stuard VM Agent — runs on each user's cloud VM. Hosts the multi-bot scheduler, deploy/shell/file/memory commands, and a relay to the local Python tool agent.",
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "build:dev": "node scripts/build.cjs --no-obfuscate",
+    "build:upload": "node scripts/build.cjs --upload",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "node-cron": "^3.0.3",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/node-cron": "^3.0.11",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.25.0",
+    "javascript-obfuscator": "^5.3.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.10"
+  }
+}

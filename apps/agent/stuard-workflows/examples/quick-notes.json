@@ -1,0 +1,42 @@
+{
+  "id": "flow_quick_notes",
+  "name": "Quick Notes",
+  "version": "1",
+  "description": "A floating scratchpad for quick notes with auto-save and markdown preview",
+  "triggers": [
+    {
+      "id": "trig_hotkey",
+      "type": "hotkey",
+      "label": "Toggle Notes",
+      "args": { "hotkey": "Ctrl+Shift+N" },
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "notes_ui",
+      "tool": "custom_ui",
+      "label": "Quick Notes",
+      "args": {
+        "id": "quick_notes",
+        "title": "Quick Notes",
+        "keepOpen": true,
+        "window": {
+          "width": 350,
+          "height": 400,
+          "position": "bottom-right",
+          "borderRadius": 12,
+          "alwaysOnTop": true
+        },
+        "css": "#editor { font-family: 'Consolas', 'Monaco', monospace; } #preview { font-family: inherit; } #preview h1 { font-size: 1.5em; } #preview h2 { font-size: 1.25em; } #preview h3 { font-size: 1.1em; } #preview code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; } #preview pre { background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; overflow-x: auto; } #preview ul, #preview ol { padding-left: 1.5em; } #preview blockquote { border-left: 3px solid #6366f1; padding-left: 12px; color: #94a3b8; }",
+        "html": "<div class=\"flex flex-col h-screen bg-slate-900\"><div class=\"flex border-b border-slate-700\"><button id=\"tab-edit\" class=\"flex-1 py-2 text-sm font-medium text-indigo-400 border-b-2 border-indigo-400\">Edit</button><button id=\"tab-preview\" class=\"flex-1 py-2 text-sm font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-300\">Preview</button></div><div class=\"flex-1 relative\"><textarea id=\"editor\" class=\"absolute inset-0 w-full h-full p-3 text-sm resize-none bg-transparent border-none outline-none\" placeholder=\"Start typing your notes...\\n\\nSupports **markdown** formatting!\"></textarea><div id=\"preview\" class=\"absolute inset-0 w-full h-full p-3 text-sm overflow-y-auto hidden prose prose-invert prose-sm\"></div></div><div class=\"flex items-center justify-between p-2 border-t border-slate-700 text-xs\"><div class=\"flex items-center gap-2\"><span id=\"status\" class=\"text-slate-500\">Ready</span><span id=\"char-count\" class=\"text-slate-600\">0 chars</span></div><div class=\"flex gap-1\"><button id=\"btn-clear\" class=\"px-2 py-1 text-slate-400 hover:text-red-400\" title=\"Clear\">Clear</button><button id=\"btn-copy\" class=\"px-2 py-1 text-slate-400 hover:text-indigo-400\" title=\"Copy All\">Copy</button><button id=\"btn-save\" class=\"px-2 py-1 text-slate-400 hover:text-green-400\" title=\"Save to File\">Save</button></div></div></div>",
+        "script": "const editor = document.getElementById('editor');\nconst preview = document.getElementById('preview');\nconst status = document.getElementById('status');\nconst charCount = document.getElementById('char-count');\nconst tabEdit = document.getElementById('tab-edit');\nconst tabPreview = document.getElementById('tab-preview');\n\nlet saveTimeout = null;\nconst STORAGE_KEY = 'stuard_quick_notes';\n\n// Load saved notes\neditor.value = localStorage.getItem(STORAGE_KEY) || '';\nupdateCharCount();\n\n// Simple markdown parser\nfunction parseMarkdown(text) {\n  return text\n    .replace(/^### (.*$)/gm, '<h3>$1</h3>')\n    .replace(/^## (.*$)/gm, '<h2>$1</h2>')\n    .replace(/^# (.*$)/gm, '<h1>$1</h1>')\n    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')\n    .replace(/\\*(.+?)\\*/g, '<em>$1</em>')\n    .replace(/`([^`]+)`/g, '<code>$1</code>')\n    .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')\n    .replace(/^- (.*$)/gm, '<li>$1</li>')\n    .replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>')\n    .replace(/\\n/g, '<br>');\n}\n\nfunction updateCharCount() {\n  charCount.textContent = `${editor.value.length} chars`;\n}\n\nfunction autoSave() {\n  clearTimeout(saveTimeout);\n  status.textContent = 'Saving...';\n  saveTimeout = setTimeout(() => {\n    localStorage.setItem(STORAGE_KEY, editor.value);\n    status.textContent = 'Saved';\n    setTimeout(() => status.textContent = 'Ready', 1000);\n  }, 500);\n}\n\n// Editor events\neditor.addEventListener('input', () => {\n  updateCharCount();\n  autoSave();\n});\n\n// Tab switching\ntabEdit.addEventListener('click', () => {\n  editor.classList.remove('hidden');\n  preview.classList.add('hidden');\n  tabEdit.classList.add('text-indigo-400', 'border-indigo-400');\n  tabEdit.classList.remove('text-slate-400', 'border-transparent');\n  tabPreview.classList.remove('text-indigo-400', 'border-indigo-400');\n  tabPreview.classList.add('text-slate-400', 'border-transparent');\n  editor.focus();\n});\n\ntabPreview.addEventListener('click', () => {\n  editor.classList.add('hidden');\n  preview.classList.remove('hidden');\n  preview.innerHTML = parseMarkdown(editor.value) || '<span class=\"text-slate-500\">Nothing to preview</span>';\n  tabPreview.classList.add('text-indigo-400', 'border-indigo-400');\n  tabPreview.classList.remove('text-slate-400', 'border-transparent');\n  tabEdit.classList.remove('text-indigo-400', 'border-indigo-400');\n  tabEdit.classList.add('text-slate-400', 'border-transparent');\n});\n\n// Action buttons\ndocument.getElementById('btn-clear').addEventListener('click', () => {\n  if (confirm('Clear all notes?')) {\n    editor.value = '';\n    localStorage.removeItem(STORAGE_KEY);\n    updateCharCount();\n    status.textContent = 'Cleared';\n  }\n});\n\ndocument.getElementById('btn-copy').addEventListener('click', async () => {\n  await stuard.copyToClipboard(editor.value);\n  status.textContent = 'Copied!';\n  setTimeout(() => status.textContent = 'Ready', 1000);\n});\n\ndocument.getElementById('btn-save').addEventListener('click', async () => {\n  const result = await stuard.pickSavePath({\n    title: 'Save Notes',\n    defaultPath: 'notes.md',\n    filters: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Text', extensions: ['txt'] }]\n  });\n  \n  if (!result.canceled && result.filePath) {\n    try {\n      await stuard.writeFile(result.filePath, editor.value);\n      status.textContent = 'Saved to file!';\n      stuard.notify('Notes Saved', result.filePath);\n    } catch (e) {\n      status.textContent = 'Save failed';\n    }\n  }\n});\n\n// Keyboard shortcuts\neditor.addEventListener('keydown', (e) => {\n  if (e.ctrlKey && e.key === 's') {\n    e.preventDefault();\n    document.getElementById('btn-save').click();\n  }\n});\n\neditor.focus();",
+        "data": {}
+      },
+      "position": { "x": 200, "y": 50 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_hotkey", "to": "notes_ui" }
+  ]
+}

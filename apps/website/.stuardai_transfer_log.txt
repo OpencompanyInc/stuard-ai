@@ -1,0 +1,1 @@
+Transfer started: Copying all contents from C:/Users/solar/localai_website to C:/Users/solar/StuardAI-V2/apps/website, including .git directory, as requested (Option D).

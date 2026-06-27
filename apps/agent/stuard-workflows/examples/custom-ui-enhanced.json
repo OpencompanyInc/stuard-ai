@@ -1,0 +1,117 @@
+{
+    "id": "custom-ui-enhanced",
+    "name": "Enhanced UI Demo",
+    "version": "1",
+    "triggers": [
+        {
+            "type": "manual"
+        }
+    ],
+    "steps": [
+        {
+            "id": "step1",
+            "tool": "custom_ui",
+            "args": {
+                "title": "Welcome to Stuard AI",
+                "blocking": true,
+                "width": 450,
+                "height": 500,
+                "content": [
+                    {
+                        "type": "container",
+                        "style": {
+                            "textAlign": "center",
+                            "padding": "20px"
+                        },
+                        "animate": "fadeIn",
+                        "children": [
+                            {
+                                "type": "text",
+                                "value": "✨ Enhanced UI Demo",
+                                "style": {
+                                    "fontSize": "24px",
+                                    "fontWeight": "bold",
+                                    "marginBottom": "10px",
+                                    "background": "linear-gradient(45deg, #007acc, #00d2ff)",
+                                    "backgroundClip": "text",
+                                    "color": "transparent"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "value": "Experience the new seamless UI system with animations and instant input response.",
+                                "style": {
+                                    "marginBottom": "30px",
+                                    "opacity": 0.8,
+                                    "lineHeight": "1.5"
+                                }
+                            },
+                            {
+                                "type": "container",
+                                "animate": "slideUp",
+                                "style": {
+                                    "textAlign": "left",
+                                    "background": "rgba(255,255,255,0.05)",
+                                    "padding": "20px",
+                                    "borderRadius": "12px"
+                                },
+                                "children": [
+                                    {
+                                        "type": "text",
+                                        "value": "User Details",
+                                        "style": {
+                                            "fontWeight": "bold",
+                                            "marginBottom": "15px",
+                                            "fontSize": "16px"
+                                        }
+                                    },
+                                    {
+                                        "type": "input",
+                                        "key": "user_name",
+                                        "placeholder": "Enter your name",
+                                        "style": {
+                                            "background": "rgba(0,0,0,0.2)"
+                                        }
+                                    },
+                                    {
+                                        "type": "file-upload",
+                                        "key": "avatar",
+                                        "label": "Upload Avatar",
+                                        "value": "No file selected"
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "button",
+                                "label": "Continue →",
+                                "action": "submit",
+                                "animate": "pulse",
+                                "style": {
+                                    "width": "100%",
+                                    "marginTop": "20px",
+                                    "padding": "12px",
+                                    "fontSize": "16px",
+                                    "fontWeight": "600",
+                                    "background": "linear-gradient(90deg, #007acc, #005fa3)",
+                                    "boxShadow": "0 4px 15px rgba(0,122,204,0.3)"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "next": [
+                {
+                    "to": "step2"
+                }
+            ]
+        },
+        {
+            "id": "step2",
+            "tool": "log",
+            "args": {
+                "message": "User: {{step1.data.user_name}}, Avatar: {{step1.data.avatar}}"
+            }
+        }
+    ]
+}

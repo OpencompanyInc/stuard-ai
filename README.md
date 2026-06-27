@@ -1,2 +1,1 @@
-# stuard-ai
-OpenCompany project (platform-managed)
+# Stuard-AI

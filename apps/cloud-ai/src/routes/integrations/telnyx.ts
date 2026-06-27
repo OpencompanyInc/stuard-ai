@@ -1,0 +1,2033 @@
+import type { IncomingMessage, ServerResponse } from 'http';
+import { randomInt } from 'crypto';
+import {
+  upsertExternalAccount,
+  getExternalAccount,
+  findUserIdByPhone,
+  enqueueSmsInboxItem,
+  getSmsQueueItem,
+  markSmsQueueReplySent,
+  upsertSmsUserState,
+  getSmsUserState,
+  getCloudEngine,
+  debitCredits,
+  createConversation,
+  addUserMessage,
+  addAssistantMessage,
+  finishRun,
+  setConversationTitle,
+} from '../../supabase';
+import { authenticateHttpLegacy, sendJson, sendAuthError } from '../../auth/http';
+import { AuthErrorCode } from '../../auth';
+import { TELNYX_API_KEY, TELNYX_FROM_NUMBER, TELNYX_MESSAGING_PROFILE_ID, CLOUD_PUBLIC_URL } from '../../utils/config';
+import { stripMarkdownForSms, sendWelcomeSms, sendSmsRaw } from '../sms-utils';
+import { sendVMCommand } from '../../services/vm-command';
+import { messagingCreditCost, voiceCallCreditCost, MESSAGING_USD } from '../../pricing';
+import { getOrCreateQueryEmbedding } from '../../utils/shared-embedding';
+import { MediaProcessor, fromTelnyxMms } from '../../media';
+import { hasDesktopConnection } from '../../services/vm-bridge';
+
+const TELNYX_API = 'https://api.telnyx.com/v2';
+
+// Track inbound calls that are pending streaming setup (for streaming.failed fallback)
+const pendingInboundCalls = new Map<string, { fromNumber: string; answeredAt: number }>();
+
+// Track call direction from call.initiated (Telnyx may not include direction in later events)
+const callDirectionCache = new Map<string, string>();
+
+// ── Inbound message dedup (prevents double-processing on Telnyx webhook retries) ──
+// Telnyx uses at-least-once delivery. If our response takes >30s, it retries.
+// We track recent provider_message_ids so the second delivery is a no-op.
+const _recentMsgIds = new Set<string>();
+function _markMsgProcessed(id: string): void {
+  _recentMsgIds.add(id);
+  setTimeout(() => _recentMsgIds.delete(id), 120_000); // forget after 2 min
+}
+function _isMsgDuplicate(id: string): boolean {
+  return _recentMsgIds.has(id);
+}
+
+// Cache proactive call config keyed by callControlId
+// Supports: streaming bridge (bidirectional AI), ElevenLabs audio playback, or Telnyx TTS fallback
+const proactiveCallCache = new Map<string, {
+  bridgeConfig?: string;    // base64-encoded bridge config for streaming
+  wsBaseUrl?: string;       // WebSocket base URL for streaming bridge
+  providerId?: string;      // voice provider ID (openai-realtime, elevenlabs, etc.)
+  audioUrl?: string;        // ElevenLabs pre-generated audio URL (fallback)
+  ttsMessage?: string;      // Telnyx TTS message (last resort fallback)
+  createdAt: number;
+}>();
+
+// ── Multi-phone profile support (up to 5 verified numbers) ────────────────
+const MAX_PHONE_SLOTS = 5;
+
+// Unified pending-verification map keyed by "userId:slot"
+const pendingPhoneVerifications = new Map<string, { code: string; phone: string; expiresAt: number }>();
+
+function phoneKey(slot: number): string { return slot === 0 ? 'phone' : `phone${slot + 1}`; }
+function verifiedKey(slot: number): string { return slot === 0 ? 'verified' : `verified${slot + 1}`; }
+function verifiedAtKey(slot: number): string { return slot === 0 ? 'verifiedAt' : `verifiedAt${slot + 1}`; }
+
+function getPhoneSlots(meta: any): Array<{ phone: string; slot: number; verifiedAt?: string }> {
+  const phones: Array<{ phone: string; slot: number; verifiedAt?: string }> = [];
+  for (let i = 0; i < MAX_PHONE_SLOTS; i++) {
+    const pKey = phoneKey(i);
+    const vKey = verifiedKey(i);
+    if (meta[vKey] && meta[pKey]) {
+      phones.push({ phone: meta[pKey], slot: i, verifiedAt: meta[verifiedAtKey(i)] });
+    }
+  }
+  return phones;
+}
+
+function normalizePhone(raw: string): string {
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits && !digits.startsWith('+')) digits = '+' + digits;
+  return digits;
+}
+
+// Build downloadable media descriptors the desktop can persist to its media
+// library so the agent gets a real local file path, not just a transcript.
+// Images/documents already ride along in MediaResult.attachments (and the
+// desktop saves those), so this only carries the binary for kinds those don't
+// cover — chiefly inbound audio voice notes (transcript-only in attachments).
+function buildDownloadableMediaFiles(
+  items: any[],
+): Array<{ mediaType: string; mimeType: string; name?: string; data: string; transcript?: string }> {
+  const out: Array<{ mediaType: string; mimeType: string; name?: string; data: string; transcript?: string }> = [];
+  for (const it of items || []) {
+    if (it?.original?.mediaType !== 'audio') continue;
+    const buf: Buffer | undefined = it?.buffer;
+    if (!buf || !buf.length) continue;
+    const mime = String(it.mimeType || it.original?.mimeType || 'audio/mpeg');
+    out.push({
+      mediaType: 'audio',
+      mimeType: mime,
+      name: it.original?.filename,
+      data: `data:${mime};base64,${buf.toString('base64')}`,
+      transcript: it.transcript,
+    });
+  }
+  return out;
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+export async function telnyxSendSms(to: string, text: string): Promise<void> {
+  if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) throw new Error('Telnyx not configured');
+  const body: any = { from: TELNYX_FROM_NUMBER, to, text };
+  if (TELNYX_MESSAGING_PROFILE_ID) body.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
+  const res = await fetch(`${TELNYX_API}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${TELNYX_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any)?.errors?.[0]?.detail || `Telnyx SMS failed (${res.status})`);
+  }
+}
+
+// ─── SMS Slash Command Handler ───────────────────────────────────────────────
+
+const SMS_HELP_TEXT =
+  'Stuard SMS Commands:\n' +
+  '/vm - Route messages to Cloud VM agent\n' +
+  '/desktop - Route messages to desktop agent\n' +
+  '/auto - Use VM if running, else desktop (default)\n' +
+  '/status - Show current routing & VM status\n' +
+  '/model <fast|balanced|smart> - Set AI model\n' +
+  '/agent - Switch to agent mode\n' +
+  '/proactive - Switch to proactive mode\n' +
+  '/new - Start a new conversation\n' +
+  '/help - Show this help message';
+
+async function handleSmsSlashCommand(userId: string, fromPhone: string, command: string): Promise<boolean> {
+  const cmd = command.split(/\s+/)[0].toLowerCase();
+  const arg = command.slice(cmd.length).trim();
+
+  const reply = async (text: string) => {
+    await sendSmsRaw(fromPhone, text).catch(() => {});
+    await deductTelnyxCredit(userId);
+  };
+
+  switch (cmd) {
+    case '/vm': {
+      await upsertSmsUserState({ userId, agentTarget: 'vm' });
+      await reply('SMS routing set to Cloud VM. Your messages will be handled by the VM agent.\n\nText /auto to switch back to automatic routing.');
+      return true;
+    }
+    case '/desktop': {
+      await upsertSmsUserState({ userId, agentTarget: 'desktop' });
+      await reply('SMS routing set to Desktop. Your messages will be queued for the desktop agent.\n\nText /auto to switch back to automatic routing.');
+      return true;
+    }
+    case '/cloud': {
+      // Cloud serverless replies were retired (they lost context, never synced
+      // to desktop, and mis-billed). Treat /cloud as auto: VM if it's running,
+      // otherwise your desktop when it's online.
+      await upsertSmsUserState({ userId, agentTarget: 'auto' });
+      await reply('Heads up: cloud-only replies were retired. Messages now run on your Cloud VM if it is on, otherwise your desktop when it is online.\n\nText /status to check what is available.');
+      return true;
+    }
+    case '/auto': {
+      await upsertSmsUserState({ userId, agentTarget: 'auto' });
+      await reply('SMS routing set to Auto. Messages will try VM first, then cloud, then desktop.\n\nText /status to check current routing.');
+      return true;
+    }
+    case '/status': {
+      const [state, engine] = await Promise.all([
+        getSmsUserState(userId),
+        getCloudEngine(userId),
+      ]);
+      const vmStatus = engine?.status === 'running' ? 'Running' : engine?.status ? `${engine.status}` : 'Not provisioned';
+      const targetLabel = { desktop: 'Desktop', vm: 'Cloud VM', cloud: 'Cloud (serverless)', auto: 'Auto (VM > Cloud > Desktop)' }[state.agent_target] || 'Auto';
+      const modeLabel = state.mode === 'proactive' ? 'Proactive' : 'Agent';
+      await reply(
+        `Stuard SMS Status:\n` +
+        `Routing: ${targetLabel}\n` +
+        `Mode: ${modeLabel}\n` +
+        `Model: ${state.preferred_model}\n` +
+        `Cloud VM: ${vmStatus}`
+      );
+      return true;
+    }
+    case '/model': {
+      const model = arg.toLowerCase();
+      if (!model) {
+        const s = await getSmsUserState(userId);
+        await reply(
+          `Current model: ${s.preferred_model}\n` +
+            'Set: /model fast | /model balanced | /model smart | /model research',
+        );
+        return true;
+      }
+      if (['fast', 'balanced', 'smart', 'research'].includes(model)) {
+        const s = await upsertSmsUserState({ userId, preferredModel: model as any });
+        await reply(`Saved. Your SMS model is now ${s.preferred_model} (stored in cloud).`);
+      } else {
+        await reply('Usage: /model <fast|balanced|smart|research> or /model to see current');
+      }
+      return true;
+    }
+    case '/agent': {
+      await upsertSmsUserState({ userId, mode: 'agent', proactiveMessage: null });
+      await reply('Switched to Agent mode.');
+      return true;
+    }
+    case '/proactive': {
+      await upsertSmsUserState({ userId, mode: 'proactive' });
+      await reply('Switched to Proactive mode. You will receive proactive notifications.');
+      return true;
+    }
+    case '/new': {
+      await upsertSmsUserState({ userId, conversationId: null, resumeConversationId: null });
+      await reply('New conversation started. Previous context cleared.');
+      return true;
+    }
+    case '/help': {
+      await reply(SMS_HELP_TEXT);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// ── Voice call billing tracking ─────────────────────────────────────────────
+// Keyed by callControlId. Populated when we know the userId (inbound: in
+// answerWithStreaming; outbound: by the proactive route or telnyx_voice_call
+// tool via registerCallForBilling). startedAt is set on call.answered, then
+// the entry is consumed on call.hangup to debit credits for the call duration.
+type CallBillingEntry = {
+  userId: string;
+  direction: 'inbound' | 'outbound';
+  fromNumber: string;
+  toNumber: string;
+  startedAt: number;
+  registeredAt: number;
+};
+const callBillingMap = new Map<string, CallBillingEntry>();
+
+export function registerCallForBilling(callControlId: string, info: {
+  userId: string;
+  direction: 'inbound' | 'outbound';
+  fromNumber?: string;
+  toNumber?: string;
+}): void {
+  if (!callControlId || !info.userId) return;
+  callBillingMap.set(callControlId, {
+    userId: info.userId,
+    direction: info.direction,
+    fromNumber: info.fromNumber || '',
+    toNumber: info.toNumber || '',
+    startedAt: 0,
+    registeredAt: Date.now(),
+  });
+}
+
+async function billCallOnHangup(callControlId: string, hangupCause: string): Promise<void> {
+  const entry = callBillingMap.get(callControlId);
+  callBillingMap.delete(callControlId);
+  if (!entry) {
+    console.warn('[telnyx] Call hangup without billing entry — skipping bill', {
+      callControlId: callControlId.slice(0, 24),
+    });
+    return;
+  }
+  if (!entry.startedAt) {
+    console.log('[telnyx] Call ended before answer, no billing', {
+      callControlId: callControlId.slice(0, 24), hangupCause,
+    });
+    return;
+  }
+  const durationMs = Date.now() - entry.startedAt;
+  const { credits, usd, seconds } = voiceCallCreditCost('telnyx', entry.direction, durationMs);
+  console.log('[telnyx] Billing voice call', {
+    callControlId: callControlId.slice(0, 24),
+    direction: entry.direction,
+    seconds,
+    usd,
+    credits,
+    hangupCause,
+  });
+  if (credits <= 0) return;
+  try {
+    await debitCredits(entry.userId, {
+      sourceType: `voice:telnyx:${entry.direction}`,
+      sourceRef: `call:${callControlId}`,
+      credits,
+      amountUsd: usd,
+      metadata: {
+        provider: 'telnyx',
+        direction: entry.direction,
+        from: entry.fromNumber,
+        to: entry.toNumber,
+        durationMs,
+        durationSeconds: seconds,
+        hangupCause,
+      },
+    });
+  } catch (e: any) {
+    console.error('[telnyx] Voice call credit deduction failed:', e?.message);
+  }
+}
+
+async function deductTelnyxCredit(userId: string): Promise<void> {
+  const credits = messagingCreditCost('telnyx');
+  if (credits <= 0) return;
+  try {
+    await debitCredits(userId, {
+      sourceType: 'messaging:telnyx',
+      sourceRef: `sms_send:${Date.now()}`,
+      credits,
+      amountUsd: MESSAGING_USD.telnyxSms,
+      metadata: { provider: 'telnyx' },
+    });
+  } catch (e: any) {
+    console.error('[telnyx] credit deduction failed:', e?.message);
+  }
+}
+
+// ── Offline auto-reply ───────────────────────────────────────────────────────
+// When neither the user's Cloud VM nor their desktop is online, nothing can run
+// the agent right now. We still queue the message so the desktop answers it on
+// next launch, but we also text the sender once (per window) so they aren't left
+// hanging. Debounced per user so a burst of texts doesn't trigger a burst of
+// auto-replies.
+const _lastOfflineAutoReply = new Map<string, number>();
+const OFFLINE_AUTOREPLY_WINDOW_MS = 10 * 60 * 1000;
+
+async function maybeSendOfflineAutoReply(userId: string, toPhone: string): Promise<void> {
+  if (!toPhone) return;
+  const now = Date.now();
+  const last = _lastOfflineAutoReply.get(userId) || 0;
+  if (now - last < OFFLINE_AUTOREPLY_WINDOW_MS) return;
+  _lastOfflineAutoReply.set(userId, now);
+  try {
+    await sendSmsRaw(toPhone, "Got it — I'm offline right now, but I'll get back to you the moment I'm back online.");
+    await deductTelnyxCredit(userId);
+  } catch (e: any) {
+    console.error('[telnyx] offline auto-reply failed:', e?.message);
+  }
+}
+
+export async function handleTelnyxRoutes(req: IncomingMessage, res: ServerResponse, parsedUrl: URL): Promise<boolean> {
+  const { pathname } = parsedUrl;
+
+  // ── Status: primary + secondary phone info ────────────────────────────────
+  if (req.method === 'GET' && pathname === '/integrations/telnyx/status') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    const acc = await getExternalAccount(auth.userId, 'telnyx');
+    const meta = acc?.meta || {};
+    const phones = getPhoneSlots(meta);
+    sendJson(res, 200, {
+      ok: true,
+      connected: phones.length > 0,
+      phone: meta.verified ? meta.phone : undefined,
+      phone2: meta.verified2 ? meta.phone2 : undefined,
+      phones,
+    });
+    return true;
+  }
+
+  // ── Request verification code (any slot 0-4) ─────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/request-code') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
+      sendJson(res, 503, { ok: false, error: 'Telnyx integration is not configured on the server.' });
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const slot = typeof body.slot === 'number' ? body.slot : 0;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
+        return true;
+      }
+      const phone = normalizePhone(body.phone || '');
+      if (!phone || phone.length < 10) {
+        sendJson(res, 400, { ok: false, error: 'Invalid phone number. Include country code (e.g. +1...).' });
+        return true;
+      }
+      // Non-primary slots require primary to be verified first
+      if (slot > 0) {
+        const acc = await getExternalAccount(auth.userId, 'telnyx');
+        const meta = acc?.meta || {};
+        if (!meta.verified) {
+          sendJson(res, 400, { ok: false, error: 'Verify your primary phone number (slot 0) first.' });
+          return true;
+        }
+        const verifiedCount = getPhoneSlots(meta).length;
+        if (verifiedCount >= MAX_PHONE_SLOTS) {
+          sendJson(res, 400, { ok: false, error: `Maximum of ${MAX_PHONE_SLOTS} verified phones reached.` });
+          return true;
+        }
+      }
+      const code = String(randomInt(100000, 999999));
+      pendingPhoneVerifications.set(`${auth.userId}:${slot}`, { code, phone, expiresAt: Date.now() + 10 * 60 * 1000 });
+      await telnyxSendSms(phone, `Your Stuard verification code is: ${code}`);
+      sendJson(res, 200, { ok: true, message: 'Verification code sent.', slot });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Verify code (any slot 0-4) ────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/verify-code') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const slot = typeof body.slot === 'number' ? body.slot : 0;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
+        return true;
+      }
+      const userCode = String(body.code || '').trim();
+      const pendingKey = `${auth.userId}:${slot}`;
+      const pending = pendingPhoneVerifications.get(pendingKey);
+      if (!pending) {
+        sendJson(res, 400, { ok: false, error: 'No pending verification. Request a new code.' });
+        return true;
+      }
+      if (Date.now() > pending.expiresAt) {
+        pendingPhoneVerifications.delete(pendingKey);
+        sendJson(res, 400, { ok: false, error: 'Verification code expired. Request a new one.' });
+        return true;
+      }
+      if (userCode !== pending.code) {
+        sendJson(res, 400, { ok: false, error: 'Incorrect code. Please try again.' });
+        return true;
+      }
+      pendingPhoneVerifications.delete(pendingKey);
+
+      // Preserve existing phone data for other slots
+      const existing = await getExternalAccount(auth.userId, 'telnyx');
+      const existingMeta = existing?.meta || {};
+
+      await upsertExternalAccount({
+        userId: auth.userId,
+        provider: 'telnyx',
+        access_token: 'verified',
+        scopes: ['sms', 'voice'],
+        meta: {
+          ...existingMeta,
+          [phoneKey(slot)]: pending.phone,
+          [verifiedKey(slot)]: true,
+          [verifiedAtKey(slot)]: new Date().toISOString(),
+        },
+      });
+      sendJson(res, 200, { ok: true, phone: pending.phone, verified: true, slot });
+      // Fire-and-forget welcome SMS only for primary phone (slot 0)
+      if (slot === 0) {
+        sendWelcomeSms(pending.phone).catch(() => {});
+      }
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Remove a phone by slot (0-4) ──────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/remove-phone') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const slot = typeof body.slot === 'number' ? body.slot : -1;
+      if (slot < 0 || slot >= MAX_PHONE_SLOTS || !Number.isInteger(slot)) {
+        sendJson(res, 400, { ok: false, error: `Invalid slot. Must be 0-${MAX_PHONE_SLOTS - 1}.` });
+        return true;
+      }
+      if (slot === 0) {
+        // Removing primary phone disconnects everything (same as disconnect)
+        const { deleteExternalAccount } = await import('../../supabase');
+        await deleteExternalAccount(auth.userId, 'telnyx', 'default');
+        sendJson(res, 200, { ok: true, removedSlot: 0, disconnected: true });
+        return true;
+      }
+      // Remove just this slot's keys from meta
+      const existing = await getExternalAccount(auth.userId, 'telnyx');
+      const existingMeta = { ...(existing?.meta || {}) };
+      delete existingMeta[phoneKey(slot)];
+      delete existingMeta[verifiedKey(slot)];
+      delete existingMeta[verifiedAtKey(slot)];
+      await upsertExternalAccount({
+        userId: auth.userId,
+        provider: 'telnyx',
+        access_token: existing?.access_token || 'verified',
+        scopes: ['sms', 'voice'],
+        meta: existingMeta,
+      });
+      sendJson(res, 200, { ok: true, removedSlot: slot });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Disconnect / remove all ────────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/disconnect') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const { deleteExternalAccount } = await import('../../supabase');
+      await deleteExternalAccount(auth.userId, 'telnyx', 'default');
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Proactive SMS (called by desktop scheduler) ────────────────────────────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/proactive-sms') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
+      sendJson(res, 503, { ok: false, error: 'Telnyx not configured.' });
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const acc = await getExternalAccount(auth.userId, 'telnyx');
+      const meta = acc?.meta || {};
+      if (!meta.verified || !meta.phone) {
+        sendJson(res, 400, { ok: false, error: 'No verified phone number.' });
+        return true;
+      }
+      await telnyxSendSms(meta.phone, String(body.message || '').slice(0, 1600));
+      await deductTelnyxCredit(auth.userId);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Proactive Call (called by desktop scheduler or cloud proactive) ──────
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/proactive-call') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    if (!TELNYX_API_KEY || !TELNYX_FROM_NUMBER) {
+      sendJson(res, 503, { ok: false, error: 'Telnyx not configured.' });
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const acc = await getExternalAccount(auth.userId, 'telnyx');
+      const meta = acc?.meta || {};
+      if (!meta.verified || !meta.phone) {
+        sendJson(res, 400, { ok: false, error: 'No verified phone number.' });
+        return true;
+      }
+
+      const proactiveMessage = String(body.message || 'Hey! This is Stuard AI with a quick check-in.');
+      const publicUrl = CLOUD_PUBLIC_URL || '';
+
+      // ── Strategy: Use bidirectional voice streaming (real AI conversation)
+      // The proactive message is passed as initialMessage — the AI speaks it
+      // first, then stays on the line for a real two-way conversation.
+      const { getConfiguredProviders } = await import('../../voice');
+      const configuredProviders = getConfiguredProviders();
+
+      let usedProvider = 'tts-fallback';
+
+      if (configuredProviders.length > 0) {
+        // First configured provider in getTelephonyProviderOrder (default: gemini-live).
+        const { getTelephonyProviderOrder } = await import('../../voice');
+        const preferredOrder = getTelephonyProviderOrder();
+        let providerId = '';
+        for (const id of preferredOrder) {
+          const p = configuredProviders.find(cp => cp.id === id);
+          if (!p) continue;
+          if (id === 'elevenlabs') {
+            const agentId = process.env.ELEVENLABS_OUTBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID || '';
+            if (!agentId) continue;
+          }
+          providerId = id;
+          break;
+        }
+        if (!providerId) providerId = configuredProviders[0].id;
+
+        // Build bridge config for bidirectional streaming
+        const bridgeConfig: Record<string, any> = {
+          providerId,
+          initialMessage: proactiveMessage,
+          direction: 'outbound',
+          callerNumber: meta.phone,
+          userId: auth.userId,
+          systemPrompt: `You just called the user to deliver a proactive message. After delivering your message, stay on the line and have a natural conversation. If the user wants to act on something, use your tools. Be warm and helpful.`,
+          metadata: { source: 'proactive_call', message: proactiveMessage.slice(0, 200) },
+        };
+
+        if (providerId === 'elevenlabs') {
+          bridgeConfig.agentId = process.env.ELEVENLABS_OUTBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID;
+        }
+        if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
+          bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+        } else if (providerId === 'gemini-live') {
+          bridgeConfig.voiceId = process.env.GEMINI_LIVE_VOICE || 'Aoede';
+        }
+
+        const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
+        const wsBaseUrl = (publicUrl || '').replace(/^http/, 'ws');
+
+        // Cache the bridge config so call.answered can start streaming
+        const customHeaders: Array<{ name: string; value: string }> = [
+          { name: 'X-Proactive-Call', value: 'true' },
+        ];
+
+        const callResult = await (await fetch(`${TELNYX_API}/calls`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${TELNYX_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            connection_id: process.env.TELNYX_SIP_CONNECTION_ID || '',
+            to: meta.phone,
+            from: TELNYX_FROM_NUMBER,
+            answering_machine_detection: 'detect',
+            webhook_url: `${publicUrl}/integrations/telnyx/call-webhook`,
+            webhook_url_method: 'POST',
+            custom_headers: customHeaders,
+          }),
+        })).json() as any;
+
+        const callCtrlId = callResult?.data?.call_control_id || '';
+
+        if (callCtrlId) {
+          // Store bridge config for call.answered to start bidirectional streaming
+          proactiveCallCache.set(callCtrlId, {
+            bridgeConfig: bridgeB64,
+            wsBaseUrl,
+            providerId,
+            ttsMessage: proactiveMessage, // Fallback if streaming fails
+            createdAt: Date.now(),
+          });
+          registerCallForBilling(callCtrlId, {
+            userId: auth.userId,
+            direction: 'outbound',
+            fromNumber: TELNYX_FROM_NUMBER || '',
+            toNumber: meta.phone,
+          });
+          usedProvider = providerId;
+          console.log('[telnyx] Proactive call placed with streaming bridge', {
+            callControlId: callCtrlId.slice(0, 24), providerId, userId: auth.userId,
+          });
+        }
+
+        sendJson(res, 200, { ok: true, callControlId: callCtrlId, provider: usedProvider });
+      } else {
+        // No voice providers configured — fall back to ElevenLabs TTS or Telnyx speak
+        let proactiveAudioUrl: string | null = null;
+        const elevenLabsKey = (process.env.ELEVENLABS_API_KEY || '').trim();
+
+        if (elevenLabsKey) {
+          try {
+            const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+            const { uploadUserFileBuffer } = await import('../../services/cold-storage');
+            const { randomUUID } = await import('crypto');
+
+            const el = new ElevenLabsClient({ apiKey: elevenLabsKey });
+            const voiceId = process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb';
+            const audioStream = await el.textToSpeech.convert(voiceId, {
+              text: proactiveMessage.slice(0, 3000),
+              modelId: 'eleven_turbo_v2_5',
+              outputFormat: 'mp3_44100_128',
+            } as any);
+
+            const chunks: Uint8Array[] = [];
+            if (typeof (audioStream as any).getReader === 'function') {
+              const reader = (audioStream as any).getReader();
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value) chunks.push(value);
+              }
+            } else {
+              for await (const chunk of audioStream as any) {
+                chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+              }
+            }
+            const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+            const buf = Buffer.alloc(totalLen);
+            let off = 0;
+            for (const c of chunks) { buf.set(c, off); off += c.length; }
+
+            const filename = `proactive_call_${randomUUID().slice(0, 8)}.mp3`;
+            const uploadResult = await uploadUserFileBuffer(auth.userId, filename, buf, 'audio/mpeg', 'voice-notes', 'public');
+            proactiveAudioUrl = uploadResult.url;
+            usedProvider = 'elevenlabs-tts';
+          } catch (e: any) {
+            console.warn('[telnyx] ElevenLabs TTS failed:', e?.message);
+          }
+        }
+
+        const customHeaders: Array<{ name: string; value: string }> = [
+          { name: 'X-Proactive-Call', value: 'true' },
+        ];
+
+        const callResult = await (await fetch(`${TELNYX_API}/calls`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${TELNYX_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            connection_id: process.env.TELNYX_SIP_CONNECTION_ID || '',
+            to: meta.phone,
+            from: TELNYX_FROM_NUMBER,
+            answering_machine_detection: 'detect',
+            webhook_url: `${publicUrl}/integrations/telnyx/call-webhook`,
+            webhook_url_method: 'POST',
+            custom_headers: customHeaders,
+          }),
+        })).json() as any;
+
+        const callCtrlId = callResult?.data?.call_control_id || '';
+        if (callCtrlId) {
+          proactiveCallCache.set(callCtrlId, {
+            audioUrl: proactiveAudioUrl || undefined,
+            ttsMessage: proactiveAudioUrl ? undefined : proactiveMessage,
+            createdAt: Date.now(),
+          });
+          registerCallForBilling(callCtrlId, {
+            userId: auth.userId,
+            direction: 'outbound',
+            fromNumber: TELNYX_FROM_NUMBER || '',
+            toNumber: meta.phone,
+          });
+        }
+
+        sendJson(res, 200, { ok: true, callControlId: callCtrlId, provider: usedProvider });
+      }
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Desktop-owned SMS reply submission ─────────────────────────────────────
+  // ── Outbound SMS notification (no queue item needed — used for mid-turn tool permission prompts)
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-notify') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const toPhone = String(body?.to || '').trim();
+      const text = stripMarkdownForSms(String(body?.text || '').trim()).slice(0, 1530);
+      if (!toPhone || !text) {
+        sendJson(res, 400, { ok: false, error: 'to and text are required.' });
+        return true;
+      }
+      await telnyxSendSms(toPhone, text);
+      await deductTelnyxCredit(auth.userId);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-reply') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const queueItemId = String(body?.queueItemId || '').trim();
+      const replyText = stripMarkdownForSms(String(body?.replyText || '').trim()).slice(0, 1500);
+      const stateMode = body?.mode;
+      const preferredModel = body?.preferredModel;
+      const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.trim() || null : undefined;
+      const resumeConversationId = typeof body?.resumeConversationId === 'string' ? body.resumeConversationId.trim() || null : undefined;
+      // When the desktop already streamed the reply as live per-thought texts via
+      // /sms-notify, it calls this route only to finalize state (mark replied +
+      // persist conversation/model). Don't re-send or double-charge the carrier fee.
+      const alreadyDelivered = body?.alreadyDelivered === true;
+      if (!queueItemId || (!replyText && !alreadyDelivered)) {
+        sendJson(res, 400, { ok: false, error: 'queueItemId and replyText are required.' });
+        return true;
+      }
+
+      const queueItem = await getSmsQueueItem(queueItemId);
+      if (!queueItem || queueItem.user_id !== auth.userId) {
+        sendJson(res, 404, { ok: false, error: 'sms_queue_item_not_found' });
+        return true;
+      }
+      const targetPhone = normalizePhone(String(queueItem.reply_to_phone || body?.replyToPhone || ''));
+      if (!targetPhone) {
+        sendJson(res, 400, { ok: false, error: 'reply_to_phone_missing' });
+        return true;
+      }
+      if (queueItem.reply_sent_at) {
+        sendJson(res, 200, { ok: true, duplicate: true });
+        return true;
+      }
+
+      if (!alreadyDelivered) {
+        await telnyxSendSms(targetPhone, replyText);
+        await deductTelnyxCredit(auth.userId);
+      }
+      await markSmsQueueReplySent(queueItemId).catch(() => false);
+      await upsertSmsUserState({
+        userId: auth.userId,
+        mode: stateMode,
+        preferredModel,
+        conversationId,
+        resumeConversationId,
+        lastReplyToPhone: targetPhone,
+        // Clear the stored proactive message when switching back to agent mode
+        proactiveMessage: stateMode === 'agent' ? null : undefined,
+      }).catch(() => false);
+      sendJson(res, 200, { ok: true });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── SMS Settings: get/set agent routing target ──────────────────────────
+  if (req.method === 'GET' && pathname === '/integrations/telnyx/sms-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const [state, engine] = await Promise.all([
+        getSmsUserState(auth.userId),
+        getCloudEngine(auth.userId),
+      ]);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+        vmAvailable: !!(engine && engine.status === 'running'),
+        cloudAvailable: true, // Cloud serverless is always available
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/sms-settings') {
+    const auth = await authenticateHttpLegacy(req, parsedUrl);
+    if (!auth.success || !auth.userId) {
+      sendAuthError(res, auth.error || AuthErrorCode.UNAUTHORIZED, auth.message);
+      return true;
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const updates: Parameters<typeof upsertSmsUserState>[0] = { userId: auth.userId };
+      if (body.agentTarget !== undefined) updates.agentTarget = body.agentTarget;
+      if (body.mode !== undefined) updates.mode = body.mode;
+      if (body.preferredModel !== undefined) updates.preferredModel = body.preferredModel;
+      await upsertSmsUserState(updates);
+      const state = await getSmsUserState(auth.userId);
+      sendJson(res, 200, {
+        ok: true,
+        agentTarget: state.agent_target,
+        mode: state.mode,
+        preferredModel: state.preferred_model,
+      });
+    } catch (e: any) {
+      sendJson(res, 500, { ok: false, error: String(e?.message || e) });
+    }
+    return true;
+  }
+
+  // ── Incoming SMS webhook (Telnyx → Stuard) ───────────────────────────────
+  // Configure this URL in the Telnyx portal as the messaging webhook:
+  //   POST /webhooks/telnyx/sms
+  if (req.method === 'POST' && pathname === '/webhooks/telnyx/sms') {
+    let _smsRawBody = '';
+    try { _smsRawBody = await readBody(req); } catch (e: any) {
+      console.error('[telnyx] Failed to read SMS webhook body:', e?.message);
+    }
+    // Respond 200 immediately — Telnyx expects fast ack. Processing continues async.
+    sendJson(res, 200, { ok: true });
+    (async () => {
+    try {
+      const payload = JSON.parse(_smsRawBody);
+      const eventType: string = payload?.data?.event_type || '';
+
+      if (eventType === 'message.received') {
+        const msgPayload = payload?.data?.payload || {};
+        const fromPhone = normalizePhone(String(msgPayload?.from?.phone_number || msgPayload?.from || ''));
+        const rawText: string = String(msgPayload?.text || '').trim();
+        const mediaItems: any[] = msgPayload?.media || [];
+        const hasMedia = mediaItems.length > 0;
+        const providerMessageId = String(
+          msgPayload?.id ||
+          msgPayload?.record_id ||
+          payload?.data?.id ||
+          '',
+        ).trim() || null;
+
+        // Dedup: skip if this message was already processed (Telnyx retry or dual delivery)
+        if (providerMessageId) {
+          if (_isMsgDuplicate(providerMessageId)) {
+            console.warn('[telnyx] Skipping duplicate inbound SMS:', providerMessageId);
+            return;
+          }
+          _markMsgProcessed(providerMessageId);
+        }
+
+        if (fromPhone && (rawText || hasMedia)) {
+          // Process media attachments if present (MMS sent to SMS webhook)
+          let inboundText = rawText;
+          let processedAttachments: any[] = [];
+          let incomingMediaFiles: any[] = [];
+          if (hasMedia) {
+            try {
+              const inboundMedia = fromTelnyxMms(mediaItems, rawText || undefined);
+              const mediaResult = await MediaProcessor.process(inboundMedia);
+              processedAttachments = mediaResult.attachments || [];
+              incomingMediaFiles = buildDownloadableMediaFiles(mediaResult.items || []);
+              // Build message text: original text + any transcriptions/descriptions
+              inboundText = [rawText, mediaResult.supplementaryText].filter(Boolean).join('\n') || '[media received]';
+            } catch (e: any) {
+              console.error('[telnyx] MediaProcessor.process failed in SMS handler:', e?.message);
+              if (!inboundText) inboundText = '[media received]';
+            }
+          }
+
+          // Find which user owns this number (primary or secondary)
+          const userId = await findUserIdByPhone(fromPhone);
+          if (userId) {
+            console.log('[telnyx] inbound SMS matched user', {
+              fromPhone,
+              userId,
+              textPreview: inboundText.slice(0, 80),
+              hasMedia,
+              mediaCount: mediaItems.length,
+            });
+
+            // ── Handle slash commands ────────────────────────────────
+            const trimmedLower = inboundText.toLowerCase().trim();
+            if (trimmedLower.startsWith('/')) {
+              const slashHandled = await handleSmsSlashCommand(userId, fromPhone, trimmedLower);
+              if (slashHandled) {
+                // Slash command was handled — don't route to agent
+                // Response already sent above (fast ack), just stop processing.
+                return;
+              }
+            }
+
+            // ── Route based on user's agent_target setting ───────────
+            const [smsState, engine] = await Promise.all([
+              getSmsUserState(userId),
+              getCloudEngine(userId),
+            ]);
+            const target = smsState.agent_target;
+            const vmRunning = !!(engine && engine.status === 'running');
+
+            // Resolve effective target: vm > cloud > desktop
+            let effectiveTarget: 'vm' | 'cloud' | 'desktop' = 'desktop';
+            if (target === 'vm') {
+              effectiveTarget = vmRunning ? 'vm' : 'desktop';
+            } else if (target === 'cloud') {
+              effectiveTarget = 'cloud';
+            } else if (target === 'auto') {
+              effectiveTarget = vmRunning ? 'vm' : 'cloud'; // auto now falls back to cloud instead of desktop
+            }
+
+            const msgSource = hasMedia ? 'mms' : 'sms';
+            console.log('[telnyx] SMS routing decision', {
+              userId, configuredTarget: target, vmRunning, effectiveTarget, source: msgSource,
+            });
+
+            let handled = false;
+
+            if (effectiveTarget === 'vm') {
+              // Relay to VM — generate embedding in cloud-ai so the VM can
+              // run similarity search against its synced SQLite memory DB.
+              try {
+                let queryEmbedding: number[] | undefined;
+                try {
+                  queryEmbedding = await getOrCreateQueryEmbedding(inboundText);
+                } catch {
+                  // Non-fatal: VM will still work with recent-segments fallback
+                }
+
+                // Ensure conversation is persisted in Supabase (forcePersist=true bypasses sync pref)
+                let convId = smsState.conversation_id || null;
+                let vmConvCreatedNow = false;
+                if (!convId) {
+                  convId = await createConversation(userId, inboundText, smsState.preferred_model || 'fast', {
+                    mode: smsState.preferred_model || 'fast',
+                  }, 'stuard', true);
+                  if (convId) vmConvCreatedNow = true;
+                } else {
+                  await addUserMessage(userId, convId, inboundText, {
+                    mode: smsState.preferred_model || 'fast',
+                  }, true);
+                }
+
+                const vmResult = await sendVMCommand(userId, 'agent_chat', {
+                  message: inboundText,
+                  conversationId: convId || undefined,
+                  model: smsState.preferred_model || 'fast',
+                  context: { source: msgSource, fromPhone },
+                  memoryQuery: inboundText,
+                  ...(queryEmbedding ? { queryEmbedding } : {}),
+                  ...(processedAttachments.length > 0 ? { attachments: processedAttachments } : {}),
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
+                }, 60_000);
+
+                if (vmResult.ok && vmResult.result?.text) {
+                  const vmResponseText = String(vmResult.result.text);
+                  const replyText = stripMarkdownForSms(vmResponseText).slice(0, 1500);
+                  await sendSmsRaw(fromPhone, replyText).catch((e: any) => {
+                    console.error('[telnyx] Failed to send VM agent SMS reply:', e?.message);
+                  });
+                  await deductTelnyxCredit(userId);
+                  handled = true;
+
+                  const vmConvId = vmResult.result?.conversationId || convId;
+                  if (vmConvId) {
+                    await addAssistantMessage(userId, vmConvId, vmResponseText, {
+                      mode: smsState.preferred_model || 'fast',
+                    }, true);
+                    // Finish run + generate title for new conversations
+                    try { await finishRun(userId, vmConvId, vmResponseText); } catch { }
+                    if (vmConvCreatedNow) {
+                      try { await setConversationTitle(userId, vmConvId, inboundText.slice(0, 80), true); } catch { }
+                    }
+                  }
+
+                  if (vmConvId && vmConvId !== smsState.conversation_id) {
+                    await upsertSmsUserState({ userId, conversationId: vmConvId });
+                  }
+
+                  console.log('[telnyx] SMS routed to VM', { userId, conversationId: vmConvId, responseLen: replyText.length });
+                }
+              } catch {
+                // VM call failed — fall through to cloud
+              }
+            }
+
+            // ── Desktop (local) handler ──────────────────────────────────
+            // No VM (or the VM turn failed). Route to the Supabase
+            // sms_inbox_queue so the desktop claims it via Realtime and runs
+            // the agent locally through the normal chat pipeline — exactly like
+            // a message typed in the app (full tool bridge, local memory/history,
+            // and correct token + tool billing). The cloud serverless fallback
+            // was removed: it lost multi-turn context, never synced to the
+            // desktop, and only charged the flat carrier fee.
+            if (!handled) {
+              const desktopOnline = hasDesktopConnection(userId);
+              const queued = await enqueueSmsInboxItem({
+                userId,
+                provider: 'telnyx',
+                providerMessageId,
+                fromPhone,
+                replyToPhone: fromPhone,
+                messageText: inboundText,
+                conversationId: smsState.conversation_id,
+                metadata: {
+                  eventType,
+                  receivedAt: new Date().toISOString(),
+                  ...(processedAttachments.length > 0 ? { processedAttachments } : {}),
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
+                },
+              });
+              if (!queued) {
+                console.warn('[telnyx] inbound SMS could not be queued', {
+                  fromPhone, userId, textPreview: inboundText.slice(0, 80),
+                });
+              }
+              // Neither VM nor desktop online → let the sender know we'll follow up.
+              if (!desktopOnline) {
+                await maybeSendOfflineAutoReply(userId, fromPhone);
+              }
+            }
+          } else {
+            console.warn('[telnyx] inbound SMS did not match a verified user', {
+              fromPhone,
+              textPreview: inboundText.slice(0, 80),
+            });
+          }
+        } else {
+          console.warn('[telnyx] inbound SMS missing sender or text/media', {
+            fromPhone,
+            hasText: !!rawText,
+            hasMedia,
+          });
+        }
+      }
+    } catch (e: any) {
+      console.error('[telnyx] Incoming SMS webhook error:', e?.message || e);
+    }
+    })().catch((e: any) => console.error('[telnyx] SMS webhook async error:', e?.message));
+    return true;
+  }
+
+  // ── Call webhook (Telnyx sends call events here) ──────────────────────────
+  // Health-check: GET the same URL so operators can verify the route is wired
+  // up without sending a real call event.
+  if (req.method === 'GET' && pathname === '/integrations/telnyx/call-webhook') {
+    sendJson(res, 200, { ok: true, route: 'telnyx_call_webhook', method: 'POST only for events' });
+    return true;
+  }
+  if (req.method === 'POST' && pathname === '/integrations/telnyx/call-webhook') {
+    const ua = String(req.headers['user-agent'] || '');
+    const sig = String(req.headers['telnyx-signature-ed25519'] || '');
+    console.log('[telnyx] Call webhook HIT', {
+      ua: ua.slice(0, 80),
+      hasSignature: !!sig,
+      contentType: String(req.headers['content-type'] || ''),
+    });
+    // Read body synchronously, then respond 200 immediately so Telnyx doesn't retry.
+    // Process the event asynchronously after responding.
+    let rawBody = '';
+    try {
+      rawBody = await readBody(req);
+    } catch (e: any) {
+      console.error('[telnyx] Failed to read webhook body:', e?.message);
+    }
+
+    // Respond 200 immediately — Telnyx expects fast acknowledgement
+    sendJson(res, 200, { ok: true });
+
+    // Process the call event asynchronously
+    processCallWebhook(rawBody).catch((e: any) => {
+      console.error('[telnyx] Call webhook processing error:', e?.message || e);
+    });
+
+    return true;
+  }
+
+
+  // ── MMS webhook (Telnyx sends inbound MMS/media messages here) ────────────
+  if (req.method === 'POST' && pathname === '/webhooks/telnyx/mms') {
+    let _mmsRawBody = '';
+    try { _mmsRawBody = await readBody(req); } catch (e: any) {
+      console.error('[telnyx] Failed to read MMS webhook body:', e?.message);
+    }
+    // Respond 200 immediately — Telnyx expects fast ack. Processing continues async.
+    sendJson(res, 200, { ok: true });
+    (async () => {
+    try {
+      const body = JSON.parse(_mmsRawBody);
+      const eventType: string = body?.data?.event_type || '';
+
+      if (eventType === 'message.received') {
+        const payload = body?.data?.payload || {};
+        const from: string = normalizePhone(payload?.from?.phone_number || '');
+        const mediaItems: any[] = payload?.media || [];
+        const text: string = payload?.text || '';
+        const providerMessageId = String(payload?.id || '').trim() || null;
+
+        // Dedup: skip if this message was already processed (Telnyx retry or dual delivery)
+        if (providerMessageId) {
+          if (_isMsgDuplicate(providerMessageId)) {
+            console.warn('[telnyx] Skipping duplicate inbound MMS:', providerMessageId);
+            return;
+          }
+          _markMsgProcessed(providerMessageId);
+        }
+
+        // Accept text-only MMS too (mediaItems may be empty if Telnyx sends text via MMS webhook)
+        if (from && (mediaItems.length > 0 || text)) {
+          const userId = await findUserIdByPhone(from);
+          if (userId) {
+            const [smsState, engine] = await Promise.all([
+              getSmsUserState(userId),
+              getCloudEngine(userId),
+            ]);
+            const target = smsState.agent_target;
+            const vmRunning = !!(engine && engine.status === 'running');
+
+            let effectiveTarget: 'vm' | 'cloud' | 'desktop' = 'desktop';
+            if (target === 'vm') {
+              effectiveTarget = vmRunning ? 'vm' : 'cloud';
+            } else if (target === 'cloud') {
+              effectiveTarget = 'cloud';
+            } else if (target === 'auto') {
+              effectiveTarget = vmRunning ? 'vm' : 'cloud';
+            }
+
+            // ── Process media through unified MediaProcessor ─────────────
+            const inboundMedia = fromTelnyxMms(mediaItems, text || undefined);
+            let mediaResult = { attachments: [] as any[], supplementaryText: '', items: [] as any[] };
+            try {
+              mediaResult = await MediaProcessor.process(inboundMedia);
+            } catch (e: any) {
+              console.error('[telnyx] MediaProcessor.process failed:', e?.message);
+            }
+
+            // Build message text: original text + any transcriptions
+            const messageText = [text, mediaResult.supplementaryText].filter(Boolean).join('\n') || '[media received]';
+
+            let handled = false;
+
+            if (effectiveTarget === 'vm') {
+              try {
+                // Generate embedding so the VM can run similarity search
+                // against its synced SQLite memory — mirrors the SMS path.
+                let queryEmbedding: number[] | undefined;
+                try {
+                  queryEmbedding = await getOrCreateQueryEmbedding(messageText);
+                } catch {
+                  // Non-fatal: VM will still work with recent-segments fallback
+                }
+
+                // Persist conversation in Supabase (same as SMS VM route)
+                let mmsConvId = smsState.conversation_id || null;
+                let mmsConvCreatedNow = false;
+                if (!mmsConvId) {
+                  mmsConvId = await createConversation(userId, messageText, smsState.preferred_model || 'fast', {
+                    mode: smsState.preferred_model || 'fast',
+                  }, 'stuard', true);
+                  if (mmsConvId) mmsConvCreatedNow = true;
+                } else {
+                  await addUserMessage(userId, mmsConvId, messageText, {
+                    mode: smsState.preferred_model || 'fast',
+                  }, true);
+                }
+
+                const vmResult = await sendVMCommand(userId, 'agent_chat', {
+                  message: messageText,
+                  conversationId: mmsConvId || undefined,
+                  model: smsState.preferred_model || 'fast',
+                  context: {
+                    source: 'mms',
+                    fromPhone: from,
+                  },
+                  memoryQuery: messageText,
+                  ...(queryEmbedding ? { queryEmbedding } : {}),
+                  attachments: mediaResult.attachments,
+                  ...(buildDownloadableMediaFiles(mediaResult.items || []).length > 0
+                    ? { incomingMediaFiles: buildDownloadableMediaFiles(mediaResult.items || []) }
+                    : {}),
+                }, 60_000);
+
+                if (vmResult.ok && vmResult.result?.text) {
+                  const vmResponseText = String(vmResult.result.text);
+                  const replyText = stripMarkdownForSms(vmResponseText).slice(0, 1500);
+                  await sendSmsRaw(from, replyText).catch((e: any) => {
+                    console.error('[telnyx] Failed to send VM agent MMS reply:', e?.message);
+                  });
+                  await deductTelnyxCredit(userId);
+                  handled = true;
+
+                  const vmConvId = vmResult.result?.conversationId || mmsConvId;
+                  if (vmConvId) {
+                    await addAssistantMessage(userId, vmConvId, vmResponseText, {
+                      mode: smsState.preferred_model || 'fast',
+                    }, true);
+                    try { await finishRun(userId, vmConvId, vmResponseText); } catch { }
+                    if (mmsConvCreatedNow) {
+                      try { await setConversationTitle(userId, vmConvId, messageText.slice(0, 80), true); } catch { }
+                    }
+                  }
+                  if (vmConvId && vmConvId !== smsState.conversation_id) {
+                    await upsertSmsUserState({ userId, conversationId: vmConvId });
+                  }
+                }
+              } catch {
+                // VM call failed — fall through to cloud
+              }
+            }
+
+            // ── Desktop (local) handler for MMS ───────────────────────────
+            // Same as SMS: queue to the desktop so it runs locally with the full
+            // bridge + correct billing. Cloud serverless fallback removed.
+            if (!handled) {
+              const desktopOnline = hasDesktopConnection(userId);
+              const incomingMediaFiles = buildDownloadableMediaFiles(mediaResult.items || []);
+              await enqueueSmsInboxItem({
+                userId,
+                provider: 'telnyx',
+                providerMessageId,
+                fromPhone: from,
+                replyToPhone: from,
+                messageText,
+                conversationId: smsState.conversation_id,
+                metadata: {
+                  processedAttachments: mediaResult.attachments,
+                  ...(incomingMediaFiles.length > 0 ? { incomingMediaFiles } : {}),
+                  receivedAt: new Date().toISOString(),
+                },
+              });
+              if (!desktopOnline) {
+                await maybeSendOfflineAutoReply(userId, from);
+              }
+            }
+
+            console.log('[telnyx] MMS received', { from, userId, mediaCount: mediaItems.length, effectiveTarget, handled });
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[telnyx] MMS webhook error:', e?.message || e);
+    }
+    })().catch((e: any) => console.error('[telnyx] MMS webhook async error:', e?.message));
+    return true;
+  }
+
+  // ── Catch-all diagnostic for any telnyx path we didn't explicitly handle ──
+  // If Telnyx ever hits an unexpected URL (legacy `/webhooks/telnyx/call`,
+  // trailing slash, wrong CCA webhook URL pasted somewhere, etc.) we want to
+  // see it in logs rather than silently 404 and wonder why webhooks vanish.
+  if (pathname.startsWith('/integrations/telnyx/') || pathname.startsWith('/webhooks/telnyx/')) {
+    console.warn('[telnyx] Unhandled telnyx path — 404', {
+      method: req.method,
+      pathname,
+      ua: String(req.headers['user-agent'] || '').slice(0, 80),
+    });
+    sendJson(res, 404, { ok: false, error: 'telnyx_route_not_found', pathname });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Process incoming Telnyx call control webhook events.
+ *
+ * Telnyx v2 call flow (single-step answer+stream):
+ *   call.initiated  → answer the call with stream_url (answer + streaming in one API call)
+ *   call.answered   → log confirmation
+ *   streaming.started / streaming.failed → handle streaming lifecycle
+ *   call.hangup     → cleanup
+ */
+async function processCallWebhook(rawBody: string): Promise<void> {
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    console.error('[telnyx] Failed to parse call webhook JSON');
+    return;
+  }
+
+  const eventType: string =
+    payload?.data?.event_type ||
+    payload?.event_type ||
+    '';
+  const eventPayload = payload?.data?.payload || payload?.payload || {};
+  const callControlId: string = eventPayload?.call_control_id || '';
+  const direction: string = eventPayload?.direction || '';
+  const fromNumber: string = eventPayload?.from || '';
+  const toNumber: string = eventPayload?.to || '';
+
+  console.log('[telnyx] Call webhook event', {
+    eventType, callControlId: callControlId.slice(0, 24) + '…',
+    direction, from: fromNumber, to: toNumber,
+  });
+
+  if (!callControlId) {
+    console.warn('[telnyx] Call webhook missing call_control_id');
+    return;
+  }
+
+  switch (eventType) {
+    // ── Incoming call — answer with streaming in one step ────────────────
+    case 'call.initiated': {
+      // Cache direction for later events (Telnyx may omit it in call.answered)
+      if (direction) callDirectionCache.set(callControlId, direction);
+
+      if (direction !== 'incoming') {
+        console.log('[telnyx] Outbound call.initiated tracked', { direction, callControlId: callControlId.slice(0, 24) });
+        return;
+      }
+
+      pendingInboundCalls.set(callControlId, { fromNumber, answeredAt: Date.now() });
+
+      console.log('[telnyx] Answering inbound call', { callControlId: callControlId.slice(0, 24), from: fromNumber });
+
+      try {
+        await answerWithStreaming(callControlId, fromNumber);
+      } catch (e: any) {
+        console.error('[telnyx] answerWithStreaming failed', { callControlId, error: e?.message });
+        pendingInboundCalls.delete(callControlId);
+      }
+      break;
+    }
+
+    // ── Call answered — start streaming for outbound calls ──────────────
+    case 'call.answered': {
+      // Telnyx often omits direction in call.answered — use cached value from call.initiated
+      const effectiveDirection = direction || callDirectionCache.get(callControlId) || '';
+      callDirectionCache.delete(callControlId);
+      const customHeaders: Array<{ name: string; value: string }> = eventPayload?.custom_headers || [];
+
+      console.log('[telnyx] Call answered', {
+        callControlId: callControlId.slice(0, 24),
+        direction: effectiveDirection,
+        rawDirection: direction,
+        hasCustomHeaders: customHeaders.length > 0,
+      });
+
+      // Mark billing start — duration is measured from answer to hangup
+      const billingEntry = callBillingMap.get(callControlId);
+      if (billingEntry && !billingEntry.startedAt) {
+        billingEntry.startedAt = Date.now();
+      }
+
+      // For outbound calls, streaming wasn't started in the answer command
+      // (since WE placed the call). We need to start it now.
+      // Check direction AND custom headers as fallback. Telnyx often omits direction.
+      const isOutbound = effectiveDirection === 'outgoing' ||
+        proactiveCallCache.has(callControlId) ||
+        (!effectiveDirection && customHeaders.some(h =>
+          h.name === 'X-Voice-Bridge' || h.name === 'X-Tts-Message' || h.name === 'X-Audio-Url' || h.name === 'X-Proactive-Call'));
+
+      if (isOutbound) {
+        // Check in-memory cache first (reliable) before falling back to custom_headers
+        const cachedProactive = proactiveCallCache.get(callControlId);
+        const bridgeHeader = customHeaders.find(h => h.name === 'X-Voice-Bridge');
+        const wsUrlHeader = customHeaders.find(h => h.name === 'X-Bridge-Ws-Url');
+        const ttsHeader = customHeaders.find(h => h.name === 'X-Tts-Message');
+
+        if (cachedProactive?.bridgeConfig && cachedProactive?.wsBaseUrl) {
+          // ── Bidirectional streaming proactive call (real AI conversation) ──
+          proactiveCallCache.delete(callControlId);
+
+          const streamUrl = `${cachedProactive.wsBaseUrl}/ws/telnyx-bridge?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(cachedProactive.bridgeConfig)}`;
+
+          console.log('[telnyx] Starting streaming for proactive call', {
+            callControlId: callControlId.slice(0, 24),
+            providerId: cachedProactive.providerId,
+            streamUrl: streamUrl.slice(0, 120),
+          });
+
+          const streamRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              stream_url: streamUrl,
+              stream_track: 'both_tracks',
+              stream_bidirectional_mode: 'rtp',
+              stream_bidirectional_codec: 'PCMU',
+              send_silence_when_idle: true,
+            }),
+          });
+
+          if (!streamRes.ok) {
+            const errBody = await streamRes.text().catch(() => '');
+            console.error('[telnyx] Failed to start proactive streaming, falling back to TTS', {
+              status: streamRes.status, body: errBody.slice(0, 300), callControlId,
+            });
+            // Fallback: speak the proactive message via Telnyx TTS
+            await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                payload: cachedProactive.ttsMessage || 'Hey! This is Stuard AI with a quick check-in.',
+                voice: 'female',
+                language: 'en-US',
+              }),
+            }).catch(() => {});
+          }
+        } else if (cachedProactive?.audioUrl) {
+          // ElevenLabs pre-generated audio — play via Telnyx playback (one-way fallback)
+          proactiveCallCache.delete(callControlId);
+
+          console.log('[telnyx] Playing ElevenLabs audio for proactive call (from cache)', {
+            callControlId: callControlId.slice(0, 24),
+            audioUrl: cachedProactive.audioUrl.slice(0, 80),
+          });
+
+          const playRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/playback_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio_url: cachedProactive.audioUrl }),
+          }).catch((e: any) => {
+            console.error('[telnyx] Playback start fetch failed:', e?.message);
+            return null;
+          });
+
+          if (playRes && !playRes.ok) {
+            const errBody = await playRes.text().catch(() => '');
+            console.error('[telnyx] Playback start API error, falling back to TTS speak', {
+              status: playRes.status, body: errBody.slice(0, 300),
+            });
+            await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                payload: cachedProactive.ttsMessage || 'Hey! This is Stuard AI with a quick check-in.',
+                voice: 'female',
+                language: 'en-US',
+              }),
+            }).catch(() => {});
+          }
+        } else if (cachedProactive?.ttsMessage) {
+          // Proactive call with no streaming or audio — use Telnyx TTS (last resort)
+          proactiveCallCache.delete(callControlId);
+
+          console.log('[telnyx] Speaking TTS for proactive call (from cache)', {
+            callControlId: callControlId.slice(0, 24),
+            messageLen: cachedProactive.ttsMessage.length,
+          });
+
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: cachedProactive.ttsMessage,
+              voice: 'female',
+              language: 'en-US',
+            }),
+          }).catch((e: any) => {
+            console.error('[telnyx] TTS speak failed for proactive call:', e?.message);
+          });
+        } else if (bridgeHeader?.value && wsUrlHeader?.value) {
+          // AI voice call via custom_headers — start bidirectional streaming
+          const wsBaseUrl = Buffer.from(wsUrlHeader.value, 'base64').toString('utf8');
+          const streamUrl = `${wsBaseUrl}?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeHeader.value)}`;
+
+          console.log('[telnyx] Starting streaming for outbound call', {
+            callControlId: callControlId.slice(0, 24),
+            streamUrl: streamUrl.slice(0, 120),
+          });
+
+          const streamRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/streaming_start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              stream_url: streamUrl,
+              stream_track: 'both_tracks',
+              stream_bidirectional_mode: 'rtp',
+              stream_bidirectional_codec: 'PCMU',
+              send_silence_when_idle: true,
+            }),
+          });
+
+          if (!streamRes.ok) {
+            const errBody = await streamRes.text().catch(() => '');
+            console.error('[telnyx] Failed to start outbound streaming', {
+              status: streamRes.status, body: errBody.slice(0, 300), callControlId,
+            });
+            await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                payload: 'Hello, this is Stuard AI. Voice streaming could not be started. Please try again later.',
+                voice: 'female',
+                language: 'en-US',
+              }),
+            }).catch(() => {});
+          }
+        } else if (ttsHeader?.value) {
+          // Legacy: TTS from custom_headers
+          const ttsMessage = Buffer.from(ttsHeader.value, 'base64').toString('utf8');
+          const ttsVoice = customHeaders.find(h => h.name === 'X-Tts-Voice')?.value || 'female';
+
+          await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: ttsMessage,
+              voice: ttsVoice,
+              language: 'en-US',
+            }),
+          }).catch((e: any) => {
+            console.error('[telnyx] TTS speak failed for proactive call:', e?.message);
+          });
+        } else {
+          console.warn('[telnyx] Outbound call answered but no bridge or TTS config found', {
+            callControlId: callControlId.slice(0, 24),
+            headerNames: customHeaders.map(h => h.name),
+          });
+        }
+      }
+      break;
+    }
+
+    // ── Streaming lifecycle ──────────────────────────────────────────────
+    case 'streaming.started': {
+      console.log('[telnyx] Streaming started', { callControlId: callControlId.slice(0, 24) });
+      pendingInboundCalls.delete(callControlId);
+      break;
+    }
+
+    case 'streaming.failed': {
+      console.error('[telnyx] Streaming failed', {
+        callControlId: callControlId.slice(0, 24),
+        reason: eventPayload?.streaming_failure_reason || 'unknown',
+      });
+      pendingInboundCalls.delete(callControlId);
+
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: 'Hello, this is Stuard AI. Voice streaming could not be started. Please try calling again or send a text message.',
+          voice: 'female',
+          language: 'en-US',
+        }),
+      }).catch(() => {});
+      break;
+    }
+
+    // ── Call ended ───────────────────────────────────────────────────────
+    case 'call.hangup': {
+      const hangupCause = eventPayload?.hangup_cause || 'unknown';
+      console.log('[telnyx] Call hung up', {
+        callControlId: callControlId.slice(0, 24),
+        hangupCause,
+      });
+      await billCallOnHangup(callControlId, hangupCause);
+      pendingInboundCalls.delete(callControlId);
+      callDirectionCache.delete(callControlId);
+      proactiveCallCache.delete(callControlId);
+      break;
+    }
+
+    // ── Speak completed (after TTS fallback) ────────────────────────────
+    case 'call.speak.ended': {
+      console.log('[telnyx] TTS speak ended, hanging up', { callControlId: callControlId.slice(0, 24) });
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      }).catch(() => {});
+      break;
+    }
+
+    // ── Playback completed (after ElevenLabs audio playback) ─────────
+    case 'call.playback.ended': {
+      console.log('[telnyx] Audio playback ended, hanging up', { callControlId: callControlId.slice(0, 24) });
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/hangup`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      }).catch(() => {});
+      break;
+    }
+
+    default: {
+      console.log('[telnyx] Unhandled call event', { eventType, callControlId: callControlId.slice(0, 24) });
+      break;
+    }
+  }
+}
+
+/**
+ * Answer an inbound call and start AI voice streaming in a single Telnyx API call.
+ *
+ * Per Telnyx docs, the answer command accepts stream_url + streaming params directly,
+ * which answers the call AND initiates bidirectional WebSocket streaming in one step.
+ * This eliminates a separate streaming_start round-trip and reduces latency.
+ *
+ * If no voice providers are configured, answers with TTS fallback instead.
+ */
+async function answerWithStreaming(callControlId: string, fromNumber: string): Promise<void> {
+  const { getConfiguredProviders } = await import('../../voice');
+
+  const userId = await findUserIdByPhone(normalizePhone(fromNumber));
+  const configuredProviders = getConfiguredProviders();
+
+  // Only allow calls from verified/connected users
+  if (!userId) {
+    console.log('[telnyx] Rejecting inbound call from unregistered number', { fromNumber });
+    pendingInboundCalls.delete(callControlId);
+
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    await new Promise(r => setTimeout(r, 500));
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: 'Sorry, this number is not registered with Stuard AI. Please sign up and verify your phone number to use voice calls.',
+        voice: 'female',
+        language: 'en-US',
+      }),
+    });
+    return;
+  }
+
+  if (configuredProviders.length === 0) {
+    console.log('[telnyx] No voice providers configured, answering with TTS fallback');
+    pendingInboundCalls.delete(callControlId);
+
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    await new Promise(r => setTimeout(r, 500));
+    await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: 'Hello, this is Stuard AI. I cannot take voice calls right now. Please send a text message instead.',
+        voice: 'female',
+        language: 'en-US',
+      }),
+    });
+    return;
+  }
+
+  // Pick the first configured provider (see getTelephonyProviderOrder):
+  // gemini-live is default; OpenAI / Grok follow; ElevenLabs last.
+  const { getTelephonyProviderOrder } = await import('../../voice');
+  const preferredOrder = getTelephonyProviderOrder();
+  let providerId = '';
+
+  for (const id of preferredOrder) {
+    const p = configuredProviders.find(cp => cp.id === id);
+    if (!p) continue;
+
+    if (id === 'elevenlabs') {
+      const agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID || '';
+      if (!agentId) continue;
+    }
+
+    providerId = id;
+    break;
+  }
+
+  if (!providerId) providerId = configuredProviders[0].id;
+
+  console.log('[telnyx] Inbound call provider selection', {
+    callControlId, fromNumber, providerId, userId,
+    configured: configuredProviders.map(p => p.id),
+  });
+
+  registerCallForBilling(callControlId, {
+    userId,
+    direction: 'inbound',
+    fromNumber,
+    toNumber: TELNYX_FROM_NUMBER || '',
+  });
+
+  // Build bridge config — system prompt and tools are loaded by the bridge
+  // via buildVoiceContext() using the userId, so we don't hardcode prompts here.
+  const bridgeConfig: Record<string, any> = {
+    providerId,
+    initialMessage: 'Hello! This is Stuard AI. How can I help you today?',
+    direction: 'inbound',
+    callerNumber: fromNumber,
+    userId,
+    metadata: { source: 'inbound_call', callerNumber: fromNumber },
+  };
+
+  if (providerId === 'elevenlabs') {
+    bridgeConfig.agentId = process.env.ELEVENLABS_INBOUND_AGENT_ID || process.env.ELEVENLABS_DEFAULT_AGENT_ID;
+  }
+
+  if (providerId === 'openai-realtime' || providerId === 'grok-realtime') {
+    bridgeConfig.voiceId = process.env.OPENAI_REALTIME_VOICE || 'alloy';
+  } else if (providerId === 'gemini-live') {
+    bridgeConfig.voiceId = process.env.GEMINI_LIVE_VOICE || 'Aoede';
+  }
+
+  const bridgeB64 = Buffer.from(JSON.stringify(bridgeConfig)).toString('base64');
+  const wsBaseUrl = (CLOUD_PUBLIC_URL || '').replace(/^http/, 'ws');
+  const streamUrl = `${wsBaseUrl}/ws/telnyx-bridge?callControlId=${encodeURIComponent(callControlId)}&bridge=${encodeURIComponent(bridgeB64)}`;
+
+  console.log('[telnyx] Answering with streaming', { callControlId, streamUrl: streamUrl.slice(0, 120), providerId });
+
+  // Answer + start bidirectional streaming in a single API call
+  const answerRes = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stream_url: streamUrl,
+      stream_track: 'both_tracks',
+      stream_bidirectional_mode: 'rtp',
+      stream_bidirectional_codec: 'PCMU',
+      send_silence_when_idle: true,
+    }),
+  });
+
+  const answerBody = await answerRes.text();
+  console.log('[telnyx] Answer+stream response', {
+    status: answerRes.status,
+    body: answerBody.slice(0, 500),
+    callControlId, fromNumber, providerId, userId,
+  });
+
+  if (!answerRes.ok) {
+    console.error('[telnyx] Answer+stream failed', { status: answerRes.status, callControlId });
+    pendingInboundCalls.delete(callControlId);
+
+    // Last resort: try answering without streaming, then use TTS
+    const plainAnswer = await fetch(`${TELNYX_API}/calls/${callControlId}/actions/answer`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }).catch(() => null);
+
+    if (plainAnswer?.ok) {
+      await new Promise(r => setTimeout(r, 500));
+      await fetch(`${TELNYX_API}/calls/${callControlId}/actions/speak`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: 'Hello, this is Stuard AI. Voice streaming is temporarily unavailable. Please try again later.',
+          voice: 'female',
+          language: 'en-US',
+        }),
+      }).catch(() => {});
+    }
+  }
+}
+
+/**
+ * Verify Telnyx Call Control Application configuration on startup.
+ *
+ * We ensure three things so inbound calls actually reach this server:
+ *   1. The Call Control App's webhook_event_url + webhook_api_version are
+ *      correct (v2 — which is what processCallWebhook parses).
+ *   2. The phone number is attached to the Call Control App's connection.
+ *   3. The phone number has its own voice webhook URL set to the CCA (as
+ *      a belt-and-braces override in case the app-level setting is ignored
+ *      for some toll-free carriers).
+ *
+ * If inbound webhooks still don't fire after this, the problem is almost
+ * always upstream in Telnyx: toll-free voice termination not enabled for
+ * the number, or the carrier blocking the call before it reaches Telnyx's
+ * network.
+ */
+export async function verifyTelnyxConfig(): Promise<void> {
+  if (!TELNYX_API_KEY || !CLOUD_PUBLIC_URL) {
+    console.log('[telnyx] Skipping config verification (missing API key or CLOUD_PUBLIC_URL)');
+    return;
+  }
+
+  const expectedWebhookUrl = `${CLOUD_PUBLIC_URL}/integrations/telnyx/call-webhook`;
+  const expectedApiVersion = '2';
+
+  try {
+    // ── 1. Fetch Call Control Applications ───────────────────────────────
+    const res = await fetch(`${TELNYX_API}/call_control_applications`, {
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      console.warn('[telnyx] Failed to list call control apps:', res.status);
+      return;
+    }
+    const data = await res.json() as any;
+    const apps = data?.data || [];
+
+    // ── 2. Fetch phone number first so we know which CCA it's tied to ────
+    const phoneRes = await fetch(`${TELNYX_API}/phone_numbers?filter[phone_number]=${encodeURIComponent(TELNYX_FROM_NUMBER)}`, {
+      headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+    });
+    if (!phoneRes.ok) {
+      console.warn('[telnyx] Failed to fetch phone number config:', phoneRes.status);
+      return;
+    }
+    const phoneData = await phoneRes.json() as any;
+    const phone = phoneData?.data?.[0];
+    if (!phone) {
+      console.warn('[telnyx] ⚠ Phone number not found in account', { number: TELNYX_FROM_NUMBER });
+      return;
+    }
+
+    // Pick the CCA that the phone number is currently attached to so we only
+    // patch the one that matters. Fall back to apps[0] if the phone isn't
+    // attached to any CCA yet.
+    const attachedApp = apps.find((a: any) => a.id === phone.connection_id);
+    const targetApp = attachedApp || apps[0];
+    if (!targetApp) {
+      console.warn('[telnyx] ⚠ No Call Control Applications found in Telnyx account — inbound calls cannot be routed');
+      return;
+    }
+
+    console.log('[telnyx] Target Call Control App', {
+      appId: targetApp.id,
+      appName: targetApp.application_name,
+      isAttachedToPhone: !!attachedApp,
+      phoneConnectionId: phone.connection_id,
+      totalAppsInAccount: apps.length,
+    });
+
+    // ── 3. Ensure the target CCA's webhook URL + api version are correct ──
+    {
+      const app = targetApp;
+      const urlMismatch = app.webhook_event_url !== expectedWebhookUrl ||
+        app.webhook_event_failover_url !== expectedWebhookUrl;
+      const versionMismatch = String(app.webhook_api_version || '') !== expectedApiVersion;
+
+      if (urlMismatch || versionMismatch) {
+        console.log('[telnyx] Updating Call Control App config', {
+          appId: app.id,
+          appName: app.application_name,
+          oldUrl: app.webhook_event_url,
+          oldApiVersion: app.webhook_api_version,
+          newUrl: expectedWebhookUrl,
+          newApiVersion: expectedApiVersion,
+        });
+        const patchRes = await fetch(`${TELNYX_API}/call_control_applications/${app.id}`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            webhook_event_url: expectedWebhookUrl,
+            webhook_event_failover_url: expectedWebhookUrl,
+            webhook_api_version: expectedApiVersion,
+          }),
+        });
+        if (!patchRes.ok) {
+          const errBody = await patchRes.text().catch(() => '');
+          console.warn('[telnyx] Failed to PATCH Call Control App', {
+            appId: app.id, status: patchRes.status, body: errBody.slice(0, 300),
+          });
+        }
+      } else {
+        console.log('[telnyx] Call Control App config OK', {
+          appId: app.id,
+          appName: app.application_name,
+          webhookUrl: app.webhook_event_url,
+          apiVersion: app.webhook_api_version,
+        });
+      }
+    }
+
+    // ── 4. Phone number connection + voice settings ──────────────────────
+    console.log('[telnyx] Phone number config', {
+      number: phone.phone_number,
+      status: phone.status,
+      connectionId: phone.connection_id,
+      connectionName: phone.connection_name,
+      type: phone.phone_number_type,
+    });
+
+    const expectedConnectionId = targetApp.id;
+    if (expectedConnectionId && phone.connection_id !== expectedConnectionId) {
+      console.warn('[telnyx] ⚠ Phone number is attached to a different connection than our Call Control App — patching', {
+        number: phone.phone_number,
+        currentConnectionId: phone.connection_id,
+        expectedConnectionId,
+      });
+      await fetch(`${TELNYX_API}/phone_numbers/${phone.id}`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: expectedConnectionId }),
+      }).catch(() => {});
+    }
+    if (!phone.connection_id && !expectedConnectionId) {
+      console.warn('[telnyx] ⚠ Phone number has no voice connection! Inbound calls will not work.');
+    }
+
+    // Fetch the per-number voice settings and log them so we can tell
+    // whether toll-free voice is enabled at the carrier level.
+    try {
+      const vRes = await fetch(`${TELNYX_API}/phone_numbers/${phone.id}/voice`, {
+        headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+      });
+      if (vRes.ok) {
+        const vData = await vRes.json() as any;
+        const voice = vData?.data || {};
+        console.log('[telnyx] Phone number voice settings', {
+          number: phone.phone_number,
+          connection_id: voice.connection_id,
+          usage_payment_method: voice.usage_payment_method,
+          call_forwarding_enabled: voice.call_forwarding?.call_forwarding_enabled,
+          cnam_listing_enabled: voice.cnam_listing?.cnam_listing_enabled,
+          tech_prefix_enabled: voice.tech_prefix_enabled,
+        });
+        // If call forwarding is on, inbound webhooks go to the forward target
+        // rather than our CCA — force it off.
+        if (voice.call_forwarding?.call_forwarding_enabled) {
+          console.warn('[telnyx] ⚠ Phone number has call forwarding enabled — inbound calls are being forwarded instead of webhooked. Disabling.');
+          await fetch(`${TELNYX_API}/phone_numbers/${phone.id}/voice`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${TELNYX_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              call_forwarding: { call_forwarding_enabled: false },
+            }),
+          }).catch(() => {});
+        }
+      } else {
+        console.warn('[telnyx] Could not fetch phone number voice settings', { status: vRes.status });
+      }
+    } catch (e: any) {
+      console.warn('[telnyx] Voice settings lookup error:', e?.message);
+    }
+  } catch (e: any) {
+    console.warn('[telnyx] Config verification error:', e?.message);
+  }
+}

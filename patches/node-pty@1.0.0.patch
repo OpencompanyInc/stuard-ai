@@ -1,0 +1,20 @@
+diff --git a/package.json b/package.json
+index dfc9d25d2b94fa141a9fc8331564deb82c6cec83..e3a9c562f9a65c130999edc6393601cd798eccc7 100644
+--- a/package.json
++++ b/package.json
+@@ -33,14 +33,11 @@
+     "openpty"
+   ],
+   "scripts": {
+-    "build": "tsc -b ./src/tsconfig.json",
+     "watch": "tsc -b -w ./src/tsconfig.json",
+     "lint": "eslint -c .eslintrc.js --ext .ts src/",
+     "postinstall": "node scripts/post-install.js",
+     "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
+-    "posttest": "npm run lint",
+-    "prepare": "npm run build",
+-    "prepublishOnly": "npm run build"
++    "posttest": "npm run lint"
+   },
+   "dependencies": {
+     "nan": "^2.17.0"

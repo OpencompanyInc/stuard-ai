@@ -1,0 +1,1635 @@
+
+import { WebSocket } from 'ws';
+
+import { getSkillsFromContext } from '../../tools/skill-tools';
+import { getBotAgentForUser } from '../../agents/bot-agent';
+import { getWorkflowAgentForUser, WORKFLOW_SYSTEM_PROMPT } from '../../agents/workflow-agent';
+import { getSkillAgentForUser, SKILL_SYSTEM_PROMPT, clearSessionSkill, setSessionSkill } from '../../agents/skill-agent';
+import { withClientBridge, getBridgeSecrets } from '../../tools/bridge';
+import { attachResearchReportForClient } from '../../tools/research-mode';
+import { routeModel, ModelChoice } from '../../router/model-router';
+import {
+  heuristicReasoningControl,
+  resolveEffectiveReasoning,
+  type EffectiveReasoning,
+  type ReasoningEffort,
+  type RequestedReasoning,
+} from '../../utils/reasoning-capability';
+import { writeLog } from '../../utils/logger';
+import { normalizeUsage } from '../../utils/usage';
+import { computeBudget, estimateTokens } from '../../memory/token-budget';
+import {
+  compactHistory,
+  emergencyTruncate,
+  getRecentWithinBudget,
+  pruneToolOutputs,
+} from '../../memory/context-compactor';
+import { ensureExecutionToolsRegistered } from '../../orchestrator/execution-tools-bootstrap';
+import { getOrchestratorAgentForUser, type BotPromptSummary } from '../../orchestrator';
+import { abortAllRunningSubagents, abortRunningSubagent } from '../../orchestrator/subagent-runtime';
+import {
+  getPendingSubagentQuestions,
+  hasPendingSubagentQuestions,
+  resolvePendingSubagentQuestionsForRequest,
+  type PendingSubagentQuestion,
+} from '../../orchestrator/delegation-coordinator-registry';
+import { LiveUsageBillingTracker } from '../../services/live-usage-billing';
+import { BOT_MEMORY_TOOL_NAMES, PROACTIVE_TASK_TOOL_NAMES } from '../../tools/proactive-task-tools';
+import {
+  appendInterjectionToMessages,
+  drainInterjectionPayload,
+} from '../chat/interjections';
+
+/** Max retries when the model calls a bad/missing tool or sends invalid args */
+const MAX_TOOL_ERROR_RETRIES = 3;
+
+/**
+ * Max times we re-prompt the orchestrator to reply to a blocked subagent before
+ * force-resolving the stragglers. Prevents an unanswered ask_orchestrator from
+ * leaving the subagent hung and the UI stuck on "Using ask_orchestrator…".
+ */
+const MAX_SUBAGENT_GUARD_ROUNDS = 3;
+
+/** Build the system reminder that forces the orchestrator to answer blocked subagents. */
+function buildSubagentReplyReminder(pending: PendingSubagentQuestion[]): string {
+  const lines = pending
+    .map((q, i) => {
+      const who = q.subagent ? ` [${q.subagent}]` : '';
+      const choices = q.choices && q.choices.length ? `\n   Choices: ${q.choices.join(' | ')}` : '';
+      return `${i + 1}. questionId="${q.questionId}"${who}: ${q.question}${choices}`;
+    })
+    .join('\n');
+  return (
+    '[System] Do not end your turn yet. The following delegated subagent(s) are BLOCKED, ' +
+    'waiting on you via ask_orchestrator — they cannot finish until you reply:\n\n' +
+    `${lines}\n\n` +
+    'For EACH question: if you can answer from context or a safe default, call reply_to_subagent ' +
+    'with that exact questionId now. If it needs the user to decide, confirm, or provide input, call ' +
+    'ask_user first, then reply_to_subagent with the result. Only after every subagent has returned ' +
+    'control should you give the user your final answer.'
+  );
+}
+
+/**
+ * Detect if an error is caused by the model calling a non-existent, invalid, or
+ * broken tool. Returns info about the problematic tool, or null for other errors.
+ */
+function detectToolError(error: any): { toolName: string; type: 'no_such_tool' | 'invalid_args' | 'tool_not_found' | 'tool_execution_error'; message: string } | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const name = String(error.name || '');
+  const message = String(error.message || '');
+
+  // AI SDK NoSuchToolError (error.name === 'AI_NoSuchToolError')
+  if (name === 'AI_NoSuchToolError' || name === 'NoSuchToolError' || message.includes('is not a tool')) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'no_such_tool',
+      message: message || 'The model tried to call a tool that does not exist.',
+    };
+  }
+
+  // AI SDK InvalidToolArgumentsError
+  if (name === 'AI_InvalidToolArgumentsError' || name === 'InvalidToolArgumentsError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'invalid_args',
+      message: message || 'The model generated invalid arguments for a tool call.',
+    };
+  }
+
+  // AI SDK ToolExecutionError (tool.execute threw during execution)
+  if (name === 'AI_ToolExecutionError' || name === 'ToolExecutionError') {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message: message || 'Tool execution failed.',
+    };
+  }
+
+  // Generic patterns in error message
+  const lower = message.toLowerCase();
+  if (
+    (lower.includes('tool') && (lower.includes('not found') || lower.includes('does not exist') || lower.includes('unknown tool'))) ||
+    lower.includes('no such tool')
+  ) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_not_found',
+      message,
+    };
+  }
+
+  // Catch tool-related execution errors (bridge failures, timeout, etc.)
+  if (lower.includes('tool') && (lower.includes('failed') || lower.includes('error') || lower.includes('timeout'))) {
+    return {
+      toolName: error.toolName || extractToolName(message) || 'unknown',
+      type: 'tool_execution_error',
+      message,
+    };
+  }
+
+  return null;
+}
+
+/** Try to extract a tool name from an error message like "Tool 'foo' not found" */
+function extractToolName(message: string): string | undefined {
+  const match = message.match(/[Tt]ool\s+['"`](\w+)['"`]/);
+  return match?.[1];
+}
+
+async function isCatalogTool(toolName: string): Promise<boolean> {
+  try {
+    const [{ initToolRegistry }, { getToolRegistry }] = await Promise.all([
+      import('../../tools/meta-tools'),
+      import('../../tools/tool-registry'),
+    ]);
+    initToolRegistry();
+    return getToolRegistry().has(toolName);
+  } catch {
+    return false;
+  }
+}
+
+function isToolCallParseError(error: unknown): error is { error?: unknown; input?: string } {
+  if (!error || typeof error !== 'object') return false;
+
+  const innerError = (error as any).error;
+  const input = (error as any).input;
+  return typeof input === 'string' && (
+    innerError instanceof SyntaxError ||
+    String(innerError || '').includes('SyntaxError') ||
+    String((error as any).message || '').includes('SyntaxError')
+  );
+}
+
+type AgentType = 'stuard' | 'workflow' | 'skill' | 'bot';
+
+interface AgentMessage {
+  text: string;
+  agent?: AgentType;
+  model?: ModelChoice | 'auto';
+  modelId?: string;
+  modelSource?: string;
+  modelConfig?: any;
+  reasoningLevel?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  integrations?: string[];
+  history?: any[]; // Context history
+  context?: {
+    paths?: Array<{ path: string; name: string; isDirectory: boolean; type?: string; metadata?: any }>;
+    tone?: string;
+    persona?: string;
+    [key: string]: any;
+  };
+  userId?: string;
+  conversationId?: string;
+}
+
+function normalizeTier(input: any): ModelChoice | 'auto' {
+  const raw = String(input || '').toLowerCase().trim();
+  if (raw === 'deep') return 'smart';
+  if (raw === 'smart') return 'smart';
+  if (raw === 'balanced') return 'balanced';
+  if (raw === 'fast') return 'fast';
+  if (raw === 'research') return 'research';
+  if (raw === 'auto') return 'auto';
+  return 'balanced';
+}
+
+function pickDefaultModelId(modelConfig: any, tier: ModelChoice): string | undefined {
+  try {
+    const cfg = modelConfig && typeof modelConfig === 'object' ? modelConfig : null;
+    const entry = cfg && (cfg as any)[tier];
+    const d = entry && typeof entry.default === 'string' ? String(entry.default).trim() : '';
+    return d || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function send(ws: WebSocket, data: unknown) {
+  try { ws.send(JSON.stringify(data)); } catch { }
+}
+
+function extractBotPromptSummaries(context: any): BotPromptSummary[] {
+  const fromBotArrays = [
+    context?.runningBots,
+    context?.bots,
+    context?.availableBots,
+    context?.botSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'bot' })) : []);
+
+  const fromAgentArrays = [
+    context?.runningAgents,
+    context?.agents,
+    context?.availableAgents,
+    context?.agentSummaries,
+  ].flatMap((value) => Array.isArray(value) ? value.map((entry: any) => ({ ...entry, kind: 'agent' })) : []);
+
+  const fromPaths = (Array.isArray(context?.paths) ? context.paths : [])
+    .filter((path: any) => (
+      path?.type === 'bot'
+      || path?.type === 'agent'
+      || String(path?.path || '').startsWith('bot://')
+      || String(path?.path || '').startsWith('agent://')
+    ))
+    .map((path: any) => {
+      const metadata = path?.metadata && typeof path.metadata === 'object' ? path.metadata : {};
+      const kind = path?.type === 'agent' || String(path?.path || '').startsWith('agent://') ? 'agent' : 'bot';
+      return {
+        id: String(metadata.id || path.path || '').replace(/^(bot|agent):\/\//, ''),
+        name: String(path.name || metadata.name || '').trim(),
+        kind,
+        status: metadata.status,
+        lastRunAt: metadata.lastRunAt,
+        nextRunAt: metadata.nextRunAt,
+        vmDeployedAt: metadata.vmDeployedAt,
+      };
+    });
+
+  const seen = new Set<string>();
+  return [...fromBotArrays, ...fromAgentArrays, ...fromPaths]
+    .map((bot: any) => ({
+      id: String(bot?.id || bot?.agentId || bot?.botId || '').trim(),
+      name: String(bot?.name || bot?.agentName || bot?.botName || '').trim(),
+      kind: bot?.kind === 'agent' ? 'agent' as const : 'bot' as const,
+      status: bot?.status ? String(bot.status) : undefined,
+      lastRunAt: bot?.lastRunAt ?? null,
+      nextRunAt: bot?.nextRunAt ?? null,
+      vmDeployedAt: bot?.vmDeployedAt ?? null,
+    }))
+    .filter((bot) => {
+      if (!bot.id && !bot.name) return false;
+      const key = bot.id || bot.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
+}
+
+function buildBotScopedActiveTools(agent: any, allowedTools: unknown): string[] | undefined {
+  if (!Array.isArray(allowedTools) || allowedTools.length === 0) return undefined;
+
+  const executionToolNames = new Set<string>(
+    Array.isArray(agent?.__executionToolNames)
+      ? agent.__executionToolNames
+      : (Array.isArray(agent?.__activeToolNames) ? agent.__activeToolNames : []),
+  );
+  if (executionToolNames.size === 0) return undefined;
+
+  const allowed = Array.from(new Set(
+    allowedTools.map((tool) => String(tool || '').trim()).filter(Boolean),
+  ));
+  const defaults = [
+    ...PROACTIVE_TASK_TOOL_NAMES,
+    ...BOT_MEMORY_TOOL_NAMES,
+    'write_session_summary',
+  ];
+
+  const isAllowed = (name: string) => {
+    if (defaults.includes(name as any)) return true;
+    if (allowed.includes(name)) return true;
+    if (name === 'run_system_command' && allowed.includes('run_command')) return true;
+    return allowed.some((prefix) => prefix.endsWith('_') && name.startsWith(prefix));
+  };
+
+  return Array.from(executionToolNames).filter(isAllowed);
+}
+
+// Store active abort controllers by WebSocket
+const activeControllers = new WeakMap<WebSocket, AbortController>();
+
+function abortWithReason(controller: AbortController | null | undefined, reason: string) {
+  if (!controller) return;
+  try {
+    (controller as any).abort(reason);
+  } catch {
+    try { controller.abort(); } catch {}
+  }
+}
+
+function getAbortReason(signal: AbortSignal | null | undefined): string {
+  const reason = (signal as any)?.reason;
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason?.message === 'string') return reason.message;
+  return signal?.aborted ? 'aborted' : '';
+}
+
+export function abortAgent(ws: WebSocket, requestId?: string): boolean {
+  // Also abort any running delegated subagents
+  const subagentsCancelled = abortAllRunningSubagents('client_stop');
+  if (subagentsCancelled > 0) {
+    console.log(`[AgentRunner] Aborted ${subagentsCancelled} running subagent(s)`);
+  }
+
+  // Try per-request abort first
+  if (requestId) {
+    const controller = (ws as any)[`__abort_${requestId}`] as AbortController | undefined;
+    if (controller) {
+      console.log(`[AgentRunner] Aborting agent stream (requestId=${requestId})`);
+      abortWithReason(controller, 'client_stop');
+      delete (ws as any)[`__abort_${requestId}`];
+      return true;
+    }
+  }
+  // Fallback: abort the most recent request on this WS
+  const controller = activeControllers.get(ws);
+  if (controller) {
+    console.log('[AgentRunner] Aborting agent stream');
+    abortWithReason(controller, 'client_stop');
+    activeControllers.delete(ws);
+    return true;
+  }
+  return subagentsCancelled > 0;
+}
+
+export async function runAgent(ws: WebSocket, message: AgentMessage, bridgeWs?: WebSocket, requestId?: string): Promise<{ text: string } | null> {
+  const _rt0 = Date.now();
+  const agentType = message.agent || 'stuard';
+  let model = normalizeTier(message.model);
+  const integrations = message.integrations || [];
+  const history = message.history || [];
+  const context = message.context || {};
+  const userId = message.userId;
+  const conversationId = message.conversationId;
+  let resultText = '';
+
+  // Tag every outbound message with requestId so the client can route to the correct tab
+  const send = (target: WebSocket, data: unknown) => {
+    try {
+      const payload = (requestId && typeof data === 'object' && data !== null)
+        ? { ...(data as any), requestId }
+        : data;
+      target.send(JSON.stringify(payload));
+    } catch { }
+  };
+
+  // Create abort controller for this request (keyed by requestId when available)
+  const abortController = new AbortController();
+  const abortKey = requestId || '__default';
+  activeControllers.set(ws, abortController);
+  if (requestId) (ws as any)[`__abort_${requestId}`] = abortController;
+
+  // 1. Auto-Routing Logic
+  if (model === 'auto') {
+    const _rStart = Date.now();
+    const routingResult = await routeModel({
+      messages: [...history, { role: 'user', content: message.text }],
+    });
+    console.log(`[perf] routeModel: ${Date.now() - _rStart}ms`);
+    model = routingResult.model;
+    // Notify UI of routing decision
+    send(ws, { type: 'progress', event: 'routing', data: { m: routingResult.modelIndex, l: routingResult.layerIndexes } });
+  }
+
+  const chosenModelId =
+    (typeof message.modelId === 'string' && message.modelId.trim())
+      ? message.modelId.trim()
+      : pickDefaultModelId(message.modelConfig, model);
+  const modelSource = typeof message.modelSource === 'string' ? message.modelSource.trim() : undefined;
+  const _bStart = Date.now();
+  const budget = computeBudget(chosenModelId || model);
+  pruneToolOutputs(history as any[], budget);
+  if (estimateTokens(history as any[]).totalTokens > budget.historyBudget) {
+    emergencyTruncate(history as any[], budget);
+  }
+  const effectiveHistory = getRecentWithinBudget(history as any[], budget);
+  console.log(`[perf] budget+prune: ${Date.now() - _bStart}ms`);
+
+  // Notify UI of final model decision (tier + optional concrete provider modelId)
+  try {
+    send(ws, { type: 'progress', event: 'model', data: { tier: model, modelId: chosenModelId } });
+  } catch { }
+
+  console.log(`[perf] runAgent pre-stream total: ${Date.now() - _rt0}ms`);
+
+  // Carry forward secrets from the outer bridge context (server.ts path).
+  // Also read skills directly from message.context.skills (manager.ts path has no outer bridge).
+  const inheritedSecrets = getBridgeSecrets();
+  const contextSkills = Array.isArray(message.context?.skills) ? message.context.skills : undefined;
+  const skillsSecret = contextSkills ?? inheritedSecrets?.__skills;
+  await withClientBridge(bridgeWs || ws, async () => {
+    const _sStart = Date.now();
+    let fullText = '';
+    let usage: any = null;
+    const finishedSteps: Array<{ usage: any; providerMetadata: any }> = [];
+    const sourceLabel = agentType === 'workflow'
+      ? 'Workflow Architect'
+      : agentType === 'skill'
+        ? 'Skill Agent'
+        : agentType === 'bot'
+          ? 'Bot Agent'
+        : 'Chat';
+    const billingTracker = new LiveUsageBillingTracker({
+      userId,
+      conversationId,
+      model: chosenModelId || model,
+      sourceRef: `agent:${requestId || conversationId || Date.now()}`,
+      sourceType: 'inference',
+      sourceLabel,
+      billingExcluded: false,
+      onSettlement: (summary) => {
+        send(ws, {
+          type: 'progress',
+          event: 'billing_update',
+          data: {
+            sourceRef: summary.sourceRef,
+            trigger: summary.trigger,
+            stepNumber: summary.stepNumber,
+            conversationId,
+            model: chosenModelId || model,
+            sourceType: 'inference',
+            sourceLabel,
+            delta: summary.delta,
+            cumulative: summary.cumulative,
+          },
+        });
+      },
+    });
+
+    try {
+      // Select agent based on type
+      if (agentType === 'skill') {
+        try {
+          clearSessionSkill();
+          const incomingSkill = message?.context?.skill;
+          if (incomingSkill && typeof incomingSkill === 'object' && !Array.isArray(incomingSkill)) {
+            setSessionSkill(incomingSkill);
+          }
+        } catch { }
+      }
+
+      const _agentStart = Date.now();
+      const skills = getSkillsFromContext();
+      const bots = extractBotPromptSummaries(context);
+      if (agentType === 'stuard') {
+        await ensureExecutionToolsRegistered();
+      }
+      const agent = agentType === 'workflow'
+        ? await getWorkflowAgentForUser({ modelId: chosenModelId, userId, modelSource })
+        : agentType === 'skill'
+          ? await getSkillAgentForUser(chosenModelId, userId, modelSource)
+          : agentType === 'bot'
+            ? await getBotAgentForUser({
+                botId: String(context?.proactiveBotId || context?.botId || '').trim() || undefined,
+                botName: String(context?.botName || '').trim() || undefined,
+                model: model as ModelChoice,
+                modelId: chosenModelId,
+                modelSource,
+                userId,
+                allowedTools: Array.isArray(context?.allowedTools) ? context.allowedTools : [],
+              })
+            : await getOrchestratorAgentForUser(model as ModelChoice, integrations, {}, chosenModelId, skills, bots, userId, modelSource);
+      const billingExcluded = !!(agent as any)?.__billingExcluded;
+      billingTracker.setBillingExcluded(billingExcluded);
+      const bridgeSecrets = getBridgeSecrets();
+      if (bridgeSecrets) {
+        bridgeSecrets.__modelSource = (agent as any)?.__modelSource;
+        bridgeSecrets.__billingExcluded = billingExcluded;
+      }
+      console.log(`[perf] agent instantiation: ${Date.now() - _agentStart}ms (orchestrator=${agentType === 'stuard'})`);
+
+      // Build context prefix for paths
+      let contextPrefix = '';
+      if (context.paths && context.paths.length > 0) {
+        const botRefs = context.paths.filter(p => (
+          p.type === 'bot'
+          || p.type === 'agent'
+          || String(p.path || '').startsWith('bot://')
+          || String(p.path || '').startsWith('agent://')
+        ));
+        const fileRefs = context.paths.filter(p => !(
+          p.type === 'bot'
+          || p.type === 'agent'
+          || String(p.path || '').startsWith('bot://')
+          || String(p.path || '').startsWith('agent://')
+        ));
+        const parts: string[] = [];
+        if (fileRefs.length > 0) {
+          const pathsList = fileRefs.map(p =>
+            `- ${p.isDirectory ? '[DIR]' : '[FILE]'} ${p.path}`
+          ).join('\n');
+          parts.push(`User added this as context:\n${pathsList}`);
+        }
+        if (botRefs.length > 0) {
+          const botList = botRefs.map(p => {
+            const metadata = p.metadata && typeof p.metadata === 'object' ? p.metadata : {};
+            const kind = p.type === 'agent' || String(p.path || '').startsWith('agent://') ? 'AGENT' : 'BOT';
+            const id = String(metadata.id || p.path || '').replace(/^(bot|agent):\/\//, '');
+            return `- [${kind}] @${p.name} id=${id}${metadata.status ? ` status=${metadata.status}` : ''}${metadata.vmDeployedAt ? ' vm=deployed' : ''}`;
+          }).join('\n');
+          parts.push(`User added this as context (configured agents/bots - delegate to the agent or bot subagent with this id before answering status/detail questions):\n${botList}`);
+        }
+        contextPrefix = parts.length > 0 ? `${parts.join('\n\n')}\n\n` : '';
+      }
+
+      // Hidden context (e.g. SMS formatting instructions) — prepend as system-level guidance
+      const hiddenContextMsg = context.hiddenContext
+        ? { role: 'system', content: String(context.hiddenContext) }
+        : null;
+
+      // Prepare input with context
+      const userContent = contextPrefix + message.text;
+      const buildInput = (extraMessages?: Array<{ role: string; content: string }>) => {
+        const extra = extraMessages || [];
+        if (effectiveHistory.length > 0 || extra.length > 0 || hiddenContextMsg) {
+          const prefix = hiddenContextMsg ? [hiddenContextMsg] : [];
+          const base = [...prefix, ...effectiveHistory, ...extra, { role: 'user', content: userContent }];
+          if (agentType === 'workflow') {
+            return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, ...base];
+          }
+          if (agentType === 'skill') {
+            return [{ role: 'system', content: SKILL_SYSTEM_PROMPT }, ...base];
+          }
+          return base;
+        }
+        if (agentType === 'workflow') {
+          return [{ role: 'system', content: WORKFLOW_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
+        }
+        if (agentType === 'skill') {
+          return [{ role: 'system', content: SKILL_SYSTEM_PROMPT }, { role: 'user', content: userContent }];
+        }
+        return userContent;
+      };
+
+      // Notify start
+      send(ws, { type: 'progress', event: 'start', data: {} });
+
+      // Send initial token estimate so UI has a baseline before any step finishes
+      const initialEstimate = estimateTokens(effectiveHistory as any[]);
+      send(ws, {
+        type: 'progress',
+        event: 'usage_update',
+        data: {
+          promptTokens: initialEstimate.totalTokens,
+          completionTokens: 0,
+          totalTokens: initialEstimate.totalTokens,
+          contextWindow: budget.contextWindow,
+          modelId: chosenModelId || model,
+        },
+      });
+
+      // Build stream options
+      // Workflow agent needs more steps for tool discovery and testing
+      const maxToolSteps = (agentType === 'workflow' || agentType === 'skill') ? 60 : 40;
+      let cumulativeInputTokens = 0;
+      // Size of the live context = the *last* step's prompt tokens (every
+      // step's prompt re-includes the full history, so summing steps
+      // overestimates quadratically — that used to burn all compaction
+      // rounds within a few steps and abort runs that had plenty of room).
+      let currentContextTokens = 0;
+      let currentTurnStartIndex = 0;
+      let midTurnCompacted = false;
+      // Halt-and-resume compaction: when onStepFinish detects tokens exceed
+      // the budget threshold we abort the stream, compact, and re-stream.
+      let needsCompaction = false;
+      let compactionAbort: AbortController | null = null;
+      const MAX_COMPACTION_ROUNDS = 3;
+      let compactionRound = 0;
+      // Accumulated messages from the current stream for compaction
+      let streamAccumulatedMessages: any[] = [];
+      // Mastra's `activeTools` controls which tools the LLM sees in its schema.
+      // The Agent is constructed with the FULL tool universe so execution never
+      // fails with "Tool X not found", but we limit the LLM to the lean set.
+      const botScopedActiveTools = buildBotScopedActiveTools(agent as any, context.allowedTools);
+      const activeToolNames: string[] | undefined = botScopedActiveTools || (agent as any).__activeToolNames;
+      const buildStreamOptions = (): any => ({
+        maxSteps: maxToolSteps,
+        ...(Object.keys(providerOpts).length > 0 ? { providerOptions: { ...providerOpts } } : {}),
+        abortSignal: compactionAbort?.signal ?? abortController.signal,
+        ...(activeToolNames ? { activeTools: activeToolNames } : {}),
+        prepareStep: async ({ messages, stepNumber }: any) => {
+          let stepMessages = Array.isArray(messages) ? [...messages] : messages;
+          let injectedSteer = false;
+
+          if (Array.isArray(stepMessages)) {
+            const interjection = drainInterjectionPayload(ws, requestId);
+            if (interjection) {
+              stepMessages = appendInterjectionToMessages(stepMessages, interjection.content);
+              history.push({ role: 'user', content: interjection.content });
+              injectedSteer = true;
+              send(ws, {
+                type: 'progress',
+                event: 'interjection_applied',
+                data: { count: interjection.count },
+              });
+            }
+          }
+
+          if (!Array.isArray(stepMessages) || stepNumber <= 1 || midTurnCompacted) {
+            // Snapshot messages for potential compaction on halt
+            streamAccumulatedMessages = Array.isArray(stepMessages) ? [...stepMessages] : [];
+            return injectedSteer ? { messages: stepMessages } : {};
+          }
+
+          // Snapshot messages for potential compaction on halt
+          streamAccumulatedMessages = [...stepMessages];
+
+          const estimate = estimateTokens(stepMessages as any[]);
+          if (estimate.totalTokens < budget.historyBudget * 0.85) {
+            return injectedSteer ? { messages: stepMessages } : {};
+          }
+
+          try {
+            console.log(`[compactor] Mid-turn compaction at step ${stepNumber}: ${estimate.totalTokens} tokens`);
+            // compactHistory protects the leading system prompt + original
+            // task message and snaps tool-call/result boundaries, so this is
+            // safe mid-turn (the old splice-at-0 destroyed the workflow/skill
+            // system prompt).
+            stepMessages = await compactHistory([...stepMessages], chosenModelId || model);
+            midTurnCompacted = true;
+            streamAccumulatedMessages = [...stepMessages];
+            const postCompactEstimate = estimateTokens(stepMessages as any[]);
+            console.log(`[compactor] Mid-turn compacted: ${postCompactEstimate.totalTokens} tokens remaining`);
+            // Notify UI of reduced context after compaction
+            send(ws, {
+              type: 'progress',
+              event: 'usage_update',
+              data: {
+                promptTokens: postCompactEstimate.totalTokens,
+                completionTokens: 0,
+                totalTokens: postCompactEstimate.totalTokens,
+                contextWindow: budget.contextWindow,
+                modelId: chosenModelId || model,
+                compacted: true,
+              },
+            });
+          } catch (err) {
+            console.warn('[compactor] Mid-turn summarization failed, falling back to pruning:', err);
+            pruneToolOutputs(stepMessages as any[], budget);
+          }
+
+          return { messages: stepMessages };
+        },
+        onStepFinish: async (stepData: any) => {
+          const stepUsage = stepData?.usage;
+          if (!stepUsage) return;
+          finishedSteps.push({
+            usage: stepUsage,
+            providerMetadata: stepData?.providerMetadata,
+          });
+          const normalized = normalizeUsage(stepUsage);
+          cumulativeInputTokens += normalized.promptTokens;
+          currentContextTokens = normalized.promptTokens + (normalized.completionTokens || 0);
+          // Emit live usage update so the UI can update token counts mid-stream
+          send(ws, {
+            type: 'progress',
+            event: 'usage_update',
+            data: {
+              promptTokens: normalized.promptTokens,
+              completionTokens: normalized.completionTokens || 0,
+              totalTokens: currentContextTokens,
+              contextWindow: budget.contextWindow,
+              modelId: chosenModelId || model,
+            },
+          });
+          await billingTracker.settleIncrement(stepData, {
+            trigger: 'step_finish',
+            stepNumber: finishedSteps.length,
+          });
+          const rawCalls = stepData?.toolCalls || stepData?.tool_calls || [];
+          if (Array.isArray(rawCalls) && rawCalls.length > 0 && finishedSteps.length < maxToolSteps) {
+            send(ws, {
+              type: 'progress',
+              event: 'step_finished',
+              data: { step: finishedSteps.length },
+            });
+            await new Promise((resolve) => setTimeout(resolve, 350));
+          }
+
+          // Halt-and-resume compaction: if cumulative prompt tokens exceed the
+          // budget threshold, flag compaction and abort the current stream so
+          // the outer loop can compact and re-stream.
+          if (
+            !needsCompaction &&
+            compactionRound < MAX_COMPACTION_ROUNDS &&
+            currentContextTokens > budget.historyBudget * 0.85
+          ) {
+            needsCompaction = true;
+            console.log(`[compactor] Halt-and-resume triggered: ${currentContextTokens} tokens exceeds ${Math.round(budget.historyBudget * 0.85)} threshold (round ${compactionRound + 1}/${MAX_COMPACTION_ROUNDS})`);
+            abortWithReason(compactionAbort, 'compaction');
+          }
+        },
+      });
+
+      // Enable thinking/reasoning streams for supported providers. The requested
+      // level is reconciled with the model's real capability (extra-high tier,
+      // disable-ability) via the shared resolver — see provider-options.ts, which
+      // keeps the main chat path in sync with this one.
+      const requestedReasoning: RequestedReasoning =
+        (['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(message.reasoningLevel || '')
+          ? message.reasoningLevel
+          : 'high') as RequestedReasoning;
+      const reasoningControl = heuristicReasoningControl(chosenModelId || '');
+      const effectiveReasoning: EffectiveReasoning = resolveEffectiveReasoning(requestedReasoning, reasoningControl);
+
+      // Build provider options as a standalone object — merged into buildStreamOptions()
+      const providerOpts: Record<string, any> = {};
+
+      // ---------- Google Gemini thinking ----------
+      const isGemini3 = chosenModelId?.includes('google/gemini-3');
+      const isGemini25 = chosenModelId?.includes('google/gemini-2.5');
+      if (isGemini25) {
+        if (effectiveReasoning === 'none') {
+          providerOpts.google = { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } };
+        } else if (effectiveReasoning === 'default') {
+          providerOpts.google = { thinkingConfig: { includeThoughts: true } };
+        } else {
+          const gemini25Budget: Record<ReasoningEffort, number> = {
+            minimal: 512,
+            low: 1024,
+            medium: 8192,
+            high: 24576,
+            xhigh: 24576,
+          };
+          providerOpts.google = {
+            thinkingConfig: { thinkingBudget: gemini25Budget[effectiveReasoning], includeThoughts: true },
+          };
+        }
+      } else if (isGemini3 && effectiveReasoning !== 'none' && effectiveReasoning !== 'default') {
+        const gemini3Level: Record<ReasoningEffort, 'low' | 'medium' | 'high'> = {
+          minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high',
+        };
+        providerOpts.google = {
+          thinkingConfig: { thinkingLevel: gemini3Level[effectiveReasoning], includeThoughts: true },
+        };
+      }
+
+      // ---------- Anthropic thinking ----------
+      if (chosenModelId?.includes('anthropic/')) {
+        if (effectiveReasoning === 'none') {
+          providerOpts.anthropic = {
+            thinking: { type: 'disabled' },
+          };
+        } else {
+          const anthropicBudget: Record<EffectiveReasoning, number | undefined> = {
+            none: undefined, default: undefined,
+            minimal: 3000, low: 5000, medium: 16384, high: undefined /* no cap */, xhigh: 32000,
+          };
+          const budgetTokens = anthropicBudget[effectiveReasoning];
+          providerOpts.anthropic = {
+            sendReasoning: true,
+            thinking: budgetTokens
+              ? { type: 'enabled', budgetTokens }
+              : { type: 'enabled' },
+          };
+        }
+      }
+
+      // ---------- OpenAI reasoning effort ----------
+      if (chosenModelId?.includes('openai/')) {
+        const modelPart = (chosenModelId || '').split('/').pop() || '';
+        const supportsEffort = /^(o[1-9]|gpt-5(?:$|[-.]))/.test(modelPart);
+        if (supportsEffort && effectiveReasoning !== 'none') {
+          // OpenAI reasoningEffort accepts minimal|low|medium|high; xhigh folds to
+          // high. gpt-5.1 caps at 'medium'; 'default' lands on a safe 'medium'.
+          const maxEffort: 'medium' | 'high' = /^gpt-5\.1/.test(modelPart) ? 'medium' : 'high';
+          const order: Array<'minimal' | 'low' | 'medium' | 'high'> = ['minimal', 'low', 'medium', 'high'];
+          const base: 'minimal' | 'low' | 'medium' | 'high' =
+            effectiveReasoning === 'default' ? 'medium' : effectiveReasoning === 'xhigh' ? 'high' : effectiveReasoning;
+          const clampedEffort = order.indexOf(base) > order.indexOf(maxEffort) ? maxEffort : base;
+          providerOpts.openai = {
+            reasoningEffort: clampedEffort,
+            // Responses API: expose reasoning summaries as streaming chunks
+            // GPT-5.4 supports 'detailed' summaries for richer reasoning output
+            reasoningSummary: /^gpt-5\.4/.test(modelPart) ? 'detailed' : 'auto',
+          };
+        }
+      }
+
+      // ---------- xAI/Grok reasoning ----------
+      if (chosenModelId?.includes('xai/')) {
+        const modelPart = (chosenModelId || '').split('/').pop() || '';
+        const supportsReasoning = !modelPart.includes('non-reasoning');
+        if (supportsReasoning && effectiveReasoning !== 'none') {
+          // xAI Chat API only supports 'low' | 'high' (not 'medium' or 'none')
+          const xaiEffort = (effectiveReasoning === 'low' || effectiveReasoning === 'minimal') ? 'low' : 'high';
+          providerOpts.xai = { reasoningEffort: xaiEffort };
+        }
+      }
+
+      // ---------- DeepSeek thinking ----------
+      if (chosenModelId?.includes('deepseek/')) {
+        if (effectiveReasoning === 'none') {
+          providerOpts.deepseek = { thinking: { type: 'disabled' } };
+        } else {
+          providerOpts.deepseek = { thinking: { type: 'enabled' } };
+        }
+      }
+
+      // Track tool errors for retry logic
+      const toolErrorHistory: string[] = [];
+      let attempt = 0;
+
+      while (attempt <= MAX_TOOL_ERROR_RETRIES) {
+        try {
+          // Build input, injecting tool error feedback if retrying
+          const extraMessages = toolErrorHistory.length > 0
+            ? [{ role: 'assistant', content: fullText || 'I tried to use a tool.' },
+               { role: 'user', content: `[System: Tool call failed] ${toolErrorHistory[toolErrorHistory.length - 1]}. Please use only the tools available to you. Do NOT invent or guess tool names.` }]
+            : undefined;
+          let input = buildInput(extraMessages) as any;
+          currentTurnStartIndex = Array.isArray(input) ? input.length : 1;
+          midTurnCompacted = false;
+          needsCompaction = false;
+          streamAccumulatedMessages = [];
+
+          // Create per-stream abort controller that chains to the main one
+          compactionAbort = new AbortController();
+          // If the main abort fires, also abort the compaction controller
+          const onMainAbort = () => abortWithReason(compactionAbort, getAbortReason(abortController.signal) || 'parent_abort');
+          abortController.signal.addEventListener('abort', onMainAbort, { once: true });
+
+          // Get stream result from Mastra
+          console.log(`[perf] agent.stream() called at +${Date.now() - _rt0}ms`);
+          const streamOptions = buildStreamOptions();
+          const streamResult: any = await agent.stream(input, streamOptions);
+          console.log(`[perf] agent.stream() returned at +${Date.now() - _rt0}ms`);
+
+          // Try to get the async iterable - Mastra uses fullStream
+          const stream = streamResult?.fullStream || streamResult;
+
+          // Check if it's actually iterable
+          if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+            // Stream is async iterable - process chunks
+            let chunkCount = 0;
+            let reasoningChunks = 0;
+            let _firstChunk = true;
+            for await (const chunk of stream) {
+              if (_firstChunk) { console.log(`[perf] first stream chunk at +${Date.now() - _rt0}ms`); _firstChunk = false; }
+              chunkCount++;
+              if (chunk?.type === 'finish') {
+                const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                if (finishUsage) {
+                  usage = normalizeUsage({
+                    ...finishUsage,
+                    providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                  });
+                }
+              }
+              // Debug: log thinking/reasoning chunks
+              if (chunk?.type?.includes('reasoning') || chunk?.type?.includes('thinking')) {
+                reasoningChunks++;
+                console.log('[AgentRunner] THINKING chunk:', chunk.type, chunk.payload?.text?.slice(0, 80) || chunk.textDelta?.slice(0, 80));
+              }
+              const delta = handleStreamChunk(ws, chunk, send);
+              if (delta) fullText += delta;
+            }
+            console.log(`[AgentRunner] Stream complete: ${chunkCount} chunks, ${reasoningChunks} reasoning`);
+          } else {
+            // Not iterable - this is the aggregated result
+            console.log('[AgentRunner] Stream not iterable, using aggregated result');
+            if (streamResult?.text) {
+              fullText = streamResult.text;
+              send(ws, { type: 'progress', event: 'delta', data: { text: fullText } });
+            }
+            if (streamResult?.usage) {
+              usage = normalizeUsage(streamResult.usage);
+            }
+          }
+
+          // Clean up the chain listener
+          abortController.signal.removeEventListener('abort', onMainAbort);
+
+          // ── Halt-and-resume compaction check ──
+          // If onStepFinish flagged compaction, compact and re-stream
+          if (needsCompaction && !abortController.signal.aborted && compactionRound < MAX_COMPACTION_ROUNDS) {
+            compactionRound++;
+            console.log(`[compactor] Halt-and-resume: compacting context (round ${compactionRound}/${MAX_COMPACTION_ROUNDS})`);
+
+            // Show compacting as a shimmering trace step in the chain-of-thought panel
+            send(ws, {
+              type: 'progress',
+              event: 'compacting',
+              data: {
+                phase: 'start',
+                round: compactionRound,
+                maxRounds: MAX_COMPACTION_ROUNDS,
+                tokensBefore: currentContextTokens,
+              },
+            });
+            send(ws, {
+              type: 'progress',
+              event: 'usage_update',
+              data: {
+                promptTokens: currentContextTokens,
+                completionTokens: 0,
+                totalTokens: currentContextTokens,
+                contextWindow: budget.contextWindow,
+                modelId: chosenModelId || model,
+                compacting: true,
+              },
+            });
+
+            try {
+              // Use the messages snapshot from prepareStep (includes tool results
+              // accumulated during the current turn)
+              const messagesToCompact = streamAccumulatedMessages.length > 0
+                ? streamAccumulatedMessages
+                : (Array.isArray(input) ? [...input] : [{ role: 'user', content: input }]);
+
+              const compacted = await compactHistory(messagesToCompact, chosenModelId || model);
+              const postEstimate = estimateTokens(compacted as any[]);
+              const tokensBeforeCompaction = currentContextTokens;
+              console.log(`[compactor] Compacted: ${tokensBeforeCompaction} -> ${postEstimate.totalTokens} tokens`);
+
+              // Reset and rebuild input from compacted messages
+              // Override the buildInput to use the compacted messages directly
+              input = compacted;
+              currentTurnStartIndex = compacted.length;
+              midTurnCompacted = true;
+              currentContextTokens = postEstimate.totalTokens;
+              needsCompaction = false;
+              streamAccumulatedMessages = [];
+
+              send(ws, {
+                type: 'progress',
+                event: 'compacting',
+                data: {
+                  phase: 'done',
+                  round: compactionRound,
+                  maxRounds: MAX_COMPACTION_ROUNDS,
+                  tokensBefore: tokensBeforeCompaction,
+                  tokensAfter: postEstimate.totalTokens,
+                },
+              });
+              send(ws, {
+                type: 'progress',
+                event: 'usage_update',
+                data: {
+                  promptTokens: postEstimate.totalTokens,
+                  completionTokens: 0,
+                  totalTokens: postEstimate.totalTokens,
+                  contextWindow: budget.contextWindow,
+                  modelId: chosenModelId || model,
+                  compacted: true,
+                },
+              });
+
+              // Re-stream with compacted input
+              compactionAbort = new AbortController();
+              const onMainAbort2 = () => abortWithReason(compactionAbort, getAbortReason(abortController.signal) || 'parent_abort');
+              abortController.signal.addEventListener('abort', onMainAbort2, { once: true });
+              needsCompaction = false;
+
+              console.log(`[perf] agent.stream() (compacted) called at +${Date.now() - _rt0}ms`);
+              const compactedStreamOptions = buildStreamOptions();
+              const compactedStreamResult: any = await agent.stream(input, compactedStreamOptions);
+              console.log(`[perf] agent.stream() (compacted) returned at +${Date.now() - _rt0}ms`);
+
+              const compactedStream = compactedStreamResult?.fullStream || compactedStreamResult;
+              if (compactedStream && typeof compactedStream[Symbol.asyncIterator] === 'function') {
+                for await (const chunk of compactedStream) {
+                  if (chunk?.type === 'finish') {
+                    const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                    if (finishUsage) {
+                      usage = normalizeUsage({
+                        ...finishUsage,
+                        providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                      });
+                    }
+                  }
+                  const delta = handleStreamChunk(ws, chunk, send);
+                  if (delta) fullText += delta;
+                }
+              } else if (compactedStreamResult?.text) {
+                fullText += compactedStreamResult.text;
+                send(ws, { type: 'progress', event: 'delta', data: { text: compactedStreamResult.text } });
+                if (compactedStreamResult?.usage) usage = normalizeUsage(compactedStreamResult.usage);
+              }
+
+              abortController.signal.removeEventListener('abort', onMainAbort2);
+            } catch (compactError: any) {
+              if (compactError?.name === 'AbortError' || abortController.signal.aborted) {
+                throw compactError;
+              }
+              console.warn('[compactor] Halt-and-resume compaction failed:', compactError);
+              // Continue with whatever we have
+            }
+          }
+
+          // Try to get final text if we didn't accumulate any
+          if (!fullText && streamResult?.text) {
+            fullText = streamResult.text;
+          }
+
+          // Get usage from stream result if not set
+          if (!usage && streamResult?.usage) {
+            usage = normalizeUsage(streamResult.usage);
+          }
+
+          // Check for reasoning/thinking in final result
+          if (streamResult?.reasoning) {
+            console.log('[AgentRunner] Final reasoning found:', String(streamResult.reasoning).slice(0, 100));
+            send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.reasoning } });
+          }
+          if (streamResult?.thinking) {
+            console.log('[AgentRunner] Final thinking found:', String(streamResult.thinking).slice(0, 100));
+            send(ws, { type: 'progress', event: 'reasoning', data: { text: streamResult.thinking } });
+          }
+
+          // Stream succeeded - break out of retry loop
+          break;
+
+        } catch (streamError: any) {
+          if (isToolCallParseError(streamError)) {
+            throw streamError;
+          }
+
+          // Check if this is a tool error we can retry
+          const toolError = detectToolError(streamError);
+          if (toolError && attempt < MAX_TOOL_ERROR_RETRIES) {
+            attempt++;
+            const toolCallId = `tc-error-${Date.now()}`;
+            const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+            const isMetaAccessibleTool = isMissingTool && await isCatalogTool(toolError.toolName);
+            const isHallucination = isMissingTool && !isMetaAccessibleTool;
+            const label = isMetaAccessibleTool
+              ? 'meta-only'
+              : isHallucination
+                ? 'hallucinated'
+                : toolError.type === 'invalid_args'
+                  ? 'invalid args'
+                  : 'execution failed';
+
+            console.warn(`[AgentRunner] Tool error (${label}): "${toolError.toolName}" (${toolError.type}), retrying (${attempt}/${MAX_TOOL_ERROR_RETRIES})`);
+
+            try {
+              writeLog('tool_error_retry', {
+                toolName: toolError.toolName,
+                type: toolError.type,
+                attempt,
+                message: toolError.message,
+              });
+            } catch { }
+
+            // Notify UI about the failed tool call (show as error pill)
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: toolError.toolName,
+                status: 'called',
+                toolCallId,
+                args: {},
+                description: `${toolError.toolName} (${label})`,
+              }
+            });
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: toolError.toolName,
+                status: 'error',
+                toolCallId,
+                error: isHallucination
+                  ? `Tool "${toolError.toolName}" does not exist. Use search_tools to find available tools, or execute_tool to run tools by name. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`
+                  : isMetaAccessibleTool
+                    ? `Tool "${toolError.toolName}" exists in the catalog but is not loaded natively in this turn. Use get_tool_schema({ tool_name: "${toolError.toolName}" }) and then execute_tool({ tool_name: "${toolError.toolName}", args: {...} }). (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`
+                  : `Tool "${toolError.toolName}" failed: ${toolError.message}. Check args with get_tool_schema first. (attempt ${attempt}/${MAX_TOOL_ERROR_RETRIES})`,
+              }
+            });
+
+            // Store error feedback to inject into the retry
+            if (isHallucination) {
+              toolErrorHistory.push(
+                `The tool "${toolError.toolName}" does not exist and cannot be called directly. ` +
+                `Use search_tools to find available tools, or use execute_tool({ tool_name: "...", args: {...} }) to run tools by name. ` +
+                `Do NOT invent tool names — only use tools you can verify exist.`
+              );
+            } else if (isMetaAccessibleTool) {
+              toolErrorHistory.push(
+                `The tool "${toolError.toolName}" is real, but it is not loaded as a native direct-call tool in this turn. ` +
+                `Do not call "${toolError.toolName}" directly. Instead call get_tool_schema({ tool_name: "${toolError.toolName}" }) first, ` +
+                `then call execute_tool({ tool_name: "${toolError.toolName}", args: {...} }).`
+              );
+            } else if (toolError.type === 'invalid_args') {
+              toolErrorHistory.push(
+                `Tool "${toolError.toolName}" received invalid arguments: ${toolError.message}. ` +
+                `Use get_tool_schema({ tool_name: "${toolError.toolName}" }) to see the correct argument format before retrying.`
+              );
+            } else {
+              toolErrorHistory.push(
+                `Tool "${toolError.toolName}" failed during execution: ${toolError.message}. ` +
+                `Try a different approach or use a different tool.`
+              );
+            }
+
+            // Continue to next iteration of the retry loop
+            continue;
+          }
+
+          // Not a retryable tool error, or retries exhausted - re-throw
+          throw streamError;
+        }
+      }
+
+      // ── Subagent question guard ──
+      // The orchestrator sometimes ends its turn while a delegated subagent is
+      // still blocked on ask_orchestrator: `delegate` returned the question
+      // early, but the model produced a final answer instead of calling
+      // reply_to_subagent. Re-prompt it to resolve every dangling question
+      // before we finish; then force-resolve any stragglers so the subagent
+      // fails fast instead of hanging the UI on "Using ask_orchestrator…".
+      if (requestId && hasPendingSubagentQuestions(requestId)) {
+        let guardRound = 0;
+        while (
+          guardRound < MAX_SUBAGENT_GUARD_ROUNDS &&
+          !abortController.signal.aborted &&
+          hasPendingSubagentQuestions(requestId)
+        ) {
+          guardRound++;
+          const pending = getPendingSubagentQuestions(requestId);
+          writeLog('subagent_question_guard', { requestId, round: guardRound, pending: pending.length });
+          send(ws, { type: 'progress', event: 'subagent_guard', data: { round: guardRound, pending: pending.length } });
+
+          // Continue the conversation with the model's own (premature) turn plus
+          // a forcing reminder. The orchestrator already has its system prompt on
+          // the Agent, so we only replay history + this turn + the reminder.
+          const guardInput: any[] = [
+            ...effectiveHistory,
+            { role: 'user', content: userContent },
+            { role: 'assistant', content: fullText || '(working…)' },
+            { role: 'user', content: buildSubagentReplyReminder(pending) },
+          ];
+
+          // Use the main request abort signal, not a stale compaction one.
+          compactionAbort = null;
+          needsCompaction = false;
+          currentTurnStartIndex = guardInput.length;
+          midTurnCompacted = false;
+
+          try {
+            const guardOptions = buildStreamOptions();
+            const guardResult: any = await agent.stream(guardInput, guardOptions);
+            const guardStream = guardResult?.fullStream || guardResult;
+            if (guardStream && typeof guardStream[Symbol.asyncIterator] === 'function') {
+              for await (const chunk of guardStream) {
+                if (chunk?.type === 'finish') {
+                  const finishUsage = chunk?.usage ?? chunk?.payload?.usage ?? chunk?.payload;
+                  if (finishUsage) {
+                    usage = normalizeUsage({
+                      ...finishUsage,
+                      providerMetadata: chunk?.providerMetadata ?? chunk?.payload?.providerMetadata,
+                    });
+                  }
+                }
+                const delta = handleStreamChunk(ws, chunk, send);
+                if (delta) fullText += delta;
+              }
+            } else if (guardResult?.text) {
+              fullText += guardResult.text;
+              send(ws, { type: 'progress', event: 'delta', data: { text: guardResult.text } });
+              if (guardResult?.usage) usage = normalizeUsage(guardResult.usage);
+            }
+          } catch (guardError: any) {
+            if (guardError?.name === 'AbortError' || abortController.signal.aborted) break;
+            console.warn('[AgentRunner] Subagent question guard round failed:', guardError);
+            break;
+          }
+        }
+
+        // Anything still blocked after the guard rounds: unblock it and abort
+        // the subagent so it fails fast instead of hanging the UI forever.
+        const stranded = resolvePendingSubagentQuestionsForRequest(requestId, 'orchestrator_finished');
+        if (stranded.length > 0) {
+          console.warn(`[AgentRunner] Force-resolved ${stranded.length} dangling subagent question(s) after guard rounds`);
+          for (const id of stranded) {
+            try { abortRunningSubagent(id, 'orchestrator_finished'); } catch { }
+          }
+        }
+      }
+
+      const billableSteps = finishedSteps.length > 0
+        ? finishedSteps
+        : usage
+          ? [{ usage, providerMetadata: usage?.providerMetadata }]
+          : [];
+      await billingTracker.settleToUsageList(billableSteps, { trigger: 'finish' });
+
+      const billedTotals = billingTracker.getCumulativeTotals();
+      if (billedTotals.totalTokens > 0 || billedTotals.credits > 0) {
+        usage = {
+          ...(usage || {}),
+          promptTokens: billedTotals.promptTokens,
+          completionTokens: billedTotals.completionTokens,
+          totalTokens: billedTotals.totalTokens,
+          cachedPromptTokens: billedTotals.cachedPromptTokens,
+          reasoningTokens: billedTotals.reasoningTokens,
+          costUsd: billedTotals.costUsd,
+          creditCost: billedTotals.credits,
+        };
+      } else if (usage) {
+        const promptTokens = Math.max(usage.promptTokens || 0, cumulativeInputTokens);
+        usage = {
+          ...usage,
+          promptTokens,
+          totalTokens: Math.max(usage.totalTokens || 0, promptTokens + (usage.completionTokens || 0)),
+        };
+      } else if (cumulativeInputTokens > 0) {
+        usage = {
+          promptTokens: cumulativeInputTokens,
+          completionTokens: 0,
+          totalTokens: cumulativeInputTokens,
+        };
+      }
+
+      // Send final message (include conversationId for SMS multi-turn continuity)
+      send(ws, {
+        type: 'final',
+        model: chosenModelId || model,
+        conversationId,
+        result: { text: fullText, response: fullText, usage, modelId: chosenModelId || model },
+        usage,
+      });
+
+      resultText = fullText;
+
+    } catch (error: any) {
+      // Handle abort specifically
+      if (error.name === 'AbortError' || abortController.signal.aborted) {
+        console.log(`[AgentRunner] Stream aborted | reason=${getAbortReason(abortController.signal) || 'unknown'}`);
+        send(ws, {
+          type: 'final',
+          model: chosenModelId || model,
+          result: { text: fullText || '(Stopped)', response: fullText || '(Stopped)', modelId: chosenModelId || model },
+          aborted: true
+        });
+        await billingTracker.settleToUsageList(
+          finishedSteps.length > 0
+            ? finishedSteps
+            : usage
+              ? [{ usage, providerMetadata: usage?.providerMetadata }]
+              : [],
+          {
+            trigger: 'aborted',
+            partial: true,
+          },
+        );
+        resultText = fullText || '(Stopped)';
+      } else {
+        console.error('[AgentRunner] Error:', error);
+        await billingTracker.settleToUsageList(
+          finishedSteps.length > 0
+            ? finishedSteps
+            : usage
+              ? [{ usage, providerMetadata: usage?.providerMetadata }]
+              : [],
+          {
+            trigger: 'error',
+            partial: true,
+          },
+        );
+
+        // Check for tool errors that exhausted retries
+        const toolError = detectToolError(error);
+        if (toolError) {
+          const toolCallId = `tc-error-final-${Date.now()}`;
+          const isMissingTool = toolError.type === 'no_such_tool' || toolError.type === 'tool_not_found';
+          const isMetaAccessibleTool = isMissingTool && await isCatalogTool(toolError.toolName);
+          const isHallucination = isMissingTool && !isMetaAccessibleTool;
+          console.error(`[AgentRunner] Tool error (retries exhausted): "${toolError.toolName}" (${toolError.type})`);
+
+          try {
+            writeLog('tool_error_final', {
+              toolName: toolError.toolName,
+              type: toolError.type,
+              message: toolError.message,
+            });
+          } catch { }
+
+          // Show the failed tool as an error in the UI
+          send(ws, {
+            type: 'progress',
+            event: 'tool_event',
+            data: {
+              tool: toolError.toolName,
+              status: 'called',
+              toolCallId,
+              args: {},
+              description: `${toolError.toolName} (${isHallucination ? 'not found' : 'failed'})`,
+            }
+          });
+          send(ws, {
+            type: 'progress',
+            event: 'tool_event',
+            data: {
+              tool: toolError.toolName,
+              status: 'error',
+                toolCallId,
+                error: isHallucination
+                  ? `Tool "${toolError.toolName}" does not exist. All retry attempts exhausted.`
+                  : isMetaAccessibleTool
+                    ? `Tool "${toolError.toolName}" exists but was called directly instead of through get_tool_schema/execute_tool. All retry attempts exhausted.`
+                  : `Tool "${toolError.toolName}" failed after ${MAX_TOOL_ERROR_RETRIES} attempts: ${toolError.message}`,
+            }
+          });
+
+          const errorText = fullText
+            ? fullText + (isHallucination
+              ? `\n\nI apologize, but I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request.`
+              : isMetaAccessibleTool
+                ? `\n\nI attempted to call "${toolError.toolName}" directly even though it should have been invoked through the meta-tool path.`
+              : `\n\nThe tool "${toolError.toolName}" encountered an error: ${toolError.message}. Please try a different approach.`)
+            : (isHallucination
+              ? `I attempted to use a tool called "${toolError.toolName}" that doesn't exist. Please try rephrasing your request, and I'll use only the tools available to me.`
+              : isMetaAccessibleTool
+                ? `I attempted to call "${toolError.toolName}" directly even though it should have gone through get_tool_schema and execute_tool.`
+              : `The tool "${toolError.toolName}" failed: ${toolError.message}. Let me try a different approach.`);
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: errorText, response: errorText, modelId: chosenModelId || model } });
+          resultText = errorText;
+          return;
+        }
+
+        if (isToolCallParseError(error)) {
+          const errMsg = String((error as any)?.error?.message || 'Invalid JSON in tool call input');
+          const inputPreview = String((error as any).input || '').slice(0, 2000);
+          const toolCallId = `tc-parse-${Date.now()}`;
+
+          try {
+            writeLog('tool_call_parse_error', {
+              message: errMsg,
+              inputChars: typeof (error as any).input === 'string' ? (error as any).input.length : undefined,
+            });
+          } catch { }
+
+          try {
+            send(ws, {
+              type: 'progress',
+              event: 'tool_event',
+              data: {
+                tool: 'tool_call',
+                status: 'error',
+                toolCallId,
+                error: 'invalid_json',
+                message: errMsg,
+                inputPreview,
+              }
+            });
+          } catch { }
+
+          const finalText = `Tool call failed: ${errMsg}. Please retry.`;
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: finalText, response: finalText, modelId: chosenModelId || model } });
+          resultText = finalText;
+          return;
+        }
+
+        // Send what we have if any
+        if (fullText) {
+          send(ws, { type: 'final', model: chosenModelId || model, result: { text: fullText, response: fullText, modelId: chosenModelId || model } });
+          resultText = fullText;
+        } else {
+          send(ws, { type: 'error', message: error.message || 'Agent execution failed' });
+        }
+      }
+    } finally {
+      // Clean up abort controller
+      activeControllers.delete(ws);
+      if (requestId) { try { delete (ws as any)[`__abort_${requestId}`]; } catch { } }
+      // Final safety net: never leave a delegated subagent hung on
+      // ask_orchestrator after the orchestrator turn ends. Covers the error and
+      // abort paths that skip the in-band guard above. Scoped to this request.
+      if (requestId) {
+        try {
+          const stranded = resolvePendingSubagentQuestionsForRequest(requestId, 'turn_ended');
+          for (const id of stranded) {
+            try { abortRunningSubagent(id, 'turn_ended'); } catch { }
+          }
+        } catch { }
+      }
+    }
+    // __chatWs is the primary response channel — the WS that streams text
+    // deltas / tool events back to the end-user's UI. For desktop chats this
+    // is the same as the bridge; for VM-agent chats the bridge is the
+    // desktop while __chatWs is the VM WS (which relays back through
+    // Python → vm-agent.ts SSE → the website/desktop VM chat UI).
+    // Delegated subagents use it to emit subagent_event to the right socket.
+  }, {
+    ...inheritedSecrets,
+    ...(skillsSecret ? { __skills: skillsSecret } : {}),
+    userId,
+    conversationId,
+    __chatWs: ws,
+    ...(requestId ? { __requestId: requestId } : {}),
+  });
+
+  return resultText ? { text: resultText } : null;
+}
+
+// Returns the text delta if any, so caller can accumulate
+function handleStreamChunk(ws: WebSocket, chunk: any, sendFn?: (target: WebSocket, data: unknown) => void): string {
+  const _send = sendFn || send;
+  try {
+    // Debug: log all chunk types to see what's coming through
+    if (chunk?.type) {
+      const payloadKeys = chunk.payload ? Object.keys(chunk.payload) : [];
+      const hasText = chunk.payload?.text || chunk.textDelta;
+      if (!['text-delta'].includes(chunk.type) || hasText?.includes('think')) {
+        console.log('[AgentRunner] Chunk:', chunk.type, payloadKeys, hasText ? `"${String(hasText).slice(0, 50)}..."` : '');
+      }
+    }
+
+    // Handle tool_event pass-through from nested tools
+    if (chunk?.type === 'tool_event') {
+      _send(ws, { type: 'progress', event: 'tool_event', data: chunk });
+      return '';
+    }
+
+    // Legacy AI SDK toolCall shape
+    if (chunk?.toolCall?.name) {
+      _send(ws, {
+        type: 'progress',
+        event: 'tool_event',
+        data: { tool: chunk.toolCall.name, status: 'called', args: chunk.toolCall.args }
+      });
+      return '';
+    }
+
+    // Legacy AI SDK toolResult shape
+    if (chunk?.toolResult) {
+      _send(ws, {
+        type: 'progress',
+        event: 'tool_event',
+        data: {
+          tool: chunk.toolResult.toolName,
+          status: 'completed',
+          toolCallId: chunk.toolResult.toolCallId,
+          result: chunk.toolResult.result
+        }
+      });
+      return '';
+    }
+
+    // Mastra native event types
+    switch (chunk?.type) {
+      case 'text-delta': {
+        const text = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
+        if (text) {
+          _send(ws, { type: 'progress', event: 'delta', data: { text } });
+          return text;
+        }
+        break;
+      }
+
+      // Reasoning events (for models that support it like o1, o3, Grok with reasoning)
+      case 'reasoning-start': {
+        console.log('[AgentRunner] reasoning-start received');
+        _send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
+        break;
+      }
+
+      case 'reasoning-delta': {
+        const reasoning = chunk.payload?.text || (typeof chunk.payload === 'string' ? chunk.payload : '');
+        if (reasoning) {
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: reasoning } });
+        }
+        break;
+      }
+
+      case 'reasoning': {
+        // Raw AI SDK reasoning chunk format (type: 'reasoning', textDelta: '...')
+        const rawReasoning = chunk.textDelta || chunk.payload?.text || chunk.payload?.textDelta || '';
+        if (rawReasoning) {
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: rawReasoning } });
+        }
+        break;
+      }
+
+      case 'reasoning-end': {
+        console.log('[AgentRunner] reasoning-end received');
+        _send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
+        break;
+      }
+
+      case 'reasoning-signature': {
+        // Some models emit this for reasoning metadata
+        console.log('[AgentRunner] reasoning-signature:', chunk.payload?.signature);
+        break;
+      }
+
+      // Gemini thinking events (different naming from reasoning)
+      case 'thinking-start': {
+        console.log('[AgentRunner] thinking-start received');
+        _send(ws, { type: 'progress', event: 'reasoning_start', data: { id: chunk.payload?.id } });
+        break;
+      }
+
+      case 'thinking-delta': {
+        const thinking = chunk.payload?.text || chunk.textDelta || (typeof chunk.payload === 'string' ? chunk.payload : '');
+        if (thinking) {
+          _send(ws, { type: 'progress', event: 'reasoning', data: { text: thinking } });
+        }
+        break;
+      }
+
+      case 'thinking-end': {
+        console.log('[AgentRunner] thinking-end received');
+        _send(ws, { type: 'progress', event: 'reasoning_end', data: { id: chunk.payload?.id } });
+        break;
+      }
+
+      // Tool INPUT streaming — the model emits these while it generates a
+      // tool call's arguments. For a big argument (e.g. a long research_report
+      // markdown), this phase can run 30–90s with no other output; without a
+      // forwarded chunk the WS goes idle and a proxy can drop it ("times out,
+      // comes back when done"). Forward a lightweight keepalive that also gives
+      // the UI an "preparing input…" signal. No payload text needed.
+      case 'tool-input-start':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName || chunk.payload?.tool || 'tool',
+            status: 'input_stream_start',
+            toolCallId: chunk.payload?.toolCallId || chunk.payload?.id,
+          }
+        });
+        break;
+
+      case 'tool-input-delta':
+      case 'tool-input-end':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName || chunk.payload?.tool || 'tool',
+            status: chunk?.type === 'tool-input-end' ? 'input_stream_end' : 'input_delta',
+            toolCallId: chunk.payload?.toolCallId || chunk.payload?.id,
+          }
+        });
+        break;
+
+      case 'tool-call':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName,
+            status: 'called',
+            toolCallId: chunk.payload?.toolCallId,
+            args: chunk.payload?.args
+          }
+        });
+        break;
+
+      case 'tool-result':
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: chunk.payload?.toolName,
+            status: 'completed',
+            toolCallId: chunk.payload?.toolCallId,
+            // Re-attach the full report markdown to the client copy so the
+            // desktop report viewer can open it (the model's result stays
+            // compact). Mirrors stream-runner's tool-result handling.
+            result: attachResearchReportForClient(chunk.payload?.toolName, chunk.payload?.result),
+          }
+        });
+        break;
+
+      case 'step-start':
+        _send(ws, { type: 'progress', event: 'start', data: { stepId: chunk.payload?.stepId } });
+        break;
+
+      case 'error': {
+        // Handle error chunks from the stream (e.g. tool execution errors)
+        const errPayload = chunk.payload || {};
+        const errMessage = errPayload.message || errPayload.error || 'Stream error';
+        console.error('[AgentRunner] Error chunk received:', errMessage);
+        _send(ws, {
+          type: 'progress',
+          event: 'tool_event',
+          data: {
+            tool: errPayload.toolName || 'stream',
+            status: 'error',
+            toolCallId: errPayload.toolCallId || `tc-err-${Date.now()}`,
+            error: String(errMessage),
+          }
+        });
+        break;
+      }
+
+      case 'finish':
+        // Don't send final here - we'll send it after the loop
+        break;
+
+      default:
+        // Handle plain string chunks
+        if (typeof chunk === 'string' && chunk) {
+          _send(ws, { type: 'progress', event: 'delta', data: { text: chunk } });
+          return chunk;
+        }
+        // Handle textDelta property (AI SDK format)
+        if (chunk?.textDelta) {
+          _send(ws, { type: 'progress', event: 'delta', data: { text: chunk.textDelta } });
+          return chunk.textDelta;
+        }
+        break;
+    }
+  } catch (e) {
+    console.error('Error handling chunk:', e);
+  }
+  return '';
+}

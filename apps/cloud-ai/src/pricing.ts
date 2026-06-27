@@ -1,0 +1,450 @@
+import modelsData from './models.json';
+
+export type ModelCategory = 'fast' | 'balanced' | 'smart' | 'research';
+
+export type PlanType = 'FREE_TRIAL' | 'STARTER' | 'PRO' | 'POWER' | 'BYOK';
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  category: ModelCategory;
+  contextWindow?: number;
+  pricing: {
+    in: number;
+    out: number;
+    cached: number;
+  };
+}
+
+type Price = { inPerMTokUSD: number; outPerMTokUSD: number; cachedInPerMTokUSD: number };
+
+/**
+ * Plan configuration with pricing and budget details
+ * Budget = 65% of plan price allocated to usage
+ */
+export const PLAN_CONFIG: Record<PlanType, {
+  priceUsd: number;
+  budgetUsd: number;
+  isRecurring: boolean;
+  allModels: boolean;
+}> = {
+  FREE_TRIAL: { priceUsd: 0, budgetUsd: 0.45, isRecurring: false, allModels: false },
+  STARTER: { priceUsd: 10, budgetUsd: 6.50, isRecurring: true, allModels: true },
+  PRO: { priceUsd: 45, budgetUsd: 31.50, isRecurring: true, allModels: true },
+  POWER: { priceUsd: 100, budgetUsd: 75, isRecurring: true, allModels: true },
+  BYOK: { priceUsd: 0, budgetUsd: Infinity, isRecurring: false, allModels: true },
+};
+
+/**
+ * Usage cost percentage - how much of plan price goes to API usage budget
+ */
+export const USAGE_COST_PERCENTAGE = 0.65;
+
+/**
+ * Cost threshold for "mini" models (output price per MTok in USD)
+ * Models with output price <= this threshold are considered "mini" models
+ * and are available to Free Trial users
+ */
+export const MINI_MODEL_OUTPUT_COST_THRESHOLD = 1.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Tier & Storage Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const COMPUTE_TIER_CONFIG: Record<string, { machineType: string; vcpus: number; memoryGb: number; hourlyUsd: number }> = {
+  starter: { machineType: 'e2-small',      vcpus: 1, memoryGb: 2,  hourlyUsd: 0.017 },
+  basic:   { machineType: 'e2-standard-2', vcpus: 2, memoryGb: 8,  hourlyUsd: 0.067 },
+  pro:     { machineType: 'e2-standard-4', vcpus: 4, memoryGb: 16, hourlyUsd: 0.134 },
+  power:   { machineType: 'e2-standard-8', vcpus: 8, memoryGb: 32, hourlyUsd: 0.268 },
+};
+
+export const STORAGE_PRICING = {
+  hotPerGbMonthUsd: 0.10,   // pd-balanced persistent disk
+  coldPerGbMonthUsd: 0.02,  // GCS standard class
+};
+
+/** Estimate compute cost in credits for a given tier over `hours` hours. */
+export function estimateComputeCostCredits(tier: string, hours: number): number {
+  const config = COMPUTE_TIER_CONFIG[tier];
+  if (!config) return 0;
+  return creditsFromUsd(config.hourlyUsd * hours);
+}
+
+/** Estimate storage cost in credits for hot (GB) + cold (bytes) over `hours` hours. */
+export function estimateStorageCostCredits(hotGb: number, coldBytes: number, hours: number): number {
+  const hoursPerMonth = 730;
+  const coldGb = coldBytes / (1024 * 1024 * 1024);
+  const hotUsd = (hotGb * STORAGE_PRICING.hotPerGbMonthUsd / hoursPerMonth) * hours;
+  const coldUsd = (coldGb * STORAGE_PRICING.coldPerGbMonthUsd / hoursPerMonth) * hours;
+  return preciseCreditsFromUsd(hotUsd + coldUsd);
+}
+
+function envNumber(key: string, def: number) {
+  const v = process.env[key];
+  if (!v) return def;
+  const n = Number(v);
+  return isNaN(n) ? def : n;
+}
+
+/**
+ * All available models loaded from models.json
+ */
+export const ALL_MODELS: ModelInfo[] = modelsData as any;
+
+/**
+ * Dynamic pricing cache for models fetched at runtime (e.g. OpenRouter).
+ * Maps model ID → { in, out } pricing per MTok USD.
+ */
+const _dynamicPricing = new Map<string, { in: number; out: number }>();
+
+/**
+ * Register dynamic pricing for models fetched from external APIs.
+ * Called by the models route when it fetches OpenRouter models.
+ */
+export function registerDynamicPricing(modelId: string, inPerMTok: number, outPerMTok: number): void {
+  _dynamicPricing.set(modelId, { in: inPerMTok, out: outPerMTok });
+}
+
+/**
+ * Mapping for legacy model IDs to the new system
+ */
+const LEGACY_MAPPING: Record<string, string> = {
+  'gpt-4.1': 'google/gemini-3.1-pro-preview',
+  'gpt-5-mini': 'google/gemini-3.1-flash-lite',
+  'gpt-5': 'openai/gpt-5.4',
+};
+
+/**
+ * Get the default model ID for a specific category.
+ *
+ * These defaults are server-side fallbacks used when the desktop client doesn't
+ * supply a `modelConfig.<tier>.default`. They MUST match the desktop client's
+ * `DEFAULT_CHAT_MODELS` (apps/desktop/src/renderer/hooks/usePreferences.ts) so
+ * a fresh user gets the same model whether their preferences propagate or not.
+ *
+ * Tier defaults: flash-lite (fast), gemini-3.1-pro (balanced), gpt-5.4 (smart).
+ */
+export function getDefaultModelForCategory(category: ModelCategory): string {
+  const models = ALL_MODELS.filter(m => m.category === category);
+  if (models.length > 0) {
+    if (category === 'fast') return 'google/gemini-3.1-flash-lite';
+    if (category === 'balanced') return 'google/gemini-3.1-pro-preview';
+    if (category === 'smart') return 'openai/gpt-5.4';
+    if (category === 'research') return 'perplexity/sonar-pro';
+    return models[0].id;
+  }
+  return 'google/gemini-3.1-flash-lite';
+}
+
+export function priceForModel(modelId: string): Price {
+  // Resolve legacy mapping or direct ID
+  const resolvedId = LEGACY_MAPPING[modelId] || modelId;
+  const model = ALL_MODELS.find(m => m.id === resolvedId);
+
+  if (model) {
+    // Support environment variable overrides based on the model ID (sanitized)
+    const envBase = resolvedId.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    return {
+      inPerMTokUSD: envNumber(`PRICE_${envBase}_IN_PER_M_USD`, model.pricing.in),
+      outPerMTokUSD: envNumber(`PRICE_${envBase}_OUT_PER_M_USD`, model.pricing.out),
+      cachedInPerMTokUSD: envNumber(`PRICE_${envBase}_CACHED_IN_PER_M_USD`, model.pricing.cached),
+    };
+  }
+
+  // Check dynamic pricing (OpenRouter models fetched at runtime)
+  const dynamic = _dynamicPricing.get(resolvedId);
+  if (dynamic) {
+    return {
+      inPerMTokUSD: dynamic.in,
+      outPerMTokUSD: dynamic.out,
+      cachedInPerMTokUSD: dynamic.in * 0.1, // estimate cached at 10% of input
+    };
+  }
+
+  // Fallback to a default (fast tier)
+  return {
+    inPerMTokUSD: envNumber('PRICE_DEFAULT_IN_PER_M_USD', 0.14),
+    outPerMTokUSD: envNumber('PRICE_DEFAULT_OUT_PER_M_USD', 0.28),
+    cachedInPerMTokUSD: envNumber('PRICE_DEFAULT_CACHED_IN_PER_M_USD', 0.014),
+  };
+}
+
+export function estimateCostUsd(model: string, promptTokens: number, completionTokens: number, cachedPromptTokens = 0): number {
+  const p = priceForModel(model);
+  const cached = Math.max(0, Math.min(Math.max(0, promptTokens), Math.max(0, cachedPromptTokens)));
+  const nonCached = Math.max(0, Math.max(0, promptTokens) - cached);
+  const inCost = (nonCached / 1_000_000) * p.inPerMTokUSD + (cached / 1_000_000) * p.cachedInPerMTokUSD;
+  const outCost = (Math.max(0, completionTokens) / 1_000_000) * p.outPerMTokUSD;
+  const total = inCost + outCost;
+  return Math.max(0, Number(total.toFixed(8)));
+}
+
+export function creditsPerUsd(): number {
+  return envNumber('CREDITS_PER_USD', 33);
+}
+
+export function creditsFromUsd(usd: number): number {
+  return snapCredits(preciseCreditsFromUsd(usd));
+}
+
+/**
+ * Estimate credits for an embedding workload. Embeddings are input-only (no
+ * completion tokens). Gemini Batch mode is ~50% cheaper, so pass `{ batch: true }`
+ * for batch jobs. Rate is overridable via EMBEDDING_PRICE_PER_M_USD.
+ */
+export function embeddingUsdForTokens(tokens: number, opts: { batch?: boolean } = {}): number {
+  const perMUsd = envNumber('EMBEDDING_PRICE_PER_M_USD', 0.15);
+  const discount = opts.batch ? 0.5 : 1;
+  return (Math.max(0, tokens) / 1_000_000) * perMUsd * discount;
+}
+
+export function estimateEmbeddingCredits(tokens: number, opts: { batch?: boolean } = {}): number {
+  return creditsFromUsd(embeddingUsdForTokens(tokens, opts));
+}
+
+function planKey(plan: string): string {
+  return String(plan || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+}
+
+export function monthlyCreditLimitForPlan(plan: string): number {
+  const key = planKey(plan);
+  const envKey = `PLAN_${key}_MONTHLY_CREDITS`;
+  const n = envNumber(envKey, -1);
+  if (n >= 0) return n;
+
+  // New plan structure with 65% usage budget
+  const planConfig = PLAN_CONFIG[key as PlanType];
+  if (planConfig) {
+    if (planConfig.budgetUsd === Infinity) return -1; // BYOK = unlimited
+    return creditsFromUsd(planConfig.budgetUsd);
+  }
+
+  // Legacy plan support
+  if (key === 'FREE') {
+    // Free tier defaults to 30 credits — deliberately just under $1 (≈33 credits = $1).
+    // Override via PLAN_FREE_MONTHLY_CREDITS (checked at the top of this function).
+    return 30;
+  }
+  const priceKey = `PLAN_${key}_PRICE_USD`;
+  const price = envNumber(priceKey, -1);
+  if (price >= 0) {
+    const usageBudgetUsd = price * USAGE_COST_PERCENTAGE;
+    return Math.round(usageBudgetUsd * creditsPerUsd());
+  }
+  if (key === 'TEAM') return 50000;
+  if (key === 'BUSINESS') return 200000;
+  if (key === 'ENTERPRISE') return 1000000;
+  return -1;
+}
+
+/**
+ * Check if a model is considered a "mini" model based on its output cost
+ */
+export function isMiniModel(modelId: string): boolean {
+  const price = priceForModel(modelId);
+  return price.outPerMTokUSD <= MINI_MODEL_OUTPUT_COST_THRESHOLD;
+}
+
+/**
+ * Get all mini models (models with output cost <= threshold)
+ */
+export function getMiniModels(): ModelInfo[] {
+  return ALL_MODELS.filter(m => m.pricing.out <= MINI_MODEL_OUTPUT_COST_THRESHOLD);
+}
+
+/**
+ * Get available models for a given plan
+ */
+export function getModelsForPlan(plan: string): ModelInfo[] {
+  const key = planKey(plan);
+  const planConfig = PLAN_CONFIG[key as PlanType];
+
+  // If plan has access to all models, return all
+  if (!planConfig || planConfig.allModels) {
+    return ALL_MODELS;
+  }
+
+  // For FREE_TRIAL, only return mini models (cost-based restriction)
+  return getMiniModels();
+}
+
+/**
+ * Check if a model is available for a given plan
+ */
+export function isModelAvailableForPlan(modelId: string, plan: string): boolean {
+  const key = planKey(plan);
+  const planConfig = PLAN_CONFIG[key as PlanType];
+
+  // If plan has access to all models, return true
+  if (!planConfig || planConfig.allModels) {
+    return true;
+  }
+
+  // For FREE_TRIAL, check if model is a mini model
+  return isMiniModel(modelId);
+}
+
+/**
+ * Get plan configuration
+ */
+export function getPlanConfig(plan: string) {
+  const key = planKey(plan);
+  return PLAN_CONFIG[key as PlanType] || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Precise Credits & Snap Rounding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Like creditsFromUsd but without rounding — returns full-precision float.
+ * Used for fractional hourly billing (storage, compute).
+ */
+export function preciseCreditsFromUsd(usd: number): number {
+  if (!Number.isFinite(usd) || usd <= 0) return 0;
+  return Number((usd * creditsPerUsd()).toFixed(4));
+}
+
+/**
+ * Snap a credit value to user-friendly increments (never undercharge).
+ * ≤0 → 0, ≤0.1 → 0.1, otherwise ceil to nearest 0.25.
+ */
+export function snapCredits(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value <= 0.1) return 0.1;
+  return Math.ceil(value * 4) / 4;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messaging Credit Cost
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Telnyx published rates (carrier fees not included).
+const MESSAGING_COST_USD: Record<string, number> = {
+  telnyx: 0.0055,      // SMS per part
+  telnyx_mms: 0.016,   // MMS per part
+  whatsapp: 0.005,
+  discord: 0,
+};
+
+export const MESSAGING_USD = {
+  telnyxSms: MESSAGING_COST_USD.telnyx,
+  telnyxMms: MESSAGING_COST_USD.telnyx_mms,
+};
+
+/**
+ * Returns the credit cost for a single message on the given platform.
+ */
+export function messagingCreditCost(platform: string): number {
+  const usd = MESSAGING_COST_USD[platform] ?? 0;
+  return snapCredits(usd * creditsPerUsd());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice Call Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// All-in Telnyx voice cost = Programmable Voice base ($0.002/min) + SIP Trunking
+// fee. SIP Trunking varies by destination/jurisdiction; these defaults assume
+// US local DID inbound and US/Canada outbound. Toll-free inbound is much
+// higher (~$0.017/min) — bump 'telnyx:inbound' if using a toll-free number.
+//   Inbound local : $0.002 PV + $0.0035 SIP = $0.0055/min
+//   Outbound      : $0.002 PV + $0.0070 SIP = $0.0090/min
+const VOICE_CALL_COST_USD_PER_MIN: Record<string, number> = {
+  'telnyx:inbound': 0.0055,
+  'telnyx:outbound': 0.009,
+};
+
+export function voiceCallCreditCost(
+  provider: string,
+  direction: 'inbound' | 'outbound',
+  durationMs: number,
+): { credits: number; usd: number; seconds: number } {
+  const perMinUsd = VOICE_CALL_COST_USD_PER_MIN[`${provider}:${direction}`] ?? 0;
+  if (perMinUsd <= 0 || durationMs <= 0) return { credits: 0, usd: 0, seconds: 0 };
+  const seconds = Math.max(1, Math.ceil(durationMs / 1000));
+  const usd = Number(((perMinUsd * seconds) / 60).toFixed(6));
+  const credits = snapCredits(preciseCreditsFromUsd(usd));
+  return { credits, usd, seconds };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Speech-to-Text (STT) Pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// STT providers bill by audio *duration*, not per transcription call or per
+// token. Mirror that here so streaming transcription — which slices audio into
+// many small windows — sums the real audio cost instead of hitting the 0.1
+// per-event credit floor on every utterance (the "0.1 per word" overcharge).
+// Rates are USD per minute of audio.
+//   • OpenAI / OpenRouter Whisper-1, gpt-4o-transcribe ≈ $0.006/min
+//   • gpt-4o-mini-transcribe                            ≈ $0.003/min
+//   • ElevenLabs Scribe (~$0.40/hr)                     ≈ $0.0067/min
+const STT_USD_PER_MIN: Record<string, number> = {
+  'openai/whisper-1': 0.006,
+  'openai/gpt-4o-transcribe': 0.006,
+  'openai/gpt-4o-mini-transcribe': 0.003,
+  'elevenlabs/scribe_v1': 0.0067,
+  'elevenlabs/scribe_v2': 0.0067,
+};
+
+const DEFAULT_STT_USD_PER_MIN = 0.006;
+
+/**
+ * Cost in USD for `audioSeconds` of speech-to-text on `model`. Used as the
+ * billing basis for transcription when the provider does not report an explicit
+ * cost. The per-minute default is overridable via STT_PRICE_PER_MIN_USD.
+ */
+export function sttCostUsd(model: string, audioSeconds: number): number {
+  const seconds = Number(audioSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  const perMin =
+    STT_USD_PER_MIN[String(model || '').trim()] ??
+    envNumber('STT_PRICE_PER_MIN_USD', DEFAULT_STT_USD_PER_MIN);
+  if (perMin <= 0) return 0;
+  return Math.max(0, Number(((perMin * seconds) / 60).toFixed(8)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloud Compute Machine Specs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_CLOUD_DISK_GB_BY_TIER: Record<string, number> = {
+  starter: 10,
+  basic: 20,
+  pro: 50,
+  power: 100,
+};
+
+type MachineSpec = {
+  tier: string;
+  machineType: string;
+  vcpus: number;
+  memoryGb: number;
+  hourlyUsd: number;
+  custom?: boolean;
+};
+
+/**
+ * Resolve a machine-type string (or tier alias) to its full spec.
+ */
+export function resolveComputeMachineSpec(machineTypeOrTier: string): MachineSpec | null {
+  const key = String(machineTypeOrTier || '').toLowerCase();
+  // Direct tier lookup
+  const tier = COMPUTE_TIER_CONFIG[key];
+  if (tier) return { tier: key, ...tier };
+  // Reverse lookup by GCP machine type
+  for (const [t, cfg] of Object.entries(COMPUTE_TIER_CONFIG)) {
+    if (cfg.machineType === key) return { tier: t, ...cfg };
+  }
+  return null;
+}
+
+/**
+ * Estimate credits per hour for a given machine type/tier.
+ */
+export function estimateMachineCreditsPerHour(machineTypeOrTier: string): number {
+  const spec = resolveComputeMachineSpec(machineTypeOrTier);
+  if (!spec) return 0;
+  return creditsFromUsd(spec.hourlyUsd);
+}

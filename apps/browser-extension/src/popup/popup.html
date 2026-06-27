@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Stuard</title>
+  </head>
+  <body>
+    <header class="hdr">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-name">Stuard</span>
+      </div>
+      <span id="state-chip" class="chip chip-idle">…</span>
+    </header>
+
+    <main class="body">
+      <p id="state-line" class="state-line">Connecting to the Stuard desktop app…</p>
+
+      <section id="pair-section" class="card hidden">
+        <label class="label" for="token">Pairing key</label>
+        <p class="hint">Stuard desktop → Settings → Browser Extension → copy the pairing key.</p>
+        <div class="row">
+          <input id="token" class="input" type="text" placeholder="stuext_…" autocomplete="off" spellcheck="false" />
+          <button id="save-token" class="btn btn-primary">Pair</button>
+        </div>
+      </section>
+
+      <section id="userscripts-section" class="card warn hidden">
+        <div class="card-title">Enable full scripting</div>
+        <p class="hint">
+          To let Stuard run custom scripts on strict sites (Reddit, etc.), turn on
+          <strong>Allow user scripts</strong> on this extension's details page. Reading pages,
+          extracting data, and organizing tabs already work without it.
+        </p>
+        <button id="open-details" class="btn btn-ghost">Open extension details</button>
+      </section>
+
+      <div class="actions">
+        <button id="reconnect" class="btn btn-ghost">Reconnect</button>
+      </div>
+    </main>
+
+    <footer class="ftr">Stuard Browser Connector v1.0.0</footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

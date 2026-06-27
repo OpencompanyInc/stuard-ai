@@ -1,0 +1,619 @@
+import { createTool } from '@mastra/core/tools';
+import { generateText } from 'ai';
+import { z } from 'zod';
+import { getBridgeSecrets, execLocalTool } from './bridge';
+import { buildProviderModel } from '../utils/models';
+import { getDefaultModelForCategory } from '../pricing';
+
+export { computer_use_agent } from './computer-use-agent';
+export { browserUseAnalyzeScreenshotTool as browser_use_analyze_screenshot } from './analyze-media';
+
+// Cloud-side LLM extraction for memory texts using Gemini 2.5 Flash
+export const memory_extract_texts = createTool({
+  id: 'memory_extract_texts',
+  description: 'Extract the most important, note-worthy information from an array of texts using a fast AI model.',
+  inputSchema: z.object({
+    items: z.array(z.string()).min(1),
+    maxWords: z.number().int().min(10).max(1000).default(120),
+  }),
+  outputSchema: z.object({ extraction: z.string() }),
+  execute: async (inputData, { writer }) => {
+    const c = inputData as any;
+    const secrets = getBridgeSecrets();
+    const items = (c.items || []).map((s: any) => String(s)).filter((s: string) => s);
+    const maxWords = Number(c.maxWords || 120);
+    const joined = items.map((t: string, i: number) => `(${i + 1}) ${t}`).join('\n');
+    const prompt = `Extract the most important, note-worthy information from the following texts under ${maxWords} words. Prefer concise bullets or short sentences. Include key facts, tasks, decisions, preferences, names, dates, numbers. Avoid fluff and speculation.\n\nTexts:\n${joined}\n\nExtraction:`;
+
+    const modelId = getDefaultModelForCategory('fast');
+    const model = buildProviderModel(modelId);
+
+    await (writer as any)?.write?.({ type: 'tool_event', tool: 'memory_extract_texts', status: 'extracting', model: modelId, count: items.length });
+    const res = await generateText({ model: model as any, prompt, temperature: 0.2 });
+    const extraction = String((res as any)?.text || '').trim();
+    return { extraction };
+  },
+});
+
+// GUI Interaction & Automation
+export {
+  get_mouse_position,
+  computer_use,
+  click_at_coordinates,
+  double_click_at_coordinates,
+  type_text,
+  send_hotkey,
+  scroll,
+  drag_and_drop,
+} from './device/gui';
+
+// Screen & Visual Perception
+export {
+  take_screenshot,
+  capture_screen_to_file,
+  get_screen_text,
+  read_image_optimized,
+} from './device/screen';
+
+// Google Cloud Vision OCR (Cloud-side, uses API key)
+export { find_text, find_text_on_screen, find_and_click_text } from './device/ocr';
+
+// System & Window Management
+export {
+  launch_application_or_uri,
+  run_command,
+  list_terminals,
+  read_terminal,
+} from './device/system';
+
+// Interactive PTY terminal (Electron/node-pty)
+export {
+  terminal_create,
+  terminal_list,
+  terminal_get,
+  terminal_read,
+  terminal_send_input,
+  terminal_send_raw,
+  terminal_send_keys,
+  terminal_wait_for,
+  terminal_destroy,
+} from './device/terminal';
+
+// Coding-agent CLI delegation (Codex, Cursor Agent, Antigravity, Claude Code)
+export {
+  cli_agent_detect,
+  cli_agent_start,
+  cli_agent_send,
+  cli_agent_read,
+  cli_agent_status,
+  cli_agent_wait_for,
+  cli_agent_wait_idle,
+  cli_agent_stop,
+} from './device/cli-agent';
+
+// Python Runtime Management
+export {
+  python_status,
+  python_setup,
+  python_list_packages,
+  python_install,
+  run_python_script,
+  run_node_script,
+} from './device/python';
+
+// Data Analysis (pandas/numpy/scipy/matplotlib/seaborn in a dedicated venv)
+export {
+  data_analysis_status,
+  data_analysis_setup,
+  data_analysis_uninstall,
+  data_load,
+  describe_data,
+  correlate_data,
+  plot_line,
+  plot_bar,
+  plot_scatter,
+  plot_hist,
+  plot_pie,
+  plot_heatmap,
+  plot_box,
+  run_data_python,
+} from './device/data-analysis';
+
+// Utility tools (no scripts needed)
+export {
+  get_datetime,
+  math_eval,
+  generate_uuid,
+  random_number,
+  random_choice,
+  get_env_var,
+  get_system_info,
+  hash_string,
+  base64_encode,
+  base64_decode,
+  json_parse,
+  json_stringify,
+  sleep,
+  regex_match,
+  regex_replace,
+} from './device/utils';
+
+export {
+  list_open_windows,
+  bring_window_to_foreground,
+  get_window_info,
+  smart_bring_window_to_foreground,
+  set_window_bounds,
+} from './device/windows';
+
+// Desktop software controls
+export {
+  describe_desktop_control_capabilities,
+  get_desktop_wallpaper,
+  set_desktop_wallpaper,
+  get_system_volume,
+  set_system_volume,
+  list_bluetooth_devices,
+  connect_bluetooth_device,
+  disconnect_bluetooth_device,
+  get_display_brightness,
+  set_display_brightness,
+  get_power_status,
+} from './device/desktop-control';
+
+// Workflows metadata (desktop-side JSON files)
+// These tools require a client bridge to the desktop app. If no bridge is available,
+// they return an empty list gracefully instead of timing out.
+// NOTE: workflow discovery is handled by search_local_workflows.
+// NOTE: list_local_stuards deprecated - stuards and workflows are now unified
+export {
+  list_local_stuards,  // Deprecated, kept for backwards compatibility
+  show_json_workflow_code,
+  execute_workflow,
+  import_workflow,
+  run_automation,
+  stop_automation,
+  invoke_workflow,
+  test_run_steps,
+  search_local_workflows,  // Primary tool for listing/searching workflows
+  run_workflow,
+} from './device/workflows';
+
+// Knowledge Packs (sandboxed, attachable RAG namespaces)
+export {
+  create_knowledge_pack,
+  list_knowledge_packs,
+  query_knowledge_pack,
+  start_live_session,
+} from './device/rag-packs';
+
+// File System Operations
+export {
+  read_file,
+  write_file,
+  create_directory,
+  list_directory,
+  open_file,
+  move_file,
+  copy_file,
+  delete_file,
+  checkpoint_create,
+  checkpoint_restore,
+  checkpoint_redo,
+  checkpoint_list,
+} from './device/filesystem';
+
+// Agentic File Tools (for AI agents - Stuard & Workflow Agent)
+export { file_read, file_edit, glob, grep } from './agentic-file-tools';
+
+// Clipboard Operations
+export { get_clipboard_content, set_clipboard_content } from './device/filesystem';
+
+// Folder Permissions
+export {
+  folder_permission_add,
+  folder_permission_remove,
+  folder_permission_list,
+  folder_permission_set_enabled,
+  folder_permission_check,
+} from './device/folder-permissions';
+
+// Media & Audio Capture (Webcam/Microphone)
+export {
+  capture_media,
+  stop_capture,
+  list_active_captures,
+  describe_media_capture_capabilities,
+  subscribe_media_bus,
+  unsubscribe_media_bus,
+  get_bus_status,
+  list_media_buses,
+  start_bus_recording,
+  stop_bus_recording,
+  stream_speech,
+  stop_stream_speech,
+} from './device/media';
+
+// Screen Recording & System Audio Capture
+export {
+  capture_screen,
+  stop_screen_capture,
+  describe_screen_capture_capabilities,
+  capture_system_audio,
+  stop_system_audio,
+  describe_system_audio_capabilities,
+} from './device/screen-capture';
+
+export {
+  ffmpeg_status,
+  ffmpeg_setup,
+  ffmpeg_run,
+  ffmpeg_convert_media,
+  ffmpeg_extract_audio,
+  ffmpeg_trim_media,
+  ffmpeg_probe_media,
+  ffmpeg_extract_frames,
+} from './device/ffmpeg';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MEDIAPIPE — Computer Vision (Pose, Hands, Face, Segmentation)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  mediapipe_status,
+  mediapipe_setup,
+  mediapipe_pose,
+  mediapipe_hands,
+  mediapipe_face_detection,
+  mediapipe_face_mesh,
+  mediapipe_segmentation,
+  mediapipe_holistic,
+  mediapipe_process_video,
+} from './device/mediapipe';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OLLAMA — Local AI Models (Chat, Vision, Embeddings, Model Management)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  ollama_status,
+  ollama_agent,
+  ollama_chat,
+  ollama_generate,
+  ollama_vision,
+  ollama_embeddings,
+  ollama_models,
+} from './device/ollama';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BROWSER USE — AI Browser Automation (Navigate, Click, Type, Screenshot, Script)
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  browser_use_status,
+  browser_use_configure,
+  browser_use_execute_script,
+  browser_use_navigate,
+  browser_use_click,
+  browser_use_type,
+  browser_use_press_key,
+  browser_use_screenshot,
+  browser_use_content,
+  browser_use_scroll,
+  browser_use_tabs,
+  browser_use_cookies,
+  browser_use_hover,
+  browser_use_select_option,
+  browser_use_get_dropdown_options,
+  browser_use_get_interactive_elements,
+  browser_use_fill_form,
+  browser_use_upload_file,
+  browser_use_wait_for,
+} from './device/browser-use';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BROWSER EXTENSION — act on the user's REAL browser via the paired connector
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  browser_ext_status,
+  browser_ext_get_page,
+  browser_ext_extract,
+  browser_ext_run_script,
+  browser_ext_tabs,
+  browser_ext_capture_screenshot,
+  browser_ext_service_list,
+  browser_ext_service_save,
+  browser_ext_service_run,
+  browser_ext_service_delete,
+} from './device/browser-extension';
+
+// ============================================================================
+// Workspace File Management — Read/write/list files in workflow workspace
+// ============================================================================
+export {
+  workspace_read_file,
+  workspace_write_file,
+  workspace_delete_file,
+  workspace_list_files,
+  workspace_create_folder,
+  workspace_get_info,
+} from './device/workspace';
+
+// ============================================================================
+// Workflow Variables - Persistent state across workflow runs
+// ============================================================================
+export {
+  set_variable,
+  get_variable,
+  toggle_variable,
+  increment_variable,
+  append_to_list,
+  list_variables,
+  delete_variable,
+} from './device/variables';
+
+// Task & Calendar Management
+export { calendar_crud, task_crud, task_reminders } from './device/productivity';
+
+// Unified planner helper: aggregate meetings (Google Calendar), local tasks, and local reminders
+export { planner_list_items } from './device/productivity';
+
+// Generic local notification helper
+export { send_notification } from './device/productivity';
+
+// Proactive task board tools (desktop-backed)
+export {
+  proactive_task_list,
+  proactive_task_update,
+  proactive_task_create,
+  proactive_task_delete,
+} from './proactive-task-tools';
+
+// Bot management tools (desktop-backed, available in normal chat)
+export {
+  agent_list,
+  agent_get_status,
+  agent_create,
+  agent_deploy,
+  agent_pause,
+  agent_delete,
+  ask_agent,
+  agent_ask,
+  bot_list,
+  bot_get_status,
+  bot_create,
+  bot_deploy,
+  bot_pause,
+  bot_delete,
+  ask_bot,
+  bot_ask,
+} from './bot-tools';
+
+// Bot's private kanban + run-log tools (desktop-backed, scoped to running bot)
+export {
+  agent_memory_list,
+  agent_memory_create,
+  agent_memory_update,
+  agent_memory_delete,
+  agent_memory_log,
+  agent_memory_profile_get,
+  agent_memory_profile_update,
+  bot_memory_list,
+  bot_memory_create,
+  bot_memory_update,
+  bot_memory_delete,
+  bot_memory_log,
+  bot_memory_profile_get,
+  bot_memory_profile_update,
+} from './bot-memory-tools';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KNOWLEDGE GRAPH TOOLS
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  knowledge_add_instruction,
+  knowledge_remember_about_user,
+  knowledge_update_profile,
+  knowledge_add_project_fact,
+  knowledge_get_stats,
+} from './device/knowledge';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONVERSATION MEMORY TOOLS
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  search_past_conversations,
+  get_conversation_context,
+  browse_topic_collections,
+  get_collection_detail,
+  synthesize_collection,
+} from './device/memory';
+
+// Project Mode tools (successor to Spaces)
+export {
+  list_projects,
+  create_project,
+  update_project,
+  delete_project,
+  enter_project_mode,
+  exit_project_mode,
+  journal_add,
+  memory_add,
+  project_search,
+  search_project_conversations,
+  add_project_context,
+  pin_file,
+  unpin_file,
+} from './device/projects';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AGENT TODO TOOLS
+// ═══════════════════════════════════════════════════════════════════════════════
+export const agent_todo = createTool({
+  id: 'agent_todo',
+  description: [
+    "Track what you're doing for the user this session — a live, plain-language status line plus an optional step checklist. The user watches both update in real time.",
+    'Actions: set_status, list, create, bulk_create, update, start, complete, fail, block, delete, finish, clear, progress, get_current, get_next.',
+    '`data` MUST be an object (not a JSON string). Shape per action:',
+    "  • set_status: { label: string, detail?: string, state?: 'working'|'done'|'blocked'|'idle' } — the one-line \"what's happening now\" headline; pass label:'' to clear it",
+    '  • create: { title: string, description?: string, priority?: number, tags?: string[] }',
+    '  • bulk_create: { items: Array<{ title: string, description?: string, priority?: number, tags?: string[] }> }',
+    '  • start | complete | fail | block | delete: { id: string, note?: string, reason?: string }',
+    '  • update: { id: string, title?, description?, status?, priority?, tags?, metadata? }',
+    '  • list: { includeCompleted?: boolean }',
+    "  • finish: { summary?: string } — mark every remaining step done + set a 'done' status (call this to wrap up before you end)",
+    '  • clear: { keepInProgress?: boolean }',
+    '  • progress | get_current | get_next: omit data',
+  ].join(' '),
+  inputSchema: z.object({
+    action: z.enum([
+      'set_status', 'list', 'create', 'bulk_create', 'update', 'start', 'complete',
+      'fail', 'block', 'delete', 'finish', 'clear', 'progress', 'get_current', 'get_next',
+    ]).describe('The action to perform'),
+    sessionId: z.string().describe('The conversation/thread ID'),
+    data: z.record(z.string(), z.any()).optional().describe(
+      'Action-specific data as an object. Pass an empty object {} if not needed. Do NOT JSON-stringify.'
+    ),
+  }),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    todo: z.any().nullish(),
+    todos: z.any().nullish(),
+    items: z.any().nullish(),
+    count: z.number().nullish(),
+    progress: z.any().nullish(),
+    error: z.string().nullish(),
+  }),
+  execute: async (inputData, context) => {
+    return await execLocalTool('agent_todo', inputData);
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI AGENT WORKFLOW NODES — Synchronous agent steps for workflows
+// ═══════════════════════════════════════════════════════════════════════════════
+export { agent_node, agent_decision, agent_extract } from './device/agent-node';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MATH & NEURAL NETWORK OPERATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  // Basic arithmetic
+  math_add,
+  math_subtract,
+  math_multiply,
+  math_divide,
+  math_power,
+  math_sqrt,
+  math_abs,
+  math_negate,
+  math_exp,
+  math_log,
+  // Aggregations
+  math_sum,
+  math_mean,
+  math_max,
+  math_min,
+  math_argmax,
+  math_argmin,
+  // Matrix operations
+  math_dot,
+  math_transpose,
+  math_reshape,
+  math_shape,
+  math_flatten,
+  // Tensor creation
+  math_zeros,
+  math_ones,
+  math_random,
+  math_range,
+  math_linspace,
+  // Activation functions
+  math_sigmoid,
+  math_relu,
+  math_leaky_relu,
+  math_tanh,
+  math_softmax,
+  math_gelu,
+  math_swish,
+  // Neural network layers
+  math_linear,
+  math_forward_pass,
+  math_cross_entropy_loss,
+  math_mse_loss,
+  // Comparison & logic
+  math_compare,
+  math_clip,
+  math_where,
+  // Array operations
+  math_concat,
+  math_stack,
+  math_slice,
+  math_get_index,
+  math_set_index,
+} from './device/math';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FILE INDEX & SEARCH
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  file_index_add_root,
+  file_index_remove_root,
+  file_index_list_roots,
+  file_index_scan,
+  file_index_get_pending,
+  file_index_stats,
+  file_index_update,
+  file_search,
+  file_search_by_filename,
+  file_search_by_kind,
+  file_search_recent,
+  file_search_details,
+  file_search_similar,
+  process_pending_file_index,
+  process_pending_file_index_batch,
+  semantic_file_search,
+} from './device/file-index';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATABASE STORAGE — Local SQLite persistent storage for workflows
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  db_query,
+  db_store,
+  db_retrieve,
+  db_search,
+  db_delete,
+  db_list_tables,
+} from './device/database';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VECTOR EMBEDDINGS — Text embedding and similarity search
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  embed_text,
+  vector_similarity,
+  embed_and_store,
+} from './device/embeddings';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STREAMING — Advanced stream management (user-facing)
+// Most streaming is now handled via `stream: true` on tools like agent_node,
+// ai_inference, http_request, run_python_script. These advanced tools are for
+// manual stream control when needed.
+// ═══════════════════════════════════════════════════════════════════════════════
+export {
+  stream_create,
+  stream_close,
+  stream_list,
+  stream_get_status,
+} from './device/streams';
+
+// Engine-internal stream tools (not user-facing, used by engine stream wires)
+// Re-exported so the engine/tool-router can still call them internally
+export {
+  stream_write as _stream_write,
+  stream_read as _stream_read,
+  stream_subscribe as _stream_subscribe,
+  stream_unsubscribe as _stream_unsubscribe,
+  stream_add_transform as _stream_add_transform,
+  stream_remove_transform as _stream_remove_transform,
+  stream_update_transform as _stream_update_transform,
+} from './device/streams';

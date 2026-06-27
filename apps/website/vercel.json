@@ -1,0 +1,32 @@
+{
+  "buildCommand": "pnpm -F stuard-ai-website build",
+  "devCommand": "pnpm -F stuard-ai-website dev",
+  "installCommand": "npx --yes pnpm@8.15.0 install --frozen-lockfile",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+
+
+  
+  "redirects": [
+    {
+      "source": "/auth/login",
+      "destination": "/login",
+      "permanent": true
+    },
+    {
+      "source": "/auth/signup",
+      "destination": "/signup",
+      "permanent": true
+    },
+    {
+      "source": "/steward-ai",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/stuart-ai",
+      "destination": "/",
+      "permanent": true
+    }
+  ]
+} 

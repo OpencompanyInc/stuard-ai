@@ -1,0 +1,92 @@
+{
+  "name": "Market Research & Report Generator",
+  "version": "1.0",
+  "description": "A complex workflow demonstrating Parallel Execution, Context Management, and Data Transformation.",
+  "mode": "auto",
+  "steps": [
+    {
+      "id": "init_context",
+      "uses": "context_manager",
+      "args": {
+        "action": "create",
+        "contextId": "market_research_001",
+        "data": {
+          "topics": ["AI Agents", "LLM Automation", "Future of Work"],
+          "status": "started"
+        }
+      },
+      "next": [
+        { "to": "fetch_trends_parallel" }
+      ]
+    },
+    {
+      "id": "fetch_trends_parallel",
+      "uses": "parallel_executor",
+      "args": {
+        "concurrency": 3,
+        "tasks": [
+          {
+            "tool": "run_python_script",
+            "args": {
+              "code": "import json\nprint(json.dumps({'topic': 'AI Agents', 'trend_score': 85, 'related': ['Autonomous Agents', 'AutoGPT']}))"
+            }
+          },
+          {
+            "tool": "run_python_script",
+            "args": {
+              "code": "import json\nprint(json.dumps({'topic': 'LLM Automation', 'trend_score': 92, 'related': ['LangChain', 'Zapier AI']}))"
+            }
+          },
+          {
+            "tool": "run_python_script",
+            "args": {
+              "code": "import json\nprint(json.dumps({'topic': 'Future of Work', 'trend_score': 78, 'related': ['Remote Work', 'AI Tools']}))"
+            }
+          }
+        ]
+      },
+      "next": [
+        { "to": "transform_results" }
+      ]
+    },
+    {
+      "id": "transform_results",
+      "uses": "transform_data",
+      "args": {
+        "mode": "map",
+        "data": "{{steps.fetch_trends_parallel.output.results}}", 
+        "rules": {
+          "agent_trend": "0.stdout", 
+          "automation_trend": "1.stdout",
+          "work_trend": "2.stdout"
+        }
+      },
+      "next": [
+        { "to": "save_to_memory" }
+      ]
+    },
+    {
+      "id": "save_to_memory",
+      "uses": "context_manager",
+      "args": {
+        "action": "merge",
+        "contextId": "market_research_001",
+        "value": {
+          "research_results": "{{steps.transform_results.output.result}}"
+        }
+      },
+      "next": [
+        { "to": "generate_report" }
+      ]
+    },
+    {
+      "id": "generate_report",
+      "uses": "run_python_script",
+      "args": {
+        "code": "import json\n# In a real scenario, we would fetch from context_manager here\nprint('Generating PDF Report based on research_results... DONE')"
+      }
+    }
+  ]
+}
+
+

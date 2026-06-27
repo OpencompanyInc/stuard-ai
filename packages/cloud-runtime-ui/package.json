@@ -1,0 +1,29 @@
+{
+  "name": "@stuardai/cloud-runtime-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./CloudRuntimeWorkspace": "./src/CloudRuntimeWorkspace.tsx",
+    "./CloudAutomationsPanel": "./src/CloudAutomationsPanel.tsx",
+    "./file-viewer": "./src/file-viewer/index.ts",
+    "./shell": "./src/shell/constants.ts",
+    "./shell/activity-bar": "./src/shell/CloudRuntimeActivityBar.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "clsx": "^2.0.0",
+    "lucide-react": ">=0.500.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.3.3"
+  }
+}

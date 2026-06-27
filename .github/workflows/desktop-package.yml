@@ -1,0 +1,160 @@
+name: Desktop Package
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/agent/**'
+      - '.github/workflows/desktop-package.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches: [ main, develop ]
+    tags: [ 'desktop-v*', 'v*' ]
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/agent/**'
+      - '.github/workflows/desktop-package.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-checks:
+    name: Desktop Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Verify wakeword assets
+        shell: bash
+        run: |
+          test -f apps/desktop/resources/wakeword/listen_numpy.py
+          test -f apps/desktop/resources/wakeword/models/kws_weights.npz
+          test -s apps/desktop/resources/wakeword/models/kws_weights.npz
+
+      - name: Typecheck desktop
+        run: pnpm turbo run typecheck --filter=@stuardai/desktop
+
+      - name: Test desktop
+        run: pnpm turbo run test --filter=@stuardai/desktop
+
+      - name: Build desktop
+        run: pnpm turbo run build --filter=@stuardai/desktop
+
+  package-desktop:
+    name: Package Desktop (${{ matrix.platform }})
+    needs: desktop-checks
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            artifact: desktop-windows
+          # - os: macos-latest
+          #   platform: macos
+          #   artifact: desktop-macos
+          # - os: ubuntu-latest
+          #   platform: linux
+          #   artifact: desktop-linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev libportaudio2 libfuse2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: apps/agent/requirements.txt
+
+      - name: Install Python dependencies
+        working-directory: apps/agent
+        run: pip install -r requirements.txt
+
+      - name: Build bundled service binaries
+        working-directory: apps/agent
+        run: python build-services.py --services agent wakeword
+
+      - name: Build file indexer (Rust, branded "Stuard AI")
+        shell: bash
+        run: |
+          cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml
+          mkdir -p dist
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer.exe dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-macos
+          else
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-linux
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm install
+
+      - name: Write packaged env
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/build/agent
+          cat > apps/desktop/build/.env << EOF
+          CLOUD_PUBLIC_URL=https://api.stuard.ai
+          CLOUD_AI_HTTP=https://api.stuard.ai
+          UPDATE_CHANNEL=stable
+          STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop
+          EOF
+          cp apps/desktop/build/.env apps/desktop/build/agent/.env
+
+      - name: Package desktop
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fail if prepare:agent can't find the Rust file indexer, so a packaged
+          # build can never silently ship with local file search disabled.
+          STUARD_REQUIRE_FILE_INDEXER: "1"
+        run: npm run dist
+
+      - name: Upload packaged app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            apps/desktop/release/**
+          if-no-files-found: error
+          retention-days: 14

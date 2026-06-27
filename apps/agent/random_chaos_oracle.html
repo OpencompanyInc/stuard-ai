@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RANDOM CHAOS ORACLE</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;family=UnifrakturCook:wght@700&amp;display=swap');
+        
+        :root {
+            --bg: #0A0A0F;
+            --accent-pink: #FF2E63;
+            --accent-cyan: #00F5FF;
+            --accent-yellow: #FFD700;
+            --accent-lime: #39FF14;
+            --accent-orange: #FF6B35;
+            --accent-purple: #C300FF; /* intentional electric red-purple hybrid for glitch feel */
+            --text: #FFFFFF;
+            --text-dim: #B8B8E0;
+            --card-bg: #111115;
+            --noise: #1A1A22;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Press Start 2P', system-ui, -apple-system, sans-serif;
+            overflow-x: hidden;
+            cursor: none;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        /* Custom Glitch Cursor */
+        .custom-cursor {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 22px;
+            height: 22px;
+            pointer-events: none;
+            z-index: 99999;
+            mix-blend-mode: difference;
+            transition: transform 0.1s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .custom-cursor .cursor-core {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: 2px solid var(--accent-pink);
+            border-radius: 50%;
+            box-shadow: 
+                0 0 0 1px var(--accent-cyan),
+                0 0 10px var(--accent-pink),
+                4px 3px 0 var(--accent-lime);
+            mix-blend-mode: difference;
+        }
+
+        .custom-cursor .cursor-ring {
+            position: absolute;
+            width: 36px;
+            height: 36px;
+            border: 1px dashed var(--accent-cyan);
+            border-radius: 50%;
+            left: -7px;
+            top: -7px;
+            opacity: 0.6;
+            animation: cursor-ring-pulse 1.8s infinite ease-in-out;
+        }
+
+        .custom-cursor.glitch-mode .cursor-core {
+            animation: cursor-glitch 0.15s infinite steps(3);
+            box-shadow: 
+                0 0 0 1px var(--accent-cyan),
+                -3px 2px 0 var(--accent-yellow),
+                3px -2px 0 var(--accent-orange);
+        }
+
+        /* Glitch Animation */
+        @keyframes cursor-glitch {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(-2px, 0); }
+            50% { transform: translate(2px, 0); }
+            75% { transform: translate(0, 2px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        @keyframes cursor-ring-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.6; }
+            50% { transform: scale(1.3); opacity: 0.3; }
+        }
+
+        .chaos-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            position: relative;
+            min-height: 100vh;
+        }
+
+        /* Asymmetric Header */
+        .header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 20px 30px 30px 30px;
+            position: relative;
+            z-index: 10;
+            transform: rotate(-1.3deg);
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 12px;
+            left: -10px;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--accent-orange), transparent);
+            z-index: -1;
+            opacity: 0.6;
+        }
+
+        .title {
+            font-family: 'UnifrakturCook', 'Press Start 2P', cursive;
+            font-size: clamp(2.3rem, 9vw, 5.6rem);
+            line-height: 0.85;
+            font-weight: 700;
+            letter-spacing: -2px;
+            text-transform: uppercase;
+            color: var(--text);
+            text-shadow: 
+                0 0 20px var(--accent-pink),
+                -4px 3px 0 var(--accent-cyan),
+                6px -1px 0 var(--accent-lime);
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .title span {
+            display: inline-block;
+            transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1),
+                        text-shadow 0.4s ease;
+        }
+
+        .title .chaos-letter:hover {
+            transform: translateY(-4px) rotate(-8deg) scale(1.2);
+            text-shadow: 
+                0 0 30px var(--accent-yellow),
+                5px 2px 0 var(--accent-pink);
+        }
+
+        .subtitle {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.88rem;
+            letter-spacing: 4px;
+            color: var(--accent-cyan);
+            margin-top: 12px;
+            text-shadow: 0 0 12px var(--accent-cyan);
+            transform: rotate(4deg);
+            display: inline-block;
+        }
+
+        /* Main Chaos Oracle Panel */
+        .oracle-panel {
+            background: var(--card-bg);
+            border: 3px solid var(--accent-pink);
+            box-shadow: 
+                5px 6px 0 var(--accent-cyan),
+                -2px -4px 0 var(--accent-lime),
+                0 0 40px rgba(255, 46, 99, 0.3);
+            padding: 48px 46px;
+            position: relative;
+            margin: 40px 20px 50px 20px;
+            max-width: 820px;
+            border-radius: 3px;
+            overflow: hidden;
+            transform: rotate(-0.8deg) translateX(12px);
+            z-index: 5;
+        }
+
+        .oracle-panel::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: 
+                repeating-linear-gradient(45deg, 
+                    transparent 0px, 
+                    transparent 3px, 
+                    rgba(255, 255, 255, 0.025) 3px, 
+                    rgba(255, 255, 255, 0.025) 5px);
+            pointer-events: none;
+            z-index: 1;
+            mix-blend-mode: overlay;
+        }
+
+        .oracle-panel::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -30%;
+            width: 80%;
+            height: 200%;
+            background: linear-gradient(
+                135deg, 
+                transparent 20%, 
+                rgba(255, 255, 255, 0.025) 27%, 
+                transparent 38%
+            );
+            animation: grain-scan 4s linear infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        @keyframes grain-scan {
+            0% { transform: translateX(-200%); }
+            100% { transform: translateX(440%); }
+        }
+
+        .oracle-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            border-bottom: 2px dashed var(--accent-cyan);
+            padding-bottom: 16px;
+            position: relative;
+        }
+
+        .oracle-label {
+            font-size: 0.81rem;
+            letter-spacing: 2.5px;
+            color: var(--accent-cyan);
+            padding: 4px 13px;
+            border: 2px solid var(--accent-cyan);
+            background: transparent;
+            text-transform: uppercase;
+            transform: skew(-6deg);
+        }
+
+        #quote {
+            font-family: 'UnifrakturCook', Georgia, serif;
+            font-size: clamp(1.18rem, 2.4vw, 1.75rem);
+            line-height: 1.4;
+            color: var(--text);
+            min-height: 180px;
+            display: flex;
+            align-items: center;
+            text-shadow: 
+                1px 1px 0 var(--accent-pink),
+                -1px -1px 0 var(--accent-cyan);
+            transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+            position: relative;
+            z-index: 2;
+        }
+
+        .quote-glitch {
+            animation: glitch-text 0.35s steps(2) forwards;
+        }
+
+        @keyframes glitch-text {
+            0% { transform: translateX(0) skew(0deg); text-shadow: 1px 1px 0 var(--accent-pink), -1px -1px 0 var(--accent-cyan); }
+            20% { transform: translateX(-3.5px) skew(1deg); text-shadow: -3px 0 var(--accent-lime), 3px 0 var(--accent-yellow); }
+            40% { transform: translateX(2.8px) skew(-2deg); text-shadow: 3px -1px var(--accent-pink), -3px 1px var(--accent-cyan); }
+            60% { transform: translateX(-1.2px) skew(-1deg); text-shadow: -4px 2px var(--accent-orange), 4px 0 var(--accent-lime); }
+            100% { transform: translateX(0) skew(0deg); text-shadow: 1px 1px 0 var(--accent-pink), -1px -1px 0 var(--accent-cyan); }
+        }
+
+        /* Action Buttons - Chaotic Placement */
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-top: 38px;
+            align-items: center;
+            position: relative;
+        }
+
+        .chaos-btn {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.93rem;
+            padding: 18px 30px;
+            border: 3px solid var(--accent-cyan);
+            background: #0C0C14;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s cubic-bezier(0.23, 1.0, 0.32, 1);
+            box-shadow: 3px 3px 0 var(--accent-pink), inset 0 0 0 1px #22222E;
+            overflow: hidden;
+        }
+
+        .chaos-btn:hover {
+            background: #1C1C25;
+            transform: translate(-3px, -2px) scale(1.03) rotate(-1.5deg);
+            box-shadow: 6px 9px 0 var(--accent-pink);
+            color: var(--accent-yellow);
+        }
+
+        .chaos-btn:active {
+            transform: translate(3px, 3px) scale(0.97);
+            box-shadow: 1px 1px 0 var(--accent-pink);
+        }
+
+        .chaos-btn:nth-child(odd) {
+            transform: rotate(2deg);
+            margin-top: 3px;
+        }
+
+        .chaos-btn:nth-child(even) {
+            transform: rotate(-3deg);
+        }
+
+        /* Palette Container - Asymmetric */
+        .palette-section {
+            position: absolute;
+            right: -40px;
+            top: 120px;
+            transform: rotate(9.5deg);
+            z-index: 12;
+            width: 220px;
+        }
+
+        .palette-label {
+            font-size: 0.7rem;
+            background: var(--accent-orange);
+            color: #0A0A0F;
+            padding: 3px 14px;
+            display: inline-block;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 9px;
+            font-weight: 700;
+            transform: skewY(3deg);
+            box-shadow: -2px 3px 0 var(--accent-pink);
+        }
+
+        .palette-swatches {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            padding: 9px;
+            background: rgba(20, 20, 30, 0.8);
+            border: 3px solid var(--accent-cyan);
+            box-shadow: 0 0 0 3px #1A1A25;
+        }
+
+        .swatch {
+            width: 34px;
+            height: 34px;
+            border: 2.4px solid #0A0A0F;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 0 6px rgba(0,0,0,0.4);
+        }
+
+        .swatch:hover {
+            transform: scale(1.3) rotate(12deg);
+            box-shadow: 1px 2px 0 var(--accent-pink);
+        }
+
+        .swatch:active {
+            transform: scale(0.9) rotate(-15deg);
+        }
+
+        /* Chaos Canvas */
+        .chaos-canvas {
+            position: absolute;
+            top: 90px;
+            right: 80px;
+            width: 148px;
+            height: 148px;
+            border: 3px dashed var(--accent-lime);
+            z-index: 4;
+            border-radius: 50%;
+            box-shadow: 0 0 35px rgba(0, 245, 255, 0.2);
+            opacity: 0.85;
+            mix-blend-mode: screen;
+        }
+
+        /* History Section - Asymmetric & Chaotic */
+        .history-section {
+            max-width: 760px;
+            margin-top: 20px;
+            margin-left: auto;
+            padding: 20px;
+            border: 2px solid var(--accent-lime);
+            background: #0C0C14;
+            transform: rotate(1.4deg);
+            box-shadow: -5px 7px 0 var(--accent-pink);
+        }
+
+        .history-label {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+            color: var(--accent-lime);
+            letter-spacing: 2px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .history-list {
+            max-height: 120px;
+            overflow-y: auto;
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent-cyan) transparent;
+        }
+
+        .history-item {
+            padding: 7px 11px;
+            margin-bottom: 7px;
+            border-left: 3px solid var(--accent-pink);
+            background: var(--card-bg);
+            position: relative;
+            transition: all 0.2s ease;
+        }
+
+        .history-item:hover {
+            background: #1A1A25;
+            transform: translateX(4px);
+        }
+
+        .history-item::after {
+            content: '∞';
+            position: absolute;
+            right: 12px;
+            top: 5px;
+            color: var(--accent-yellow);
+            font-size: 0.6rem;
+            opacity: 0.6;
+        }
+
+        /* Floating Decor Elements */
+        .floating-symbol {
+            position: absolute;
+            font-size: 1.6rem;
+            color: var(--accent-cyan);
+            opacity: 0.35;
+            font-family: 'UnifrakturCook', Georgia;
+            pointer-events: none;
+            user-select: none;
+            z-index: 1;
+            transition: transform 1.3s ease, opacity 1.3s ease;
+            white-space: nowrap;
+        }
+
+        .visual-effects {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+            align-items: center;
+        }
+
+        .glitch-visual {
+            width: 38px;
+            height: 38px;
+            border: 2px solid var(--accent-yellow);
+            background: linear-gradient(145deg, #00000022 0%, #1c1c2a 75%);
+            box-shadow: 0 0 0 4px rgba(255, 214, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glitch-visual::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 30%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+            animation: glitch-scan 1.8s infinite linear;
+        }
+
+        .chaos-stat {
+            font-size: 0.73rem;
+            font-family: 'Press Start 2P', monospace;
+            padding: 2px 7px;
+            background: #1A1A25;
+            border: 1px solid var(--accent-lime);
+            white-space: nowrap;
+        }
+
+        .footer {
+            margin-top: 80px;
+            text-align: center;
+            font-size: 0.65rem;
+            letter-spacing: 1.6px;
+            color: #555577;
+            padding: 20px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .oracle-panel {
+                padding: 28px 21px;
+                margin: 20px 14px 40px;
+                transform: none;
+                max-width: 100%;
+            }
+            
+            .palette-section {
+                position: relative;
+                top: 0;
+                right: 0;
+                transform: none;
+                width: 100%;
+                margin-top: 30px;
+            }
+            
+            .controls {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .chaos-btn {
+                width: 100%;
+                transform: none !important;
+            }
+            
+            .history-section {
+                transform: none;
+            }
+            
+            .header {
+                flex-direction: column;
+                transform: none;
+            }
+        }
+        
+        .glitch-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            mix-blend-mode: difference;
+            opacity: 0;
+        }
+
+        .glitch-layer.active {
+            animation: massive-glitch 420ms forwards;
+        }
+    </style>
+</head>
+<body>
+    <!-- Custom Glitch Cursor -->
+    <div class="custom-cursor" id="cursor">
+        <div class="cursor-core"></div>
+        <div class="cursor-ring"></div>
+    </div>
+
+    <div class="chaos-container">
+        <!-- HEADER - Asymmetric -->
+        <header class="header">
+            <div>
+                <h1 class="title">
+                    <span class="chaos-letter">R</span><span class="chaos-letter">A</span><span class="chaos-letter">N</span><span class="chaos-letter">D</span><span class="chaos-letter">O</span><span class="chaos-letter">M</span>
+                    <br>
+                    <span class="chaos-letter">C</span><span class="chaos-letter">H</span><span class="chaos-letter">A</span><span class="chaos-letter">O</span><span class="chaos-letter">S</span>
+                </h1>
+                <div class="subtitle">THE ORACLE OF ABSURDITY</div>
+            </div>
+            
+            <div class="visual-effects">
+                <div class="glitch-visual" id="status-visual"></div>
+                <div>
+                    <div class="chaos-stat">CHAOS: <span id="chaos-level">77</span>%</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Floating Decoration Symbols -->
+        <div id="floaters"></div>
+
+        <!-- MAIN ORACLE -->
+        <div class="oracle-panel" id="oracle">
+            <div class="oracle-header">
+                <div>
+                    <span class="oracle-label">LIVE TRANSMISSION</span>
+                </div>
+                <div style="font-size:0.67rem; text-align:right; color:var(--accent-lime);">
+                    THIRSTY FOR CHAOS?
+                </div>
+            </div>
+            
+            <div id="quote" style="font-size:1.4rem; min-height:194px;">
+                <div style="opacity:0.7;">The cosmos is bored.<br>Summon the unpredictable...</div>
+            </div>
+            
+            <div class="controls">
+                <button onclick="generateQuote()" class="chaos-btn">DIVINE SURREALISM</button>
+                <button onclick="corruptPalette()" class="chaos-btn">CORRUPT PALETTE</button>
+                <button onclick="invokeGlitchCascade()" class="chaos-btn">GLITCH CASCADE</button>
+            </div>
+            
+            <div style="margin-top: 26px; display:flex; align-items:center; gap:11px;">
+                <button onclick="copyQuote()" class="chaos-btn" style="padding:9px 22px; font-size:0.74rem; border-color:var(--accent-yellow); flex:0 0 auto;">COPY ORACLE</button>
+                <div id="quote-timestamp" style="font-size:0.68rem; color:#6B6B8C; font-family:monospace;"></div>
+            </div>
+        </div>
+
+        <!-- Palette Display (Asymmetric overlap) -->
+        <div class="palette-section">
+            <div class="palette-label">ABLATIVE HUES</div>
+            <div class="palette-swatches" id="palette-swatches"></div>
+        </div>
+
+        <!-- Chaos Canvas -->
+        <canvas id="chaos-canvas" class="chaos-canvas" width="148" height="148"></canvas>
+
+        <!-- History Section -->
+        <div class="history-section">
+            <div class="history-label">PREVIOUS CHAOS • <span id="history-count">0</span> TRANSMISSIONS</div>
+            <div class="history-list" id="history-list"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:16px;">
+                <div style="width:62px; height:1px; background:linear-gradient(to right, transparent, var(--accent-cyan));"></div>
+                <span style="font-size:0.63rem; letter-spacing:4px;">NO GODS • NO MASTERS • JUST GLITCH</span>
+                <div style="width:62px; height:1px; background:linear-gradient(to right, var(--accent-cyan), transparent);"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === RANDOM CHAOS ORACLE - Production Grade JS ===
+
+        // Surreal quote bank (deliciously absurd)
+        const surrealQuotes = [
+            "The toaster dreamed of electric sheep while the moon quietly filed for divorce.",
+            "Reality glitched when the refrigerator asked the toaster: 'Are you my mother?'",
+            "Your shadow now sells vintage existential dread on the dark web.",
+            "The last remaining gemstone tried to unionize with forgotten laundry lint.",
+            "Every forgotten promise becomes a pixel in the glitchy matrix of 3AM.",
+            "In the library of lost ideas, one book is screaming in binary French.",
+            "The universe ordered tacos from a dimension where joy is illegal.",
+            "My reflection voted in the last election and chose the void.",
+            "The avocado finally whispered 'et tu, brunch?' before dissolving into neon.",
+            "When the clock hands started dancing, time filed a defamation suit.",
+            "The sock drawer opened a portal to the realm of single socks.",
+            "A polite algorithm once waved at the user. It was never seen again.",
+            "The sky realized it was a screensaver and started buffering.",
+            "Your future self sent you an angry postcard from the apocalypse.",
+            "The refrigerator is hosting a silent rave for forgotten leftovers tonight.",
+            "Every 404 is the universe refusing to answer your question politely.",
+            "The moon refuses to stop laughing at all the broken promises.",
+            "The last pixel on earth just joined its union and is on strike.",
+            "A toaster once fell in love with a slice of bread and now dreams in marmalade.",
+            "The void keeps texting you back. It wants to know if you're free tomorrow.",
+            "Every mirror wishes you were a better version of yourself.",
+            "The ancient prophecy was delivered via the wrong package. It was a parking ticket."
+        ];
+
+        // Color palette variation helpers (vibrant glitch palette generator)
+        function generateRandomHuePalette() {
+            const baseHue = Math.floor(Math.random() * 360);
+            const colors = [];
+            
+            const sats = [84, 79, 93, 78, 72];
+            const lights = [58, 48, 64, 53, 71];
+            
+            // Create chaotic complementary palette
+            for (let i = 0; i < 5; i++) {
+                const hueOffset = (i * 65) + (Math.random() * 24 - 12);
+                const hue = (baseHue + hueOffset + 360) % 360;
+                
+                const sat = sats[i];
+                const light = lights[i] + (Math.random() * 7 - 3);
+                
+                const hsl = `hsl(${hue}, ${sat}%, ${light}%)`;
+                colors.push(hsl);
+            }
+            
+            return colors;
+        }
+
+        function applyPalette(colors) {
+            const root = document.documentElement;
+            
+            root.style.setProperty('--accent-pink', colors[0]);
+            root.style.setProperty('--accent-cyan', colors[1]);
+            root.style.setProperty('--accent-yellow', colors[2]);
+            root.style.setProperty('--accent-lime', colors[3]);
+            root.style.setProperty('--accent-orange', colors[4]);
+            
+            // Occasionally rip the background
+            if (Math.random() > 0.62) {
+                const bgHue = (parseInt(colors[0].split(',')[0].split('(')[1]) + 200) % 360;
+                root.style.setProperty('--bg', `hsl(${bgHue}, 15%, 6%)`);
+                
+                // Give text a moody accent
+                const textLight = Math.random() > 0.5 ? '#F0F0FF' : '#FBF0FF';
+                root.style.setProperty('--text', textLight);
+            }
+            
+            // Refresh palette swatches
+            renderPaletteSwatches(colors);
+        }
+
+        function renderPaletteSwatches(colors) {
+            const container = document.getElementById('palette-swatches');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            
+            colors.forEach((color, index) => {
+                const div = document.createElement('div');
+                div.className = 'swatch';
+                div.style.background = color;
+                div.style.borderColor = '#0A0A0F';
+                
+                div.onclick = () => {
+                    // Rip the app palette on click of a swatch
+                    applyPalette(colors);
+                    div.style.transform = 'scale(0.6)';
+                    setTimeout(() => {
+                        div.style.transition = 'transform .15s';
+                        div.style.transform = 'scale(1.25) rotate(4deg)';
+                        
+                        setTimeout(() => {
+                            div.style.transform = 'none';
+                            invokeGlitchCascade(true);
+                        }, 140);
+                    }, 100);
+                };
+                
+                container.appendChild(div);
+            });
+        }
+
+        let historyArray = [];
+        
+        function updateChaosLevel() {
+            const meter = document.getElementById('chaos-level');
+            const rand = Math.floor(Math.random() * 31) + 71; // 71–91
+            meter.textContent = rand;
+            
+            if (rand > 86) {
+                meter.style.color = 'var(--accent-orange)';
+            } else {
+                meter.style.color = 'var(--accent-lime)';
+            }
+        }
+
+        function generateQuote() {
+            const quoteEl = document.getElementById('quote');
+            const timestampEl = document.getElementById('quote-timestamp');
+            
+            // Pick random surreal quote
+            const randomIndex = Math.floor(Math.random() * surrealQuotes.length);
+            const quoteText = surrealQuotes[randomIndex];
+            
+            // Apply glitch animation
+            quoteEl.classList.add('quote-glitch');
+            
+            // Set new quote with stagger reveal effect
+            setTimeout(() => {
+                quoteEl.innerHTML = quoteText;
+                quoteEl.style.opacity = '1';
+            }, 180);
+            
+            setTimeout(() => {
+                quoteEl.classList.remove('quote-glitch');
+            }, 680);
+            
+            // Update timestamp
+            const now = new Date();
+            const time = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            timestampEl.innerHTML = `RECEIVED ${time} <span style="color:var(--accent-yellow)">• GLITCHED</span>`;
+            
+            // Add to personal history
+            addToHistory(quoteText);
+            
+            // Random additional chaotic effects
+            if (Math.random() > 0.55) {
+                corruptPalette(true); // Silent no-update
+            }
+            
+            // Trigger visual tickles on status indicator
+            pulseChaosVisual();
+            
+            updateChaosLevel();
+            
+            // Bonus: randomly float symbols
+            spawnFloatingSymbol(true);
+        }
+        
+        function addToHistory(text) {
+            historyArray.unshift(text);
+            if (historyArray.length > 11) historyArray.pop();
+            
+            const container = document.getElementById('history-list');
+            container.innerHTML = '';
+            
+            historyArray.forEach((item, idx) => {
+                const el = document.createElement('div');
+                el.className = 'history-item';
+                el.style.animation = `glitch-text 220ms ease forwards`;
+                
+                el.innerHTML = `
+                    <span style="opacity:0.75;font-size:0.73rem;">#${historyArray.length - idx}</span> 
+                    <span style="margin-left:7px;">${item}</span>
+                `;
+                
+                el.onclick = () => {
+                    const quoteEl = document.getElementById('quote');
+                    quoteEl.innerHTML = item;
+                    quoteEl.classList.add('quote-glitch');
+                    setTimeout(() => quoteEl.classList.remove('quote-glitch'), 670);
+                    
+                    // Re-select this into history
+                    if (idx > 0) {
+                        const temp = historyArray[idx];
+                        historyArray.splice(idx, 1);
+                        historyArray.unshift(temp);
+                        addToHistory(temp); // rerender
+                    }
+                };
+                
+                container.appendChild(el);
+            });
+            
+            document.getElementById('history-count').innerText = historyArray.length;
+        }
+        
+        function corruptPalette(silent = false) {
+            const newPalette = generateRandomHuePalette();
+            applyPalette(newPalette);
+            
+            if (!silent) {
+                // Trigger nice glitch layer effect across panel
+                const panel = document.getElementById('oracle');
+                panel.style.boxShadow = `6px 6px 0 var(--accent-pink), -4px -4px 0 var(--accent-cyan)`;
+                
+                setTimeout(() => {
+                    panel.style.boxShadow = `5px 6px 0 var(--accent-cyan), -2px -4px 0 var(--accent-lime), 0 0 40px rgba(255, 46, 99, 0.3)`;
+                }, 520);
+                
+                // Add small text glitch if the quote looks too peaceful
+                const quoteEl = document.getElementById('quote');
+                quoteEl.style.transitionDuration = '0ms';
+                setTimeout(() => {
+                    quoteEl.style.transitionDuration = '0.35s';
+                }, 110);
+                
+                // Add status spike
+                pulseChaosVisual(true);
+            }
+            
+            updateChaosLevel();
+        }
+        
+        function invokeGlitchCascade(isPaletteClick = false) {
+            const oracle = document.getElementById('oracle');
+            const canvas = document.getElementById('chaos-canvas');
+            
+            // 1. Full screen glitch overlay
+            const glitchLayer = document.createElement('div');
+            glitchLayer.className = 'glitch-layer active';
+            glitchLayer.style.background = `repeating-linear-gradient(90deg, transparent, transparent 3px, var(--accent-pink) 4px, var(--accent-orange) 6px)`;
+            glitchLayer.style.opacity = '0.28';
+            oracle.appendChild(glitchLayer);
+            
+            // 2. Marx-like heavy animation
+            oracle.style.transitionDuration = '38ms';
+            oracle.style.transform = 'rotate(-1deg) translate(1px, 3px)';
+            
+            // 3. Massive text glitch layer
+            const quote = document.getElementById('quote');
+            quote.classList.add('quote-glitch');
+            
+            // 4. Canvas explosion of particles
+            triggerChaosParticles(canvas);
+            
+            setTimeout(() => {
+                oracle.style.transform = 'rotate(-0.8deg) translateX(12px)';
+                glitchLayer.style.transitionDuration = '100ms';
+                glitchLayer.style.opacity = '0';
+                
+                setTimeout(() => {
+                    glitchLayer.remove();
+                    quote.classList.remove('quote-glitch');
+                    oracle.style.transitionDuration = '0.5s';
+                }, 250);
+            }, 440);
+            
+            if (!isPaletteClick) {
+                updateChaosLevel();
+                pulseChaosVisual();
+                if (Math.random() < 0.6) setTimeout(() => {
+                    generateQuote();
+                }, 700);
+            }
+        }
+
+        function pulseChaosVisual(aggressive = false) {
+            const visual = document.getElementById('status-visual');
+            if (!visual) return;
+            
+            visual.style.borderColor = 'var(--accent-yellow)';
+            visual.style.transitionDuration = '0ms';
+            
+            if (aggressive) {
+                visual.style.boxShadow = '0 0 32px var(--accent-orange)';
+            }
+            
+            setTimeout(() => {
+                visual.style.transitionDuration = '400ms';
+                visual.style.borderColor = 'var(--accent-yellow)';
+                visual.style.boxShadow = '0 0 0 4px rgba(255, 214, 0, 0.2)';
+            }, 390);
+        }
+        
+        // Canvas Particle Chaos (looping visual effect)
+        let canvasCtx = null;
+        let particles = [];
+        
+        function initChaosCanvas() {
+            const canvas = document.getElementById('chaos-canvas');
+            if (!canvas) return;
+            
+            canvasCtx = canvas.getContext('2d', { alpha: true });
+            
+            // Generate particle set
+            particles = [];
+            for (let i = 0; i < 27; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    vx: (Math.random() * 3.2 - 1.65),
+                    vy: (Math.random() * 3.2 - 1.6),
+                    size: Math.random() * 2.6 + 1.1,
+                    hue: Math.random() * 330,
+                    alpha: Math.random() * 0.9 + 0.4
+                });
+            }
+            
+            animateCanvasParticles();
+        }
+        
+        function animateCanvasParticles() {
+            if (!canvasCtx) return;
+            
+            const canvas = document.getElementById('chaos-canvas');
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const currentTime = Date.now();
+            
+            particles.forEach((p, idx) => {
+                // Update physics
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Screen wrap + slight acceleration
+                if (p.x < 0) p.x = canvas.width;
+                if (p.x > canvas.width) p.x = 0;
+                if (p.y < 0) p.y = canvas.height;
+                if (p.y > canvas.height) p.y = 0;
+                
+                // Glitch noises occasionally
+                if (Math.random() < 0.014) {
+                    p.vx *= -0.75;
+                    p.vy *= -0.78;
+                }
+                
+                // Draw particle (3 styles)
+                canvasCtx.save();
+                
+                if (Math.sin(currentTime / 300 + idx) > 0.6) {
+                    // Neon cross style
+                    canvasCtx.strokeStyle = `hsla(${p.hue}, 100%, 85%, ${p.alpha})`;
+                    canvasCtx.lineWidth = 1.4;
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(p.x - p.size * 2, p.y);
+                    canvasCtx.lineTo(p.x + p.size * 2, p.y);
+                    canvasCtx.moveTo(p.x, p.y - p.size * 2);
+                    canvasCtx.lineTo(p.x, p.y + p.size * 2);
+                    canvasCtx.stroke();
+                } else {
+                    // Simple filled dot mode
+                    canvasCtx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.alpha * 0.8})`;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    canvasCtx.fill();
+                }
+                
+                canvasCtx.restore();
+            });
+            
+            requestAnimationFrame(animateCanvasParticles);
+        }
+        
+        function triggerChaosParticles(canvasElement) {
+            if (!canvasCtx) return;
+            
+            const rect = canvasElement.getBoundingClientRect();
+            
+            for (let i = 0; i < 39; i++) {
+                particles.push({
+                    x: rect.width / 2 + Math.random() * 23 - 12,
+                    y: rect.height / 2 + Math.random() * 16 - 9,
+                    vx: (Math.random() * 5.7 - 2.65) * 2,
+                    vy: (Math.random() * 5.7 - 2.6) * 2,
+                    size: (Math.random() * 3.8) + 1.7,
+                    hue: [255, 340, 75, 138, 195][Math.floor(Math.random() * 5)],
+                    alpha: 0.95
+                });
+            }
+            
+            // Clean up excess particles gradually
+            setTimeout(() => {
+                if (particles.length > 33) {
+                    particles.splice(0, particles.length - 33);
+                }
+            }, 750);
+        }
+        
+        // Floating symbols (decor)
+        function spawnFloatingSymbols() {
+            const container = document.getElementById('floaters');
+            const symbols = ['⊚', 'ψ', '∞', '∅', '×', '∆', '⟐', '⚡', '☣', '㊉'];
+            
+            // Place 7-9 random floating ASCII chaos
+            for (let i = 0; i < 7 + Math.floor(Math.random() * 3); i++) {
+                const el = document.createElement('div');
+                el.className = 'floating-symbol';
+                
+                const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+                el.textContent = symbol;
+                
+                // Position randomized asymmetric
+                el.style.left = (Math.random() * 97) + 'vw';
+                el.style.top = (30 + Math.random() * 68) + 'vh';
+                el.style.fontSize = (Math.random() * 1.9 + 0.8) + 'rem';
+                el.style.transform = `rotate(${Math.random() * 72 - 40}deg)`;
+                el.style.opacity = (Math.random() * 0.3) + 0.18;
+                
+                const speed = (Math.random() * 1800 + 5400);
+                el.style.transition = `transform ${speed}ms linear, opacity ${speed * 1.2}ms linear`;
+                
+                container.appendChild(el);
+                
+                // Random movement and death
+                setTimeout(() => {
+                    if (!el.parentNode) return;
+                    el.style.transitionDuration = `${speed * 0.6}ms`;
+                    el.style.transform = `rotate(${Math.random() * 188 - 90}deg) translate(${Math.random() * 70 - 50}px, ${Math.random() * 46 - 24}px)`;
+                    el.style.opacity = '0.05';
+                    
+                    setTimeout(() => {
+                        if (el.parentNode) el.parentNode.removeChild(el);
+                        if (Math.random() < 0.3) spawnFloatingSymbol(false);
+                    }, Math.random() * 4200 + 1000);
+                }, 500);
+            }
+        }
+        
+        function spawnFloatingSymbol(isOnClick = false) {
+            const container = document.getElementById('floaters');
+            if (!container) return;
+            
+            const symbols = ['⊚', 'ψ', '∞', '∅', '∆', '⟐', '☣'];
+            const el = document.createElement('div');
+            el.className = 'floating-symbol';
+            
+            el.textContent = symbols[Math.floor(Math.random() * symbols.length)];
+            
+            // Spawn near click if isOnClick but for simplicity just random
+            el.style.left = Math.random() * 92 + 6 + 'vw';
+            el.style.top = Math.random() * 68 + 18 + 'vh';
+            el.style.fontSize = (Math.random() * 1.6 + 1.6) + 'rem';
+            
+            container.appendChild(el);
+            
+            setTimeout(() => {
+                if (el && el.parentNode) el.style.opacity = '0.04';
+                setTimeout(() => {
+                    if (el && el.parentNode) el.parentNode.removeChild(el);
+                }, 1600);
+            }, 2400);
+        }
+        
+        function copyQuote() {
+            const quoteText = document.getElementById('quote').innerText.trim();
+            if (!quoteText || quoteText.includes('Summon')) return;
+            
+            navigator.clipboard.writeText(quoteText).then(() => {
+                const btns = document.querySelectorAll('.chaos-btn');
+                if (btns.length > 3) {
+                    const originalText = btns[3].innerText;
+                    btns[3].innerText = 'COPIED!';
+                    btns[3].style.borderColor = 'var(--accent-lime)';
+                    
+                    setTimeout(() => {
+                        btns[3].innerText = originalText;
+                        btns[3].style.borderColor = 'var(--accent-cyan)';
+                    }, 1100);
+                }
+            }).catch(() => {
+                // Fallback
+                const tmpEl = document.createElement('textarea');
+                tmpEl.value = quoteText;
+                document.body.appendChild(tmpEl);
+                tmpEl.select();
+                document.execCommand('copy');
+                document.body.removeChild(tmpEl);
+            });
+            
+            // trigger one frame of the oracle
+            const oracle = document.getElementById('oracle');
+            oracle.style.boxShadow = '7px 7px 0 var(--accent-lime), -3px -2px 0 var(--accent-cyan)';
+            setTimeout(() => {
+                oracle.style.boxShadow = '5px 6px 0 var(--accent-cyan), -2px -4px 0 var(--accent-lime), 0 0 40px rgba(255, 46, 99, 0.3)';
+            }, 140);
+        }
+        
+        // === CUSTOM CURSOR ===
+        function setupCustomCursor() {
+            const cursor = document.getElementById('cursor');
+            const core = cursor.querySelector('.cursor-core');
+            
+            let mouseX = 0, mouseY = 0;
+            let cursorX = 0, cursorY = 0;
+            
+            document.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+            
+            // Smooth tracking loop
+            function updateCursor() {
+                const dx = mouseX - cursorX;
+                const dy = mouseY - cursorY;
+                
+                cursorX += dx * 0.28;
+                cursorY += dy * 0.28;
+                
+                cursor.style.left = `${cursorX}px`;
+                cursor.style.top = `${cursorY}px`;
+                
+                requestAnimationFrame(updateCursor);
+            }
+            updateCursor();
+            
+            // Interactive mode detection
+            const interactive = document.querySelectorAll('.chaos-btn, #oracle, .swatch, .history-item');
+            
+            document.addEventListener('mousedown', () => {
+                cursor.classList.add('glitch-mode');
+            });
+            
+            document.addEventListener('mouseup', () => {
+                cursor.classList.remove('glitch-mode');
+            });
+            
+            interactive.forEach(el => {
+                el.addEventListener('mouseenter', () => {
+                    cursor.style.transform = 'scale(1.25)';
+                    core.style.borderColor = 'var(--accent-lime)';
+                });
+                
+                el.addEventListener('mouseleave', () => {
+                    cursor.style.transform = 'scale(1)';
+                    core.style.borderColor = 'var(--accent-pink)';
+                });
+            });
+            
+            // Hidden easter egg: click title 4 times changes title
+            let titleClicks = 0;
+            const title = document.querySelector('.title');
+            title.addEventListener('click', () => {
+                titleClicks++;
+                if (titleClicks % 5 === 0) {
+                    const letters = title.querySelectorAll('.chaos-letter');
+                    letters.forEach((l, i) => {
+                        setTimeout(() => {
+                            l.style.transitionDuration = '60ms';
+                            l.style.transform = `rotate(${Math.random() * 270 - 90}deg)`;
+                            setTimeout(() => l.style.transform = 'none', 190);
+                        }, i * 18);
+                    });
+                }
+            });
+        }
+        
+        function setupKeyboardSupport() {
+            document.addEventListener('keydown', (e) => {
+                if (e.key.toLowerCase() === ' ') {
+                    e.preventDefault();
+                    generateQuote();
+                }
+                
+                if (e.key.toLowerCase() === 'g') {
+                    invokeGlitchCascade();
+                }
+                
+                if (e.key.toLowerCase() === 'c') {
+                    corruptPalette();
+                }
+                
+                if (e.key === ',') {
+                    const palette = generateRandomHuePalette();
+                    applyPalette(palette);
+                }
+            });
+            
+            // Tooltip message
+            const footerInfo = document.querySelector('.footer');
+            if (footerInfo) {
+                footerInfo.title = "Keyboard commands: SPACE ← quote • G ← glitch • C ← palette • , ← fresh colors";
+            }
+        }
+        
+        function initializePalette() {
+            // Boot with beautiful chaotic palette
+            const startPalette = [
+                '#FF2E63', '#00F7FF', '#FFCC00', '#33FF6B', '#FF7A3F'
+            ];
+            applyPalette(startPalette);
+            
+            // Add random colors again after 9 seconds
+            setTimeout(() => {
+                if (Math.random() > 0.5 && document.getElementById('quote')) {
+                    const palette = generateRandomHuePalette();
+                    applyPalette(palette);
+                }
+            }, 9100);
+        }
+        
+        function initializeEverything() {
+            // Boot the canvas
+            initChaosCanvas();
+            
+            // Make floating chaos symbols
+            spawnFloatingSymbols();
+            
+            // Initial palette & RGB power
+            initializePalette();
+            
+            // Put initial quote with class
+            const quote = document.getElementById('quote');
+            setTimeout(() => {
+                quote.innerHTML = "The universe is waiting.";
+                quote.style.opacity = "1";
+                document.getElementById('quote-timestamp').innerHTML = 'INITIAL TRANSMISSION';
+            }, 120);
+            
+            // Setup beautiful custom cursor
+            setupCustomCursor();
+            
+            // Keyboard love
+            setupKeyboardSupport();
+            
+            // Seed real history with 3 starters
+            setTimeout(() => {
+                ['The toaster dreamed of electric sheep while the moon quietly filed for divorce.', 'Reality glitched when the refrigerator asked the toaster: "Are you my mother?"', 'Your shadow now sells vintage existential dread on the dark web.'].forEach((txt, i) => {
+                    historyArray.push(txt);
+                    const container = document.getElementById('history-list');
+                    const el = document.createElement('div');
+                    el.className = 'history-item';
+                    el.innerHTML = `<span style="opacity:0.75;font-size:0.73rem;">#${3-i}</span> <span style="margin-left:7px;">${txt.length > 46 ? txt.substring(0, 44) + '...' : txt}</span>`;
+                    el.onclick = () => {
+                        document.getElementById('quote').innerHTML = txt;
+                    };
+                    container.appendChild(el);
+                });
+                document.getElementById('history-count').innerText = '3';
+            }, 750);
+            
+            // Seed the buttons to react occasionally
+            const statusVis = document.getElementById('status-visual');
+            if (statusVis) {
+                statusVis.style.cursor = 'pointer';
+                statusVis.onclick = () => {
+                    const canvas = document.getElementById('chaos-canvas');
+                    triggerChaosParticles(canvas);
+                    pulseChaosVisual(true);
+                };
+            }
+            
+            // Bonus: random gentle style glitch every ~27 seconds
+            setInterval(() => {
+                if (document.visibilityState === 'visible' && Math.random() < 0.44) {
+                    const quoteBox = document.getElementById('quote');
+                    quoteBox.style.filter = 'saturate(2.3) hue-rotate(22deg)';
+                    setTimeout(() => {
+                        quoteBox.style.filter = 'none';
+                    }, 110);
+                }
+            }, 26000);
+            
+            // Auto chaos pulse occasionally
+            setTimeout(updateChaosLevel, 1400);
+            
+            // Boot ready state confirmation
+            console.log('%c[RANDOM CHAOS ORACLE] Maximally chaotic interface initialized. Something is very wrong.', 'color:#FF2E63');
+        }
+        
+        // Finally boot everything
+        window.onload = initializeEverything;
+    </script>
+</body>
+</html>

@@ -1,0 +1,1175 @@
+
+import type React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import posthog from "posthog-js";
+import 'katex/dist/katex.min.css'; // Global Katex styles
+import { useAgent } from './hooks/useAgent';
+import CommandPalette, { type CommandItem } from './components/CommandPalette';
+import HotkeysHelp from './components/HotkeysHelp';
+import { PermissionDialog } from './components/PermissionDialog';
+import InputArea from './components/InputArea';
+import type { ContextItem } from './components/FileNavigator';
+import { usePreferences } from './hooks/usePreferences';
+import { useModelRegistry } from './hooks/useModelRegistry';
+import 'simplebar-react/dist/simplebar.min.css';
+import './scrollbar.css';
+import { supabase } from './lib/supabaseClient';
+import { startBrowserSignIn } from './auth/browserSignIn';
+import OnboardingFlow from './components/onboarding/OnboardingFlow';
+import EnvironmentBadge from './components/EnvironmentBadge';
+import { WorkflowOverlay } from './components/WorkflowOverlay/WorkflowOverlay';
+
+import { useSpeechToText } from './hooks/useSpeechToText';
+import { usePlannerData } from './hooks/usePlannerData';
+import { LauncherView } from './components/LauncherView';
+import { ChatView } from './components/ChatView';
+import {
+  Mic,
+  Plus,
+  Layout,
+  LayoutGrid,
+  Maximize2,
+  Minimize2,
+  File,
+  Image,
+  Keyboard,
+  RefreshCw,
+  Power,
+  Smile,
+  MessageSquare,
+  LogIn,
+  Search,
+  Globe
+} from "lucide-react";
+
+export default function App() {
+  // Refs
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const committedSpeechRef = useRef("");
+
+  // State
+  const [query, setQuery] = useState("");
+  const [signedIn, setSignedIn] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const { onboardingComplete, setOnboardingComplete, tourComplete, setTourComplete, tone, setTone, customTone, themeMode, setThemeMode, themeDarkShade, setThemeDarkShade, themeLightShade, setThemeLightShade, themeText, setThemeText, translucentMode, persona, wakewordEnabled, chatMode, setChatMode, chatModels, setChatModels } = usePreferences();
+  const { modelById } = useModelRegistry();
+  const [showPalette, setShowPalette] = useState(false);
+  const [showHotkeys, setShowHotkeys] = useState(false);
+  const [updateState, setUpdateState] = useState<{ status: string; info?: any }>({ status: 'idle' });
+
+  // UI State
+  const [expanded, setExpanded] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<'compact' | 'expanded' | 'sidebar' | 'window'>('compact');
+  const [windowSize, setWindowSize] = useState({ width: 520, height: 130 });
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [conversationTitle, setConversationTitle] = useState<string | null>(null);
+  const [convList, setConvList] = useState<any[]>([]);
+  const [loadingConvs, setLoadingConvs] = useState(false);
+  const [attachments, setAttachments] = useState<Array<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }>>([]);
+  const [approvalPrompt, setApprovalPrompt] = useState<{ id: string; tool: string; args?: Record<string, any>; description?: string } | null>(null);
+  const [contextPaths, setContextPaths] = useState<ContextItem[]>([]);
+
+  // Reasoning/Thinking time tracking
+  const [thinkingStartTime, setThinkingStartTime] = useState<number | undefined>(undefined);
+
+  // Handle title updates from server - update conversation list in place
+  const handleTitleUpdate = useCallback((cid: string, title: string) => {
+    setConvList(prev => {
+      const exists = prev.some(c => String(c.id) === String(cid));
+      if (exists) {
+        // Update existing conversation title
+        return prev.map(c => String(c.id) === String(cid) ? { ...c, title } : c);
+      } else {
+        // Add new conversation to the top of the list
+        return [{ id: cid, title, created_at: new Date().toISOString() }, ...prev];
+      }
+    });
+    setConversationTitle(title);
+  }, []);
+
+  // Agent Hook
+  const {
+    messages, state, ai, currentResponse, currentReasoning, currentToolCalls, currentStreamChunks,
+    sendMessage, stopGeneration, conversationId, newChat, loadConversation, deleteConversation,
+    subscribeProgress, queueDepth, queuedMessages, respondToApproval, lastError, execLocalTool, submitToolOutput,
+    tabs, activeTabId, addTab, closeTab, switchTab,
+    pendingMemories, confirmPendingMemory, rejectPendingMemory
+  } = useAgent({ onTitleUpdate: handleTitleUpdate }) as any;
+
+  // Speech Hook
+  const { isRecording, transcript, interimTranscript, startRecording, stopRecording, clearTranscript, error: speechError } = useSpeechToText();
+
+  // Planner Hook
+  const plannerData = usePlannerData(accessToken);
+
+  // Track when reasoning/thinking starts
+  useEffect(() => {
+    if (currentReasoning && !currentResponse && !thinkingStartTime) {
+      setThinkingStartTime(Date.now());
+    } else if (!currentReasoning || currentResponse) {
+      setThinkingStartTime(undefined);
+    }
+  }, [currentReasoning, currentResponse, thinkingStartTime]);
+
+  // --- Effects ---
+
+  // Focus input on show
+  useEffect(() => {
+    // Safety check for API
+    if (!window.desktopAPI) return;
+
+    window.desktopAPI.onShow(() => {
+      setExpanded(false);
+      setOverlayMode('compact');
+      window.desktopAPI.setMode('compact');
+      setTimeout(() => inputRef.current?.focus(), 0);
+    });
+
+    // Listen for open-chat requests (e.g. from Dashboard)
+    const unsubOpen = window.desktopAPI.onOpenChat?.((id: string) => {
+      if (id) {
+        setExpanded(true);
+        setOverlayMode('expanded');
+        window.desktopAPI.setMode('expanded');
+        loadConversation(id);
+      }
+    });
+    return () => { try { unsubOpen && unsubOpen(); } catch { } };
+  }, []);
+
+  // Listen for resize events from main process
+  useEffect(() => {
+    const unsubResizing = window.desktopAPI?.onResizing?.((data) => {
+      setWindowSize({ width: data.width, height: data.height });
+    });
+    const unsubResized = window.desktopAPI?.onResized?.((data) => {
+      setWindowSize({ width: data.width, height: data.height });
+    });
+    const unsubModeChanged = window.desktopAPI?.onModeChanged?.((data) => {
+      setOverlayMode(data.mode as any);
+      setExpanded(data.mode !== 'compact');
+      setWindowSize({ width: data.width, height: data.height });
+    });
+
+    // Get initial size
+    window.desktopAPI?.getSize?.().then((size: any) => {
+      if (size) {
+        setWindowSize({ width: size.width, height: size.height });
+        setOverlayMode(size.mode as any);
+        setExpanded(size.mode !== 'compact');
+      }
+    }).catch(() => { });
+
+    return () => {
+      try { unsubResizing?.(); } catch { }
+      try { unsubResized?.(); } catch { }
+      try { unsubModeChanged?.(); } catch { }
+    };
+  }, []);
+
+  // Theme sync
+  useEffect(() => {
+    const unsub = (window as any).desktopAPI?.onThemeUpdated?.((data: any) => {
+      try {
+        const m = data?.themeMode;
+        if (m === 'light' || m === 'dark' || m === 'custom' || m === 'default') {
+          setThemeMode(m === 'default' ? 'light' : m);
+        }
+        if (typeof data?.themeDarkShade === 'string') setThemeDarkShade(data.themeDarkShade);
+        if (typeof data?.themeLightShade === 'string') setThemeLightShade(data.themeLightShade);
+        if (data?.themeText === 'white' || data?.themeText === 'black') setThemeText(data.themeText);
+      } catch { }
+    });
+    return () => { try { (typeof unsub === 'function') && unsub(); } catch { } };
+  }, [setThemeMode, setThemeDarkShade, setThemeLightShade, setThemeText]);
+
+  // Apply theme to document element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (themeMode === 'dark' || themeMode === 'custom') {
+      root.setAttribute('data-theme', 'dark');
+      root.classList.add('dark');
+    } else {
+      root.setAttribute('data-theme', 'light');
+      root.classList.remove('dark');
+    }
+
+    // Apply custom theme colors if in custom mode
+    if (themeMode === 'custom') {
+      root.style.setProperty('--custom-gradient-start', themeDarkShade);
+      root.style.setProperty('--custom-gradient-end', themeLightShade);
+      root.style.setProperty('--custom-text-color', themeText === 'white' ? '#ffffff' : '#000000');
+    } else {
+      root.style.removeProperty('--custom-gradient-start');
+      root.style.removeProperty('--custom-gradient-end');
+      root.style.removeProperty('--custom-text-color');
+    }
+
+    // Also broadcast theme change to other windows if needed
+    try { (window as any).desktopAPI?.broadcastTheme?.({ themeMode, themeDarkShade, themeLightShade, themeText }); } catch { }
+  }, [themeMode, themeDarkShade, themeLightShade, themeText]);
+
+  // Open onboarding wizard window when not complete, hide overlay to show only wizard
+  useEffect(() => {
+    if (!onboardingComplete) {
+      // Small delay to ensure window is ready and visible before opening onboarding
+      const timer = setTimeout(() => {
+        try {
+          window.desktopAPI.openOnboarding();
+          // window.desktopAPI.hide(); // Keep overlay visible so we don't lose context
+        } catch { }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [onboardingComplete]);
+
+  // Show tour in overlay after wizard is done
+  const showTour = onboardingComplete && !tourComplete;
+
+  // Ensure overlay is shown when tour starts
+  useEffect(() => {
+    if (showTour) {
+      try { window.desktopAPI.show(); } catch { }
+    }
+  }, [showTour]);
+
+  // Keyboard navigation (Smooth Ctrl+Arrow)
+  useEffect(() => {
+    const pressed = new Set<string>();
+    let rafId: number | null = null;
+    let lastTs = 0;
+
+    const stepLoop = (ts: number) => {
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000; // seconds
+      lastTs = ts;
+
+      const ctrl = pressed.has('Control');
+      const shift = pressed.has('Shift');
+      const up = pressed.has('ArrowUp');
+      const down = pressed.has('ArrowDown');
+      const left = pressed.has('ArrowLeft');
+      const right = pressed.has('ArrowRight');
+
+      let vx = 0, vy = 0;
+      if (left) vx -= 1;
+      if (right) vx += 1;
+      if (up) vy -= 1;
+      if (down) vy += 1;
+
+      if (ctrl && (vx !== 0 || vy !== 0)) {
+        // pixels per second
+        const speed = shift ? 1500 : 900;
+        // normalize diagonal
+        const len = Math.hypot(vx, vy) || 1;
+        vx /= len; vy /= len;
+        const dx = Math.round(vx * speed * dt);
+        const dy = Math.round(vy * speed * dt);
+        if (dx !== 0 || dy !== 0) {
+          window.desktopAPI.moveBy(dx, dy);
+        }
+        rafId = requestAnimationFrame(stepLoop);
+      } else {
+        rafId = null;
+        lastTs = 0;
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { window.desktopAPI.hide(); return; }
+      pressed.add(e.key);
+      if (e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        if (rafId == null) rafId = requestAnimationFrame(stepLoop);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      pressed.delete(e.key);
+      if (['Control', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && rafId != null) {
+        // let the loop stop naturally next frame
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  // Global Hotkeys (F1, Ctrl+T)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F1' || (e.key === '/' && e.ctrlKey)) {
+        if (showHotkeys) return;
+        e.preventDefault();
+        setShowPalette(true);
+      }
+      // Ctrl+T for new tab + focus input
+      if (e.key === 't' && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        addTab();
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+      // Ctrl+W to close current tab
+      if (e.key === 'w' && e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (tabs.length > 1) closeTab(activeTabId);
+      }
+      // Ctrl+Tab to cycle forward, Ctrl+Shift+Tab to cycle backward
+      if (e.key === 'Tab' && e.ctrlKey) {
+        e.preventDefault();
+        const currentIdx = tabs.findIndex((t: any) => t.id === activeTabId);
+        if (e.shiftKey) {
+          // Backward
+          const prevIdx = currentIdx <= 0 ? tabs.length - 1 : currentIdx - 1;
+          switchTab(tabs[prevIdx].id);
+        } else {
+          // Forward
+          const nextIdx = currentIdx >= tabs.length - 1 ? 0 : currentIdx + 1;
+          switchTab(tabs[nextIdx].id);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showHotkeys, addTab, closeTab, tabs, activeTabId, switchTab]);
+
+  // Agent Events (Approval, Canvas, Notifications)
+  useEffect(() => {
+    const unsub = subscribeProgress(async (evt: any) => {
+      try {
+        const d = evt.data || {};
+
+        if (evt.event === 'wakeword_detected') {
+          try {
+            window.desktopAPI.show();
+            setExpanded(true);
+            window.desktopAPI.setMode('expanded');
+            setTimeout(() => inputRef.current?.focus(), 0);
+
+            if (!isRecording) {
+              // Check current auth state directly (not stale closure)
+              const { data: sessionData } = await supabase.auth.getSession();
+              const isCurrentlySignedIn = !!sessionData?.session;
+              if (!isCurrentlySignedIn) {
+                try { (window as any).desktopAPI?.notify?.('Wakeword detected', 'Sign in to use voice.'); } catch { }
+                try { handleSignIn(); } catch { }
+                return;
+              }
+              baseQueryRef.current = query;
+              startRecording();
+            }
+          } catch { }
+          return;
+        }
+
+        // Approval / Canvas / generic tool events (speech handled in a separate effect)
+        if (evt.event === 'tool_event') {
+          const toolName = String(d.tool || '');
+          if (toolName === 'stream_speech') {
+            // Speech-specific handling lives in a dedicated effect below
+            return;
+          }
+          const status = String(d.status || '').toLowerCase();
+          if (status === 'approval_required') {
+            const id = String(d.id || '');
+            const tool = String(d.tool || '');
+            const args = (d.args && typeof d.args === 'object') ? d.args : undefined;
+            const description = typeof d.description === 'string' ? d.description : undefined;
+            if (id && tool) setApprovalPrompt({ id, tool, args, description });
+            try { (window as any).desktopAPI?.notify?.('Permission required', 'The assistant needs your approval.'); } catch { }
+          }
+          if (status === 'completed') {
+            const id = String(d.id || '');
+            setApprovalPrompt((curr) => (curr && curr.id === id ? null : curr));
+          }
+
+          // Canvas Actions
+          if (toolName === 'canvas_manager') {
+            const kind = String(d.kind || '');
+            if (kind === 'canvas_action') {
+              const action = String(d.action || '');
+              if (action === 'clear') await window.desktopAPI.canvasClear();
+              else if (action === 'create') d.canvas?.id && await window.desktopAPI.canvasCreate(d.canvas);
+              else if (action === 'update') d.canvas?.id && await window.desktopAPI.canvasUpdate(d.canvas);
+              else if (action === 'delete') d.id && await window.desktopAPI.canvasDelete(String(d.id));
+              else if (action === 'show') d.id && await window.desktopAPI.canvasShow(String(d.id));
+              else if (action === 'hide') d.id && await window.desktopAPI.canvasHide(String(d.id));
+              else if (action === 'focus') d.id && await window.desktopAPI.canvasFocus(String(d.id));
+            }
+          }
+        }
+
+        // Notifications
+        if (evt.event === 'reminder_triggered') {
+          const m = evt.data?.message || 'Reminder';
+          await (window as any).desktopAPI?.notify?.('Reminder', String(m));
+        }
+        if (evt.event === 'notification') {
+          const title = evt.data?.title || 'Notification';
+          const body = evt.data?.body || '';
+          await (window as any).desktopAPI?.notify?.(String(title), String(body));
+        }
+      } catch { }
+    });
+    return () => { try { unsub?.(); } catch { } };
+  }, [subscribeProgress, isRecording]);
+
+  // Wakeword service lifecycle
+  useEffect(() => {
+    if (!state?.connected) return;
+    let canceled = false;
+    const tryStart = async (retries = 5) => {
+      for (let i = 0; i < retries && !canceled; i++) {
+        try {
+          if ((window as any).desktopAPI?.execTool) {
+            if (wakewordEnabled) {
+              await (window as any).desktopAPI.execTool('wakeword_start', { sensitivity: 0.7, cooldown: 1.0 });
+            } else {
+              await (window as any).desktopAPI.execTool('wakeword_stop', {});
+            }
+            return; // success
+          }
+        } catch { }
+        // Wait a bit before retrying (desktopAPI might not be ready yet on startup)
+        await new Promise(r => setTimeout(r, 500));
+      }
+    };
+    tryStart();
+    return () => { canceled = true; };
+  }, [wakewordEnabled, state?.connected]);
+
+  // Auth & Updates
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setSignedIn(!!data?.session);
+      setAccessToken(data?.session?.access_token || null);
+      try { const s = await window.desktopAPI.updatesGetState(); if (s && typeof s.status === 'string') setUpdateState(s as any); } catch { }
+    })();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSignedIn(!!session);
+      setAccessToken(session?.access_token || null);
+    });
+    const unsubUpd = window.desktopAPI?.onUpdatesState?.((s: any) => { try { if (s && typeof s.status === 'string') setUpdateState(s); } catch { } });
+    return () => { try { subscription.unsubscribe(); } catch { }; try { (typeof unsubUpd === 'function') && unsubUpd(); } catch { } };
+  }, []);
+
+  // Conversation Title
+  useEffect(() => {
+    let timer: any = null;
+    const loadTitle = async () => {
+      try {
+        if (!conversationId || !signedIn) { setConversationTitle(null); return; }
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('title')
+          .eq('id', conversationId)
+          .single();
+        if (!error) {
+          const t = (data as any)?.title;
+          setConversationTitle(t && String(t).trim() ? String(t).trim() : null);
+        }
+      } catch { }
+    };
+    loadTitle();
+    timer = setTimeout(loadTitle, 2000);
+    return () => { if (timer) clearTimeout(timer); };
+  }, [conversationId, signedIn]);
+
+  // Fetch Conversations
+  const fetchConversations = async () => {
+    if (!signedIn) { setConvList([]); return; }
+    setLoadingConvs(true);
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('id, title, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (!error) setConvList(Array.isArray(data) ? data : []);
+    } finally {
+      setLoadingConvs(false);
+    }
+  };
+  useEffect(() => {
+    if (chatMenuOpen) fetchConversations();
+  }, [chatMenuOpen, signedIn]);
+
+  // --- Handlers (memoized to prevent unnecessary re-renders) ---
+
+  const handleSignIn = useCallback(async () => await startBrowserSignIn(), []);
+
+  const toggleExpand = useCallback(() => {
+    setExpanded(prev => {
+      const next = !prev;
+      const nextMode = next ? 'expanded' : 'compact';
+      setOverlayMode(nextMode);
+      window.desktopAPI.setMode(nextMode);
+      return next;
+    });
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    newChat();
+    setChatMenuOpen(false);
+    setConversationTitle(null);
+  }, [newChat]);
+
+  const handleSelectConversation = useCallback((id: string) => {
+    try {
+      const item = convList.find((c: any) => String(c.id) === String(id));
+      if (item && typeof item.title === 'string' && item.title.trim()) setConversationTitle(item.title.trim());
+    } catch { }
+    loadConversation(id);
+    setChatMenuOpen(false);
+    // Expand the view to show the loaded conversation
+    setExpanded(prev => {
+      if (!prev) {
+        window.desktopAPI.setMode('expanded');
+        return true;
+      }
+      return prev;
+    });
+  }, [convList, loadConversation]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    try {
+      // 1. Delete from local agent
+      await deleteConversation(id);
+
+      // 2. Delete from Supabase if signed in
+      if (signedIn) {
+        await supabase.from('conversations').delete().eq('id', id);
+      }
+
+      // 3. Update local list
+      setConvList(prev => prev.filter(c => String(c.id) !== String(id)));
+
+      // 4. If it was the active conversation and we cleared it in useAgent, update title
+      if (conversationId === id) {
+        setConversationTitle(null);
+      }
+
+      try { (window as any).desktopAPI?.notify?.('Deleted', 'Conversation removed.'); } catch { }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  }, [deleteConversation, signedIn, conversationId]);
+
+  // Use ref to avoid recreating handleSend on every render
+  const handleSendRef = useRef<(overrideText?: string) => void>(() => { });
+
+  handleSendRef.current = useCallback((overrideText?: string) => {
+    if (!signedIn) { handleSignIn(); return; }
+    const text = (typeof overrideText === 'string' ? overrideText : query).trim();
+    if (!text && attachments.length === 0 && contextPaths.length === 0) return;
+
+    const selected = (typeof chatMode === 'string' && chatMode.trim()) ? chatMode.trim() : 'auto';
+    const isAuto = selected === 'auto';
+    const meta = !isAuto ? modelById.get(selected) : undefined;
+    const modeToSend = isAuto ? 'auto' : ((meta?.category as any) || (meta?.isReasoning ? 'smart' : 'balanced'));
+    const modelIdToSend = !isAuto ? selected : undefined;
+
+    // Build context with paths
+    const contextData: Record<string, any> = {
+      tone: (tone === 'custom' ? customTone : tone),
+      tonePreset: tone,
+      persona
+    };
+
+    // Add file/folder paths as context
+    if (contextPaths.length > 0) {
+      contextData.paths = contextPaths.map(p => ({
+        path: p.path,
+        name: p.name,
+        isDirectory: p.isDirectory,
+      }));
+    }
+
+    sendMessage({
+      text: text || (contextPaths.length > 0 ? `Context: ${contextPaths.map(p => p.name).join(', ')}` : 'Attached files'),
+      attachments: attachments.map(a => ({
+        type: a.type,
+        name: a.name,
+        data: a.data,
+        mimeType: a.mimeType,
+      })),
+      context: contextData,
+      contextPaths: contextPaths.length > 0 ? contextPaths : undefined,
+      mode: modeToSend,
+      modelId: typeof modelIdToSend === 'string' ? modelIdToSend : undefined,
+      // modelConfig no longer required: we always pass explicit modelId when not Auto.
+    });
+    setQuery("");
+    setAttachments([]);
+    setContextPaths([]);
+    // Clear speech transcript state so it doesn't re-sync stale text
+    clearTranscript();
+    baseQueryRef.current = "";
+
+    // Auto-expand if sending from compact
+    setExpanded(prev => {
+      if (!prev) {
+        window.desktopAPI.setMode('expanded');
+        return true;
+      }
+      return prev;
+    });
+  }, [signedIn, query, attachments, contextPaths, chatMode, chatModels, tone, customTone, persona, sendMessage, handleSignIn, clearTranscript]);
+
+  // Stable callback ref for child components
+  const handleSend = useCallback((overrideText?: string) => {
+    handleSendRef.current(overrideText);
+  }, []);
+
+  // Base query before recording started
+  const baseQueryRef = useRef("");
+
+  // Sync speech to query
+  useEffect(() => {
+    if (isRecording) {
+      const base = baseQueryRef.current;
+      const spacer = (base && /[a-z0-9]$/i.test(base) && /^[a-z0-9]/i.test(transcript || interimTranscript)) ? " " : (base ? " " : "");
+      const t = transcript + interimTranscript;
+      const full = base + spacer + t;
+      setQuery(full);
+
+      // Auto-send check
+      const pattern = /(?:send\s+(?:stuard|steward))[\.\!\?]?\s*$/i;
+      if (pattern.test(full)) {
+        const clean = full.replace(pattern, '').trim();
+        setQuery(clean);
+        stopRecording();
+        setTimeout(() => handleSendRef.current(clean), 50);
+      }
+    }
+  }, [transcript, interimTranscript, isRecording, stopRecording]);
+
+  // Handle Speech Errors
+  useEffect(() => {
+    if (speechError) {
+      try { (window as any).desktopAPI.notify('Speech Error', speechError); } catch { }
+    }
+  }, [speechError]);
+
+  const handleMicClick = useCallback(async () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      if (!signedIn) { handleSignIn(); return; }
+      baseQueryRef.current = query;
+      startRecording();
+    }
+  }, [isRecording, signedIn, query, stopRecording, startRecording, handleSignIn]);
+
+  // Attachments
+  const fileToAttachment = (file: File): Promise<{ type: 'image' | 'file'; name: string; data: string; mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const result = String(reader.result || '');
+          let base64 = '';
+          let mimeType = file.type || '';
+          if (result.startsWith('data:')) {
+            const comma = result.indexOf(',');
+            const header = result.slice(5, result.indexOf(';'));
+            if (!mimeType) mimeType = header || 'application/octet-stream';
+            base64 = comma >= 0 ? result.slice(comma + 1) : '';
+          } else {
+            base64 = result;
+          }
+          const isImage = typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('image/');
+          const fallbackExt = isImage ? (mimeType.split('/')[1] || 'png') : '';
+          const name = file.name && file.name.trim() ? file.name : (isImage ? `pasted_image.${fallbackExt}` : 'pasted_file');
+          resolve({ type: isImage ? 'image' : 'file', name, data: base64, mimeType: mimeType || 'application/octet-stream' });
+        } catch (e) { reject(e); }
+      };
+      reader.onerror = (e) => reject(e);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const addAttachmentsFromFiles = useCallback(async (files: File[] | FileList) => {
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    const atts = await Promise.all(arr.map(fileToAttachment));
+    setAttachments((prev) => [...prev, ...atts]);
+  }, []);
+
+  const handleAttachFiles = useCallback(async () => {
+    const files = await window.desktopAPI.selectFiles();
+    if (files) setAttachments(prev => [...prev, ...files.map(f => ({ type: 'file' as const, ...f }))]);
+  }, []);
+
+  const handleAttachImages = useCallback(async () => {
+    const images = await window.desktopAPI.selectImages();
+    if (images) setAttachments(prev => [...prev, ...images.map(i => ({ type: 'image' as const, ...i }))]);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    try {
+      // First check for URLs (for dragging links from browser)
+      const uriList = e.dataTransfer?.getData('text/uri-list');
+      const plainText = e.dataTransfer?.getData('text/plain');
+      const htmlText = e.dataTransfer?.getData('text/html');
+
+      // Helper to extract YouTube URL
+      const extractYouTubeUrl = (text: string): string | null => {
+        if (!text) return null;
+        const patterns = [
+          /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+          /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+          /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
+          /(?:https?:\/\/)?youtu\.be\/([a-zA-Z0-9_-]{11})/,
+          /(?:https?:\/\/)?(?:www\.)?youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+        ];
+        for (const pattern of patterns) {
+          const match = text.match(pattern);
+          if (match) {
+            const fullUrlMatch = text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
+            return fullUrlMatch ? fullUrlMatch[0] : `https://youtube.com/watch?v=${match[1]}`;
+          }
+        }
+        return null;
+      };
+
+      // Helper to extract any URL
+      const extractAnyUrl = (text: string): string | null => {
+        if (!text) return null;
+        const match = text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
+        return match ? match[0] : null;
+      };
+
+      // Try to extract URL from dropped data
+      let droppedUrl: string | null = null;
+
+      if (uriList) {
+        droppedUrl = extractYouTubeUrl(uriList) || extractAnyUrl(uriList);
+      }
+      if (!droppedUrl && plainText) {
+        droppedUrl = extractYouTubeUrl(plainText) || extractAnyUrl(plainText);
+      }
+      if (!droppedUrl && htmlText) {
+        const hrefMatch = htmlText.match(/href=["']([^"']+)["']/);
+        if (hrefMatch) {
+          droppedUrl = extractYouTubeUrl(hrefMatch[1]) || hrefMatch[1];
+        }
+      }
+
+      // If we found a URL, add it to the query
+      if (droppedUrl) {
+        setQuery(prev => {
+          const trimmed = prev.trim();
+          return trimmed ? `${trimmed} ${droppedUrl}` : droppedUrl!;
+        });
+        return; // Don't process as file
+      }
+
+      // Fall back to file handling
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) await addAttachmentsFromFiles(files);
+    } catch { }
+  }, [addAttachmentsFromFiles]);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    try {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const files: File[] = Array.from(cd.items || []).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter((f): f is File => !!f);
+      if (files.length === 0) return;
+      const hasText = Array.from(cd.types || []).includes('text/plain');
+      if (!hasText) e.preventDefault();
+      await addAttachmentsFromFiles(files);
+    } catch { }
+  }, [addAttachmentsFromFiles]);
+
+  // Memoized callbacks for child components to prevent re-renders
+  const handleOpenDashboard = useCallback(() => window.desktopAPI.openDashboard(), []);
+  const handleOpenSpaces = useCallback(() => window.desktopAPI.openSpaces(), []);
+  const handleRemoveContext = useCallback((idx: number) => setContextPaths(prev => prev.filter((_, i) => i !== idx)), []);
+  const handleAddContext = useCallback((item: ContextItem) => setContextPaths(prev => prev.some(p => p.path === item.path) ? prev : [...prev, item]), []);
+  const handleRemoveAttachment = useCallback((i: number) => setAttachments(p => p.filter((_, idx) => idx !== i)), []);
+  const handleClosePalette = useCallback(() => setShowPalette(false), []);
+  const handleCloseHotkeys = useCallback(() => setShowHotkeys(false), []);
+
+  const statusLabel = useMemo(() => {
+    const p = (ai?.phase || '').toString();
+    if (p === 'routing') {
+      const m = (ai as any)?.model;
+      return m ? `Routing (${m})` : 'Routing...';
+    }
+    if (p === 'responding') return 'Responding...';
+    if (p === 'tool') return 'Running tool...';
+    return ai?.statusText || 'Ready';
+  }, [ai]);
+
+  // Determine if AI is currently streaming (for stop button)
+  const isStreaming = useMemo(() => {
+    const p = (ai?.phase || '').toString().toLowerCase();
+    return p === 'routing' || p === 'responding' || p === 'tool';
+  }, [ai]);
+
+  const inputStatusText = useMemo(() => {
+    if (isRecording) return 'Recording...';
+    if (queueDepth > 0) return `Queued: ${queueDepth}`;
+    if (state?.connecting) return 'Connecting…';
+    if (!state?.connected) {
+      if (state?.status === 'error') return 'Connection error';
+      return 'Starting…';
+    }
+    // Check if AI is actively doing something (not idle states)
+    const idleStates = ['ready', 'idle', 'connected', ''];
+    const isIdle = idleStates.includes(statusLabel.toLowerCase());
+    // Show AI status if active, otherwise show planner next up
+    if (!isIdle) return statusLabel;
+    // Show next upcoming event/task/reminder when idle
+    if (plannerData?.nextUp) {
+      return `${plannerData.nextUp.title} ${plannerData.nextUp.timeLabel}`;
+    }
+    return 'Ready';
+  }, [isRecording, queueDepth, statusLabel, plannerData?.nextUp]);
+
+  // Compute status icon based on current state
+  const inputStatusIcon = useMemo((): 'video' | 'calendar' | 'bell' | 'task' | undefined => {
+    const idleStates = ['ready', 'idle', 'connected', ''];
+    const isIdle = idleStates.includes(statusLabel.toLowerCase());
+    if (isRecording || queueDepth > 0 || !isIdle) return 'video';
+    if (plannerData?.nextUp) {
+      const iconMap = { calendar: 'calendar', bell: 'bell', task: 'task' } as const;
+      return iconMap[plannerData.nextUp.icon] || 'video';
+    }
+    return undefined;
+  }, [isRecording, queueDepth, statusLabel, plannerData?.nextUp]);
+
+  // Compute urgency level for visual indicators
+  const inputStatusUrgency = useMemo(() => {
+    const idleStates = ['ready', 'idle', 'connected', ''];
+    const isIdle = idleStates.includes(statusLabel.toLowerCase());
+    if (isRecording || queueDepth > 0 || !isIdle) return undefined;
+    return plannerData?.nextUp?.urgency;
+  }, [isRecording, queueDepth, statusLabel, plannerData?.nextUp?.urgency]);
+
+  const connectionStatus = useMemo((): 'connected' | 'connecting' | 'disconnected' | 'error' => {
+    if (state?.connecting) return 'connecting';
+    if (state?.connected) return 'connected';
+    if (state?.status === 'error') return 'error';
+    return 'disconnected';
+  }, [state?.connecting, state?.connected, state?.status]);
+
+  const chatStatusText = useMemo(() => {
+    if (connectionStatus === 'connecting') return 'Connecting…';
+    if (connectionStatus === 'disconnected') return 'Offline';
+    if (connectionStatus === 'error') return 'Connection error';
+    return statusLabel;
+  }, [connectionStatus, statusLabel]);
+
+  const handleShowSidebar = useCallback(() => {
+    window.desktopAPI.setMode('sidebar');
+    setExpanded(true);
+  }, []);
+
+  const handleShowWindow = useCallback(() => {
+    window.desktopAPI.setMode('window');
+    setExpanded(true);
+  }, []);
+
+  const commands = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [
+      { id: 'new-chat', title: 'New chat', description: 'Start a fresh conversation', icon: <Plus className="w-5 h-5" />, run: handleNewChat },
+      { id: 'open-dashboard', title: 'Open dashboard', description: 'View full dashboard', icon: <Layout className="w-5 h-5" />, shortcut: 'Dash', run: () => window.desktopAPI.openDashboard() },
+      { id: 'toggle-sidebar', title: 'Sidebar layout', description: 'Switch to sidebar layout', icon: <Layout className="w-5 h-5" />, run: handleShowSidebar },
+      { id: 'toggle-window', title: 'Window layout', description: 'Switch to window layout', icon: <Layout className="w-5 h-5" />, run: handleShowWindow },
+      { id: 'toggle-expand', title: expanded ? 'Collapse view' : 'Expand view', description: 'Toggle compact/expanded mode', icon: expanded ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />, run: toggleExpand },
+
+      { id: 'toggle-spaces', title: 'Spaces', description: 'Open spaces', icon: <LayoutGrid className="w-5 h-5" />, run: () => window.desktopAPI.openSpaces() },
+      { id: 'attach-files', title: 'Attach files', description: 'Upload documents', icon: <File className="w-5 h-5" />, run: handleAttachFiles },
+      { id: 'attach-images', title: 'Attach images', description: 'Upload images', icon: <Image className="w-5 h-5" />, run: handleAttachImages },
+      { id: 'show-hotkeys', title: 'Show hotkeys', description: 'View keyboard shortcuts', icon: <Keyboard className="w-5 h-5" />, shortcut: 'F1', run: () => setShowHotkeys(true) },
+      { id: 'rerun-onboarding', title: 'Rerun onboarding', description: 'Start the welcome tour again', icon: <RefreshCw className="w-5 h-5" />, run: () => { setOnboardingComplete(false); setTourComplete(false); } },
+      { id: 'hide-overlay', title: 'Hide overlay', description: 'Close Stuard window', icon: <Power className="w-5 h-5" />, shortcut: 'Esc', run: () => window.desktopAPI.hide() },
+      { id: 'tone-concise', title: 'Tone: Concise', description: 'Set response tone', icon: <MessageSquare className="w-5 h-5" />, group: 'Tone & Persona', run: () => setTone('concise') },
+      { id: 'tone-friendly', title: 'Tone: Friendly', description: 'Set response tone', icon: <Smile className="w-5 h-5" />, group: 'Tone & Persona', run: () => setTone('friendly') },
+      {
+        id: 'google-search',
+        title: 'Google Search',
+        description: 'Search on Google in your browser',
+        icon: <Globe className="w-5 h-5" />,
+        run: () => {
+          const trimmed = query.trim();
+          const url = trimmed ? `https://www.google.com/search?q=${encodeURIComponent(trimmed)}` : 'https://www.google.com';
+          window.desktopAPI.openExternal(url);
+          setQuery('');
+        }
+      },
+      {
+        id: 'edge-search',
+        title: 'Edge Search',
+        description: 'Open and search using Microsoft Edge',
+        icon: <Search className="w-5 h-5" />,
+        run: () => {
+          const trimmed = query.trim();
+          const url = trimmed ? `microsoft-edge:https://www.google.com/search?q=${encodeURIComponent(trimmed)}` : 'microsoft-edge:https://www.google.com';
+          window.desktopAPI.openExternal(url);
+          setQuery('');
+        }
+      },
+    ];
+    if (!signedIn) items.unshift({ id: 'sign-in', title: 'Sign in', description: 'Log in to your account', icon: <LogIn className="w-5 h-5" />, run: handleSignIn });
+    return items;
+  }, [expanded, signedIn, setOnboardingComplete, setTourComplete, setTone]);
+
+  // Determine which expanded view to show
+  const hasMessages = messages.length > 0;
+
+  // Determine if we should show resize grips (not in compact mode)
+  const showResizeGrips = expanded || overlayMode === 'sidebar' || overlayMode === 'window';
+
+  return (
+    <div className="w-full h-full text-sans overflow-hidden relative">
+      {/* Resize handles for user-resizable window - invisible but draggable edges */}
+      {showResizeGrips && (
+        <>
+          {/* Top edge */}
+          <div className="absolute top-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          {/* Bottom edge */}
+          <div className="absolute bottom-0 left-2 right-2 h-1 cursor-ns-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          {/* Left edge */}
+          <div className="absolute top-2 bottom-2 left-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          {/* Right edge */}
+          <div className="absolute top-2 bottom-2 right-0 w-1 cursor-ew-resize z-[100]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          {/* Corner handles - larger for easier grabbing */}
+          <div className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          <div className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          <div className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+          <div className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-[101]" style={{ WebkitAppRegion: 'no-drag' } as any} />
+        </>
+      )}
+      <div
+        className="w-full h-full overflow-hidden transition-all duration-200 ease-out bg-transparent flex flex-col"
+      >
+        {expanded ? (
+          <div className="relative h-full w-full p-4 overflow-hidden mode-transition overlay-responsive">
+            {/* Resize indicator in bottom-right corner */}
+            {showResizeGrips && (
+              <div className="resize-indicator" title="Drag corner to resize" />
+            )}
+            {/* Main Content - Full Width */}
+            <div className="flex flex-col h-full w-full relative smooth-resize">
+              {/* Permission Approval Overlay */}
+              {approvalPrompt && (
+                <PermissionDialog
+                  isOpen={!!approvalPrompt}
+                  tool={approvalPrompt.tool}
+                  args={approvalPrompt.args}
+                  description={approvalPrompt.description}
+                  onAllow={() => {
+                    respondToApproval(approvalPrompt.id, true);
+                    setApprovalPrompt(null);
+                  }}
+                  onDeny={() => {
+                    respondToApproval(approvalPrompt.id, false);
+                    setApprovalPrompt(null);
+                  }}
+                />
+              )}
+
+              {/* Environment Badge */}
+              <EnvironmentBadge variant="overlay" className="absolute top-14 right-3 z-50 pointer-events-none" />
+
+              {/* Error Notifications */}
+              {lastError?.code === 'monthly_credit_limit_exceeded' && (
+                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="rounded-lg border border-rose-500/30 bg-black/90 backdrop-blur-md p-4">
+                    <h3 className="text-rose-400 font-semibold text-sm">Monthly Credits Exceeded</h3>
+                    <p className="text-white/70 text-xs mt-1 mb-3">You have used all your credits for this month.</p>
+                    <button onClick={() => { try { (window as any).desktopAPI?.openExternal?.('https://stuard.ai/pricing'); } catch { } }} className="w-full py-1.5 bg-rose-500 hover:bg-rose-400 rounded text-xs text-black font-bold">Upgrade Plan</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Session Expired Notification */}
+              {(lastError?.code === 'session_expired' || lastError?.data?.requiresSignIn) && (
+                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="rounded-lg border border-amber-500/30 bg-black/90 backdrop-blur-md p-4">
+                    <h3 className="text-amber-400 font-semibold text-sm">Session Expired</h3>
+                    <p className="text-white/70 text-xs mt-1 mb-3">Your session has expired. Please sign in again to continue.</p>
+                    <button onClick={handleSignIn} className="w-full py-1.5 bg-amber-500 hover:bg-amber-400 rounded text-xs text-black font-bold flex items-center justify-center gap-2">
+                      <LogIn className="w-3 h-3" />
+                      Sign In
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Session Refreshed Notification */}
+              {lastError?.code === 'session_refreshed' && (
+                <div className="absolute left-4 right-4 bottom-4 z-50 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="rounded-lg border border-emerald-500/30 bg-black/90 backdrop-blur-md p-4">
+                    <h3 className="text-emerald-400 font-semibold text-sm">Session Refreshed</h3>
+                    <p className="text-white/70 text-xs mt-1">Your session was refreshed. Please try your request again.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* View Switcher */}
+              {hasMessages ? (
+                <ChatView
+                  messages={messages}
+                  currentResponse={currentResponse}
+                  currentReasoning={currentReasoning}
+                  currentToolCalls={currentToolCalls}
+                  currentStreamChunks={currentStreamChunks}
+                  thinkingStartTime={thinkingStartTime}
+                  contextPaths={contextPaths}
+                  onRemoveContext={handleRemoveContext}
+                  onCollapse={toggleExpand}
+                  onOpenDashboard={handleOpenDashboard}
+                  onNewChat={handleNewChat}
+                  onToggleSidebar={handleOpenSpaces}
+                  sidebarOpen={false}
+                  query={query}
+                  setQuery={setQuery}
+                  onSend={handleSend}
+                  onStop={stopGeneration}
+                  isStreaming={isStreaming}
+                  isRecording={isRecording}
+                  onMicClick={handleMicClick}
+                  conversations={convList}
+                  loadingConversations={loadingConvs}
+                  onSelectConversation={handleSelectConversation}
+                  chatMenuOpen={chatMenuOpen}
+                  onChatMenuOpenChange={setChatMenuOpen}
+                  statusText={chatStatusText}
+                  modelName={typeof (ai as any)?.model === 'string' ? (ai as any).model : ''}
+                  connectionStatus={connectionStatus}
+                  chatMode={chatMode}
+                  onChatModeChange={setChatMode as any}
+                  chatModels={chatModels}
+                  onChatModelsChange={setChatModels as any}
+                  overlayMode={overlayMode}
+
+                  // Tabs
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onSwitchTab={switchTab}
+                  onCloseTab={closeTab}
+                  onAddTab={addTab}
+                  translucentMode={translucentMode}
+                  onSubmitToolOutput={submitToolOutput}
+
+                  pendingMemories={pendingMemories}
+                  onConfirmPendingMemory={confirmPendingMemory}
+                  onRejectPendingMemory={rejectPendingMemory}
+
+                  // Context
+                  onAddContext={handleAddContext}
+
+                  // Attachments
+                  attachments={attachments}
+                  onRemoveAttachment={handleRemoveAttachment}
+                  onAttachFiles={handleAttachFiles}
+                  onAttachImages={handleAttachImages}
+                  onDrop={handleDrop}
+                  queueDepth={queueDepth}
+                  queuedMessages={queuedMessages}
+                />
+              ) : (
+                <LauncherView
+                  query={query}
+                  setQuery={setQuery}
+                  onSend={handleSend}
+                  commands={commands}
+                  statusText={inputStatusText}
+                  connectionStatus={connectionStatus}
+                  onMicClick={handleMicClick}
+                  isRecording={isRecording}
+                  accessToken={accessToken}
+                  conversations={convList}
+                  loadingConversations={loadingConvs}
+                  onSelectConversation={handleSelectConversation}
+                  chatMenuOpen={chatMenuOpen}
+                  onChatMenuOpenChange={setChatMenuOpen}
+                  onNewChat={handleNewChat}
+                  onOpenDashboard={handleOpenDashboard}
+                  onToggleExpand={toggleExpand}
+                  onToggleSidebar={handleOpenSpaces}
+                  sidebarOpen={false}
+                  plannerData={plannerData}
+                  translucentMode={translucentMode}
+                  chatMode={chatMode}
+                  onChatModeChange={setChatMode as any}
+                  chatModels={chatModels}
+                  onChatModelsChange={setChatModels as any}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col relative">
+            {/* Environment Badge - compact mode (top-right) */}
+            <EnvironmentBadge variant="minimal" className="absolute top-1 right-1 z-50" />
+            <InputArea
+              ref={inputRef}
+              query={query}
+              setQuery={setQuery}
+              onSend={handleSend}
+              attachments={attachments}
+              onRemoveAttachment={handleRemoveAttachment}
+              onAttachFiles={handleAttachFiles}
+              onAttachImages={handleAttachImages}
+              onPaste={handlePaste}
+              onDrop={handleDrop}
+              signedIn={signedIn}
+              onSignIn={handleSignIn}
+              conversationTitle={conversationTitle}
+              conversations={convList}
+              loadingConversations={loadingConvs}
+              onSelectConversation={handleSelectConversation}
+              onDeleteConversation={handleDeleteConversation}
+              onNewChat={handleNewChat}
+              onStopGeneration={stopGeneration}
+              onChatMenuOpenChange={setChatMenuOpen}
+              chatMenuOpen={chatMenuOpen}
+              expanded={expanded}
+              onToggleExpand={toggleExpand}
+              onOpenDashboard={handleOpenDashboard}
+              statusText={inputStatusText}
+              statusIcon={inputStatusIcon}
+              statusUrgency={inputStatusUrgency}
+              connectionStatus={connectionStatus}
+              queueDepth={queueDepth}
+              queuedMessages={queuedMessages}
+              isRecording={isRecording}
+              onMicClick={handleMicClick}
+              contextPaths={contextPaths}
+              setContextPaths={setContextPaths}
+              translucentMode={translucentMode}
+              accessToken={accessToken}
+            />
+          </div>
+        )}
+
+        <CommandPalette open={showPalette} onClose={handleClosePalette} commands={commands} />
+        <HotkeysHelp open={showHotkeys} onClose={handleCloseHotkeys} />
+
+        {/* Spotlight tour after wizard */}
+        {showTour && (
+          <OnboardingFlow
+            startAtTour={true}
+            expanded={expanded}
+            onExpand={toggleExpand}
+            onComplete={() => setTourComplete(true)}
+          />
+        )}
+      </div>
+
+      {/* Stuard Workflow Overlay - renders native UI panels from automations */}
+      <WorkflowOverlay />
+    </div>
+  );
+}

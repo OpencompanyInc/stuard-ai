@@ -1,0 +1,20 @@
+{
+  "name": "@stuardai/cloud-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./origins": "./src/origins.ts",
+    "./transport": "./src/transport.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

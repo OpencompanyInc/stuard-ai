@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "lib": ["ES2022"],
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@stuardai/workflow-core/runtime": ["../../packages/workflow-core/src/runtime/index.ts"],
+      "@stuardai/workflow-core/dependencies": ["../../packages/workflow-core/src/dependencies.ts"],
+      "@stuardai/workflow-core": ["../../packages/workflow-core/src/index.ts"],
+      "@stuardai/bots-core/bot-memory": ["../../packages/bots-core/src/bot-memory.ts"],
+      "@stuardai/bots-core": ["../../packages/bots-core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

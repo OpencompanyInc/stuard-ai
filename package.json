@@ -1,0 +1,39 @@
+{
+  "name": "stuardai-monorepo",
+  "private": true,
+  "packageManager": "pnpm@8.15.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean --parallel",
+    "version:bump": "node scripts/version-bump.js",
+    "dev:stack": "concurrently -k -n CLOUD,AGENT,DESKTOP,OPS,WEB \"pnpm -F @stuardai/cloud-ai dev\" \"node scripts/run-agent.js\" \"npm --prefix apps/desktop run dev\" \"pnpm -F ops-console dev\" \"pnpm -F stuard-ai-website dev\"",
+    "dev:stack:remote": "node scripts/run-dev-stack-remote.js",
+    "dev:stack:beta": "node scripts/run-dev-stack-remote.js beta",
+    "dev:stack:staging": "node scripts/run-dev-stack-remote.js staging",
+    "dev:stack:prod": "node scripts/run-dev-stack-remote.js prod"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^8.2.2",
+    "framer-motion": "^12.23.24",
+    "katex": "^0.16.25",
+    "lucide-react": "^0.554.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "turbo": "^1.10.12",
+    "typescript": "^5.3.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "18.2.21",
+      "@types/react-dom": "18.2.7"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+We need to fix memories, group system, fill in gaps - make it proactive to try and get the empty slots. and other memory related thing.
+might attach semantic past convo at runtime.
+
+skim integrations, remove mcp.
+better ux in stuard agent for workflow system, marketplace search etc.
+better ui for compact mode, analyse screen a mini compact mode not too intrusive. overall improve the layout system.
+
+make sure the whole planner system works, reminders, tasks, calendar and well integrated into the stuard agent.
+
+billing, rate limiting and everything works.
+
+grey out terminal, browser and voice wake word. 
+
+fix manual space system.  
+improve the note system.
+make it UX problem to fix before launch

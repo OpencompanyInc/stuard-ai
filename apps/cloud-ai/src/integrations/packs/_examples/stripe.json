@@ -1,0 +1,125 @@
+{
+  "slug": "stripe",
+  "name": "Stripe",
+  "description": "Payments, customers, charges, refunds via the Stripe REST API.",
+  "icon": "💳",
+  "category": "Payments",
+  "version": "0.1.0",
+
+  "auth": {
+    "strategy": { "type": "bearer", "tokenField": "secret_key" },
+    "fields": [
+      {
+        "name": "secret_key",
+        "label": "Secret Key",
+        "secret": true,
+        "required": true,
+        "placeholder": "sk_test_... or sk_live_...",
+        "hint": "Stripe Dashboard → Developers → API keys → Secret key",
+        "pattern": "^sk_(test|live)_[A-Za-z0-9]+$"
+      }
+    ]
+  },
+
+  "outbound_hosts": ["api.stripe.com"],
+
+  "ping": {
+    "method": "GET",
+    "urlTemplate": "https://api.stripe.com/v1/balance"
+  },
+
+  "tools": [
+    {
+      "name": "create_customer",
+      "description": "Create a Stripe customer.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "description": "Customer email" },
+          "name":  { "type": "string", "description": "Customer name" },
+          "description": { "type": "string", "description": "Free-form note" }
+        },
+        "required": ["email"]
+      },
+      "request": {
+        "method": "POST",
+        "urlTemplate": "https://api.stripe.com/v1/customers",
+        "body": {
+          "kind": "form",
+          "fields": {
+            "email": "{{args.email}}",
+            "name": "{{args.name}}",
+            "description": "{{args.description}}"
+          }
+        }
+      },
+      "errorMap": {
+        "401": "Stripe rejected the secret key — check your INT_STRIPE_SECRET_KEY value.",
+        "402": "Stripe payment required: {{response.error.message}}"
+      }
+    },
+
+    {
+      "name": "list_customers",
+      "description": "List the most recent Stripe customers.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "limit":          { "type": "integer", "description": "How many to return (1-100)", "default": 10 },
+          "starting_after": { "type": "string",  "description": "Cursor: customer id to page past" }
+        }
+      },
+      "request": {
+        "method": "GET",
+        "urlTemplate": "https://api.stripe.com/v1/customers",
+        "query": {
+          "limit": "{{args.limit}}",
+          "starting_after": "{{args.starting_after}}"
+        }
+      },
+      "pagination": { "style": "cursor", "nextField": "data[-1].id", "nextParam": "starting_after" }
+    },
+
+    {
+      "name": "get_charge",
+      "description": "Retrieve a single Stripe charge by id.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "charge_id": { "type": "string", "description": "ch_..." }
+        },
+        "required": ["charge_id"]
+      },
+      "request": {
+        "method": "GET",
+        "urlTemplate": "https://api.stripe.com/v1/charges/{{args.charge_id}}"
+      }
+    },
+
+    {
+      "name": "refund_charge",
+      "description": "Issue a full or partial refund for a charge.",
+      "args": {
+        "type": "object",
+        "properties": {
+          "charge_id": { "type": "string", "description": "ch_..." },
+          "amount":    { "type": "integer", "description": "Amount in cents. Omit for full refund." },
+          "reason":    { "type": "string", "enum": ["duplicate", "fraudulent", "requested_by_customer"] }
+        },
+        "required": ["charge_id"]
+      },
+      "request": {
+        "method": "POST",
+        "urlTemplate": "https://api.stripe.com/v1/refunds",
+        "body": {
+          "kind": "form",
+          "fields": {
+            "charge": "{{args.charge_id}}",
+            "amount": "{{args.amount}}",
+            "reason": "{{args.reason}}"
+          }
+        }
+      }
+    }
+  ]
+}

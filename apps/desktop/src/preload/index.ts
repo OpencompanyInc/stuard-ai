@@ -1,0 +1,823 @@
+
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+
+const __cloudBase = process.env.CLOUD_AI_HTTP || process.env.CLOUD_PUBLIC_URL || "";
+try { contextBridge.exposeInMainWorld('__CLOUD_AI_HTTP__', __cloudBase); } catch { }
+
+const __agentHttp = process.env.AGENT_HTTP || "";
+try { contextBridge.exposeInMainWorld('__AGENT_HTTP__', __agentHttp); } catch { }
+
+const __agentWs = process.env.AGENT_WS || process.env.AGENT_WS_URL || "";
+try { contextBridge.exposeInMainWorld('__AGENT_WS__', __agentWs); } catch { }
+
+contextBridge.exposeInMainWorld("desktopAPI", {
+  // Codex (ChatGPT subscription) — auth happens via the local `codex` CLI;
+  // we just read ~/.codex/auth.json and push tokens to cloud-ai.
+  codexStatus: () => ipcRenderer.invoke('codex:status'),
+  codexSyncToCloud: (opts?: { force?: boolean }) => ipcRenderer.invoke('codex:syncToCloud', opts),
+  codexOpenLogin: () => ipcRenderer.invoke('codex:openLogin'),
+  codexRevealDir: () => ipcRenderer.invoke('codex:revealDir'),
+  show: () => ipcRenderer.invoke("overlay:show"),
+  focusAgentTasks: () => ipcRenderer.invoke('overlay:focusAgentTasks'),
+  hide: () => ipcRenderer.invoke("overlay:hide"),
+  toggle: () => ipcRenderer.invoke("overlay:toggle"),
+  startOverlayScreenSnip: (durationMs?: number) => ipcRenderer.invoke("overlay:startScreenSnip", durationMs),
+  setMode: (mode: 'compact' | 'sidebar' | 'window' | 'app') => ipcRenderer.invoke('overlay:setMode', mode),
+  resize: (w: number, h: number, anchor?: 'top' | 'bottom') => ipcRenderer.invoke('overlay:resize', w, h, anchor),
+  setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number; anchor?: 'top' | 'bottom' }) => ipcRenderer.invoke('overlay:setBounds', bounds),
+  moveBy: (dx: number, dy: number) => ipcRenderer.invoke('overlay:moveBy', dx, dy),
+  getSize: () => ipcRenderer.invoke('overlay:getSize'),
+  getMode: () => ipcRenderer.invoke('overlay:getMode'),
+  overlayMinimize: () => ipcRenderer.invoke('overlay:minimize'),
+  overlayToggleMaximize: () => ipcRenderer.invoke('overlay:toggleMaximize'),
+  overlayIsMaximized: () => ipcRenderer.invoke('overlay:isMaximized'),
+  onOverlayMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:maximizedChanged', handler);
+    return () => { try { ipcRenderer.off('overlay:maximizedChanged', handler); } catch { } };
+  },
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  onWindowMaximizedChanged: (cb: (data: { maximized: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('window:maximizedChanged', handler);
+    return () => { try { ipcRenderer.off('window:maximizedChanged', handler); } catch { } };
+  },
+  // Internal sidebar (expands window width instead of separate window)
+  toggleInternalSidebar: (open?: boolean, panelWidth?: number) => ipcRenderer.invoke('overlay:toggleInternalSidebar', open, panelWidth),
+  resizeInternalSidebar: (panelWidth: number) => ipcRenderer.invoke('overlay:resizeInternalSidebar', panelWidth),
+  getInternalSidebarState: () => ipcRenderer.invoke('overlay:getInternalSidebarState'),
+  onInternalSidebarChanged: (cb: (data: { open: boolean; width: number; panelWidth?: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:internalSidebarChanged', handler);
+    return () => { try { ipcRenderer.off('overlay:internalSidebarChanged', handler); } catch { } };
+  },
+  // Resize events
+  onResizing: (cb: (data: { width: number; height: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:resizing', handler);
+    return () => { try { ipcRenderer.off('overlay:resizing', handler); } catch { } };
+  },
+  onResized: (cb: (data: { width: number; height: number; mode: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:resized', handler);
+    return () => { try { ipcRenderer.off('overlay:resized', handler); } catch { } };
+  },
+  onModeChanged: (cb: (data: { mode: string; width: number; height: number; prevMode: string; transitionMs?: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:modeChanged', handler);
+    return () => { try { ipcRenderer.off('overlay:modeChanged', handler); } catch { } };
+  },
+  openDashboard: (options?: { tab?: string }) => ipcRenderer.invoke('system:openDashboard', options),
+  openOnboarding: () => ipcRenderer.invoke('system:openOnboarding'),
+  openWorkflows: (options?: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => ipcRenderer.invoke('system:openWorkflows', options),
+  // Sidebar window (unified Terminal, Agent Tasks, Browser)
+  openSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:open', options),
+  closeSidebar: () => ipcRenderer.invoke('sidebar:close'),
+  toggleSidebar: (options?: { tab?: 'terminal' | 'todo' | 'projects'; expanded?: boolean }) => ipcRenderer.invoke('sidebar:toggle', options),
+  toggleSidebarExpanded: () => ipcRenderer.invoke('sidebar:toggleExpanded'),
+  isSidebarExpanded: () => ipcRenderer.invoke('sidebar:isExpanded'),
+  onSidebarNavigate: (cb: (data: { tab: 'terminal' | 'todo' | 'projects' }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:navigate', handler);
+    return () => { try { ipcRenderer.off('sidebar:navigate', handler); } catch { } };
+  },
+  // Relay the agent's live to-do plan from the main window into a detached
+  // sidebar window so a popped-out To-Do tab stays in sync.
+  broadcastAgentTodo: (detail: any) => ipcRenderer.invoke('sidebar:broadcastTodo', detail),
+  onSidebarTodoUpdate: (cb: (detail: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:todoUpdate', handler);
+    return () => { try { ipcRenderer.off('sidebar:todoUpdate', handler); } catch { } };
+  },
+  onSidebarExpandedChange: (cb: (data: { expanded: boolean }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:expandedChange', handler);
+    return () => { try { ipcRenderer.off('sidebar:expandedChange', handler); } catch { } };
+  },
+  onSidebarSelectItem: (cb: (data: { type: 'space' | 'canvas'; id: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('sidebar:selectItem', handler);
+    return () => { try { ipcRenderer.off('sidebar:selectItem', handler); } catch { } };
+  },
+  // Canvas document operations (sidebar canvas panel)
+  canvasListDocuments: () => ipcRenderer.invoke('canvas:listDocuments'),
+  canvasCreateDocument: (doc: any) => ipcRenderer.invoke('canvas:createDocument', doc),
+  canvasSaveDocument: (doc: any) => ipcRenderer.invoke('canvas:saveDocument', doc),
+  canvasDeleteDocument: (docId: string) => ipcRenderer.invoke('canvas:deleteDocument', docId),
+  canvasGetDocument: (docId: string) => ipcRenderer.invoke('canvas:getDocument', docId),
+  canvasRead: (docId?: string) => ipcRenderer.invoke('canvas:read', docId),
+  canvasWrite: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) =>
+    ipcRenderer.invoke('canvas:write', data),
+  onCanvasUpdate: (cb: (data: { documentId?: string; content?: string; title?: string; action?: 'append' | 'replace' | 'insert'; position?: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:update', handler);
+    return () => { try { ipcRenderer.off('canvas:update', handler); } catch { } };
+  },
+  onCanvasRead: (cb: (data: { requestId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('canvas:read', handler);
+    return () => { try { ipcRenderer.off('canvas:read', handler); } catch { } };
+  },
+  canvasReadResponse: (data: { requestId: string; documentId?: string | null; title?: string; content?: string }) =>
+    ipcRenderer.invoke('canvas:readResponse', data),
+  closeOnboarding: () => ipcRenderer.invoke('system:closeOnboarding'),
+  // Files
+  selectFiles: () => ipcRenderer.invoke('files:select'),
+  selectImages: () => ipcRenderer.invoke('files:selectImages'),
+  // Resolve the absolute path of a drag-and-dropped File (Electron 30 removed
+  // the legacy File.path). Returns '' if unavailable (e.g. non-file drag).
+  getPathForFile: (file: File): string => {
+    try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
+  },
+  showItemInFolder: (filePath: string) => ipcRenderer.invoke('files:showItemInFolder', filePath),
+  listDirectory: (path: string) => ipcRenderer.invoke('files:listDirectory', path),
+  // Workspace file preview: open a file in the user's OS app, read raw content
+  // for the in-app preview pane, or pick local files to preview.
+  openPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
+  previewReadFile: (filePath: string) => ipcRenderer.invoke('preview:readFile', filePath),
+  previewPickFiles: () => ipcRenderer.invoke('preview:pickFiles'),
+  pickFiles: async (options?: { type?: string; multiple?: boolean; title?: string; includeData?: boolean }) => {
+    try {
+      const files = await ipcRenderer.invoke('files:select', options);
+      return { ok: true, files: Array.isArray(files) ? files : [] };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  },
+  pickFolder: async (options?: { title?: string; multiple?: boolean }) => {
+    try {
+      const folders = await ipcRenderer.invoke('files:selectFolder', options);
+      return { ok: true, folders: Array.isArray(folders) ? folders : [] };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message || 'failed') };
+    }
+  },
+  mediaList: () => ipcRenderer.invoke('media:list'),
+  mediaSummary: () => ipcRenderer.invoke('media:summary'),
+  mediaGetPrefs: () => ipcRenderer.invoke('media:getPrefs'),
+  mediaUpdatePrefs: (updates: { syncMode?: 'local-only' | 'mirror-cloud'; storageRootPath?: string | null }) => ipcRenderer.invoke('media:updatePrefs', updates),
+  mediaSync: (itemIds?: string[]) => ipcRenderer.invoke('media:sync', itemIds),
+  mediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:importPaths', paths),
+  mediaOpenPath: (targetPath: string) => ipcRenderer.invoke('media:openPath', targetPath),
+  mediaDelete: (itemId: string, deleteFile = true) => ipcRenderer.invoke('media:delete', itemId, deleteFile),
+  // System helpers
+  openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
+  getLinkPreview: (url: string) => ipcRenderer.invoke('system:getLinkPreview', url),
+  getFilePreview: (filePath: string, options?: { size?: 'small' | 'normal' | 'large'; preferThumbnail?: boolean }) =>
+    ipcRenderer.invoke('system:getFilePreview', filePath, options),
+  getFileIcon: (filePath: string, options?: { size?: 'small' | 'normal' | 'large' }) => ipcRenderer.invoke('system:getFileIcon', filePath, options),
+  // App Discovery & Unified Search
+  listApps: (forceRefresh?: boolean) => ipcRenderer.invoke('apps:list', forceRefresh),
+  refreshApps: () => ipcRenderer.invoke('apps:refresh'),
+  clearAppCacheAndRediscover: () => ipcRenderer.invoke('apps:clearCacheAndRediscover'),
+  forceReindex: () => ipcRenderer.invoke('fileIndex:forceReindex'),
+  launchApp: (launchTarget: string) => ipcRenderer.invoke('apps:launch', launchTarget),
+  unifiedSearch: (query: string, options?: any) => ipcRenderer.invoke('search:unified', query, options),
+  onAppsUpdated: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('apps:updated', handler);
+    return () => { try { ipcRenderer.off('apps:updated', handler); } catch {} };
+  },
+  notify: (titleOrConfig: string | any, body?: string) => {
+    if (typeof titleOrConfig === 'string') {
+      return ipcRenderer.invoke('system:notify', { title: titleOrConfig, body });
+    }
+    return ipcRenderer.invoke('system:notify', titleOrConfig);
+  },
+  dismissNotification: (id: string) => ipcRenderer.invoke('system:dismissNotification', id),
+  // Chat UI secure helpers
+  chatUiPickFile: (options?: { title?: string; filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }) =>
+    ipcRenderer.invoke('stuard:pickFile', options || {}),
+  chatUiPickFolder: (options?: { title?: string; multiple?: boolean }) =>
+    ipcRenderer.invoke('stuard:pickFolder', options || {}),
+  chatUiPickSavePath: (options?: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) =>
+    ipcRenderer.invoke('stuard:pickSavePath', options || {}),
+  chatUiReadFile: (filePath: string, encoding?: string) =>
+    ipcRenderer.invoke('stuard:readFile', { path: filePath, encoding }),
+  chatUiWriteFile: (filePath: string, content: string) =>
+    ipcRenderer.invoke('stuard:writeFile', { path: filePath, content }),
+  chatUiClipboardWrite: (text: string) =>
+    ipcRenderer.invoke('stuard:clipboard:write', text),
+  chatUiClipboardRead: () =>
+    ipcRenderer.invoke('stuard:clipboard:read'),
+  webhooksLocalUrl: (id?: string) => ipcRenderer.invoke('webhooks:localUrl', id),
+  handleCloudWebhook: (payload: any) => ipcRenderer.invoke('webhooks:cloudEvent', payload),
+  connectOutlook: () => ipcRenderer.invoke('outlook:connect'),
+  getOutlookStatus: () => ipcRenderer.invoke('outlook:status'),
+  getOutlookToken: () => ipcRenderer.invoke('outlook:getToken'),
+  onShow: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("overlay:showed", handler);
+    return () => {
+      try { ipcRenderer.off("overlay:showed", handler); } catch { }
+    };
+  },
+  onHide: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("overlay:hidden", handler);
+    return () => {
+      try { ipcRenderer.off("overlay:hidden", handler); } catch { }
+    };
+  },
+  onWakewordDetected: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('wakeword:detected', handler);
+    return () => { try { ipcRenderer.off('wakeword:detected', handler); } catch { } };
+  },
+  // Agent
+  agentStart: (id?: string) => ipcRenderer.invoke('agent:start', id),
+  agentStop: (id: string) => ipcRenderer.invoke('agent:stop', id),
+  agentList: () => ipcRenderer.invoke('agent:list'),
+
+  // Custom UI prebuilt assets (for UI builder preview — offline, no CDN)
+  customUiGetPrebuiltAssets: () => ipcRenderer.invoke('customUi:getPrebuiltAssets'),
+  // Transform JSX component code (for UI builder preview)
+  customUiTransformJsx: (code: string, availableModules?: string[]) => ipcRenderer.invoke('customUi:transformJsx', code, availableModules),
+  // UI packages (install-once local packages for custom_ui)
+  customUiGetUiPackagesBundle: (setId: string) => ipcRenderer.invoke('customUi:getUiPackagesBundle', setId),
+  customUiEnsureUiPackages: (packages: string[]) => ipcRenderer.invoke('customUi:ensureUiPackages', packages),
+  uiPackagesInstall: (payload: { setId?: string; packages?: string[]; mode?: 'add' | 'set'; allowNpm?: boolean; force?: boolean }) => ipcRenderer.invoke('uiPackages:install', payload),
+  uiPackagesStatus: (setId: string) => ipcRenderer.invoke('uiPackages:status', setId),
+  uiPackagesList: () => ipcRenderer.invoke('uiPackages:list'),
+  uiPackagesRemove: (setId: string) => ipcRenderer.invoke('uiPackages:remove', setId),
+
+  workflowsList: () => ipcRenderer.invoke('workflows:list'),
+  workflowsRead: (id: string) => ipcRenderer.invoke('workflows:read', id),
+  workflowsSave: (id: string, content: string) => ipcRenderer.invoke('workflows:save', { id, content }),
+  workflowsDelete: (id: string) => ipcRenderer.invoke('workflows:delete', id),
+  workflowsRun: (id: string, triggerId?: string, options?: { accessToken?: string; inputs?: Record<string, any> }) => ipcRenderer.invoke('workflows:run', id, triggerId, options),
+  workflowsStop: (id: string) => ipcRenderer.invoke('workflows:stop', id),
+  workflowsDeploy: (id: string) => ipcRenderer.invoke('workflows:deploy', id),
+  workflowsUndeploy: (id: string) => ipcRenderer.invoke('workflows:undeploy', id),
+  workflowsGetDeployStatus: (id: string) => ipcRenderer.invoke('workflows:getDeployStatus', id),
+  workflowsListVersions: (id: string) => ipcRenderer.invoke('workflows:listVersions', id),
+  workflowsRevertToVersion: (id: string, versionId: string) => ipcRenderer.invoke('workflows:revertToVersion', id, versionId),
+  workflowsDeleteVersion: (id: string, versionId: string) => ipcRenderer.invoke('workflows:deleteVersion', id, versionId),
+  workflowsExport: (id: string) => ipcRenderer.invoke('workflows:export', id),
+  workflowsImport: (filePath: string) => ipcRenderer.invoke('workflows:import', filePath),
+  workflowsValidate: (id: string) => ipcRenderer.invoke('workflows:validate', id),
+  workflowsRunStep: (id: string, options: { step: { id: string; tool: string; args: any }; accessToken?: string }) =>
+    ipcRenderer.invoke('workflows:runStep', id, options),
+  workflowsRunFromStep: (id: string, options: { startStepId: string; accessToken?: string }) =>
+    ipcRenderer.invoke('workflows:runFromStep', id, options),
+  // Python environment / dependency provisioning
+  pythonStatus: () => ipcRenderer.invoke('python:status'),
+  pythonInstall: (args: { packages?: string[]; requirementsTxt?: string; envId?: string }) =>
+    ipcRenderer.invoke('python:install', args),
+  // Folder operations
+  workflowsCreateFolder: (name: string) => ipcRenderer.invoke('workflows:createFolder', name),
+  workflowsRenameFolder: (oldName: string, newName: string) => ipcRenderer.invoke('workflows:renameFolder', oldName, newName),
+  workflowsDeleteFolder: (name: string, deleteContents?: boolean) => ipcRenderer.invoke('workflows:deleteFolder', name, deleteContents),
+  workflowsMoveToFolder: (id: string, folder: string | null) => ipcRenderer.invoke('workflows:moveToFolder', id, folder),
+  // Workspace file management
+  workflowsEnsureWorkspace: (id: string) => ipcRenderer.invoke('workflows:ensureWorkspace', id),
+  workflowsGetWorkspaceInfo: (id: string) => ipcRenderer.invoke('workflows:getWorkspaceInfo', id),
+  workflowsListWorkspaceFiles: (id: string, subpath?: string) => ipcRenderer.invoke('workflows:listWorkspaceFiles', id, subpath),
+  workflowsReadWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFile', id, filePath),
+  workflowsReadWorkspaceFileBinary: (id: string, filePath: string) => ipcRenderer.invoke('workflows:readWorkspaceFileBinary', id, filePath),
+  workflowsWriteWorkspaceFile: (id: string, filePath: string, content: string) => ipcRenderer.invoke('workflows:writeWorkspaceFile', id, filePath, content),
+  workflowsWriteWorkspaceFileBinary: (id: string, filePath: string, base64: string) => ipcRenderer.invoke('workflows:writeWorkspaceFileBinary', id, filePath, base64),
+  workflowsDeleteWorkspaceFile: (id: string, filePath: string) => ipcRenderer.invoke('workflows:deleteWorkspaceFile', id, filePath),
+  workflowsCreateWorkspaceSubdir: (id: string, subpath: string) => ipcRenderer.invoke('workflows:createWorkspaceSubdir', id, subpath),
+  workflowsRenameWorkspaceFile: (id: string, oldPath: string, newName: string) => ipcRenderer.invoke('workflows:renameWorkspaceFile', id, oldPath, newName),
+  workflowsMoveWorkspaceFile: (id: string, sourcePath: string, destFolder: string) => ipcRenderer.invoke('workflows:moveWorkspaceFile', id, sourcePath, destFolder),
+  workflowsCreateWorkspaceStuard: (id: string, subPath: string, name?: string) => ipcRenderer.invoke('workflows:createWorkspaceStuard', id, subPath, name),
+  workflowsReadWorkspaceStuard: (id: string, subPath: string) => ipcRenderer.invoke('workflows:readWorkspaceStuard', id, subPath),
+  workflowsSaveWorkspaceStuard: (id: string, subPath: string, content: string) => ipcRenderer.invoke('workflows:saveWorkspaceStuard', id, subPath, content),
+  workflowsListWorkspaceFunctions: (id: string) => ipcRenderer.invoke('workflows:listWorkspaceFunctions', id),
+  workflowsImportAsWorkspaceFunction: (hostId: string, sourceId: string, options?: { subdir?: string }) => ipcRenderer.invoke('workflows:importAsWorkspaceFunction', hostId, sourceId, options),
+  onWorkflowsLog: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:log', handler);
+    return () => { try { ipcRenderer.off('workflows:log', handler); } catch { } };
+  },
+  // Workflow step execution events for visual flow
+  onWorkflowsStep: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:step', handler);
+    return () => { try { ipcRenderer.off('workflows:step', handler); } catch { } };
+  },
+  // Workflow execution state (started/stopped)
+  onWorkflowsExecution: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:execution', handler);
+    return () => { try { ipcRenderer.off('workflows:execution', handler); } catch { } };
+  },
+  // Workflow return value (engine __return) for a finished run
+  onWorkflowResult: (cb: (data: { flowId: string; name: string; returnValue: any; ts: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:result', handler);
+    return () => { try { ipcRenderer.off('workflows:result', handler); } catch { } };
+  },
+  // Stream wire activity events (for animation control)
+  onWorkflowsStream: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:stream', handler);
+    return () => { try { ipcRenderer.off('workflows:stream', handler); } catch { } };
+  },
+  // Stuards (Automations)
+  stuardsList: () => ipcRenderer.invoke('stuards:list'),
+  stuardsRead: (id: string) => ipcRenderer.invoke('stuards:read', id),
+  stuardsSave: (id: string, content: string) => ipcRenderer.invoke('stuards:save', { id, content }),
+  stuardsDeploy: (id: string) => ipcRenderer.invoke('stuards:deploy', id),
+  stuardsStop: (id: string) => ipcRenderer.invoke('stuards:stop', id),
+  stuardsRun: (id: string) => ipcRenderer.invoke('stuards:run', id),
+  onStuardsLog: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('stuards:log', handler);
+    return () => { try { ipcRenderer.off('stuards:log', handler); } catch { } };
+  },
+  // Stuards UI events (for custom workflow UIs)
+  onStuardsUiShow: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('stuards:ui:show', handler);
+    return () => { try { ipcRenderer.off('stuards:ui:show', handler); } catch { } };
+  },
+  onStuardsUiUpdate: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('stuards:ui:update', handler);
+    return () => { try { ipcRenderer.off('stuards:ui:update', handler); } catch { } };
+  },
+  onStuardsUiClose: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('stuards:ui:close', handler);
+    return () => { try { ipcRenderer.off('stuards:ui:close', handler); } catch { } };
+  },
+  onReminderTriggered: (cb: (data: { title: string; body: string; timestamp: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('reminder-triggered', handler);
+    return () => { try { ipcRenderer.off('reminder-triggered', handler); } catch { } };
+  },
+  sendStuardsUiEvent: (stuardId: string, event: string, data?: any) => ipcRenderer.invoke('stuards:ui:event', { stuardId, event, data }),
+  setScreenCaptureInvisible: (enabled: boolean) => ipcRenderer.invoke('prefs:setScreenCaptureInvisible', enabled),
+  /** Capture the screen with all Stuard windows excluded from the frame.
+   *  Returns a PNG data URL of whatever sits behind the app. */
+  captureScreenClean: (): Promise<{ ok: boolean; dataUrl?: string; error?: string }> =>
+    ipcRenderer.invoke('screen:captureClean'),
+  getTimezone: () => ipcRenderer.invoke('prefs:getTimezone'),
+  setTimezone: (tz: string | null) => ipcRenderer.invoke('prefs:setTimezone', tz),
+  /** Sync the desktop's current effective timezone to the running VM
+   *  (and persist it in supabase for future provisions). Called by the
+   *  cloud-engine hooks when the VM becomes reachable. */
+  vmSyncTimezone: (opts?: { force?: boolean }) => ipcRenderer.invoke('vm:syncTimezone', opts || {}),
+  getPrefs: () => ipcRenderer.invoke('prefs:getAll'),
+  setPrefs: (prefs: Record<string, any>) => ipcRenderer.invoke('prefs:setMany', prefs),
+  themeApply: (prefs: any) => ipcRenderer.invoke('prefs:applyTheme', prefs),
+  onThemeUpdated: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('prefs:themeUpdated', handler);
+    return () => { try { ipcRenderer.off('prefs:themeUpdated', handler); } catch { } };
+  },
+  updatesGetState: () => ipcRenderer.invoke('updates:getState'),
+  updatesCheck: () => ipcRenderer.invoke('updates:check'),
+  updatesDownload: () => ipcRenderer.invoke('updates:download'),
+  updatesInstall: () => ipcRenderer.invoke('updates:install'),
+  updatesSetChannel: (channel: 'stable' | 'beta' | 'staging') => ipcRenderer.invoke('updates:setChannel', channel),
+  updatesGetApiEndpoint: () => ipcRenderer.invoke('updates:getApiEndpoint'),
+  onUpdatesState: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('updates:state', handler);
+    return () => { try { ipcRenderer.off('updates:state', handler); } catch { } };
+  },
+  onApiEndpointChanged: (cb: (endpoint: string) => void) => {
+    const handler = (_e: any, endpoint: string) => cb(endpoint);
+    ipcRenderer.on('updates:api-endpoint-changed', handler);
+    return () => { try { ipcRenderer.off('updates:api-endpoint-changed', handler); } catch { } };
+  },
+  // Connected-Apps service management (downloaded from R2 on demand)
+  serviceMediapipeGetLocalStatus: () => ipcRenderer.invoke('service:mediapipe:getLocalStatus'),
+  serviceMediapipeCheckForUpdate: () => ipcRenderer.invoke('service:mediapipe:checkForUpdate'),
+  serviceMediapipeInstall: () => ipcRenderer.invoke('service:mediapipe:install'),
+  serviceMediapipeUpdate: () => ipcRenderer.invoke('service:mediapipe:update'),
+  serviceMediapipeUninstall: () => ipcRenderer.invoke('service:mediapipe:uninstall'),
+  serviceMediapipeStart: () => ipcRenderer.invoke('service:mediapipe:start'),
+  serviceMediapipeStop: () => ipcRenderer.invoke('service:mediapipe:stop'),
+  serviceBrowserUseGetLocalStatus: () => ipcRenderer.invoke('service:browserUse:getLocalStatus'),
+  serviceBrowserUseCheckForUpdate: () => ipcRenderer.invoke('service:browserUse:checkForUpdate'),
+  serviceBrowserUseInstall: () => ipcRenderer.invoke('service:browserUse:install'),
+  serviceBrowserUseUpdate: () => ipcRenderer.invoke('service:browserUse:update'),
+  serviceBrowserUseUninstall: () => ipcRenderer.invoke('service:browserUse:uninstall'),
+  serviceExtensionBridgeGetInfo: () => ipcRenderer.invoke('service:extensionBridge:getInfo'),
+  serviceExtensionBridgeGetDistPath: () => ipcRenderer.invoke('service:extensionBridge:getDistPath'),
+  // Speech
+  startSpeechStream: (url: string, token: string) => ipcRenderer.invoke('speech:start', { url, token }),
+  stopSpeechStream: () => ipcRenderer.invoke('speech:stop'),
+  onSpeechEvent: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('speech:event', handler);
+    return () => { try { ipcRenderer.off('speech:event', handler); } catch { } };
+  },
+  onSpeechError: (cb: (msg: string) => void) => {
+    const handler = (_e: any, msg: any) => cb(msg);
+    ipcRenderer.on('speech:error', handler);
+    return () => { try { ipcRenderer.off('speech:error', handler); } catch { } };
+  },
+  onSpeechStopped: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on('speech:stopped', handler);
+    return () => { try { ipcRenderer.off('speech:stopped', handler); } catch { } };
+  },
+  // Tools
+  execTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
+  execLocalTool: (tool: string, args: any) => ipcRenderer.invoke('tools:exec', tool, args),
+  // Navigation
+  openChat: (conversationId: string) => ipcRenderer.invoke('overlay:openChat', conversationId),
+  onOpenChat: (cb: (id: string) => void) => {
+    const handler = (_e: any, id: any) => cb(id);
+    ipcRenderer.on('overlay:open-chat', handler);
+    return () => { try { ipcRenderer.off('overlay:open-chat', handler); } catch { } };
+  },
+  onChatSyncEvent: (cb: (data: { type: string; action: string; conversationId: string; source: string; data: any; timestamp: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('chat:sync-event', handler);
+    return () => { try { ipcRenderer.off('chat:sync-event', handler); } catch { } };
+  },
+  onVMStreamEvent: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('vm:stream-event', handler);
+    return () => { try { ipcRenderer.off('vm:stream-event', handler); } catch { } };
+  },
+  onRunStateSync: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('run-state:sync', handler);
+    return () => { try { ipcRenderer.off('run-state:sync', handler); } catch { } };
+  },
+  onDashboardNavigate: (cb: (data: { tab: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('dashboard:navigate', handler);
+    return () => { try { ipcRenderer.off('dashboard:navigate', handler); } catch { } };
+  },
+  onWorkflowsNavigate: (cb: (data: { marketplaceSlug?: string; workflowId?: string; view?: 'workflows' | 'deployed' | 'shared' | 'marketplace' | 'skills' }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('workflows:navigate', handler);
+    return () => { try { ipcRenderer.off('workflows:navigate', handler); } catch { } };
+  },
+
+  // Terminal (PTY-based)
+  terminalCreate: (options?: { shell?: string; cwd?: string; cols?: number; rows?: number }) =>
+    ipcRenderer.invoke('terminal:create', options),
+  terminalWrite: (sessionId: string, data: string) =>
+    ipcRenderer.invoke('terminal:write', sessionId, data),
+  terminalResize: (sessionId: string, cols: number, rows: number) =>
+    ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
+  terminalDestroy: (sessionId: string) =>
+    ipcRenderer.invoke('terminal:destroy', sessionId),
+  terminalGet: (sessionId: string) =>
+    ipcRenderer.invoke('terminal:get', sessionId),
+  terminalGetBuffer: (sessionId: string) =>
+    ipcRenderer.invoke('terminal:getBuffer', sessionId),
+  terminalList: () =>
+    ipcRenderer.invoke('terminal:list'),
+  terminalAiWrite: (sessionId: string, input: string) =>
+    ipcRenderer.invoke('terminal:aiWrite', sessionId, input),
+
+  // Terminal event subscriptions
+  onTerminalData: (cb: (data: { sessionId: string; data: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('terminal:data', handler);
+    return () => { try { ipcRenderer.off('terminal:data', handler); } catch { } };
+  },
+  onTerminalExit: (cb: (data: { sessionId: string; exitCode: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('terminal:exit', handler);
+    return () => { try { ipcRenderer.off('terminal:exit', handler); } catch { } };
+  },
+
+  // Delegated coding-agent CLI session lifecycle (headed mode). The PTY data
+  // itself flows over the existing terminal:data channel keyed by
+  // terminalSessionId — these events just announce which sessions exist.
+  onCliAgentSessionStarted: (cb: (data: { id: string; terminalSessionId: string; provider: string; label: string; cwd: string; mode: string; createdAt: number }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('cli-agent:session-started', handler);
+    return () => { try { ipcRenderer.off('cli-agent:session-started', handler); } catch { } };
+  },
+  onCliAgentSessionStopped: (cb: (data: { id: string; terminalSessionId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('cli-agent:session-stopped', handler);
+    return () => { try { ipcRenderer.off('cli-agent:session-stopped', handler); } catch { } };
+  },
+
+  // File Indexing
+  fileIndexListRoots: () => ipcRenderer.invoke('fileIndex:listRoots'),
+  fileIndexAddRoot: (path: string, schedule?: string) => ipcRenderer.invoke('fileIndex:addRoot', path, schedule),
+  fileIndexRemoveRoot: (rootId: string) => ipcRenderer.invoke('fileIndex:removeRoot', rootId),
+  fileIndexGetStats: () => ipcRenderer.invoke('fileIndex:getStats'),
+  fileIndexScan: (rootId: string) => ipcRenderer.invoke('fileIndex:scan', rootId),
+  fileIndexScanAll: () => ipcRenderer.invoke('fileIndex:scanAll'),
+  fileIndexInitDefaults: () => ipcRenderer.invoke('fileIndex:initDefaults'),
+  fileIndexSearch: (query: string, options?: any) => ipcRenderer.invoke('fileIndex:search', query, options),
+  fileIndexGetPendingCount: () => ipcRenderer.invoke('fileIndex:getPendingCount'),
+  fileIndexGetScanStatus: () => ipcRenderer.invoke('fileIndex:getScanStatus'),
+  onFileIndexScanProgress: (cb: (data: { rootId: string; path: string; progress: any }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('file-index:scan-progress', handler);
+    return () => { try { ipcRenderer.off('file-index:scan-progress', handler); } catch { } };
+  },
+  onFileIndexStatus: (cb: (data: { status: string; totalRoots?: number; completedRoots?: number; currentPath?: string; error?: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('file-index:status', handler);
+    return () => { try { ipcRenderer.off('file-index:status', handler); } catch { } };
+  },
+  fileIndexProcessSemanticIndexing: (token: string, limit: number) => ipcRenderer.invoke('fileIndex:processSemanticIndexing', token, limit),
+  onFileIndexSemanticProgress: (cb: (data: { total: number; processed: number; successful: number; failed: number; currentFile?: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('file-index:semantic-progress', handler);
+    return () => { try { ipcRenderer.off('file-index:semantic-progress', handler); } catch { } };
+  },
+  // Semantic embedding (Gemini Batch)
+  fileIndexEmbedEstimate: (rootId: string | undefined, baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedEstimate', rootId, baseUrl, token),
+  fileIndexEmbedStart: (rootId: string | undefined, creditCap: number | undefined, baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedStart', rootId, creditCap, baseUrl, token),
+  fileIndexEmbedActive: () => ipcRenderer.invoke('fileIndex:embedActive'),
+  fileIndexEmbedResume: (baseUrl: string, token: string) =>
+    ipcRenderer.invoke('fileIndex:embedResume', baseUrl, token),
+  fileIndexSetExcludes: (rootId: string, excludeGlobs: string) =>
+    ipcRenderer.invoke('fileIndex:setExcludes', rootId, excludeGlobs),
+  fileIndexUpdateRoot: (rootId: string, opts: { enabled?: boolean; schedule?: string; intervalHours?: number }) =>
+    ipcRenderer.invoke('fileIndex:updateRoot', rootId, opts),
+  fileIndexClearEmbeddings: (rootId?: string) =>
+    ipcRenderer.invoke('fileIndex:clearEmbeddings', rootId),
+  fileIndexAddSemanticFolder: (path: string) =>
+    ipcRenderer.invoke('fileIndex:addSemanticFolder', path),
+  fileIndexSetRootSemantic: (rootId: string, on: boolean) =>
+    ipcRenderer.invoke('fileIndex:setRootSemantic', rootId, on),
+  onFileIndexEmbedProgress: (cb: (data: {
+    jobId: string;
+    rootId?: string;
+    status: 'gathering' | 'submitting' | 'running' | 'writing' | 'succeeded' | 'failed';
+    totalFiles: number;
+    embeddedFiles: number;
+    queuedFiles: number;
+    estimatedCredits: number;
+    error?: string;
+  }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('file-index:embed-progress', handler);
+    return () => { try { ipcRenderer.off('file-index:embed-progress', handler); } catch { } };
+  },
+
+  // Quick Shortcuts / Bookmarks
+  bookmarksList: () => ipcRenderer.invoke('bookmarks:list'),
+  bookmarksSave: (bookmarks: any[]) => ipcRenderer.invoke('bookmarks:save', bookmarks),
+  bookmarksAdd: (bookmark: any) => ipcRenderer.invoke('bookmarks:add', bookmark),
+  bookmarksUpdate: (bookmark: any) => ipcRenderer.invoke('bookmarks:update', bookmark),
+  bookmarksDelete: (bookmarkId: string) => ipcRenderer.invoke('bookmarks:delete', bookmarkId),
+  bookmarksReorder: (bookmarkIds: string[]) => ipcRenderer.invoke('bookmarks:reorder', bookmarkIds),
+  bookmarksExecute: (bookmark: any) => ipcRenderer.invoke('bookmarks:execute', bookmark),
+  selectFolder: (options?: { title?: string; multiple?: boolean }) => ipcRenderer.invoke('files:selectFolder', options),
+
+  // Unified Tasks System
+  // Project ↔ Notion sync
+  projectNotionSearch: (query: string) => ipcRenderer.invoke('projects:notion-search', query),
+  projectNotionLink: (projectId: string, target: any, options?: any) => ipcRenderer.invoke('projects:notion-link', projectId, target, options),
+  projectNotionUpdate: (projectId: string, patch: any) => ipcRenderer.invoke('projects:notion-update', projectId, patch),
+  projectNotionUnlink: (projectId: string) => ipcRenderer.invoke('projects:notion-unlink', projectId),
+  projectNotionSync: (projectId: string) => ipcRenderer.invoke('projects:notion-sync', projectId),
+  unifiedTasksList: () => ipcRenderer.invoke('unified-tasks:list'),
+  unifiedTasksGet: (taskId: string) => ipcRenderer.invoke('unified-tasks:get', taskId),
+  unifiedTasksAdd: (task: any) => ipcRenderer.invoke('unified-tasks:add', task),
+  unifiedTasksUpdate: (task: any) => ipcRenderer.invoke('unified-tasks:update', task),
+  unifiedTasksDelete: (taskId: string) => ipcRenderer.invoke('unified-tasks:delete', taskId),
+  unifiedTasksToggleStatus: (taskId: string) => ipcRenderer.invoke('unified-tasks:toggle-status', taskId),
+  unifiedTasksAddSubtodo: (taskId: string, subtodo: any) => ipcRenderer.invoke('unified-tasks:add-subtodo', taskId, subtodo),
+  unifiedTasksUpdateSubtodo: (taskId: string, subtodoId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-subtodo', taskId, subtodoId, updates),
+  unifiedTasksToggleSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:toggle-subtodo', taskId, subtodoId),
+  unifiedTasksDeleteSubtodo: (taskId: string, subtodoId: string) => ipcRenderer.invoke('unified-tasks:delete-subtodo', taskId, subtodoId),
+  unifiedTasksAddAgentAssignment: (taskId: string, assignment: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, assignment),
+  unifiedTasksUpdateAgentAssignment: (taskId: string, assignmentId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-agent-assignment', taskId, assignmentId, updates),
+  unifiedTasksDeleteAgentAssignment: (taskId: string, assignmentId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, assignmentId),
+  // Reminder convenience aliases (reminders are agent assignments with type='reminder')
+  unifiedTasksAddReminder: (taskId: string, reminder: any) => ipcRenderer.invoke('unified-tasks:add-agent-assignment', taskId, { ...reminder, type: 'reminder' }),
+  unifiedTasksUpdateReminder: (taskId: string, reminderId: string, updates: any) => ipcRenderer.invoke('unified-tasks:update-agent-assignment', taskId, reminderId, updates),
+  unifiedTasksDeleteReminder: (taskId: string, reminderId: string) => ipcRenderer.invoke('unified-tasks:delete-agent-assignment', taskId, reminderId),
+  unifiedTasksGetPendingAssignments: () => ipcRenderer.invoke('unified-tasks:get-pending-assignments'),
+  unifiedTasksGetCalendarItems: () => ipcRenderer.invoke('unified-tasks:get-calendar-items'),
+
+  // Offline Calendar Events (works without internet)
+  offlineCalendarList: () => ipcRenderer.invoke('offline-calendar:list'),
+  offlineCalendarGet: (eventId: string) => ipcRenderer.invoke('offline-calendar:get', eventId),
+  offlineCalendarAdd: (eventData: any) => ipcRenderer.invoke('offline-calendar:add', eventData),
+  offlineCalendarUpdate: (eventData: any) => ipcRenderer.invoke('offline-calendar:update', eventData),
+  offlineCalendarDelete: (eventId: string) => ipcRenderer.invoke('offline-calendar:delete', eventId),
+  offlineCalendarGetForRange: (startIso: string, endIso: string) => ipcRenderer.invoke('offline-calendar:get-for-range', startIso, endIso),
+  offlineCalendarGetBlocks: (startIso: string, endIso: string) => ipcRenderer.invoke('offline-calendar:get-calendar-blocks', startIso, endIso),
+
+  // Legacy User To-Do List (for backwards compatibility)
+  todosList: () => ipcRenderer.invoke('todos:list'),
+  todosSave: (todos: any[]) => ipcRenderer.invoke('todos:save', todos),
+  todosAdd: (todo: any) => ipcRenderer.invoke('todos:add', todo),
+  todosUpdate: (todo: any) => ipcRenderer.invoke('todos:update', todo),
+  todosDelete: (todoId: string) => ipcRenderer.invoke('todos:delete', todoId),
+  todosToggle: (todoId: string) => ipcRenderer.invoke('todos:toggle', todoId),
+  todosReorder: (todoIds: string[]) => ipcRenderer.invoke('todos:reorder', todoIds),
+
+  // Global Hotkey
+  setGlobalHotkey: (accelerator: string) => ipcRenderer.invoke('system:setGlobalHotkey', accelerator),
+  getGlobalHotkey: () => ipcRenderer.invoke('system:getGlobalHotkey'),
+
+  // View mode change events (for shortcuts to switch views)
+  onViewModeChange: (cb: (data: { mode: 'chat' | 'tasks'; subTab?: 'todo' | 'agent' }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('overlay:view-mode', handler);
+    return () => { try { ipcRenderer.off('overlay:view-mode', handler); } catch { } };
+  },
+
+  // Notification System
+  onShowNotification: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('notification:show', handler);
+    return () => { try { ipcRenderer.off('notification:show', handler); } catch { } };
+  },
+  onDismissNotification: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('notification:dismiss', handler);
+    return () => { try { ipcRenderer.off('notification:dismiss', handler); } catch { } };
+  },
+  // Tell main the notification overlay has no visible toasts so it can hide the
+  // always-on-top window (re-shown on the next toast).
+  notificationsIdle: () => { try { ipcRenderer.send('notifications:idle'); } catch { } },
+  respondToPermission: (id: string, allow: boolean) => ipcRenderer.invoke('notification:respondToPermission', { id, allow }),
+  respondToNotification: (payload: { responseId: string; type: string; value?: string }) => ipcRenderer.invoke('notification:respondToNotification', payload),
+  onApprovalResponse: (cb: (data: { id: string; allow: boolean }) => void) => {
+    const handler = (_e: any, data: { id: string; allow: boolean }) => cb(data);
+    ipcRenderer.on('approval:response', handler);
+    return () => { try { ipcRenderer.off('approval:response', handler); } catch { } };
+  },
+  onAskUserShow: (cb: (data: { promptId: string; args: any }) => void) => {
+    const handler = (_e: any, data: { promptId: string; args: any }) => cb(data);
+    ipcRenderer.on('ask_user:show', handler);
+    return () => { try { ipcRenderer.off('ask_user:show', handler); } catch { } };
+  },
+  onLiveSessionStart: (cb: (data: { requestId: string; cfg: any }) => void) => {
+    const handler = (_e: any, data: { requestId: string; cfg: any }) => cb(data);
+    ipcRenderer.on('live_session:start', handler);
+    return () => { try { ipcRenderer.off('live_session:start', handler); } catch { } };
+  },
+  respondLiveSessionStart: (requestId: string, result: any) =>
+    ipcRenderer.invoke(`live_session:respond:${requestId}`, result),
+  notifyLiveSessionEnded: (payload: any) => {
+    try { ipcRenderer.send('live_session:ended', payload); } catch { }
+  },
+  onVoiceSetActive: (cb: (active: boolean) => void) => {
+    const handler = (_e: any, active: boolean) => cb(Boolean(active));
+    ipcRenderer.on('voice:setActive', handler);
+    return () => { try { ipcRenderer.off('voice:setActive', handler); } catch { } };
+  },
+  // Voice border â€” full-screen click-through window with the red ambient frame
+  showVoiceBorder: () => ipcRenderer.invoke('voice:showBorder'),
+  hideVoiceBorder: () => ipcRenderer.invoke('voice:hideBorder'),
+  updateVoiceBorder: (payload: any) => {
+    try { ipcRenderer.send('voice:borderUpdate', payload); } catch { }
+  },
+  onVoiceBorderUpdate: (cb: (payload: any) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload || {});
+    ipcRenderer.on('voice:borderUpdate', handler);
+    return () => { try { ipcRenderer.off('voice:borderUpdate', handler); } catch { } };
+  },
+  // Pill controls relayed from the border window back to the main app
+  sendVoiceBorderControl: (action: 'mute' | 'close' | 'shareScreen') => {
+    try { ipcRenderer.send('voice:borderControl', { action }); } catch { }
+  },
+  onVoiceBorderControl: (cb: (payload: { action: 'mute' | 'close' | 'shareScreen' }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload || {});
+    ipcRenderer.on('voice:borderControl', handler);
+    return () => { try { ipcRenderer.off('voice:borderControl', handler); } catch { } };
+  },
+  setVoiceBorderInteractive: (interactive: boolean) => {
+    try { ipcRenderer.send('voice:borderInteractive', !!interactive); } catch { }
+  },
+  respondToAskUser: (promptId: string, result: any) => ipcRenderer.invoke(`ask_user:respond:${promptId}`, result),
+  proactiveListTasks: () => ipcRenderer.invoke('proactive:listTasks'),
+  proactiveAddTask: (task: any) => ipcRenderer.invoke('proactive:addTask', task),
+  proactiveUpdateTask: (taskId: string, updates: any) => ipcRenderer.invoke('proactive:updateTask', taskId, updates),
+  proactiveDeleteTask: (taskId: string) => ipcRenderer.invoke('proactive:deleteTask', taskId),
+  proactiveGetWakeUpLog: (limit?: number) => ipcRenderer.invoke('proactive:getWakeUpLog', limit),
+  proactiveTriggerNow: () => ipcRenderer.invoke('proactive:triggerNow'),
+  proactiveGetAvailableTools: () => ipcRenderer.invoke('proactive:getAvailableTools'),
+  proactiveIsRunning: () => ipcRenderer.invoke('proactive:isRunning'),
+  onProactiveUpdate: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-update', handler);
+    return () => { try { ipcRenderer.off('proactive-update', handler); } catch { } };
+  },
+  onProactiveWakeUp: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-checkin', handler);
+    return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
+  },
+  onProactiveProgress: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-progress', handler);
+    return () => { try { ipcRenderer.off('proactive-progress', handler); } catch { } };
+  },
+  onProactiveCheckin: (cb: (data: any) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('proactive-checkin', handler);
+    return () => { try { ipcRenderer.off('proactive-checkin', handler); } catch { } };
+  },
+  proactiveReply: (payload: { wakeUpId: string; text: string }) => ipcRenderer.invoke('proactive:reply', payload),
+  // Bots (multi-bot proactive entity layer)
+  botsList: () => ipcRenderer.invoke('bots:list'),
+  botsGet: (id: string) => ipcRenderer.invoke('bots:get', id),
+  botsCreate: (input: any) => ipcRenderer.invoke('bots:create', input),
+  botsUpdate: (id: string, patch: any) => ipcRenderer.invoke('bots:update', id, patch),
+  botsDelete: (id: string) => ipcRenderer.invoke('bots:delete', id),
+  botsGetConfig: (id: string) => ipcRenderer.invoke('bots:getConfig', id),
+  botsUpdateConfig: (id: string, patch: any) => ipcRenderer.invoke('bots:updateConfig', id, patch),
+  botsSetStatus: (id: string, status: string) => ipcRenderer.invoke('bots:setStatus', id, status),
+  botsDeploy: (id: string) => ipcRenderer.invoke('bots:deploy', id),
+  botsPause: (id: string) => ipcRenderer.invoke('bots:pause', id),
+  botsTriggerNow: (id: string) => ipcRenderer.invoke('bots:triggerNow', id),
+  botsTriggerOnVm: (id: string) => ipcRenderer.invoke('bots:triggerOnVm', id),
+  botsGetVmStatus: (id: string) => ipcRenderer.invoke('bots:getVmStatus', id),
+  botsListTasks: (id: string) => ipcRenderer.invoke('bots:listTasks', id),
+  botsGetWakeUpLog: (id: string, limit?: number) => ipcRenderer.invoke('bots:getWakeUpLog', id, limit),
+  botsAddTrigger: (id: string, input: any) => ipcRenderer.invoke('bots:addTrigger', id, input),
+  botsUpdateTrigger: (id: string, triggerId: string, patch: any) => ipcRenderer.invoke('bots:updateTrigger', id, triggerId, patch),
+  botsRemoveTrigger: (id: string, triggerId: string) => ipcRenderer.invoke('bots:removeTrigger', id, triggerId),
+  botsGetAvailableTools: () => ipcRenderer.invoke('bots:getAvailableTools'),
+  integrationsSyncToolNames: (names: string[]) => ipcRenderer.invoke('integrations:syncToolNames', names),
+  botsTestSetup: (input: any) => ipcRenderer.invoke('bots:testSetup', input),
+  botsRunPreflightProbe: (payload: { request: { probe: string; args?: Record<string, any>; label?: string }; cloudHttpBase: string; authToken: string | null }) =>
+    ipcRenderer.invoke('bots:runPreflightProbe', payload),
+  botsDeployToVm: (id: string) => ipcRenderer.invoke('bots:deployToVm', id),
+  botsStopOnVm: (id: string) => ipcRenderer.invoke('bots:stopOnVm', id),
+  // Bot kanban + run log (private bot-owned memory, separate from user tasks)
+  botsMemoryListCards: (id: string, status?: string) => ipcRenderer.invoke('bots:memoryListCards', id, status),
+  botsMemoryCreateCard: (id: string, input: { title: string; notes?: string; status?: string }) => ipcRenderer.invoke('bots:memoryCreateCard', id, input),
+  botsMemoryUpdateCard: (id: string, cardId: string, patch: { title?: string; notes?: string; status?: string }) => ipcRenderer.invoke('bots:memoryUpdateCard', id, cardId, patch),
+  botsMemoryDeleteCard: (id: string, cardId: string) => ipcRenderer.invoke('bots:memoryDeleteCard', id, cardId),
+  botsMemoryListRunLog: (id: string, limit?: number) => ipcRenderer.invoke('bots:memoryListRunLog', id, limit),
+  onBotMemoryChanged: (cb: (data: { botId: string }) => void) => {
+    const handler = (_e: any, data: any) => cb(data);
+    ipcRenderer.on('bot-memory-changed', handler);
+    return () => { try { ipcRenderer.off('bot-memory-changed', handler); } catch { } };
+  },
+  setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('window:ignore-mouse-events', ignore, options),
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsGet: (id: string) => ipcRenderer.invoke('skills:get', id),
+  skillsSave: (skill: any) => ipcRenderer.invoke('skills:save', skill),
+  skillsDelete: (id: string) => ipcRenderer.invoke('skills:delete', id),
+  skillsToggle: (id: string) => ipcRenderer.invoke('skills:toggle', id),
+  onSkillsUpdated: (cb: (skills: any[]) => void) => {
+    const handler = (_e: any, skills: any[]) => cb(skills);
+    ipcRenderer.on('skills:updated', handler);
+    return () => { try { ipcRenderer.off('skills:updated', handler); } catch { } };
+  },
+
+  // Subagent protocol events from orchestrator
+  onSubagentMessage: (cb: (msg: any) => void) => {
+    const handler = (_e: any, msg: any) => cb(msg);
+    ipcRenderer.on('subagent:message', handler);
+    return () => { try { ipcRenderer.off('subagent:message', handler); } catch { } };
+  },
+
+  // Auth session sync (required for SMS inbox realtime subscription in main process)
+  syncAuthSession: (session: any | null) => ipcRenderer.invoke('auth:syncSession', session),
+
+  // Cloud Storage — upload arbitrary file via main process. Use this for any file
+  // upload from the renderer; it bypasses the renderer's binary-body and base64
+  // string-length limits that fail on large files.
+  cloudStorageUpload: (payload: {
+    buffer: ArrayBuffer;
+    filename: string;
+    folderPath?: string;
+    contentType?: string;
+    token?: string;
+    uploadId?: string;
+  }) => ipcRenderer.invoke('cloudStorage:upload', payload),
+  // Live byte-level progress for cloudStorageUpload, keyed by uploadId.
+  onCloudStorageUploadProgress: (cb: (p: { uploadId: string; loaded: number; total: number }) => void) => {
+    const handler = (_e: any, p: any) => cb(p);
+    ipcRenderer.on('cloudStorage:uploadProgress', handler);
+    return () => { try { ipcRenderer.off('cloudStorage:uploadProgress', handler); } catch { } };
+  },
+
+  // Cloud Engine — upload agent data (knowledge.db, memory.db, file_index.db, etc.) to GCS
+  uploadAgentData: (_cloudAiUrl: string, _token: string) => ipcRenderer.invoke('cloud:uploadAgentData'),
+  // Debounced fast-path: call after any local mutation that should propagate
+  // to the VM promptly. Coalesces rapid calls into a single ~15s upload.
+  requestAgentDataPush: () => { try { ipcRenderer.send('cloud:requestAgentDataPush'); } catch { /* noop */ } },
+  // Fires whenever the desktop has just applied a fresh agent-data archive
+  // (typically pulled from the VM). Listeners should reload conversation
+  // history, memories, knowledge, etc.
+  onAgentDataSynced: (cb: (payload: { source?: string; files?: number }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload);
+    ipcRenderer.on('agent:data-synced', handler);
+    return () => { try { ipcRenderer.removeListener('agent:data-synced', handler); } catch { /* noop */ } };
+  },
+
+  // Real desktop→VM sync state (pending changes / syncing / last push result).
+  getAgentSyncState: () => ipcRenderer.invoke('cloud:agentSyncState'),
+  // Live updates whenever a sync job starts/finishes/fails in the main process.
+  onAgentSyncStatus: (cb: (payload: { phase: 'start' | 'done' | 'error'; label: string; error?: string; state?: any }) => void) => {
+    const handler = (_e: any, payload: any) => cb(payload);
+    ipcRenderer.on('agent:sync-status', handler);
+    return () => { try { ipcRenderer.removeListener('agent:sync-status', handler); } catch { /* noop */ } };
+  },
+
+});

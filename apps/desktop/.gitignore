@@ -1,0 +1,59 @@
+# Environment
+.env
+.env.local
+
+# Build outputs (Electron)
+dist/
+release/
+out/
+
+# Electron builder
+builder-debug.yml
+builder-effective-config.yaml
+
+# Packaged executables
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.pkg
+*.deb
+*.rpm
+
+# ASAR archives
+*.asar
+*.asar.unpacked/
+
+# Auto-updater manifests
+app-update.yml
+latest.yml
+latest-*.yml
+
+# Platform installers
+*.msi
+*.msix
+*.nupkg
+*.blockmap
+
+# Prepared agent builds
+build/agent/
+build/.env
+
+# Auto-generated custom UI CSS
+src/main/custom-ui/assets/tailwind-prebuilt.ts
+
+# Development
+.vite/
+.turbo/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

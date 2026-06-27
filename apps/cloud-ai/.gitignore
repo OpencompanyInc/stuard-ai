@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local encrypted data (OAuth tokens, etc.)
+.data/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+gcp-key.json
+.dev-tunnel-url

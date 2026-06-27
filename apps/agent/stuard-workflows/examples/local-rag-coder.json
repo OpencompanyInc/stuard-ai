@@ -1,0 +1,205 @@
+{
+  "id": "flow_3pwr8kup",
+  "name": "Local RAG Coder",
+  "version": "1",
+  "autostart": false,
+  "requirements": "",
+  "scripts": {},
+  "triggers": [
+    {
+      "id": "trig_0",
+      "type": "manual",
+      "label": "Manual Trigger",
+      "args": {},
+      "position": {
+        "x": 60,
+        "y": 50
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "step_z0444n",
+      "type": "local.tool",
+      "tool": "custom_ui",
+      "label": "RAG UI",
+      "args": {
+        "title": "Local RAG Coder",
+        "window": {
+          "width": 900,
+          "height": 600,
+          "position": "center",
+          "alwaysOnTop": true,
+          "frameless": false,
+          "transparent": false,
+          "borderRadius": 0,
+          "resizable": true,
+          "title": "Local RAG Coder",
+          "backgroundType": "color",
+          "backgroundColor": "#0f172a",
+          "shadow": {
+            "enabled": true,
+            "color": "#00000040",
+            "blur": 20,
+            "spread": 0,
+            "x": 0,
+            "y": 8
+          },
+          "animation": {
+            "open": "fade",
+            "close": "fade",
+            "duration": 300,
+            "easing": "ease-out"
+          },
+          "contentPadding": 0
+        },
+        "component": "function App() {\n  const [workspace, setWorkspace] = useState('C:/my-project');\n  const [model, setModel] = useState('balanced');\n  const [status, setStatus] = useState('Idle');\n  const [progress, setProgress] = useState('');\n  const [chat, setChat] = useState([]);\n  const [input, setInput] = useState('');\n  const [isIndexing, setIsIndexing] = useState(false);\n  const [isThinking, setIsThinking] = useState(false);\n\n  function cosineSim(a, b) {\n    var dot = 0, magA = 0, magB = 0;\n    for (var i = 0; i < a.length; i++) {\n      dot += a[i] * b[i];\n      magA += a[i] * a[i];\n      magB += b[i] * b[i];\n    }\n    return dot / (Math.sqrt(magA) * Math.sqrt(magB) + 1e-10);\n  }\n\n  var buildIndex = function() {\n    if (!workspace || isIndexing) return;\n    setIsIndexing(true);\n    setStatus('Setting up database...');\n    stuard.callNode('setup_db', {}).then(function() {\n      setStatus('Scanning files...');\n      return stuard.callNode('scan_files', { workspace: workspace });\n    }).then(function(scanRes) {\n      if (!scanRes.ok) {\n        setStatus('Error scanning files');\n        setIsIndexing(false);\n        return Promise.reject('scan_failed');\n      }\n      var files = [];\n      try {\n        files = JSON.parse(scanRes.stdout);\n      } catch(e) {\n        setStatus('Error parsing files');\n        setIsIndexing(false);\n        return Promise.reject('parse_failed');\n      }\n      setStatus('Found ' + files.length + ' files. Indexing...');\n\n      var processFile = function(idx) {\n        if (idx >= files.length) {\n          setStatus('Ready (' + files.length + ' files indexed)');\n          setProgress('');\n          setIsIndexing(false);\n          return Promise.resolve();\n        }\n        var file = files[idx];\n        setProgress('(' + (idx+1) + '/' + files.length + ') ' + file);\n        return stuard.callNode('read_chunk', { path: file }).then(function(readRes) {\n          if (!readRes.ok || !readRes.content) return processFile(idx + 1);\n          var text = readRes.content;\n          var chunkSize = 4000;\n          var chunks = [];\n          for (var j = 0; j < text.length; j += chunkSize) {\n            chunks.push(text.substring(j, j + chunkSize));\n          }\n          var processChunk = function(c) {\n            if (c >= chunks.length) return processFile(idx + 1);\n            var chunkText = chunks[c];\n            return stuard.callNode('embed_chunk', { text: chunkText }).then(function(embedRes) {\n              if (embedRes.ok && embedRes.embeddings && embedRes.embeddings.length > 0) {\n                var vector = embedRes.embeddings[0];\n                return stuard.callNode('store_embedding', {\n                  id: file + '#' + c,\n                  path: file,\n                  content: chunkText,\n                  vector_json: JSON.stringify(vector)\n                }).then(function() { return processChunk(c + 1); });\n              }\n              return processChunk(c + 1);\n            });\n          };\n          return processChunk(0);\n        });\n      };\n      return processFile(0);\n    }).catch(function(err) {\n      if (err !== 'scan_failed' && err !== 'parse_failed') {\n        setStatus('Error: ' + (err.message || err));\n        setIsIndexing(false);\n      }\n    });\n  };\n\n  var sendMessage = function() {\n    if (!input.trim() || isThinking) return;\n    var userMsg = input;\n    setInput('');\n    setChat(function(prev) { return prev.concat([{ role: 'user', text: userMsg }]); });\n    setIsThinking(true);\n\n    stuard.callNode('semantic_search', { query: userMsg }).then(function(embedRes) {\n      if (!embedRes.ok || !embedRes.embeddings) throw new Error('Failed to embed query');\n      var queryVector = embedRes.embeddings[0];\n      return stuard.callNode('fetch_all_embeddings', {}).then(function(dbRes) {\n        if (!dbRes.ok || !dbRes.results) throw new Error('Failed to fetch DB');\n        var candidates = dbRes.results.map(function(row) {\n          return { vector: JSON.parse(row.vector_json), path: row.path, content: row.content };\n        });\n        candidates.forEach(function(c) {\n          c.score = cosineSim(queryVector, c.vector);\n        });\n        candidates.sort(function(a, b) { return b.score - a.score; });\n        var topK = candidates.slice(0, 5);\n        var contextText = 'No relevant code found.';\n        if (topK.length > 0) {\n          contextText = topK.map(function(r) {\n            return 'File: ' + r.path + '\\n' + r.content;\n          }).join('\\n\\n---\\n\\n');\n        }\n        var prompt = 'Context from codebase:\\n' + contextText + '\\n\\nUser Question: ' + userMsg;\n        return stuard.callNode('agent_think', { prompt: prompt, model: model });\n      });\n    }).then(function(agentRes) {\n      if (agentRes && agentRes.ok) {\n        setChat(function(prev) { return prev.concat([{ role: 'agent', text: agentRes.text || 'No response' }]); });\n      } else {\n        setChat(function(prev) { return prev.concat([{ role: 'agent', text: 'Error: ' + (agentRes ? agentRes.error : 'unknown') }]); });\n      }\n      setIsThinking(false);\n    }).catch(function(err) {\n      setChat(function(prev) { return prev.concat([{ role: 'agent', text: 'Error: ' + (err.message || err) }]); });\n      setIsThinking(false);\n    });\n  };\n\n  return (\n    <div style={{display:'flex', height:'100%', background:'#0f172a', color:'#e2e8f0', fontFamily:'system-ui, sans-serif'}}>\n      <div style={{width:'240px', background:'#020617', padding:'16px', display:'flex', flexDirection:'column', borderRight:'1px solid #1e293b'}}>\n        <h1 style={{fontSize:'18px', fontWeight:'bold', color:'#60a5fa', marginBottom:'24px'}}>Local RAG Coder</h1>\n\n        <label style={{fontSize:'11px', color:'#94a3b8', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.05em'}}>Workspace Path</label>\n        <input\n          value={workspace}\n          onChange={function(e) { setWorkspace(e.target.value); }}\n          style={{width:'100%', background:'#1e293b', border:'1px solid #334155', borderRadius:'6px', padding:'8px', fontSize:'13px', color:'#e2e8f0', marginBottom:'16px', outline:'none', boxSizing:'border-box'}}\n          placeholder=\"C:/my-project\"\n        />\n\n        <label style={{fontSize:'11px', color:'#94a3b8', marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.05em'}}>AI Model</label>\n        <select\n          value={model}\n          onChange={function(e) { setModel(e.target.value); }}\n          style={{width:'100%', background:'#1e293b', border:'1px solid #334155', borderRadius:'6px', padding:'8px', fontSize:'13px', color:'#e2e8f0', marginBottom:'24px', outline:'none', boxSizing:'border-box'}}\n        >\n          <option value=\"fast\">Fast</option>\n          <option value=\"balanced\">Balanced</option>\n          <option value=\"smart\">Smart</option>\n        </select>\n\n        <button\n          onClick={buildIndex}\n          disabled={isIndexing}\n          style={{width:'100%', padding:'10px', borderRadius:'6px', fontWeight:'600', fontSize:'13px', border:'none', cursor: isIndexing ? 'not-allowed' : 'pointer', background: isIndexing ? '#334155' : '#2563eb', color: isIndexing ? '#94a3b8' : 'white', transition:'background 0.15s'}}\n        >\n          {isIndexing ? 'Indexing...' : 'Build Index'}\n        </button>\n\n        <div style={{marginTop:'16px', fontSize:'13px', color:'#94a3b8'}}>\n          <div style={{fontWeight:'500', color:'#cbd5e1'}}>Status: {status}</div>\n          {progress ? <div style={{fontSize:'11px', marginTop:'4px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={progress}>{progress}</div> : null}\n        </div>\n      </div>\n\n      <div style={{flex:1, display:'flex', flexDirection:'column', minWidth:0}}>\n        <div style={{flex:1, overflowY:'auto', padding:'24px', display:'flex', flexDirection:'column', gap:'12px'}}>\n          {chat.length === 0 ? (\n            <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#64748b'}}>\n              Index your codebase, then ask a question!\n            </div>\n          ) : (\n            chat.map(function(msg, i) {\n              return (\n                <div key={i} style={{display:'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start'}}>\n                  <div style={{maxWidth:'80%', borderRadius:'12px', padding:'12px 16px', background: msg.role === 'user' ? '#2563eb' : '#1e293b', color: msg.role === 'user' ? 'white' : '#e2e8f0', border: msg.role === 'user' ? 'none' : '1px solid #334155'}}>\n                    <div style={{fontSize:'10px', opacity:0.5, marginBottom:'4px', textTransform:'uppercase', letterSpacing:'0.05em'}}>{msg.role}</div>\n                    <div style={{whiteSpace:'pre-wrap', fontSize:'13px', lineHeight:'1.5'}}>{msg.text}</div>\n                  </div>\n                </div>\n              );\n            })\n          )}\n          {isThinking ? (\n            <div style={{display:'flex', justifyContent:'flex-start'}}>\n              <div style={{background:'#1e293b', border:'1px solid #334155', borderRadius:'12px', padding:'12px 16px', fontSize:'13px', color:'#94a3b8'}}>\n                Agent is thinking...\n              </div>\n            </div>\n          ) : null}\n        </div>\n\n        <div style={{padding:'16px', background:'#020617', borderTop:'1px solid #1e293b'}}>\n          <div style={{display:'flex', gap:'8px'}}>\n            <input\n              value={input}\n              onChange={function(e) { setInput(e.target.value); }}\n              onKeyDown={function(e) { if (e.key === 'Enter') sendMessage(); }}\n              placeholder=\"Ask about your code...\"\n              style={{flex:1, background:'#1e293b', border:'1px solid #334155', borderRadius:'8px', padding:'12px', fontSize:'13px', color:'#e2e8f0', outline:'none', boxSizing:'border-box'}}\n              disabled={isThinking}\n            />\n            <button\n              onClick={sendMessage}\n              disabled={isThinking || !input.trim()}\n              style={{padding:'10px 24px', borderRadius:'8px', fontWeight:'600', fontSize:'13px', border:'none', cursor: (isThinking || !input.trim()) ? 'not-allowed' : 'pointer', background: (isThinking || !input.trim()) ? '#334155' : '#2563eb', color: (isThinking || !input.trim()) ? '#64748b' : 'white', transition:'background 0.15s'}}\n            >\n              Send\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>\n  );\n}",
+        "blocking": true,
+        "css": "body, html, .stuard-root, #stuard-root { margin: 0; padding: 0; overflow: hidden; }\n.stuard-root { background: #0f172a !important; }"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 300,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_7ouam3",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Setup DB",
+      "args": {
+        "query": "CREATE TABLE IF NOT EXISTS code_index (id TEXT PRIMARY KEY, path TEXT, content TEXT, vector_json TEXT)"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 580,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_q1ny3s",
+      "type": "local.tool",
+      "tool": "run_python_script",
+      "label": "Scan Files",
+      "args": {
+        "code": "import os, json\nignore_dirs = {'.git', 'node_modules', 'venv', '__pycache__', 'dist', 'build', '.next'}\nvalid_exts = {'.js', '.ts', '.py', '.html', '.css', '.json', '.md', '.jsx', '.tsx', '.java', '.c', '.cpp', '.h', '.go', '.rs'}\nfiles = []\nworkspace = r'{{caller.workspace}}'\nfor root, dirs, filenames in os.walk(workspace):\n    dirs[:] = [d for d in dirs if d not in ignore_dirs]\n    for f in filenames:\n        if any(f.endswith(ext) for ext in valid_exts):\n            files.append(os.path.join(root, f).replace('\\\\', '/'))\nprint(json.dumps(files))"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 860,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_vdxn4c",
+      "type": "local.tool",
+      "tool": "read_file",
+      "label": "Read Chunk",
+      "args": {
+        "path": "{{caller.path}}"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 1140,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_z9s8sw",
+      "type": "local.tool",
+      "tool": "embed_text",
+      "label": "Embed Chunk",
+      "args": {
+        "texts": [
+          "{{caller.text}}"
+        ]
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 1420,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_h7i781",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Store Embedding",
+      "args": {
+        "query": "INSERT OR REPLACE INTO code_index (id, path, content, vector_json) VALUES (?, ?, ?, ?)",
+        "params": [
+          "{{caller.id}}",
+          "{{caller.path}}",
+          "{{caller.content}}",
+          "{{caller.vector_json}}"
+        ]
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 1700,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_wssnoo",
+      "type": "local.tool",
+      "tool": "embed_text",
+      "label": "Semantic Search",
+      "args": {
+        "texts": [
+          "{{caller.query}}"
+        ]
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 1980,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_rx4w3p",
+      "type": "local.tool",
+      "tool": "db_query",
+      "label": "Fetch All Embeddings",
+      "args": {
+        "query": "SELECT id, path, content, vector_json FROM code_index"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 2260,
+        "y": 120
+      }
+    },
+    {
+      "id": "step_frz8i6",
+      "type": "local.tool",
+      "tool": "agent_node",
+      "label": "Agent Think",
+      "args": {
+        "prompt": "{{caller.prompt}}",
+        "tools": [
+          "read_file",
+          "file_edit",
+          "run_command",
+          "list_directory"
+        ],
+        "model": "{{caller.model}}"
+      },
+      "fallbackTo": "",
+      "position": {
+        "x": 2540,
+        "y": 120
+      }
+    }
+  ],
+  "wires": [
+    {
+      "from": "trig_0",
+      "to": "step_z0444n",
+      "guard": "always",
+      "label": ""
+    }
+  ],
+  "locked": false
+}
