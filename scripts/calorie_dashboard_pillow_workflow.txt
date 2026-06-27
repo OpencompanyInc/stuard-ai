@@ -1,0 +1,209 @@
+import os
+from datetime import datetime
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    raise SystemExit('Pillow is required: add packages=["Pillow"]')
+
+profile = {{step_aw0m4p.results.0}}
+today = {{step_mk0kzo.results.0}}
+trend = {{step_hx1il9.results}}
+meals = {{step_uem418.results}}
+stats = {{step_ufev3f.results.0}}
+avgs = {{step_tlsyhb.results.0}}
+meal_img = "{{trigger.data.foodImage}}"
+out_path = "{{$workspace.assets}}/calorie_dashboard.png"
+
+W, H = 1400, 1800
+BG = "#0B0F14"
+PANEL = "#151B23"
+PANEL2 = "#10161D"
+LINE = "#2D3642"
+TEXT = "#E8EEF6"
+MUTED = "#95A1B2"
+BLUE = "#58A6FF"
+GREEN = "#3FB950"
+YELLOW = "#D29922"
+RED = "#F85149"
+
+
+def font(size, bold=False):
+    candidates = [
+        r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
+
+
+F_TITLE = font(64, True)
+F_H1 = font(42, True)
+F_H2 = font(30, True)
+F_BODY = font(25)
+F_SMALL = font(21)
+F_TINY = font(18)
+
+
+def num(d, k, default=0):
+    if not isinstance(d, dict):
+        return default
+    try:
+        return float(d.get(k, default) or default)
+    except Exception:
+        return default
+
+
+def txt(d, k, default=""):
+    if not isinstance(d, dict):
+        return default
+    v = d.get(k, default)
+    return default if v is None else str(v)
+
+
+def rr(draw, xy, r=28, fill=PANEL, outline=None, width=1):
+    draw.rounded_rectangle(xy, radius=r, fill=fill, outline=outline, width=width)
+
+
+def text(draw, xy, value, fill=TEXT, fnt=F_BODY, anchor=None):
+    draw.text(xy, str(value), fill=fill, font=fnt, anchor=anchor)
+
+
+def fit_text(draw, value, max_width, fnt):
+    original = str(value)
+    value = original
+    while value and draw.textlength(value + "...", font=fnt) > max_width:
+        value = value[:-1]
+    return value + "..." if value != original else value
+
+
+img = Image.new("RGB", (W, H), BG)
+d = ImageDraw.Draw(img)
+
+name = txt(profile, "display_name", "You")
+goal = txt(profile, "goal", "Track nutrition")
+target = max(num(profile, "daily_calorie_target", 2000), 1)
+cal = num(today, "calories")
+remaining = max(target - cal, 0)
+meals_today = int(num(today, "meals"))
+
+text(d, (72, 54), "Calorie Tracker", fnt=F_TITLE)
+text(d, (74, 132), f'{name}  |  {datetime.now().strftime("%b %d, %Y")}', fill=MUTED, fnt=F_BODY)
+text(d, (W - 72, 136), goal, fill=BLUE, fnt=F_BODY, anchor="ra")
+
+left = (72, 220, 660, 650)
+right = (700, 220, 1328, 650)
+rr(d, left)
+rr(d, right)
+text(d, (108, 258), "Today", fnt=F_H2)
+
+cx, cy, r = 366, 438, 142
+pct = max(0, min(cal / target, 1))
+d.ellipse((cx - r, cy - r, cx + r, cy + r), fill="#27303A")
+d.pieslice((cx - r, cy - r, cx + r, cy + r), start=-90, end=-90 + pct * 360, fill=BLUE)
+d.ellipse((cx - r + 34, cy - r + 34, cx + r - 34, cy + r - 34), fill=PANEL)
+text(d, (cx, cy - 28), f"{cal:.0f}", fnt=F_H1, anchor="mm")
+text(d, (cx, cy + 26), f"of {target:.0f} kcal", fill=MUTED, fnt=F_SMALL, anchor="mm")
+text(d, (108, 592), f"{remaining:.0f} kcal remaining", fill=GREEN if remaining > 0 else RED, fnt=F_BODY)
+text(d, (552, 592), f"{meals_today} meals", fill=MUTED, fnt=F_BODY, anchor="ra")
+
+text(d, (736, 258), "Latest meal", fnt=F_H2)
+photo_box = (736, 310, 1292, 610)
+rr(d, photo_box, r=22, fill=PANEL2)
+if meal_img and os.path.exists(meal_img):
+    try:
+        photo = Image.open(meal_img).convert("RGB")
+        photo.thumbnail((photo_box[2] - photo_box[0], photo_box[3] - photo_box[1]))
+        px = photo_box[0] + ((photo_box[2] - photo_box[0]) - photo.width) // 2
+        py = photo_box[1] + ((photo_box[3] - photo_box[1]) - photo.height) // 2
+        img.paste(photo, (px, py))
+    except Exception:
+        text(d, ((photo_box[0] + photo_box[2]) // 2, (photo_box[1] + photo_box[3]) // 2), "Unable to load photo", fill=MUTED, fnt=F_BODY, anchor="mm")
+else:
+    text(d, ((photo_box[0] + photo_box[2]) // 2, (photo_box[1] + photo_box[3]) // 2), "No meal photo", fill=MUTED, fnt=F_BODY, anchor="mm")
+
+macro_card = (72, 700, 1328, 1048)
+rr(d, macro_card)
+text(d, (108, 738), "Macros", fnt=F_H2)
+macros = [
+    ("Protein", num(today, "protein_g"), max(num(profile, "protein_target_g", 150), 1), GREEN),
+    ("Carbs", num(today, "carbs_g"), max(num(profile, "carbs_target_g", 200), 1), YELLOW),
+    ("Fat", num(today, "fat_g"), max(num(profile, "fat_target_g", 65), 1), RED),
+]
+bar_x, bar_w = 250, 950
+for i, (label, value, tgt, color) in enumerate(macros):
+    y = 820 + i * 72
+    text(d, (108, y + 10), label, fill=MUTED, fnt=F_BODY)
+    rr(d, (bar_x, y, bar_x + bar_w, y + 34), r=17, fill="#26303B")
+    rr(d, (bar_x, y, bar_x + int(bar_w * min(value / tgt, 1.15)), y + 34), r=17, fill=color)
+    text(d, (1220, y + 17), f"{value:.0f}g / {tgt:.0f}g", fnt=F_SMALL, anchor="lm")
+text(d, (108, 1004), f"Fiber {num(today, 'fiber_g'):.0f}g", fill=MUTED, fnt=F_SMALL)
+text(d, (310, 1004), f"Sugar {num(today, 'sugar_g'):.0f}g", fill=MUTED, fnt=F_SMALL)
+text(d, (520, 1004), f"Sodium {num(today, 'sodium_mg'):.0f}mg", fill=MUTED, fnt=F_SMALL)
+
+trend_card = (72, 1098, 1328, 1450)
+rr(d, trend_card)
+text(d, (108, 1136), "7-day calories", fnt=F_H2)
+plot = (130, 1210, 1268, 1400)
+for j in range(4):
+    y = plot[1] + j * (plot[3] - plot[1]) // 3
+    d.line((plot[0], y, plot[2], y), fill=LINE, width=1)
+trend_rows = trend if isinstance(trend, list) else []
+vals = [num(r, "calories") for r in trend_rows][-7:]
+labels = [txt(r, "day") for r in trend_rows][-7:]
+if vals:
+    lo = min(vals + [target])
+    hi = max(vals + [target])
+    pad = max((hi - lo) * 0.15, 100)
+    lo -= pad
+    hi += pad
+
+    def px(i):
+        return plot[0] + int(i * (plot[2] - plot[0]) / max(len(vals) - 1, 1))
+
+    def py(v):
+        return plot[3] - int((v - lo) * (plot[3] - plot[1]) / max(hi - lo, 1))
+
+    ty = py(target)
+    d.line((plot[0], ty, plot[2], ty), fill=GREEN, width=2)
+    pts = [(px(i), py(v)) for i, v in enumerate(vals)]
+    if len(pts) > 1:
+        d.line(pts, fill=BLUE, width=5)
+    for x, y in pts:
+        d.ellipse((x - 8, y - 8, x + 8, y + 8), fill=BLUE)
+    for i, label in enumerate(labels):
+        if i % 2 == 0 or len(labels) <= 5:
+            text(d, (px(i), 1420), fit_text(d, label, 110, F_TINY), fill=MUTED, fnt=F_TINY, anchor="ma")
+else:
+    text(d, ((plot[0] + plot[2]) // 2, (plot[1] + plot[3]) // 2), "No trend data yet", fill=MUTED, fnt=F_BODY, anchor="mm")
+
+meal_card = (72, 1500, 660, 1730)
+stat_card = (700, 1500, 1328, 1730)
+rr(d, meal_card)
+rr(d, stat_card)
+text(d, (108, 1538), "Recent meals", fnt=F_H2)
+if meals:
+    for i, m in enumerate(meals[:4]):
+        y = 1598 + i * 42
+        text(d, (108, y), fit_text(d, txt(m, "food_type"), 360, F_SMALL), fnt=F_SMALL)
+        text(d, (624, y), f"{num(m, 'calories'):.0f} cal", fill=MUTED, fnt=F_SMALL, anchor="ra")
+else:
+    text(d, (108, 1610), "No meals logged yet", fill=MUTED, fnt=F_BODY)
+
+text(d, (736, 1538), "Stats", fnt=F_H2)
+rows = [
+    ("Current streak", f"{int(num(avgs, 'current_streak'))} days"),
+    ("Avg calories/day", f"{num(avgs, 'avg_calories_per_day'):.0f}"),
+    ("Total meals logged", f"{int(num(stats, 'total_logs'))}"),
+    ("Avg confidence", f"{num(stats, 'avg_confidence') * 100:.0f}%"),
+]
+for i, (k, v) in enumerate(rows):
+    y = 1598 + i * 42
+    text(d, (736, y), k, fill=MUTED, fnt=F_SMALL)
+    text(d, (1292, y), v, fnt=F_SMALL, anchor="ra")
+
+os.makedirs(os.path.dirname(out_path), exist_ok=True)
+img.save(out_path)
+print(out_path)

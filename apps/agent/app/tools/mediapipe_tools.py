@@ -1,0 +1,1762 @@
+"""
+MediaPipe integration tools for pose estimation, hand tracking, face detection,
+face mesh, object detection, and image segmentation.
+
+In dev (running under a system Python), mediapipe + opencv-python + numpy are
+installed lazily into a managed venv and imported in-process.
+
+In frozen builds (PyInstaller), tool calls are forwarded over HTTP to the
+sibling ``stuard-mediapipe`` sidecar binary, which bundles its own matching
+Python + numpy + cv2 + mediapipe. This avoids importing C-extensions compiled
+against a different Python ABI than the frozen agent (the venv-injection trick
+only works when the system Python's ABI happens to match the frozen agent).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import importlib
+import io
+import json
+import os
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import urllib.error
+import urllib.request
+import uuid
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+from urllib.request import urlretrieve
+
+# ---------------------------------------------------------------------------
+# Lazy dependency management
+# ---------------------------------------------------------------------------
+
+_MP_ENV_ID = "mediapipe_env"
+_REQUIRED_PACKAGES = ["mediapipe", "opencv-python", "numpy"]
+_env_ready = False
+
+# Long-lived detector caches (high impact for streaming workflows)
+_CACHE_LOCK = threading.Lock()
+_POSE_LANDMARKERS: Dict[str, Any] = {}
+_POSE_LOCKS: Dict[str, threading.Lock] = {}
+_HAND_LANDMARKERS: Dict[str, Any] = {}
+_HAND_LOCKS: Dict[str, threading.Lock] = {}
+
+# ---------------------------------------------------------------------------
+# Sidecar service (frozen builds)
+# ---------------------------------------------------------------------------
+# When running as a PyInstaller-frozen .exe, in-process mediapipe imports break
+# because the venv's numpy/cv2 are compiled against the system Python's ABI
+# (e.g. cp313) while the frozen interpreter is a different version (e.g. cp311).
+# Instead we spawn the sibling ``stuard-mediapipe`` binary which bundles its own
+# Python + numpy + cv2 and forward calls to it over localhost HTTP.
+
+_SERVICE_AUTH_HEADER = "x-stuard-mediapipe-token"
+_SERVICE_LOCK = threading.Lock()
+_service_proc: Optional[subprocess.Popen] = None
+_service_port: int = 0
+_service_token: str = ""
+_service_unavailable_logged = False
+
+# Model download URLs (Google-hosted, stable)
+_MODEL_URLS: Dict[str, str] = {
+    "pose_landmarker": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+    "hand_landmarker": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+    "face_detector": "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+    "face_landmarker": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+    "image_segmenter": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+}
+
+
+def _is_frozen() -> bool:
+    """True when running as a PyInstaller-frozen executable."""
+    return bool(getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"))
+
+
+def _locate_service_binary() -> Optional[str]:
+    """Find the ``stuard-mediapipe`` sidecar binary next to the running interpreter."""
+    if sys.platform.startswith("win"):
+        names = ["stuard-mediapipe.exe"]
+    elif sys.platform == "darwin":
+        names = ["stuard-mediapipe", "stuard-mediapipe-macos"]
+    else:
+        names = ["stuard-mediapipe", "stuard-mediapipe-linux"]
+
+    search_dirs: List[str] = []
+    if getattr(sys, "executable", ""):
+        search_dirs.append(os.path.dirname(sys.executable))
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        search_dirs.append(meipass)
+    # Allow override for diagnostics / dev
+    override = os.environ.get("STUARD_MEDIAPIPE_BINARY", "").strip()
+    if override and os.path.isfile(override):
+        return override
+
+    for d in search_dirs:
+        for n in names:
+            p = os.path.join(d, n)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def _allocate_local_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+    finally:
+        s.close()
+
+
+def _service_status_sync(timeout: float = 1.5) -> bool:
+    """Probe the sidecar /status endpoint; True if it responds 2xx."""
+    if not _service_port:
+        return False
+    try:
+        url = f"http://127.0.0.1:{_service_port}/status"
+        req = urllib.request.Request(url, headers={_SERVICE_AUTH_HEADER: _service_token})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
+def _spawn_service_sync() -> bool:
+    """Spawn the sidecar binary. Caller holds _SERVICE_LOCK or is single-threaded."""
+    global _service_proc, _service_port, _service_token, _service_unavailable_logged
+
+    if _service_proc and _service_proc.poll() is None:
+        return True
+
+    binary = _locate_service_binary()
+    if not binary:
+        if not _service_unavailable_logged:
+            print("[mediapipe-tools] sidecar binary not found; cannot run mediapipe in frozen build", flush=True)
+            _service_unavailable_logged = True
+        return False
+
+    port = _allocate_local_port()
+    token = secrets.token_hex(24)
+    env = os.environ.copy()
+    env["STUARD_MEDIAPIPE_PORT"] = str(port)
+    env["STUARD_MEDIAPIPE_HOST"] = "127.0.0.1"
+    env["STUARD_MEDIAPIPE_AUTH_TOKEN"] = token
+
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": os.path.dirname(binary),
+        "env": env,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform.startswith("win"):
+        # Hide console window when spawned from a windowed Electron child
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        popen_kwargs["creationflags"] = creation_flags
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        proc = subprocess.Popen([binary], **popen_kwargs)  # nosec - trusted bundled binary
+    except Exception as e:
+        print(f"[mediapipe-tools] failed to spawn sidecar: {e}", flush=True)
+        return False
+
+    _service_proc = proc
+    _service_port = port
+    _service_token = token
+    print(f"[mediapipe-tools] spawned sidecar pid={proc.pid} port={port}", flush=True)
+    return True
+
+
+async def _ensure_service_started(timeout_s: float = 20.0) -> bool:
+    """Make sure the sidecar service is reachable; spawn it if needed."""
+    # Fast path: already alive
+    if _service_proc and _service_proc.poll() is None and await asyncio.to_thread(_service_status_sync):
+        return True
+
+    def _spawn_locked() -> bool:
+        with _SERVICE_LOCK:
+            return _spawn_service_sync()
+
+    if not await asyncio.to_thread(_spawn_locked):
+        return False
+
+    deadline = asyncio.get_event_loop().time() + max(2.0, timeout_s)
+    while asyncio.get_event_loop().time() < deadline:
+        if _service_proc and _service_proc.poll() is not None:
+            print("[mediapipe-tools] sidecar exited before becoming ready", flush=True)
+            return False
+        if await asyncio.to_thread(_service_status_sync):
+            return True
+        await asyncio.sleep(0.25)
+    return False
+
+
+def _should_use_service() -> bool:
+    """Use the sidecar HTTP service whenever we are running frozen.
+
+    Note: we don't require the binary to be on disk here — if it's missing we
+    want a clean error from the route handler (via _call_service) rather than
+    falling through to the in-process path, which would either crash on a
+    cp313/cp311 ABI mismatch or raise an opaque RuntimeError.
+    """
+    return _is_frozen()
+
+
+async def _call_service(endpoint: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
+    """Forward a request to the sidecar service. Returns the parsed JSON body."""
+    if not await _ensure_service_started():
+        return {"ok": False, "error": "MediaPipe sidecar service not available", "available": False}
+
+    url = f"http://127.0.0.1:{_service_port}{endpoint}"
+    data = json.dumps(body).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        _SERVICE_AUTH_HEADER: _service_token,
+    }
+
+    def _do() -> Dict[str, Any]:
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+                parsed = json.loads(raw) if raw else {}
+                if not isinstance(parsed, dict):
+                    return {"ok": False, "error": "sidecar returned non-object response"}
+                return parsed
+        except urllib.error.HTTPError as e:
+            try:
+                msg = e.read().decode("utf-8")
+            except Exception:
+                msg = str(e)
+            return {"ok": False, "error": f"sidecar HTTP {e.code}: {msg[:300]}"}
+        except Exception as e:
+            return {"ok": False, "error": f"sidecar request failed: {e}"}
+
+    return await asyncio.to_thread(_do)
+
+
+def _ref_to_data_url_sync(ref_id: str) -> str:
+    """Convert a chunk-ref BGR numpy array to a data: URL using PIL (no cv2)."""
+    from .streams import get_chunk_ref, release_chunk_ref
+    arr = get_chunk_ref(ref_id)
+    if arr is None:
+        raise ValueError(f"Chunk reference '{ref_id}' not found or expired")
+    release_chunk_ref(ref_id)
+    if not (hasattr(arr, "shape") and len(arr.shape) == 3):
+        raise ValueError("Chunk reference does not contain a valid image array")
+    # arr is BGR (camera convention). PIL wants RGB.
+    rgb = arr[:, :, ::-1]
+    try:
+        from PIL import Image
+    except Exception as e:
+        raise RuntimeError(f"PIL not available for image encoding: {e}")
+    pil_img = Image.fromarray(rgb)
+    buf = io.BytesIO()
+    pil_img.save(buf, format="JPEG", quality=80)
+    return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+
+
+async def _normalize_image_for_service(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate {imageData|imagePath} args for the sidecar service.
+
+    The sidecar accepts ``imageData`` (data URL) or ``imagePath``. Chunk refs
+    are decoded here using PIL+numpy (which the agent has bundled) so the
+    sidecar never sees an internal ref it doesn't know how to resolve.
+    """
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if isinstance(image_data, dict) and "__ref" in image_data:
+        ref_id = image_data["__ref"]
+        return {"imageData": await asyncio.to_thread(_ref_to_data_url_sync, ref_id)}
+    if isinstance(image_data, str) and image_data.strip().startswith("data:"):
+        return {"imageData": image_data}
+    if image_path:
+        return {"imagePath": image_path}
+    raise ValueError("imagePath or imageData is required")
+
+
+def _models_dir() -> str:
+    d = os.path.join(os.path.expanduser("~"), "StuardAI", "mediapipe", "models")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _get_model_path(model_key: str) -> str:
+    """Return local path to a model file, downloading it if missing."""
+    url = _MODEL_URLS[model_key]
+    filename = url.rsplit("/", 1)[-1]
+    local = os.path.join(_models_dir(), filename)
+    if not os.path.isfile(local):
+        urlretrieve(url, local)
+    return local
+
+
+def _ensure_venv_on_path() -> None:
+    """If the managed mediapipe venv exists, ensure its site-packages is on sys.path.
+
+    In PyInstaller-frozen builds, matplotlib is in the excludes list which creates
+    ghost module entries that clash with the real matplotlib from the venv.  We must
+    purge *all* potentially-conflicting modules and register DLL search directories
+    so that C-extension .pyd files can locate their dependencies.
+    """
+    from . import system as _sys
+    envs_root = _sys._envs_base_dir()
+    env_dir = os.path.join(envs_root, _MP_ENV_ID)
+    if not os.path.isdir(env_dir):
+        return
+    if sys.platform == "win32":
+        sp = os.path.join(env_dir, "Lib", "site-packages")
+    else:
+        py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        sp = os.path.join(env_dir, "lib", py_ver, "site-packages")
+    if os.path.isdir(sp) and sp not in sys.path:
+        # Force non-interactive matplotlib backend before any import
+        os.environ.setdefault("MPLBACKEND", "Agg")
+
+        sys.path.insert(0, sp)
+        importlib.invalidate_caches()
+
+        # Purge stale/ghost modules that PyInstaller's excludes list may have
+        # partially registered.  Without this, importing matplotlib from the venv
+        # hits "cannot import _c_internal_utils from partially initialized module".
+        _PURGE_PREFIXES = ("mediapipe", "matplotlib", "cv2", "numpy")
+        stale = [
+            k for k in sys.modules
+            if any(k == pfx or k.startswith(pfx + ".") for pfx in _PURGE_PREFIXES)
+        ]
+        for k in stale:
+            del sys.modules[k]
+
+        # On Windows, Python 3.8+ restricts DLL search paths.  C-extension .pyd
+        # files in the venv need their directory (and sub-packages like
+        # matplotlib/.libs) registered so LoadLibrary can find companion DLLs.
+        if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+            for dirpath, _dirnames, _filenames in os.walk(sp):
+                # Register any directory that contains .pyd or .dll files
+                if any(f.endswith((".pyd", ".dll")) for f in _filenames):
+                    try:
+                        os.add_dll_directory(dirpath)
+                    except OSError:
+                        pass
+
+
+# ---------------------------------------------------------------------------
+# STATUS & SETUP (for Integrations dashboard)
+# ---------------------------------------------------------------------------
+
+async def mediapipe_status(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """Check if MediaPipe is installed and available."""
+    global _env_ready
+
+    # Frozen builds — query the sidecar service.
+    if _should_use_service():
+        if not await _ensure_service_started(timeout_s=5.0):
+            return {"ok": True, "available": False, "version": None, "mode": "sidecar"}
+        resp = await _call_service("/status", {}, timeout=5.0)
+        return {
+            "ok": True,
+            "available": bool(resp.get("available")),
+            "version": resp.get("version"),
+            "mode": "sidecar",
+        }
+
+    # Make sure the managed venv is on sys.path (survives agent restarts)
+    _ensure_venv_on_path()
+    try:
+        mp = importlib.import_module("mediapipe")
+        importlib.import_module("cv2")
+        importlib.import_module("numpy")
+        # Verify tasks API exists
+        importlib.import_module("mediapipe.tasks")
+        version = getattr(mp, "__version__", "unknown")
+        _env_ready = True
+        return {"ok": True, "available": True, "version": version, "mode": "in-process"}
+    except ImportError:
+        return {"ok": True, "available": False, "version": None, "mode": "in-process"}
+
+
+async def mediapipe_setup(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    """Install MediaPipe + opencv-python + numpy into a managed environment.
+
+    In frozen builds this just spawns the sidecar service (mediapipe is already
+    bundled inside it — no install required).
+    """
+    if _should_use_service():
+        ok = await _ensure_service_started()
+        if not ok:
+            return {"ok": False, "available": False, "error": "Failed to start MediaPipe sidecar service"}
+        resp = await _call_service("/status", {}, timeout=5.0)
+        return {
+            "ok": True,
+            "available": bool(resp.get("available", True)),
+            "version": resp.get("version"),
+            "mode": "sidecar",
+            "message": "MediaPipe sidecar is ready.",
+        }
+    try:
+        await _ensure_mediapipe(emit)
+        mp = importlib.import_module("mediapipe")
+        version = getattr(mp, "__version__", "unknown")
+        return {"ok": True, "available": True, "version": version, "message": "MediaPipe is ready."}
+    except Exception as e:
+        return {"ok": False, "available": False, "error": str(e)}
+
+
+async def _ensure_mediapipe(
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> None:
+    """Ensure mediapipe + opencv are importable. Creates a venv if needed.
+
+    NOTE: In frozen builds this is a no-op — tools route through the sidecar
+    service instead and never import mediapipe in-process. Callers that take
+    the in-process path should already be guarded by ``_should_use_service``.
+    """
+    global _env_ready
+    if _env_ready:
+        return
+
+    if _is_frozen():
+        # In frozen mode we never import mediapipe in-process — the venv's
+        # numpy/cv2 are compiled against a different Python ABI than the
+        # frozen interpreter and would crash on load.
+        raise RuntimeError(
+            "MediaPipe cannot be loaded in-process in a frozen build. "
+            "Tool calls should be routed through the stuard-mediapipe sidecar."
+        )
+
+    # Try existing venv first (survives agent restarts)
+    _ensure_venv_on_path()
+
+    try:
+        importlib.import_module("mediapipe")
+        importlib.import_module("cv2")
+        importlib.import_module("numpy")
+        importlib.import_module("mediapipe.tasks")
+        _env_ready = True
+        return
+    except ImportError:
+        pass
+
+    # Purge stale modules so reinstall picks up the correct version
+    _PURGE_PREFIXES = ("mediapipe", "matplotlib", "cv2", "numpy")
+    stale = [
+        k for k in sys.modules
+        if any(k == pfx or k.startswith(pfx + ".") for pfx in _PURGE_PREFIXES)
+    ]
+    for k in stale:
+        del sys.modules[k]
+
+    # Force non-interactive matplotlib backend in frozen/headless environments
+    os.environ.setdefault("MPLBACKEND", "Agg")
+
+    from . import system as _sys
+
+    if emit:
+        await emit("mediapipe_setup", {"status": "installing", "packages": _REQUIRED_PACKAGES})
+
+    setup_result = await _sys.python_setup({"envId": _MP_ENV_ID})
+    if not setup_result.get("ok") and "already exists" not in str(setup_result.get("error", "")):
+        raise RuntimeError(f"Failed to create mediapipe env: {setup_result}")
+
+    for pkg in _REQUIRED_PACKAGES:
+        if emit:
+            await emit("mediapipe_setup", {"status": "installing_package", "package": pkg})
+        install_result = await _sys.python_install({"envId": _MP_ENV_ID, "packages": [pkg]})
+        if not install_result.get("ok"):
+            raise RuntimeError(f"Failed to install {pkg}: {install_result}")
+
+    # Add newly created venv to sys.path
+    _ensure_venv_on_path()
+
+    if emit:
+        await emit("mediapipe_setup", {"status": "ready"})
+
+    _env_ready = True
+
+
+def _get_output_dir() -> str:
+    base = os.path.join(os.path.expanduser("~"), "StuardAI", "mediapipe")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _load_image(path: str):
+    import cv2
+    img = cv2.imread(path)
+    if img is None:
+        raise FileNotFoundError(f"Cannot read image: {path}")
+    return img
+
+
+def _load_image_from_data_url(data_url: str):
+    """Decode a data:image/...;base64,... string to a BGR numpy array (no disk I/O)."""
+    import cv2
+    import numpy as np
+    # Strip the data URL prefix
+    if ',' in data_url:
+        b64_str = data_url.split(',', 1)[1]
+    else:
+        b64_str = data_url
+    raw = base64.b64decode(b64_str)
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Failed to decode base64 image data")
+    return img
+
+
+def _encode_image_to_data_url(img, quality: int = 80) -> str:
+    """Encode a BGR numpy array to a data:image/jpeg;base64,... string (no disk I/O)."""
+    import cv2
+    ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not ok:
+        raise RuntimeError("Failed to encode image as JPEG")
+    b64 = base64.b64encode(buf.tobytes()).decode('ascii')
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _save_image(img, output_path: Optional[str] = None) -> str:
+    import cv2
+    if not output_path:
+        output_path = os.path.join(_get_output_dir(), f"mp_{uuid.uuid4().hex[:8]}.png")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    cv2.imwrite(output_path, img)
+    return output_path
+
+
+async def _resolve_image(args: Dict[str, Any]):
+    """Resolve image from a chunk reference, base64 data URL, or file path.
+
+    Supports:
+      - imageData as dict with __ref key → zero-copy numpy from chunk ref registry
+      - imageData as base64 data URL string → decode from base64
+      - imagePath as file path → read from disk
+
+    Returns a BGR numpy array ready for MediaPipe processing.
+    """
+    import cv2
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")  # Can be string OR dict with __ref
+
+    # ---- Zero-copy chunk reference (from stream wire with format='ref') ----
+    if isinstance(image_data, dict) and "__ref" in image_data:
+        from .streams import get_chunk_ref, release_chunk_ref
+        ref_id = image_data["__ref"]
+        img = get_chunk_ref(ref_id)
+        if img is None:
+            raise ValueError(f"Chunk reference '{ref_id}' not found or expired")
+        # Release the ref immediately — we have the numpy array in hand
+        release_chunk_ref(ref_id)
+        # Ensure it's a proper BGR image (camera frames are already BGR)
+        if hasattr(img, 'shape') and len(img.shape) == 3:
+            return img
+        raise ValueError("Chunk reference does not contain a valid image array")
+
+    # ---- Base64 data URL ----
+    image_data_str = str(image_data or "").strip()
+    if image_data_str and image_data_str.startswith("data:"):
+        return await asyncio.to_thread(_load_image_from_data_url, image_data_str)
+
+    # ---- File path ----
+    if image_path:
+        return await asyncio.to_thread(_load_image, image_path)
+
+    raise ValueError("imagePath or imageData is required")
+
+
+def _nml_to_list(landmarks, image_width: int = 0, image_height: int = 0) -> List[Dict[str, Any]]:
+    """Convert a NormalizedLandmark list (tasks API) to serialisable dicts."""
+    result = []
+    for i, lm in enumerate(landmarks):
+        entry: Dict[str, Any] = {
+            "index": i,
+            "x": round(lm.x, 6),
+            "y": round(lm.y, 6),
+            "z": round(lm.z, 6),
+        }
+        if hasattr(lm, "visibility") and lm.visibility is not None:
+            entry["visibility"] = round(lm.visibility, 4)
+        if image_width and image_height:
+            entry["px_x"] = int(lm.x * image_width)
+            entry["px_y"] = int(lm.y * image_height)
+        result.append(entry)
+    return result
+
+
+def _pose_cache_key(model_path: str, min_det: float, min_track: float) -> str:
+    return f"{model_path}|{round(float(min_det), 4)}|{round(float(min_track), 4)}"
+
+
+def _hand_cache_key(model_path: str, max_hands: int, min_det: float, min_track: float) -> str:
+    return f"{model_path}|{int(max_hands)}|{round(float(min_det), 4)}|{round(float(min_track), 4)}"
+
+
+def _get_or_create_pose_landmarker(model_path: str, min_det: float, min_track: float):
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+    key = _pose_cache_key(model_path, min_det, min_track)
+    with _CACHE_LOCK:
+        lm = _POSE_LANDMARKERS.get(key)
+        lock = _POSE_LOCKS.get(key)
+        if lm is None:
+            options = PoseLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.IMAGE,
+                num_poses=1,
+                min_pose_detection_confidence=float(min_det),
+                min_tracking_confidence=float(min_track),
+            )
+            lm = PoseLandmarker.create_from_options(options)
+            lock = threading.Lock()
+            _POSE_LANDMARKERS[key] = lm
+            _POSE_LOCKS[key] = lock
+        return lm, lock
+
+
+def _get_or_create_hand_landmarker(model_path: str, max_hands: int, min_det: float, min_track: float):
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
+
+    key = _hand_cache_key(model_path, max_hands, min_det, min_track)
+    with _CACHE_LOCK:
+        lm = _HAND_LANDMARKERS.get(key)
+        lock = _HAND_LOCKS.get(key)
+        if lm is None:
+            options = HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=RunningMode.IMAGE,
+                num_hands=int(max_hands),
+                min_hand_detection_confidence=float(min_det),
+                min_tracking_confidence=float(min_track),
+            )
+            lm = HandLandmarker.create_from_options(options)
+            lock = threading.Lock()
+            _HAND_LANDMARKERS[key] = lm
+            _HAND_LOCKS[key] = lock
+        return lm, lock
+
+
+# ---------------------------------------------------------------------------
+# Drawing helpers (replaces removed mp.solutions.drawing_utils)
+# ---------------------------------------------------------------------------
+
+def _draw_landmarks_on_image(img, landmarks, connections=None, color=(0, 255, 0), thickness=2, radius=3):
+    """Draw landmarks and optional connections on a BGR image (cv2 format)."""
+    import cv2
+    h, w = img.shape[:2]
+    pts = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
+    if connections:
+        for start_idx, end_idx in connections:
+            if start_idx < len(pts) and end_idx < len(pts):
+                cv2.line(img, pts[start_idx], pts[end_idx], color, thickness)
+    for pt in pts:
+        cv2.circle(img, pt, radius, color, -1)
+
+
+def _draw_bboxes_on_image(img, detections, color=(0, 255, 0), thickness=2):
+    """Draw bounding boxes from FaceDetectorResult on a BGR image."""
+    import cv2
+    h, w = img.shape[:2]
+    for det in detections:
+        bb = det.bounding_box
+        x1, y1 = bb.origin_x, bb.origin_y
+        x2, y2 = x1 + bb.width, y1 + bb.height
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+        if det.categories:
+            score = det.categories[0].score
+            cv2.putText(img, f"{score:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+
+# ---------------------------------------------------------------------------
+# Connection tuples for drawing (mirrors the old solutions constants)
+# ---------------------------------------------------------------------------
+
+def _get_pose_connections():
+    from mediapipe.tasks.python.vision import PoseLandmarksConnections
+    return [(c.start, c.end) for c in PoseLandmarksConnections.POSE_LANDMARKS]
+
+
+def _get_hand_connections():
+    from mediapipe.tasks.python.vision import HandLandmarksConnections
+    return [(c.start, c.end) for c in HandLandmarksConnections.HAND_CONNECTIONS]
+
+
+def _get_face_connections():
+    from mediapipe.tasks.python.vision import FaceLandmarksConnections
+    all_conns = set()
+    for attr in dir(FaceLandmarksConnections):
+        val = getattr(FaceLandmarksConnections, attr)
+        if isinstance(val, (list, frozenset)):
+            for c in val:
+                if hasattr(c, "start") and hasattr(c, "end"):
+                    all_conns.add((c.start, c.end))
+    return list(all_conns)
+
+
+# ---------------------------------------------------------------------------
+# Sidecar response translation (frozen builds)
+# ---------------------------------------------------------------------------
+# These helpers map between the in-process tool API (rich args / structured
+# response) and the simpler stuard-mediapipe HTTP service. They preserve the
+# tool contract so callers don't notice whether they hit the sidecar or the
+# in-process implementation.
+
+def _output_format_settings(args: Dict[str, Any]) -> tuple[str, Optional[str]]:
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    return output_format, output_path
+
+
+async def _persist_data_url(data_url: str, output_path: Optional[str], prefix: str) -> Optional[str]:
+    """Decode a data: URL and write the bytes to disk. Returns the saved path."""
+    if not data_url or not data_url.startswith("data:"):
+        return None
+    try:
+        b64_str = data_url.split(",", 1)[1]
+    except IndexError:
+        return None
+    if not output_path:
+        output_path = os.path.join(_get_output_dir(), f"{prefix}_{uuid.uuid4().hex[:8]}.jpg")
+
+    def _write() -> str:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(base64.b64decode(b64_str))
+        return output_path
+
+    return await asyncio.to_thread(_write)
+
+
+async def _route_pose_via_service(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]],
+) -> Dict[str, Any]:
+    body = await _normalize_image_for_service(args)
+    body["draw"] = bool(args.get("drawLandmarks", True))
+    body["maxPoses"] = int(args.get("maxPoses", 1))
+    if emit:
+        await emit("mediapipe_processing", {"task": "pose"})
+    resp = await _call_service("/pose", body)
+    if not resp.get("ok"):
+        return {"ok": False, "error": resp.get("error", "MediaPipe sidecar failed"),
+                "poseDetected": False, "landmarks": [], "landmarkCount": 0}
+    poses = resp.get("poses") or []
+    landmarks = poses[0] if poses else []
+    annotated = resp.get("annotatedImage")
+    output_format, output_path = _output_format_settings(args)
+    out_path = None
+    out_data_url = annotated
+    if annotated and (output_format == "file" or output_path):
+        out_path = await _persist_data_url(annotated, output_path, "mp_pose")
+        if output_format == "file":
+            out_data_url = None
+    return {
+        "ok": True,
+        "poseDetected": bool(landmarks),
+        "landmarks": landmarks,
+        "landmarkCount": len(landmarks),
+        "outputPath": out_path,
+        "outputDataUrl": out_data_url,
+    }
+
+
+async def _route_hands_via_service(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]],
+) -> Dict[str, Any]:
+    body = await _normalize_image_for_service(args)
+    body["draw"] = bool(args.get("drawLandmarks", True))
+    body["maxHands"] = int(args.get("maxNumHands", 2))
+    if emit:
+        await emit("mediapipe_processing", {"task": "hands"})
+    resp = await _call_service("/hands", body)
+    if not resp.get("ok"):
+        return {"ok": False, "error": resp.get("error", "MediaPipe sidecar failed"),
+                "hands": [], "handCount": 0}
+    raw_hands = resp.get("hands") or []
+    handedness = resp.get("handedness") or []
+    hand_data: List[Dict[str, Any]] = []
+    for i, h_lms in enumerate(raw_hands):
+        side = handedness[i] if i < len(handedness) else "Unknown"
+        hand_data.append({"landmarks": h_lms, "handedness": side})
+    annotated = resp.get("annotatedImage")
+    output_format, output_path = _output_format_settings(args)
+    out_path = None
+    out_data_url = annotated
+    if annotated and (output_format == "file" or output_path):
+        out_path = await _persist_data_url(annotated, output_path, "mp_hands")
+        if output_format == "file":
+            out_data_url = None
+    return {"ok": True, "hands": hand_data, "handCount": len(hand_data),
+            "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+async def _route_face_detection_via_service(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]],
+) -> Dict[str, Any]:
+    body = await _normalize_image_for_service(args)
+    body["draw"] = bool(args.get("drawDetections", True))
+    if emit:
+        await emit("mediapipe_processing", {"task": "face_detection"})
+    resp = await _call_service("/face_detection", body)
+    if not resp.get("ok"):
+        return {"ok": False, "error": resp.get("error", "MediaPipe sidecar failed"),
+                "faces": [], "faceCount": 0}
+    raw_faces = resp.get("faces") or []
+    w = int(resp.get("width") or 0) or 1
+    h = int(resp.get("height") or 0) or 1
+    faces: List[Dict[str, Any]] = []
+    for f in raw_faces:
+        px_x, px_y = int(f.get("x", 0)), int(f.get("y", 0))
+        px_w, px_h = int(f.get("width", 0)), int(f.get("height", 0))
+        faces.append({
+            "bbox": {
+                "x": round(px_x / w, 6), "y": round(px_y / h, 6),
+                "width": round(px_w / w, 6), "height": round(px_h / h, 6),
+                "px_x": px_x, "px_y": px_y, "px_width": px_w, "px_height": px_h,
+            },
+            "keypoints": [],
+            "confidence": float(f.get("confidence", 0)),
+        })
+    annotated = resp.get("annotatedImage")
+    output_format, output_path = _output_format_settings(args)
+    out_path = None
+    out_data_url = annotated
+    if annotated and (output_format == "file" or output_path):
+        out_path = await _persist_data_url(annotated, output_path, "mp_face")
+        if output_format == "file":
+            out_data_url = None
+    return {"ok": True, "faces": faces, "faceCount": len(faces),
+            "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+async def _route_face_mesh_via_service(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]],
+) -> Dict[str, Any]:
+    body = await _normalize_image_for_service(args)
+    body["draw"] = bool(args.get("drawLandmarks", True))
+    body["maxFaces"] = int(args.get("maxNumFaces", 1))
+    body["blendshapes"] = bool(args.get("blendshapes", False))
+    if emit:
+        await emit("mediapipe_processing", {"task": "face_mesh"})
+    resp = await _call_service("/face_mesh", body)
+    if not resp.get("ok"):
+        return {"ok": False, "error": resp.get("error", "MediaPipe sidecar failed"),
+                "faces": [], "faceCount": 0}
+    raw_faces = resp.get("faces") or []
+    face_data: List[Dict[str, Any]] = [
+        {"landmarks": lms, "landmarkCount": len(lms)} for lms in raw_faces
+    ]
+    annotated = resp.get("annotatedImage")
+    output_format, output_path = _output_format_settings(args)
+    out_path = None
+    out_data_url = annotated
+    if annotated and (output_format == "file" or output_path):
+        out_path = await _persist_data_url(annotated, output_path, "mp_mesh")
+        if output_format == "file":
+            out_data_url = None
+    return {"ok": True, "faces": face_data, "faceCount": len(face_data),
+            "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+async def _route_segmentation_via_service(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]],
+) -> Dict[str, Any]:
+    body = await _normalize_image_for_service(args)
+    bg = args.get("backgroundColor")
+    if bg:
+        body["backgroundColor"] = str(bg)
+    if emit:
+        await emit("mediapipe_processing", {"task": "segmentation"})
+    resp = await _call_service("/segmentation", body)
+    if not resp.get("ok"):
+        return {"ok": False, "error": resp.get("error", "MediaPipe sidecar failed")}
+    segmented = resp.get("segmentedImage")
+    output_format, output_path = _output_format_settings(args)
+    out_path = None
+    out_data_url = segmented
+    if segmented and (output_format == "file" or output_path):
+        out_path = await _persist_data_url(segmented, output_path, "mp_seg")
+        if output_format == "file":
+            out_data_url = None
+    return {"ok": True, "outputPath": out_path, "maskPath": None, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# POSE ESTIMATION
+# ---------------------------------------------------------------------------
+
+async def mediapipe_pose(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        return await _route_pose_via_service(args, emit)
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    draw = bool(args.get("drawLandmarks", True))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+    min_track = float(args.get("minTrackingConfidence", 0.5))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "pose"})
+
+    model_path = await asyncio.to_thread(_get_model_path, "pose_landmarker")
+
+    # Load image: supports chunk refs (zero-copy), base64, or file path
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    landmarker, detector_lock = await asyncio.to_thread(_get_or_create_pose_landmarker, model_path, min_det, min_track)
+    with detector_lock:
+        result = landmarker.detect(mp_image)
+
+    if not result.pose_landmarks:
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "poseDetected": False, "landmarks": [], "landmarkCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
+
+    landmarks = _nml_to_list(result.pose_landmarks[0], w, h)
+
+    out_path = None
+    out_data_url = None
+    if draw:
+        annotated = img.copy()
+        conns = _get_pose_connections()
+        for pose_lms in result.pose_landmarks:
+            _draw_landmarks_on_image(annotated, pose_lms, conns, color=(0, 255, 0))
+        if output_format == 'file' or output_path:
+            if not output_path:
+                output_path = os.path.join(_get_output_dir(), f"mp_pose_{uuid.uuid4().hex[:8]}.png")
+            out_path = await asyncio.to_thread(_save_image, annotated, output_path)
+        if output_format == 'base64' or not output_path:
+            out_data_url = await asyncio.to_thread(_encode_image_to_data_url, annotated)
+
+    return {
+        "ok": True,
+        "poseDetected": True,
+        "landmarks": landmarks,
+        "landmarkCount": len(landmarks),
+        "outputPath": out_path,
+        "outputDataUrl": out_data_url,
+    }
+
+
+# ---------------------------------------------------------------------------
+# HAND TRACKING
+# ---------------------------------------------------------------------------
+
+async def mediapipe_hands(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        return await _route_hands_via_service(args, emit)
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    draw = bool(args.get("drawLandmarks", True))
+    max_hands = int(args.get("maxNumHands", 2))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+    min_track = float(args.get("minTrackingConfidence", 0.5))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "hands"})
+
+    model_path = await asyncio.to_thread(_get_model_path, "hand_landmarker")
+
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    landmarker, detector_lock = await asyncio.to_thread(_get_or_create_hand_landmarker, model_path, max_hands, min_det, min_track)
+    with detector_lock:
+        result = landmarker.detect(mp_image)
+
+    if not result.hand_landmarks:
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "hands": [], "handCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
+
+    hand_data = []
+    for i, hand_lms in enumerate(result.hand_landmarks):
+        handedness = "Unknown"
+        if result.handedness and i < len(result.handedness):
+            handedness = result.handedness[i][0].category_name
+        hand_data.append({
+            "landmarks": _nml_to_list(hand_lms, w, h),
+            "handedness": handedness,
+        })
+
+    out_path = None
+    out_data_url = None
+    if draw:
+        annotated = img.copy()
+        conns = _get_hand_connections()
+        for hand_lms in result.hand_landmarks:
+            _draw_landmarks_on_image(annotated, hand_lms, conns, color=(255, 0, 0))
+        if output_format == 'file' or output_path:
+            if not output_path:
+                output_path = os.path.join(_get_output_dir(), f"mp_hands_{uuid.uuid4().hex[:8]}.png")
+            out_path = await asyncio.to_thread(_save_image, annotated, output_path)
+        if output_format == 'base64' or not output_path:
+            out_data_url = await asyncio.to_thread(_encode_image_to_data_url, annotated)
+
+    return {"ok": True, "hands": hand_data, "handCount": len(hand_data), "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# FACE DETECTION
+# ---------------------------------------------------------------------------
+
+async def mediapipe_face_detection(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        return await _route_face_detection_via_service(args, emit)
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import FaceDetector, FaceDetectorOptions, RunningMode
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    draw = bool(args.get("drawDetections", True))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "face_detection"})
+
+    model_path = await asyncio.to_thread(_get_model_path, "face_detector")
+    options = FaceDetectorOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=RunningMode.IMAGE,
+        min_detection_confidence=min_det,
+    )
+
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    with FaceDetector.create_from_options(options) as detector:
+        result = detector.detect(mp_image)
+
+    if not result.detections:
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "faces": [], "faceCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
+
+    faces = []
+    for det in result.detections:
+        bb = det.bounding_box
+        keypoints = []
+        if det.keypoints:
+            for kp in det.keypoints:
+                keypoints.append({"x": round(kp.x, 6), "y": round(kp.y, 6), "px_x": int(kp.x * w), "px_y": int(kp.y * h)})
+        score = det.categories[0].score if det.categories else 0
+        faces.append({
+            "bbox": {
+                "x": round(bb.origin_x / w, 6), "y": round(bb.origin_y / h, 6),
+                "width": round(bb.width / w, 6), "height": round(bb.height / h, 6),
+                "px_x": bb.origin_x, "px_y": bb.origin_y,
+                "px_width": bb.width, "px_height": bb.height,
+            },
+            "keypoints": keypoints,
+            "confidence": round(score, 4),
+        })
+
+    out_path = None
+    out_data_url = None
+    if draw:
+        annotated = img.copy()
+        _draw_bboxes_on_image(annotated, result.detections)
+        if output_format == 'file' or output_path:
+            if not output_path:
+                output_path = os.path.join(_get_output_dir(), f"mp_face_{uuid.uuid4().hex[:8]}.png")
+            out_path = await asyncio.to_thread(_save_image, annotated, output_path)
+        if output_format == 'base64' or not output_path:
+            out_data_url = _encode_image_to_data_url(annotated)
+
+    return {"ok": True, "faces": faces, "faceCount": len(faces), "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# FACE MESH (478 landmarks)
+# ---------------------------------------------------------------------------
+
+async def mediapipe_face_mesh(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        return await _route_face_mesh_via_service(args, emit)
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, RunningMode
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    draw = bool(args.get("drawLandmarks", True))
+    max_faces = int(args.get("maxNumFaces", 1))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+    min_track = float(args.get("minTrackingConfidence", 0.5))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "face_mesh"})
+
+    model_path = await asyncio.to_thread(_get_model_path, "face_landmarker")
+    options = FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=RunningMode.IMAGE,
+        num_faces=max_faces,
+        min_face_detection_confidence=min_det,
+        min_tracking_confidence=min_track,
+    )
+
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    with FaceLandmarker.create_from_options(options) as landmarker:
+        result = landmarker.detect(mp_image)
+
+    if not result.face_landmarks:
+        # No detection — still return the raw frame so streaming pipelines don't go blank
+        no_det_data_url = None
+        if output_format == 'base64' or not output_path:
+            no_det_data_url = await asyncio.to_thread(_encode_image_to_data_url, img)
+        return {"ok": True, "faces": [], "faceCount": 0, "outputDataUrl": no_det_data_url, "outputPath": None}
+
+    face_data = []
+    for face_lms in result.face_landmarks:
+        face_data.append({"landmarks": _nml_to_list(face_lms, w, h), "landmarkCount": len(face_lms)})
+
+    out_path = None
+    out_data_url = None
+    if draw:
+        annotated = img.copy()
+        conns = _get_face_connections()
+        for face_lms in result.face_landmarks:
+            _draw_landmarks_on_image(annotated, face_lms, conns, color=(0, 200, 200), thickness=1, radius=1)
+        if output_format == 'file' or output_path:
+            if not output_path:
+                output_path = os.path.join(_get_output_dir(), f"mp_mesh_{uuid.uuid4().hex[:8]}.png")
+            out_path = await asyncio.to_thread(_save_image, annotated, output_path)
+        if output_format == 'base64' or not output_path:
+            out_data_url = _encode_image_to_data_url(annotated)
+
+    return {"ok": True, "faces": face_data, "faceCount": len(face_data), "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# IMAGE SEGMENTATION (Selfie segmentation)
+# ---------------------------------------------------------------------------
+
+async def mediapipe_segmentation(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        return await _route_segmentation_via_service(args, emit)
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import numpy as np
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import ImageSegmenter, ImageSegmenterOptions, RunningMode
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    threshold = float(args.get("threshold", 0.5))
+    bg_color = args.get("backgroundColor")
+    blur_bg = bool(args.get("blurBackground", False))
+    blur_strength = int(args.get("blurStrength", 21))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "segmentation"})
+
+    model_path = await asyncio.to_thread(_get_model_path, "image_segmenter")
+    options = ImageSegmenterOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=RunningMode.IMAGE,
+        output_category_mask=True,
+        output_confidence_masks=True,
+    )
+
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    with ImageSegmenter.create_from_options(options) as segmenter:
+        result = segmenter.segment(mp_image)
+
+    # Use the first confidence mask (foreground)
+    if result.confidence_masks:
+        mask = result.confidence_masks[0].numpy_view()
+    else:
+        mask = np.zeros(img.shape[:2], dtype=np.float32)
+
+    binary_mask = (mask > threshold).astype(np.uint8)
+
+    if blur_bg:
+        blur_k = blur_strength if blur_strength % 2 == 1 else blur_strength + 1
+        blurred = cv2.GaussianBlur(img, (blur_k, blur_k), 0)
+        mask_3ch = np.stack([binary_mask] * 3, axis=-1)
+        output = np.where(mask_3ch, img, blurred)
+    elif bg_color:
+        hex_c = str(bg_color).lstrip("#")
+        r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
+        bg = np.full_like(img, (b, g, r))
+        mask_3ch = np.stack([binary_mask] * 3, axis=-1)
+        output = np.where(mask_3ch, img, bg)
+    else:
+        alpha = (binary_mask * 255).astype(np.uint8)
+        output = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+        output[:, :, 3] = alpha
+
+    out_data_url = None
+    out_path = None
+    mask_path = None
+    if output_format == 'file' or output_path:
+        if not output_path:
+            output_path = os.path.join(_get_output_dir(), f"mp_seg_{uuid.uuid4().hex[:8]}.png")
+        out_path = await asyncio.to_thread(_save_image, output, output_path)
+        mask_path = out_path.replace(".png", "_mask.png")
+        mask_img = (mask * 255).astype(np.uint8)
+        await asyncio.to_thread(_save_image, mask_img, mask_path)
+    if output_format == 'base64' or not output_path:
+        out_data_url = _encode_image_to_data_url(output)
+
+    return {"ok": True, "outputPath": out_path, "maskPath": mask_path, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# HOLISTIC (Pose + Hands + Face combined via separate landmarkers)
+# ---------------------------------------------------------------------------
+
+async def mediapipe_holistic(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    image_path = str(args.get("imagePath") or "").strip()
+    image_data = args.get("imageData")
+    if not image_path and not image_data:
+        return {"ok": False, "error": "imagePath or imageData is required"}
+
+    if _should_use_service():
+        # Route through per-task sidecar endpoints. Drawing is dropped on
+        # holistic in frozen mode — composing three annotated frames over
+        # HTTP would be 3x bandwidth; callers that need a single annotated
+        # output should use mediapipe_pose / _hands / _face_mesh directly.
+        if emit:
+            await emit("mediapipe_processing", {"task": "holistic"})
+        no_draw = dict(args)
+        no_draw["drawLandmarks"] = False
+        pose_resp = await _route_pose_via_service(no_draw, None)
+        hands_resp = await _route_hands_via_service(no_draw, None)
+        face_resp = await _route_face_mesh_via_service(no_draw, None)
+
+        def _empty_block() -> Dict[str, Any]:
+            return {"detected": False, "landmarks": [], "landmarkCount": 0}
+
+        if pose_resp.get("ok") and pose_resp.get("poseDetected"):
+            pose_data = {
+                "detected": True,
+                "landmarks": pose_resp.get("landmarks") or [],
+                "landmarkCount": pose_resp.get("landmarkCount") or 0,
+            }
+        else:
+            pose_data = _empty_block()
+
+        left_hand_data = _empty_block()
+        right_hand_data = _empty_block()
+        if hands_resp.get("ok"):
+            for hand in hands_resp.get("hands") or []:
+                block = {
+                    "detected": True,
+                    "landmarks": hand.get("landmarks") or [],
+                    "landmarkCount": len(hand.get("landmarks") or []),
+                }
+                if str(hand.get("handedness", "")).lower().startswith("l"):
+                    left_hand_data = block
+                else:
+                    right_hand_data = block
+
+        face_data = _empty_block()
+        if face_resp.get("ok") and face_resp.get("faces"):
+            first_face = (face_resp.get("faces") or [{}])[0]
+            face_data = {
+                "detected": True,
+                "landmarks": first_face.get("landmarks") or [],
+                "landmarkCount": first_face.get("landmarkCount") or 0,
+            }
+
+        return {
+            "ok": True,
+            "pose": pose_data,
+            "leftHand": left_hand_data,
+            "rightHand": right_hand_data,
+            "face": face_data,
+            "outputPath": None,
+            "outputDataUrl": None,
+        }
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import (
+        PoseLandmarker, PoseLandmarkerOptions,
+        HandLandmarker, HandLandmarkerOptions,
+        FaceLandmarker, FaceLandmarkerOptions,
+        RunningMode,
+    )
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    output_format = str(args.get("outputFormat") or "base64").strip().lower()
+    draw = bool(args.get("drawLandmarks", True))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+    min_track = float(args.get("minTrackingConfidence", 0.5))
+
+    if emit:
+        await emit("mediapipe_processing", {"task": "holistic"})
+
+    try:
+        img = await _resolve_image(args)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    def _empty():
+        return {"detected": False, "landmarks": [], "landmarkCount": 0}
+
+    # Pose
+    pose_model = await asyncio.to_thread(_get_model_path, "pose_landmarker")
+    with PoseLandmarker.create_from_options(PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=pose_model),
+        running_mode=RunningMode.IMAGE, num_poses=1,
+        min_pose_detection_confidence=min_det, min_tracking_confidence=min_track,
+    )) as pl:
+        pose_r = pl.detect(mp_image)
+    if pose_r.pose_landmarks:
+        pose_data = {"detected": True, "landmarks": _nml_to_list(pose_r.pose_landmarks[0], w, h),
+                     "landmarkCount": len(pose_r.pose_landmarks[0])}
+    else:
+        pose_data = _empty()
+
+    # Hands
+    hand_model = await asyncio.to_thread(_get_model_path, "hand_landmarker")
+    with HandLandmarker.create_from_options(HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=hand_model),
+        running_mode=RunningMode.IMAGE, num_hands=2,
+        min_hand_detection_confidence=min_det, min_tracking_confidence=min_track,
+    )) as hl:
+        hand_r = hl.detect(mp_image)
+
+    left_hand_data = _empty()
+    right_hand_data = _empty()
+    if hand_r.hand_landmarks:
+        for i, hand_lms in enumerate(hand_r.hand_landmarks):
+            side = "Left"
+            if hand_r.handedness and i < len(hand_r.handedness):
+                side = hand_r.handedness[i][0].category_name
+            data = {"detected": True, "landmarks": _nml_to_list(hand_lms, w, h), "landmarkCount": len(hand_lms)}
+            if side == "Left":
+                left_hand_data = data
+            else:
+                right_hand_data = data
+
+    # Face
+    face_model = await asyncio.to_thread(_get_model_path, "face_landmarker")
+    with FaceLandmarker.create_from_options(FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=face_model),
+        running_mode=RunningMode.IMAGE, num_faces=1,
+        min_face_detection_confidence=min_det, min_tracking_confidence=min_track,
+    )) as fl:
+        face_r = fl.detect(mp_image)
+    if face_r.face_landmarks:
+        face_data = {"detected": True, "landmarks": _nml_to_list(face_r.face_landmarks[0], w, h),
+                     "landmarkCount": len(face_r.face_landmarks[0])}
+    else:
+        face_data = _empty()
+
+    out_path = None
+    out_data_url = None
+    if draw:
+        annotated = img.copy()
+        if pose_data["detected"]:
+            _draw_landmarks_on_image(annotated, pose_r.pose_landmarks[0], _get_pose_connections(), color=(0, 255, 0))
+        if hand_r.hand_landmarks:
+            conns = _get_hand_connections()
+            for hand_lms in hand_r.hand_landmarks:
+                _draw_landmarks_on_image(annotated, hand_lms, conns, color=(255, 0, 0))
+        if face_data["detected"]:
+            _draw_landmarks_on_image(annotated, face_r.face_landmarks[0], _get_face_connections(),
+                                     color=(0, 200, 200), thickness=1, radius=1)
+        if output_format == 'file' or output_path:
+            if not output_path:
+                output_path = os.path.join(_get_output_dir(), f"mp_holistic_{uuid.uuid4().hex[:8]}.png")
+            out_path = await asyncio.to_thread(_save_image, annotated, output_path)
+        if output_format == 'base64' or not output_path:
+            out_data_url = _encode_image_to_data_url(annotated)
+
+    return {"ok": True, "pose": pose_data, "leftHand": left_hand_data, "rightHand": right_hand_data,
+            "face": face_data, "outputPath": out_path, "outputDataUrl": out_data_url}
+
+
+# ---------------------------------------------------------------------------
+# VIDEO PROCESSING
+# ---------------------------------------------------------------------------
+
+async def mediapipe_process_video(
+    args: Dict[str, Any],
+    emit: Optional[Callable[[str, Optional[Dict[str, Any]]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    video_path = str(args.get("videoPath") or "").strip()
+    if not video_path:
+        return {"ok": False, "error": "videoPath is required"}
+
+    if _is_frozen():
+        # Frozen builds don't ship cv2.VideoCapture in-process. Video processing
+        # would need either a /process_video endpoint on the sidecar or an
+        # ffmpeg pre-pass to extract frames. Until then, surface a clear error.
+        return {
+            "ok": False,
+            "error": (
+                "mediapipe_process_video is not yet supported in packaged builds. "
+                "Use ffmpeg_extract_frames first, then call mediapipe_pose / "
+                "mediapipe_hands / mediapipe_face_mesh on each frame."
+            ),
+        }
+
+    await _ensure_mediapipe(emit)
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import (
+        PoseLandmarker, PoseLandmarkerOptions,
+        HandLandmarker, HandLandmarkerOptions,
+        FaceDetector, FaceDetectorOptions,
+        FaceLandmarker, FaceLandmarkerOptions,
+        RunningMode,
+    )
+
+    output_path = str(args.get("outputPath") or "").strip() or None
+    task = str(args.get("task") or "pose").strip().lower()
+    draw = bool(args.get("drawLandmarks", True))
+    max_frames = int(args.get("maxFrames", 0))
+    sample_n = max(1, int(args.get("sampleEveryN", 1)))
+    min_det = float(args.get("minDetectionConfidence", 0.5))
+
+    valid_tasks = ["pose", "hands", "face_detection", "face_mesh"]
+    if task not in valid_tasks:
+        return {"ok": False, "error": f"task must be one of: {valid_tasks}"}
+
+    if emit:
+        await emit("mediapipe_processing", {"task": f"video_{task}", "videoPath": video_path})
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return {"ok": False, "error": f"Cannot open video: {video_path}"}
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    writer = None
+    temp_output_path = None
+    if draw:
+        if not output_path:
+            output_path = os.path.join(_get_output_dir(), f"mp_video_{uuid.uuid4().hex[:8]}.mp4")
+        temp_output_path = output_path + ".tmp.mp4"
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(temp_output_path, fourcc, fps, (w, h))
+
+    # Build processor based on task
+    processor: Any = None
+    draw_conns: Any = None
+    draw_color = (0, 255, 0)
+
+    if task == "pose":
+        model = await asyncio.to_thread(_get_model_path, "pose_landmarker")
+        processor = PoseLandmarker.create_from_options(PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=model),
+            running_mode=RunningMode.VIDEO, num_poses=1,
+            min_pose_detection_confidence=min_det,
+        ))
+        draw_conns = _get_pose_connections()
+    elif task == "hands":
+        model = await asyncio.to_thread(_get_model_path, "hand_landmarker")
+        processor = HandLandmarker.create_from_options(HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=model),
+            running_mode=RunningMode.VIDEO, num_hands=2,
+            min_hand_detection_confidence=min_det,
+        ))
+        draw_conns = _get_hand_connections()
+        draw_color = (255, 0, 0)
+    elif task == "face_detection":
+        model = await asyncio.to_thread(_get_model_path, "face_detector")
+        processor = FaceDetector.create_from_options(FaceDetectorOptions(
+            base_options=BaseOptions(model_asset_path=model),
+            running_mode=RunningMode.VIDEO,
+            min_detection_confidence=min_det,
+        ))
+    elif task == "face_mesh":
+        model = await asyncio.to_thread(_get_model_path, "face_landmarker")
+        processor = FaceLandmarker.create_from_options(FaceLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=model),
+            running_mode=RunningMode.VIDEO, num_faces=1,
+            min_face_detection_confidence=min_det,
+        ))
+        draw_conns = _get_face_connections()
+        draw_color = (0, 200, 200)
+
+    frame_landmarks: list = []
+    frame_idx = 0
+    processed = 0
+    detected_count = 0
+
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if max_frames > 0 and processed >= max_frames:
+                break
+
+            frame_idx += 1
+            if frame_idx % sample_n != 0:
+                if writer:
+                    writer.write(frame)
+                continue
+
+            processed += 1
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            ts_ms = int(frame_idx * 1000 / fps)
+
+            frame_data: Dict[str, Any] = {"frame": frame_idx, "timestamp": round(frame_idx / fps, 3)}
+            has_detection = False
+
+            if task == "pose":
+                result = processor.detect_for_video(mp_image, ts_ms)
+                if result.pose_landmarks:
+                    has_detection = True
+                    frame_data["landmarks"] = _nml_to_list(result.pose_landmarks[0], w, h)
+                    if writer and draw:
+                        _draw_landmarks_on_image(frame, result.pose_landmarks[0], draw_conns, draw_color)
+            elif task == "hands":
+                result = processor.detect_for_video(mp_image, ts_ms)
+                if result.hand_landmarks:
+                    has_detection = True
+                    hands_d = [_nml_to_list(hl, w, h) for hl in result.hand_landmarks]
+                    frame_data["hands"] = hands_d
+                    if writer and draw:
+                        for hl in result.hand_landmarks:
+                            _draw_landmarks_on_image(frame, hl, draw_conns, draw_color)
+            elif task == "face_detection":
+                result = processor.detect_for_video(mp_image, ts_ms)
+                if result.detections:
+                    has_detection = True
+                    fd_list = []
+                    for det in result.detections:
+                        bb = det.bounding_box
+                        score = det.categories[0].score if det.categories else 0
+                        fd_list.append({"bbox": {"x": round(bb.origin_x / w, 6), "y": round(bb.origin_y / h, 6),
+                                                 "width": round(bb.width / w, 6), "height": round(bb.height / h, 6)},
+                                        "confidence": round(score, 4)})
+                    frame_data["faces"] = fd_list
+                    if writer and draw:
+                        _draw_bboxes_on_image(frame, result.detections)
+            elif task == "face_mesh":
+                result = processor.detect_for_video(mp_image, ts_ms)
+                if result.face_landmarks:
+                    has_detection = True
+                    for face_lms in result.face_landmarks:
+                        frame_data.setdefault("faces", []).append(_nml_to_list(face_lms, w, h))
+                        if writer and draw:
+                            _draw_landmarks_on_image(frame, face_lms, draw_conns, draw_color, thickness=1, radius=1)
+
+            if has_detection:
+                detected_count += 1
+            frame_landmarks.append(frame_data)
+            if writer:
+                writer.write(frame)
+            if emit and processed % 30 == 0:
+                await emit("mediapipe_progress", {"processed": processed, "total": total_frames, "detected": detected_count})
+    finally:
+        cap.release()
+        if writer:
+            writer.release()
+        if processor:
+            processor.close()
+
+    if draw and writer and output_path and temp_output_path:
+        import subprocess
+        from .ffmpeg import ensure_ffmpeg
+        setup = await ensure_ffmpeg(emit)
+        merged = False
+        if setup.get("ok"):
+            ffmpeg_path = str(setup.get("ffmpegPath"))
+            cmd = [
+                ffmpeg_path,
+                "-y",
+                "-i", temp_output_path,
+                "-i", video_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0?",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                output_path
+            ]
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    capture_output=True,
+                    timeout=300
+                )
+                if proc.returncode == 0:
+                    merged = True
+                    try:
+                        os.remove(temp_output_path)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        
+        if not merged:
+            try:
+                os.replace(temp_output_path, output_path)
+            except Exception:
+                pass
+
+    return {
+        "ok": True,
+        "frameCount": frame_idx,
+        "processedFrames": processed,
+        "framesWithDetection": detected_count,
+        "outputPath": output_path if draw else None,
+        "frameLandmarks": frame_landmarks,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sidecar lifecycle
+# ---------------------------------------------------------------------------
+
+def shutdown_mediapipe_service() -> None:
+    """Stop the sidecar service if running. Safe to call multiple times."""
+    global _service_proc, _service_port, _service_token
+    with _SERVICE_LOCK:
+        proc = _service_proc
+        if not proc:
+            return
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+        finally:
+            _service_proc = None
+            _service_port = 0
+            _service_token = ""
+
+
+# Make sure the sidecar doesn't outlive the agent process.
+import atexit as _atexit  # noqa: E402
+_atexit.register(shutdown_mediapipe_service)
+

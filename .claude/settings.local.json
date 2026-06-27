@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(grep:*)",
+      "Bash(do wc:*)",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__list_projects",
+      "Bash(cd:*)",
+      "Bash(gcloud compute:*)",
+      "Bash(gh api:*)",
+      "Bash(gcloud storage:*)",
+      "Bash(find:*)",
+      "Bash(gcloud run:*)",
+      "WebFetch(domain:developers.telnyx.com)",
+      "Bash(curl:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(gcloud resource-manager:*)",
+      "mcp__supabase__list_tables",
+      "Bash(ls:*)",
+      "Bash(git -C /c/Users/solar/StuardAI-V2 grep -il \"dashboard\" -- \"*.tsx\" \"*.ts\" \"*.jsx\")"
+    ]
+  }
+}

@@ -1,0 +1,1436 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+/* Make Tailwind v4 scan the shared chat-ui packages so their utility classes
+   (arbitrary values like left-[8.5px]/h-[18px], opacity modifiers, group-hover,
+   animate-pulse, etc.) actually get generated for the cloud IDE.
+   NOTE: @source paths are relative to THIS css file (apps/website/src/app), so
+   reaching the repo-root packages/ dir takes four `../` — earlier these used
+   three and silently resolved to a non-existent apps/packages/, meaning none of
+   the shared-package classes were ever generated (broken rails, copy buttons
+   behind text, full-width cards). */
+@source "../../../../packages/chat-ui";
+@source "../../../../packages/cloud-runtime-ui";
+@source "../../../../packages/vm-chat";
+@source "../../../../packages/bots-ui";
+
+:root {
+  /* Dark theme is the default site-wide (matches the landing page) */
+  color-scheme: dark;
+
+  /* Background Colors - Dark Theme */
+  --background: #0A0A0B;
+  --foreground: #F5F5F5;
+
+  /* Brand Colors */
+  --primary: #FF383C;
+  --primary-hover: #D31519;
+
+  --muted: #A3A3A3;
+  --border: rgba(255, 255, 255, 0.1);
+
+  /* Primary body font (Inter via next/font) */
+  --font-primary: var(--font-inter), system-ui, -apple-system, sans-serif;
+  /* Display font for the hero (General Sans via Fontshare CDN, loaded in layout head) */
+  --font-general-sans: 'General Sans', var(--font-inter), system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  /* Shared chat-ui / vm-chat theme tokens. Registering these as Tailwind v4
+     colors is what makes the opacity variants the shared components rely on
+     (border-theme/10, bg-theme-card/30, text-theme-muted/50, bg-theme-hover/40,
+     placeholder:text-theme-muted/50, …) actually generate. Without them the
+     classes are dropped: borders fall back to currentColor (near-white, looks
+     "chipped"), card/hover backgrounds disappear and muted text renders solid.
+     Base vars resolve at use-site (they're defined on .cloud-ide). */
+  --color-theme: var(--border);
+  --color-theme-fg: var(--foreground);
+  --color-theme-muted: var(--foreground-muted);
+  --color-theme-bg: var(--background);
+  --color-theme-sidebar: var(--sidebar-bg);
+  --color-theme-card: var(--card-bg);
+  --color-theme-input: var(--input-bg);
+  --color-theme-hover: var(--sidebar-item-hover);
+  --color-theme-active: var(--sidebar-item-active);
+  --color-primary-fg: var(--primary-foreground);
+
+  --font-family-serif: var(--font-serif);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #0A0A0B;
+  color: #F5F5F5;
+  font-family: var(--font-primary);
+  position: relative;
+}
+
+/* ── Hide scrollbars site-wide (keep scroll functionality) ────────────── */
+html,
+body {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE / legacy Edge */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;                /* Chromium / WebKit */
+}
+
+/* Apply the same treatment to any internal scroll containers
+   that don't explicitly opt into `.custom-scrollbar`. */
+*:not(.custom-scrollbar):not(.ide-file-tree) {
+  scrollbar-width: none;
+}
+*:not(.custom-scrollbar):not(.ide-file-tree)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* ── Lenis smooth scroll integration ─────────────────────────────────── */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
+}
+
+body.dashboard-shell [data-site-header-nav] {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Dashboard — dark theme (neutral 950 surfaces, red accent)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.dashboard-shell {
+  background-color: #0A0A0A;
+  color: #FAFAFA;
+}
+
+.dash-sidebar {
+  background: rgba(23, 23, 23, 0.5);
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dash-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  color: #A3A3A3;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  position: relative;
+}
+
+.dash-nav-item:hover {
+  background: rgba(38, 38, 38, 0.6);
+  color: #FFFFFF;
+}
+
+.dash-nav-item--active {
+  background: #262626;
+  border: 0.4px solid #404040;
+  color: #FFFFFF;
+}
+
+.dash-nav-item--active::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 14px;
+  background: #FF383C;
+  border-radius: 4px;
+}
+
+.dash-card {
+  background: rgba(23, 23, 23, 0.5);
+  border: 0.4px solid #262626;
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dash-card-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  flex: 1;
+  text-align: center;
+}
+
+.dash-card-button--ghost {
+  background: #262626;
+  border: 0.4px solid #404040;
+  color: #FFFFFF;
+}
+
+.dash-card-button--ghost:hover {
+  background: #2F2F2F;
+}
+
+.dash-card-button--primary {
+  background: #FFFFFF;
+  color: #0A0A0A;
+}
+
+.dash-card-button--primary:hover {
+  background: #F5F5F5;
+}
+
+/* Brand CTA — use instead of bg-white on dashboard (bg-white is remapped to dark glass) */
+.dash-card-button--accent {
+  background: #FF383C;
+  border: 0.4px solid rgba(255, 56, 60, 0.45);
+  color: #FFFFFF;
+}
+
+.dash-card-button--accent:hover {
+  background: #D31519;
+  border-color: rgba(211, 21, 25, 0.55);
+}
+
+.dash-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #D4D4D4;
+  background: #262626;
+  border: 0.4px solid #404040;
+  border-radius: 999px;
+}
+
+/* Download Desktop CTA card (sidebar bottom) */
+.dash-desktop-cta {
+  position: relative;
+  isolation: isolate;
+  border-radius: 18px;
+  overflow: hidden;
+  padding: 28px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.dash-desktop-cta::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 100%, rgba(255, 4, 22, 0.55) 0%, rgba(255, 4, 22, 0) 70%),
+    radial-gradient(ellipse 90% 60% at 50% 100%, rgba(19, 18, 16, 0.85) 0%, rgba(1, 1, 1, 0) 75%);
+  filter: blur(8px);
+  z-index: -1;
+}
+
+.dash-desktop-cta__title {
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 22px;
+  color: #FFFFFF;
+}
+
+.dash-desktop-cta__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  background: #FFFFFF;
+  color: #0A0A0A;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  transition: background-color 0.15s ease;
+  backdrop-filter: blur(2px);
+}
+
+.dash-desktop-cta__button:hover {
+  background: #F5F5F5;
+}
+
+.dash-divider {
+  height: 1px;
+  background: rgba(64, 64, 64, 0.5);
+  width: 100%;
+}
+
+.dash-scroll::-webkit-scrollbar { width: 4px; }
+.dash-scroll::-webkit-scrollbar-track { background: transparent; }
+.dash-scroll::-webkit-scrollbar-thumb {
+  background: rgba(64, 64, 64, 0.5);
+  border-radius: 4px;
+}
+
+/* Dashboard form controls */
+.dash-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #FAFAFA;
+  background-color: #171717;
+  border: 0.4px solid #404040;
+  border-radius: 0.5rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dash-input::placeholder {
+  color: #737373;
+}
+
+.dash-input:focus {
+  outline: none;
+  border-color: #525252;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+}
+
+.dash-input:disabled {
+  color: #737373;
+  background-color: rgba(23, 23, 23, 0.6);
+  cursor: not-allowed;
+}
+
+.dash-section-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 0.4px solid rgba(64, 64, 64, 0.5);
+}
+
+.dash-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.dash-section-desc {
+  margin-top: 0.125rem;
+  font-size: 13px;
+  color: #A3A3A3;
+}
+
+.dash-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+.dash-page-subtitle {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: #A3A3A3;
+}
+
+.dash-alert {
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 13px;
+}
+
+.dash-alert--error {
+  border: 0.4px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: #FCA5A5;
+}
+
+.dash-alert--success {
+  border: 0.4px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.1);
+  color: #6EE7B7;
+}
+
+.dash-alert--warning {
+  border: 0.4px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: #FCD34D;
+}
+
+.dash-alert--danger {
+  border: 0.4px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.dash-alert--danger .dash-alert__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #FCA5A5;
+  margin-bottom: 0.25rem;
+}
+
+.dash-alert--danger .dash-alert__desc {
+  font-size: 13px;
+  color: rgba(252, 165, 165, 0.85);
+  margin-bottom: 1rem;
+}
+
+/* Dashboard main content — remap legacy light-theme Tailwind to dark palette */
+body.dashboard-shell .dashboard-main-content {
+  color: #FAFAFA;
+}
+
+body.dashboard-shell .dashboard-main-content .text-gray-900 { color: #FFFFFF; }
+body.dashboard-shell .dashboard-main-content .text-gray-800 { color: #F5F5F5; }
+body.dashboard-shell .dashboard-main-content .text-gray-700 { color: #D4D4D4; }
+body.dashboard-shell .dashboard-main-content .text-gray-600 { color: #A3A3A3; }
+body.dashboard-shell .dashboard-main-content .text-gray-500 { color: #A3A3A3; }
+body.dashboard-shell .dashboard-main-content .text-gray-400 { color: #737373; }
+body.dashboard-shell .dashboard-main-content .text-gray-300 { color: #525252; }
+
+body.dashboard-shell .dashboard-main-content .hover\:text-gray-900:hover { color: #FFFFFF; }
+body.dashboard-shell .dashboard-main-content .hover\:text-gray-700:hover { color: #D4D4D4; }
+
+body.dashboard-shell .dashboard-main-content .bg-white:not(.rounded-full) {
+  background-color: rgba(23, 23, 23, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+body.dashboard-shell .dashboard-main-content .bg-gray-50 { background-color: rgba(38, 38, 38, 0.35); }
+body.dashboard-shell .dashboard-main-content .bg-gray-100 { background-color: rgba(38, 38, 38, 0.55); }
+body.dashboard-shell .dashboard-main-content .bg-gray-200 { background-color: rgba(64, 64, 64, 0.45); }
+
+body.dashboard-shell .dashboard-main-content .hover\:bg-gray-50:hover { background-color: rgba(38, 38, 38, 0.65); }
+
+body.dashboard-shell .dashboard-main-content .border-gray-100,
+body.dashboard-shell .dashboard-main-content .border-gray-200,
+body.dashboard-shell .dashboard-main-content .border-gray-300 { border-color: #262626; }
+
+body.dashboard-shell .dashboard-main-content .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(38, 38, 38, 0.8);
+}
+
+body.dashboard-shell .dashboard-main-content input:not([type='checkbox']):not([type='radio']),
+body.dashboard-shell .dashboard-main-content textarea,
+body.dashboard-shell .dashboard-main-content select {
+  color: #FAFAFA;
+  background-color: #171717;
+  border-color: #404040;
+}
+
+body.dashboard-shell .dashboard-main-content input:not([type='checkbox']):not([type='radio'])::placeholder,
+body.dashboard-shell .dashboard-main-content textarea::placeholder {
+  color: #737373;
+}
+
+body.dashboard-shell .dashboard-main-content input:disabled,
+body.dashboard-shell .dashboard-main-content textarea:disabled,
+body.dashboard-shell .dashboard-main-content select:disabled {
+  color: #737373;
+  background-color: rgba(23, 23, 23, 0.6);
+}
+
+/* Semantic status chips & alerts */
+body.dashboard-shell .dashboard-main-content .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.12); }
+body.dashboard-shell .dashboard-main-content .text-emerald-700 { color: #6EE7B7; }
+body.dashboard-shell .dashboard-main-content .border-emerald-100,
+body.dashboard-shell .dashboard-main-content .border-emerald-200 { border-color: rgba(16, 185, 129, 0.3); }
+
+body.dashboard-shell .dashboard-main-content .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12); }
+body.dashboard-shell .dashboard-main-content .text-amber-700 { color: #FCD34D; }
+body.dashboard-shell .dashboard-main-content .border-amber-200 { border-color: rgba(245, 158, 11, 0.3); }
+
+body.dashboard-shell .dashboard-main-content .bg-red-50 { background-color: rgba(239, 68, 68, 0.1); }
+body.dashboard-shell .dashboard-main-content .text-red-700,
+body.dashboard-shell .dashboard-main-content .text-red-900 { color: #FCA5A5; }
+body.dashboard-shell .dashboard-main-content .border-red-200 { border-color: rgba(239, 68, 68, 0.35); }
+body.dashboard-shell .dashboard-main-content .hover\:border-red-200:hover { border-color: rgba(239, 68, 68, 0.45); }
+body.dashboard-shell .dashboard-main-content .hover\:bg-red-50:hover { background-color: rgba(239, 68, 68, 0.14); }
+
+body.dashboard-shell .dashboard-main-content .bg-blue-50 { background-color: rgba(59, 130, 246, 0.12); }
+body.dashboard-shell .dashboard-main-content .bg-blue-50\/40 { background-color: rgba(59, 130, 246, 0.08); }
+body.dashboard-shell .dashboard-main-content .text-blue-700 { color: #93C5FD; }
+body.dashboard-shell .dashboard-main-content .border-blue-100,
+body.dashboard-shell .dashboard-main-content .border-blue-200 { border-color: rgba(59, 130, 246, 0.3); }
+body.dashboard-shell .dashboard-main-content .ring-blue-200 { --tw-ring-color: rgba(59, 130, 246, 0.35); }
+
+body.dashboard-shell .dashboard-main-content .bg-orange-50 { background-color: rgba(249, 115, 22, 0.12); }
+body.dashboard-shell .dashboard-main-content .text-orange-700 { color: #FDBA74; }
+body.dashboard-shell .dashboard-main-content .border-orange-200 { border-color: rgba(249, 115, 22, 0.3); }
+
+body.dashboard-shell .dashboard-main-content .bg-yellow-100 { background-color: rgba(234, 179, 8, 0.15); }
+body.dashboard-shell .dashboard-main-content .text-yellow-800 { color: #FDE047; }
+
+body.dashboard-shell .dashboard-main-content .bg-red-50\/50 { background-color: rgba(239, 68, 68, 0.08); }
+
+/* Dark theme switch driven by the hero section */
+body.hero-dark {
+  background-color: #0A0A0B;
+  color: #F5F5F5;
+}
+
+body.hero-dark [data-site-header-nav] {
+  /* The announcement bar above the nav uses dark background by default,
+     so just make sure the wrapper doesn't paint over our hero. */
+  background: transparent;
+}
+
+/* Grid background pattern - only on homepage */
+body.show-grid::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-color: #0A0A0B;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+  z-index: -2;
+  pointer-events: none;
+  transition: opacity 0.6s ease-in-out;
+}
+
+/* Plain background overlay (no grid) */
+body.show-grid::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-color: #0A0A0B;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s ease-in-out;
+}
+
+/* Fade in plain background (hide grid) */
+body.grid-faded::after {
+  opacity: 1;
+}
+
+/* ── Hero (dark, wavy grid bg) ──────────────────────────────────────────── */
+
+.hero-section {
+  background-color: #0A0A0B;
+}
+
+/* Floating nav (top-3/4/6 + ~78px bar) — pad copy panel so headline centers in the viewport */
+.hero-copy-panel {
+  padding-top: max(7.5rem, calc(1.5rem + 78px + 2.5rem));
+}
+
+@media (min-width: 640px) {
+  .hero-copy-panel {
+    padding-top: max(8.5rem, calc(1rem + 68px + 3rem));
+  }
+}
+
+@media (min-width: 1024px) {
+  .hero-copy-panel {
+    padding-top: max(9.5rem, calc(1.5rem + 78px + 3.5rem));
+  }
+}
+
+.hero-section .hero-bg {
+  position: absolute;
+  inset: 0;
+  background-image: url('/hero-bg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 1;
+  pointer-events: none;
+  z-index: 0;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+@media (min-width: 1024px) {
+  .hero-section .hero-bg {
+    background-size: 100% 100%;
+  }
+}
+
+/* Shared auth-page background */
+.auth-bg {
+  background-image: url('/authbg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Auth — compact pill theme (mirrors desktop compact mode) */
+.auth-card {
+  max-width: 372px;
+  padding: 18px;
+  border-radius: 26px;
+  background: #171717;
+  border: 0.4px solid rgba(64, 64, 64, 0.6);
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.auth-title {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.auth-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: #A6A6A6;
+}
+
+.auth-input-field {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: #262626;
+  border: 0.4px solid #404040;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.auth-input-field:focus-within {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: #2a2a2a;
+}
+
+.auth-input-field input {
+  width: 100%;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  color: #ffffff;
+  outline: none;
+}
+
+.auth-input-field input::placeholder {
+  color: #A6A6A6;
+}
+
+.auth-btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 100%;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.auth-btn-primary:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.auth-btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.auth-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.auth-btn-ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  width: 100%;
+  border-radius: 12px;
+  background: #262626;
+  border: 0.4px solid #404040;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.15s ease;
+}
+
+.auth-btn-ghost:hover {
+  background: #2f2f2f;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auth-divider span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #A6A6A6;
+  text-transform: lowercase;
+}
+
+.auth-error {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 56, 60, 0.1);
+  border: 0.4px solid rgba(255, 56, 60, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #ff8a8c;
+}
+
+.auth-link {
+  font-size: 12px;
+  font-weight: 500;
+  color: #A6A6A6;
+  transition: color 0.15s ease;
+}
+
+.auth-link:hover {
+  color: #ffffff;
+}
+
+.auth-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: #262626;
+  border: 0.4px solid #404040;
+}
+
+.auth-status-icon--success {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+@media (min-width: 1024px) {
+  .auth-bg {
+    background-size: 100% 100%;
+  }
+}
+
+.hero-section .hero-vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at center,
+      rgba(10, 10, 11, 0) 40%,
+      rgba(10, 10, 11, 0.45) 100%
+    );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Compact demo (mirrors desktop compact mode — solid pills, no glass) ── */
+
+.stuard-compact-demo {
+  --compact-pill-bg: 23 23 23;
+  --compact-pill-fg: 255 255 255;
+  --compact-pill-fg-muted: 166 166 166;
+  --compact-pill-hover: #262626;
+  --compact-pill-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+.stuard-compact-demo .compact-thinking-glow {
+  --compact-thinking-glow-red: #ff383c;
+  --compact-thinking-glow-red-soft: #ff6b6b;
+  --compact-thinking-glow-amber: #ff8a4c;
+  position: relative;
+  width: 100%;
+  border-radius: 26px;
+  isolation: isolate;
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 26px;
+  overflow: hidden;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--compact-pill-shadow);
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::before,
+.stuard-compact-demo .compact-thinking-glow__inner::after {
+  content: '';
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  background-repeat: no-repeat;
+  border-radius: 450px;
+  pointer-events: none;
+  z-index: 0;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity, background-position, background-size;
+  animation: compact-thinking-wave 5.8s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::before {
+  bottom: -12px;
+  height: 26px;
+  background-image:
+    radial-gradient(ellipse 52% 118% at 50% 100%, #ff383c 0%, rgba(255, 56, 60, 0.98) 22%, transparent 74%),
+    linear-gradient(to top, rgba(255, 44, 48, 0.82) 0%, transparent 100%);
+  background-size: 34% 52%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(9px) saturate(1.6);
+}
+
+.stuard-compact-demo .compact-thinking-glow__inner::after {
+  bottom: -10px;
+  height: 22px;
+  background-image:
+    radial-gradient(ellipse 58% 112% at 50% 100%, rgba(255, 110, 55, 0.96) 0%, transparent 74%),
+    linear-gradient(to top, rgba(255, 56, 60, 0.62) 0%, transparent 100%);
+  background-size: 38% 48%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(11px) saturate(1.5);
+  animation-delay: -2.9s;
+}
+
+@keyframes compact-thinking-wave {
+  0%, 100% {
+    background-position: -12% 100%, 0 100%;
+    background-size: 34% 48%, 100% 100%;
+    transform: translate3d(0, 4px, 0) scaleY(0.86);
+    opacity: 0.62;
+  }
+  44% {
+    background-position: 50% 100%, 0 100%;
+    background-size: 74% 92%, 100% 100%;
+    transform: translate3d(0, -4px, 0) scaleY(1.16);
+    opacity: 1;
+  }
+  88% {
+    background-position: 108% 100%, 0 100%;
+    background-size: 36% 50%, 100% 100%;
+    transform: translate3d(0, 3px, 0) scaleY(0.88);
+    opacity: 0.65;
+  }
+}
+
+.stuard-compact-demo .compact-voice-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: rgb(var(--compact-pill-fg) / 0.9);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.12);
+  background: #2a2a2a;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: background-color 0.2s ease, transform 0.18s ease;
+}
+
+.stuard-compact-demo .compact-voice-btn:hover {
+  background: #333333;
+}
+
+.stuard-compact-demo .compact-voice-btn:active {
+  transform: scale(0.95);
+}
+
+.stuard-compact-demo .compact-voice-btn--active {
+  border-color: rgba(255, 56, 60, 0.35);
+  background: color-mix(in srgb, rgba(255, 56, 60, 0.22) 55%, #2a2a2a 45%);
+}
+
+.stuard-compact-demo .compact-voice-btn--thinking {
+  background: #323232;
+}
+
+@keyframes compactResponseDot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stuard-compact-demo .compact-thinking-glow__inner::before,
+  .stuard-compact-demo .compact-thinking-glow__inner::after {
+    animation: none;
+    opacity: 0.94;
+  }
+}
+
+/* Utilities */
+.glass-nav {
+  background: rgba(243, 241, 235, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.serif-display {
+  /* Playfair Display via next/font variable, with serif fallbacks */
+  font-family: var(--font-serif), Georgia, serif;
+}
+
+/* Fix for buttons using gradient-primary */
+.gradient-primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+.animate-delay-100 { animation-delay: 100ms; }
+.animate-delay-200 { animation-delay: 200ms; }
+.animate-delay-300 { animation-delay: 300ms; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cloud Engine workspace — matches website dashboard (dark neutral + red accent)
+   Scoped under .cloud-ide so chat-ui / cloud-runtime-ui theme utilities work.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.cloud-ide {
+  /* Dashboard-aligned palette */
+  --background: #0A0A0A;
+  --foreground: #FAFAFA;
+  --foreground-muted: #A3A3A3;
+  --sidebar-bg: rgba(23, 23, 23, 0.85);
+  --sidebar-border: #262626;
+  --sidebar-item-hover: rgba(38, 38, 38, 0.6);
+  --sidebar-item-active: #262626;
+  --card-bg: rgba(23, 23, 23, 0.5);
+  --card-border: #262626;
+  --input-bg: #171717;
+  --input-border: #404040;
+  --primary: #FF383C;
+  --primary-hover: #D31519;
+  --primary-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(64, 64, 64, 0.5);
+  --color-primary: #FF383C;
+  --dashboard-panel-solid: rgba(23, 23, 23, 0.85);
+  --dashboard-panel-border: #262626;
+  --dashboard-hover: rgba(38, 38, 38, 0.6);
+  --dashboard-shadow-soft: none;
+  --ide-text-dim: #737373;
+
+  /* Legacy IDE aliases (explorer, file icons) */
+  --ide-bg: var(--background);
+  --ide-surface: rgba(23, 23, 23, 0.5);
+  --ide-surface-2: rgba(23, 23, 23, 0.35);
+  --ide-sidebar: rgba(23, 23, 23, 0.85);
+  --ide-border: rgba(64, 64, 64, 0.5);
+  --ide-border-strong: #404040;
+  --ide-hover: rgba(38, 38, 38, 0.6);
+  --ide-active: rgba(255, 56, 60, 0.12);
+  --ide-text: var(--foreground);
+  --ide-text-muted: var(--foreground-muted);
+  --ide-accent: var(--primary);
+  --ide-accent-hover: var(--primary-hover);
+  --ide-folder-color: #4f8de8;
+  --ide-input-bg: var(--input-bg);
+
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-primary);
+}
+
+.cloud-ide > * {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Card shell — same feel as .dash-sidebar / .dash-card */
+.cloud-vm-shell {
+  border-radius: 16px;
+  border: 0.4px solid #262626;
+  background: rgba(23, 23, 23, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.cloud-ide .dashboard-card {
+  background: rgba(23, 23, 23, 0.5);
+  border: 0.4px solid #262626;
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Tailwind primary utilities inside the VM shell */
+.cloud-ide .text-primary { color: var(--primary); }
+.cloud-ide .bg-primary\/15 { background-color: color-mix(in srgb, var(--primary) 15%, transparent); }
+.cloud-ide .border-primary\/40 { border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
+
+/* ── Activity bar (website variant) ─────────────────────────────────────── */
+
+.cloud-ide .ide-activity-bar {
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 2px;
+  background: rgba(23, 23, 23, 0.65);
+  border-right: 0.4px solid #262626;
+  flex-shrink: 0;
+}
+
+.cloud-ide .ide-activity-btn {
+  position: relative;
+  width: 36px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--foreground-muted);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+.cloud-ide .ide-activity-btn:hover {
+  color: var(--foreground);
+  background: var(--sidebar-item-hover);
+}
+
+.cloud-ide .ide-activity-btn-active {
+  color: #FFFFFF !important;
+  background: #262626 !important;
+  box-shadow: inset 0 0 0 0.4px #404040;
+}
+
+.cloud-ide .ide-activity-btn-active::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 12px;
+  background: #FF383C;
+  border-radius: 4px;
+}
+
+/* ── Explorer / file panel ──────────────────────────────────────────────── */
+
+.cloud-ide .ide-file-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(23, 23, 23, 0.35);
+  overflow: hidden;
+}
+
+.cloud-ide .ide-file-panel-header {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 0.4px solid #262626;
+  flex-shrink: 0;
+}
+
+.cloud-ide .ide-panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--foreground-muted);
+}
+
+.cloud-ide .ide-panel-action {
+  color: var(--foreground-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  display: flex;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.cloud-ide .ide-panel-action:hover {
+  color: var(--foreground);
+  background: var(--sidebar-item-hover);
+}
+
+/* Full-bleed VM workspace inside the website dashboard shell */
+body.dashboard-cloud-workspace {
+  overflow: hidden;
+}
+
+body.dashboard-cloud-workspace .dashboard-shell-layout {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.dashboard-cloud-workspace .dashboard-shell-row {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch !important;
+}
+
+body.dashboard-cloud-workspace .dashboard-shell-row > main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body.dashboard-cloud-workspace .dashboard-main-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0 !important;
+}
+
+body.dashboard-cloud-workspace .dashboard-main-content > * {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+body.dashboard-cloud-workspace .dashboard-shell-row > aside {
+  align-self: stretch;
+  height: auto !important;
+}
+
+/* ── Theme utility classes (mirror the desktop) ─────────────────────────── */
+
+.bg-theme-bg { background-color: var(--background); }
+.bg-theme-sidebar { background-color: var(--sidebar-bg); }
+.bg-theme-card { background-color: var(--card-bg); }
+.bg-theme-input { background-color: var(--input-bg); }
+.bg-theme-hover { background-color: var(--sidebar-item-hover); }
+.bg-theme-active { background-color: var(--sidebar-item-active); }
+
+.text-theme-fg { color: var(--foreground); }
+.text-theme-muted { color: var(--foreground-muted); }
+.text-primary-fg { color: var(--primary-foreground); }
+
+.theme-surface-hover:hover { background-color: var(--sidebar-item-hover); }
+.theme-surface-strong:hover { background-color: var(--sidebar-item-active); }
+.theme-surface-soft { background-color: color-mix(in srgb, var(--sidebar-item-hover) 52%, transparent); }
+.theme-surface-muted { background-color: color-mix(in srgb, var(--sidebar-item-hover) 28%, transparent); }
+.theme-text-hover:hover { color: var(--foreground); }
+.theme-border-hover:hover { border-color: var(--border); }
+
+.border-theme { border-color: var(--border); }
+.border-theme-sidebar { border-color: var(--sidebar-border); }
+
+/* Elevation shadows used by chat-ui / vm-chat popovers (model + history menus).
+   Defined as desktop Tailwind extensions, absent from the website's v4 build. */
+.shadow-soft { box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18); }
+.shadow-elevate { box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35); }
+
+/* Hidden-scrollbar utility used by vm-chat (composer textarea, history and
+   model lists) and chat-ui tool output panes. Defined in the desktop build,
+   absent here — without it the website shows scrollbars that eat the padding
+   the desktop app keeps. */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* Muted card + pill chrome used by vm-chat's default composer variant —
+   mirror of the desktop's .dashboard-card-muted / .dashboard-pill. */
+.dashboard-card-muted {
+  background: rgba(23, 23, 23, 0.5);
+  border: none;
+  border-radius: 18px;
+}
+.dashboard-pill {
+  background: var(--sidebar-item-active);
+  border: none;
+  border-radius: 999px;
+}
+
+.input-field {
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+}
+.input-field::placeholder { color: var(--ide-text-dim); }
+.input-field:focus { border-color: color-mix(in srgb, var(--ide-accent) 45%, transparent); }
+
+/* File explorer tree (CloudIDEExplorer) */
+.cloud-ide .ide-file-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.cloud-ide .ide-tree-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 12.5px;
+  color: var(--foreground);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s;
+  text-align: left;
+  line-height: 1.4;
+}
+.cloud-ide .ide-tree-item:hover {
+  background: var(--sidebar-item-hover);
+}
+
+.cloud-ide .ide-tree-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.cloud-ide .ide-tree-chevron-open { transform: rotate(90deg); }
+.cloud-ide .ide-tree-spacer { width: 14px; flex-shrink: 0; }
+.cloud-ide .ide-tree-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.cloud-ide .ide-tree-icon-folder { color: #4f8de8; }
+.cloud-ide .ide-tree-loading {
+  font-size: 11px;
+  color: var(--foreground-muted);
+  padding: 4px 8px;
+}
+
+.cloud-ide .ide-file-tree::-webkit-scrollbar { width: 6px; }
+.cloud-ide .ide-file-tree::-webkit-scrollbar-track { background: transparent; }
+.cloud-ide .ide-file-tree::-webkit-scrollbar-thumb {
+  background: rgba(64, 64, 64, 0.5);
+  border-radius: 3px;
+}
+.cloud-ide .ide-file-tree::-webkit-scrollbar-thumb:hover {
+  background: rgba(64, 64, 64, 0.75);
+}
+
+/* No fixed padding/font-size here — the shared components (vm-chat etc.)
+   always pass their own px/py/text utilities, and a hardcoded padding would
+   override them (plain CSS outlasts the Tailwind utilities layer), making the
+   buttons render slightly different from the desktop app. */
+.cloud-ide .dashboard-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  background: #262626;
+  border: 0.4px solid #404040;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+.cloud-ide .dashboard-refresh-button:hover {
+  background: #2F2F2F;
+  color: var(--foreground);
+}
+
+/* Workspace chrome overrides (header, panels, terminal) */
+.cloud-ide .border-theme {
+  border-color: rgba(64, 64, 64, 0.5);
+}
+
+.cloud-vm-shell header,
+.cloud-ide header {
+  background: rgba(23, 23, 23, 0.35);
+  border-bottom-color: rgba(64, 64, 64, 0.5) !important;
+}
+
+.cloud-ide aside.border-l,
+.cloud-ide section.border-r {
+  border-color: rgba(64, 64, 64, 0.5) !important;
+  background: rgba(23, 23, 23, 0.2);
+}
+
+.cloud-ide section.rounded-2xl.border,
+.cloud-ide .rounded-2xl.border.border-theme.bg-theme-card {
+  border-radius: 16px;
+  border: 0.4px solid #262626;
+  background: rgba(23, 23, 23, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.cloud-ide .ide-terminal-body {
+  background: #0A0A0A;
+}
+
+.cloud-ide .input-field:focus {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+.cloud-ide .bg-primary {
+  background-color: var(--primary);
+}
+
+.cloud-ide .text-primary-fg {
+  color: var(--primary-foreground);
+}
+
+.cloud-ide .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.cloud-ide .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(64, 64, 64, 0.5);
+  border-radius: 4px;
+}
+.cloud-ide .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(64, 64, 64, 0.75);
+}
+
+/* ── Pricing slider (transparent track, visible thumb) ──────────────────── */
+
+.pricing-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+}
+
+.pricing-slider::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 100%;
+  border: none;
+}
+
+.pricing-slider::-moz-range-track {
+  background: transparent;
+  height: 100%;
+  border: none;
+}
+
+.pricing-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 3px solid #D31519;
+  cursor: pointer;
+  margin-top: -6px;
+  box-shadow: 0 2px 8px rgba(211, 21, 25, 0.45);
+  transition: transform 0.15s ease;
+}
+
+.pricing-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.08);
+}
+
+.pricing-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  border: 3px solid #D31519;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(211, 21, 25, 0.45);
+  transition: transform 0.15s ease;
+}
+
+.pricing-slider::-moz-range-thumb:hover {
+  transform: scale(1.08);
+}
+
+.pricing-slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid #FF383C;
+  outline-offset: 2px;
+}
+
+.pricing-slider:focus-visible::-moz-range-thumb {
+  outline: 2px solid #FF383C;
+  outline-offset: 2px;
+}
+
+/* Custom subtle scrollbar (used inside chat / VM panels) */
+.custom-scrollbar::-webkit-scrollbar { width: 8px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.cloud-ide .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(64, 64, 64, 0.5);
+}
+.cloud-ide .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(64, 64, 64, 0.75);
+}

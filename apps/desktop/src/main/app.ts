@@ -1,0 +1,481 @@
+import { app, globalShortcut, protocol, session, desktopCapturer } from "electron";
+import fs from "node:fs";
+import path from "path";
+import { Readable } from "node:stream";
+import { initEnv } from "./env";
+import { createWindow, registerGlobalShortcuts, createTray, showWindow } from "./windows/index";
+import { setupIpc } from "./ipc/index";
+import { startAgentIfNeeded, stopAgent, stopAllAgents, initUpdates, disposeUpdates, runStartupIndexing, startIndexingScheduler, stopIndexingScheduler, /* startBrowserExtensionServer, */ refreshAppCache, startReminderScheduler, stopReminderScheduler, startSmsInbox, stopSmsInbox, startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService, startProactiveScheduler, stopProactiveScheduler, startBotTriggerDispatcher, stopBotTriggerDispatcher, startProjectNotionSync, stopProjectNotionSync } from "./services/index";
+import { startLocalWebhookServer, workflows_autostart } from "./workflows/index";
+import { stuards_autostart } from "./stuards";
+import { initCustomUiIpc, shutdownAllBrowserUseServers } from "./tools/index";
+import { shutdownWakewordListener } from "./tools/handlers/wakeword";
+import logger from "./utils/logger";
+import { migrateLegacyCaptureFiles, syncAgentMediaPathConfig } from "./services/media-library";
+import { startMcpLocalServer, stopMcpLocalServer } from "./services/index";
+import { startExtensionBridge, stopExtensionBridge } from "./services/index";
+
+initEnv();
+
+// ── Main-process V8 memory tuning ─────────────────────────────────────────────
+// Conservative flags that lower the main process's resident heap with no UX
+// impact (the main process is I/O/IPC-bound, not a JS hot path):
+//   --max-semi-space-size=8  shrinks V8's young-generation (new-space) reservation,
+//                            the main lever on steady-state RSS. Trade-off is
+//                            slightly more frequent minor GCs — invisible here.
+//   --max-old-space-size=512 a safe ceiling well above the ~100MB the main heap
+//                            actually uses; caps runaway growth, never triggers
+//                            OOM at normal usage.
+// Must be set before app `ready`. Applies to the Electron main process V8 isolate.
+try { app.commandLine.appendSwitch("js-flags", "--max-semi-space-size=8 --max-old-space-size=512"); } catch { }
+
+// Force consistent userData path in dev mode (package.json name is @stuardai/desktop, but we want "Stuard AI")
+// app.setName only affects display, we need app.setPath to change actual userData location
+app.setName("Stuard AI");
+
+// Override userData path to always use "Stuard AI" folder (not @stuardai/desktop in dev)
+const targetUserData = (() => {
+  const base = process.platform === 'win32'
+    ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
+    : process.platform === 'darwin'
+      ? path.join(require('os').homedir(), 'Library', 'Application Support')
+      : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'));
+  return path.join(base, 'Stuard AI');
+})();
+app.setPath('userData', targetUserData);
+console.log('[app] userData path set to:', targetUserData);
+
+// Register custom protocol for local file access (must be before app.ready)
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'local-file', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
+]);
+
+function setupSingleInstance() {
+  const gotTheLock = app.requestSingleInstanceLock();
+  if (!gotTheLock) {
+    logger.warn("Another instance is running, quitting...");
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      logger.info("Second instance detected, showing window");
+      try { showWindow(); } catch (e) { logger.error("Failed to show window on second-instance:", e); }
+    });
+  }
+}
+
+app.setAppUserModelId("Stuard AI");
+setupSingleInstance();
+
+// Migrate workflows from old dev path (@stuardai/desktop) to unified path (Stuard AI)
+function migrateDevWorkflows() {
+  try {
+    const base = process.platform === 'win32'
+      ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
+      : process.platform === 'darwin'
+        ? path.join(require('os').homedir(), 'Library', 'Application Support')
+        : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'));
+
+    const oldDevPath = path.join(base, '@stuardai', 'desktop', 'workflows');
+    const newPath = path.join(base, 'Stuard AI', 'workflows');
+
+    // Only migrate if old path exists and has files
+    if (!fs.existsSync(oldDevPath)) return;
+
+    const oldFiles = fs.readdirSync(oldDevPath).filter(f => f.endsWith('.json'));
+    if (oldFiles.length === 0) return;
+
+    // Ensure new directory exists
+    if (!fs.existsSync(newPath)) {
+      fs.mkdirSync(newPath, { recursive: true });
+    }
+
+    let migrated = 0;
+    for (const file of oldFiles) {
+      const oldFilePath = path.join(oldDevPath, file);
+      const newFilePath = path.join(newPath, file);
+
+      // Only copy if doesn't already exist in new location
+      if (!fs.existsSync(newFilePath)) {
+        fs.copyFileSync(oldFilePath, newFilePath);
+        migrated++;
+        logger.info(`[migration] Copied workflow: ${file}`);
+      }
+    }
+
+    if (migrated > 0) {
+      logger.info(`[migration] Migrated ${migrated} workflow(s) from dev path to unified path`);
+    }
+  } catch (e) {
+    logger.warn('[migration] Failed to migrate dev workflows:', e);
+  }
+}
+
+// Run migration before app ready (userData path is now set)
+migrateDevWorkflows();
+
+app.whenReady().then(async () => {
+  // Register local-file:// protocol handler to serve local files in renderer
+  protocol.handle('local-file', async (request) => {
+    // URL format: local-file://C:/path or local-file:///C:/path
+    // When using local-file://C:/path, the browser treats "C:" as hostname
+    const url = new URL(request.url);
+    let filePath: string;
+
+    if (url.hostname) {
+      // Browser parsed "C:" as hostname, so reconstruct: hostname + pathname
+      // hostname = "c" (lowercase), pathname = "/Users/..."
+      filePath = url.hostname.toUpperCase() + ':' + decodeURIComponent(url.pathname);
+    } else {
+      // Format was local-file:///C:/path, pathname contains full path
+      filePath = decodeURIComponent(url.pathname);
+    }
+
+    // Remove leading slashes for Windows paths
+    filePath = filePath.replace(/^\/+/, '');
+    // Ensure forward slashes
+    filePath = filePath.replace(/\\/g, '/');
+
+    logger.debug('[local-file protocol] Serving:', filePath);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType =
+      ext === '.mp4' ? 'video/mp4' :
+        ext === '.webm' ? 'video/webm' :
+          ext === '.mov' ? 'video/quicktime' :
+            ext === '.m4v' ? 'video/x-m4v' :
+              ext === '.mp3' ? 'audio/mpeg' :
+                ext === '.wav' ? 'audio/wav' :
+                  ext === '.ogg' ? 'audio/ogg' :
+                    ext === '.m4a' ? 'audio/mp4' :
+                      ext === '.aac' ? 'audio/aac' :
+                        ext === '.png' ? 'image/png' :
+                          ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+                            ext === '.gif' ? 'image/gif' :
+                              ext === '.webp' ? 'image/webp' :
+                                ext === '.bmp' ? 'image/bmp' :
+                                  ext === '.svg' ? 'image/svg+xml; charset=utf-8' :
+                                    ext === '.pdf' ? 'application/pdf' :
+                                      ext === '.json' || ext === '.jsonl' || ext === '.ndjson' ? 'application/json; charset=utf-8' :
+                                        ext === '.txt' || ext === '.md' || ext === '.log' || ext === '.csv' || ext === '.tsv' ? 'text/plain; charset=utf-8' :
+                                          ext === '.html' || ext === '.htm' ? 'text/html; charset=utf-8' :
+                                            ext === '.css' ? 'text/css; charset=utf-8' :
+                                              ext === '.js' || ext === '.mjs' || ext === '.cjs' ? 'text/javascript; charset=utf-8' :
+                                                ext === '.xml' ? 'application/xml; charset=utf-8' :
+                                                  ext === '.yaml' || ext === '.yml' ? 'text/yaml; charset=utf-8' :
+                                                    'application/octet-stream';
+
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile()) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const totalSize = stat.size;
+      const range = request.headers.get('range');
+      const method = (request.method || 'GET').toUpperCase();
+
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
+        if (!match) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+            },
+          });
+        }
+
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : totalSize - 1;
+
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= totalSize) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+            },
+          });
+        }
+
+        const chunkSize = end - start + 1;
+        const headers: Record<string, string> = {
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+          'Content-Length': String(chunkSize),
+        };
+
+        if (method === 'HEAD') {
+          return new Response(null, { status: 206, headers });
+        }
+
+        const nodeStream = fs.createReadStream(filePath, { start, end });
+        const webStream = Readable.toWeb(nodeStream);
+        return new Response(webStream as any, { status: 206, headers });
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(totalSize),
+      };
+
+      if (method === 'HEAD') {
+        return new Response(null, { status: 200, headers });
+      }
+
+      const nodeStream = fs.createReadStream(filePath);
+      const webStream = Readable.toWeb(nodeStream);
+      return new Response(webStream as any, { status: 200, headers });
+    } catch (e) {
+      logger.error('[local-file protocol] Failed to serve:', filePath, e);
+      return new Response('Not Found', { status: 404 });
+    }
+  });
+
+  // Log startup info (after app is ready so userData path is available)
+  logger.info("========================================");
+  logger.info("Stuard AI Starting");
+  logger.info("========================================");
+  logger.info("Version:", app.getVersion());
+  logger.info("Electron:", process.versions.electron);
+  logger.info("Node:", process.versions.node);
+  logger.info("Platform:", process.platform, process.arch);
+  logger.info("Packaged:", app.isPackaged);
+  logger.info("User Data:", app.getPath("userData"));
+  logger.info("Resources:", process.resourcesPath);
+  logger.info("Log file:", logger.getLogPath());
+  logger.info("App ready, initializing...");
+
+  // Updates, the Python agent, browser pre-warm, webhook/cloud servers, the
+  // schedulers, app discovery and file indexing are all started AFTER the window
+  // is up, in a deferred + staggered phase (see the background scheduler below).
+  // Spawning those heavy child processes before first paint is what made the
+  // cursor freeze on launch.
+
+  // Allow the renderer to call `navigator.mediaDevices.getDisplayMedia(...)`.
+  // Used by voice-mode screen-share: we hand back the primary display so the
+  // GPU-accelerated DXGI capture pipeline does the work, instead of the old
+  // approach where we polled `desktopCapturer.getSources().toJPEG()` from main
+  // (that froze the cursor at ~5 FPS while voice mode was on).
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          // We do not need thumbnails, so pass 0x0 and let Electron skip the
+          // expensive per-source bitmap render at request time.
+          thumbnailSize: { width: 0, height: 0 },
+        });
+        if (!sources.length) {
+          // Per Electron docs, calling callback() with no args denies the request.
+          (callback as any)();
+          return;
+        }
+        callback({ video: sources[0] });
+      } catch (err) {
+        logger.warn('[displayMedia] handler failed:', err);
+        (callback as any)();
+      }
+    });
+    logger.info("Display-media request handler installed");
+  } catch (e) {
+    logger.error("Failed to install display-media handler:", e);
+  }
+
+  try {
+    logger.info("Creating window...");
+    createWindow();
+    // The notification overlay is a full-screen, always-on-top transparent
+    // renderer process. It's now created lazily on the first notification
+    // (see openNotificationWindow callers) instead of being kept resident for
+    // the whole session — that idle renderer was ~50-80MB of RAM for nothing.
+    logger.info("Window created");
+  } catch (e) {
+    logger.error("Failed to create window:", e);
+  }
+
+  try {
+    logger.info("Registering global shortcuts...");
+    registerGlobalShortcuts();
+    logger.info("Shortcuts registered");
+  } catch (e) {
+    logger.error("Failed to register shortcuts:", e);
+  }
+
+  try {
+    logger.info("Creating tray...");
+    createTray();
+    logger.info("Tray created");
+  } catch (e) {
+    logger.error("Failed to create tray:", e);
+  }
+
+  try {
+    logger.info("Setting up IPC...");
+    setupIpc();
+    logger.info("IPC setup complete");
+  } catch (e) {
+    logger.error("Failed to setup IPC:", e);
+  }
+
+  try {
+    logger.info("Initializing custom UI IPC...");
+    // Initialize custom UI IPC with a function to get the router context
+    const agentWsUrl = String(process.env.AGENT_WS || process.env.AGENT_WS_URL || '').trim() || 'ws://127.0.0.1:8765/ws';
+    const cloudAiUrl = String(
+      process.env.CLOUD_AI_HTTP ||
+      process.env.CLOUD_PUBLIC_URL ||
+      process.env.VITE_CLOUD_AI_URL ||
+      'http://localhost:8082'
+    ).trim().replace(/\/+$/, '');
+
+    initCustomUiIpc(() => ({
+      agentWsUrl,
+      cloudAiUrl,
+      logFn: (msg: string) => {
+        try { logger.info(`[custom_ui] ${msg}`); } catch { }
+      },
+    }));
+    logger.info("Custom UI IPC initialized");
+  } catch (e) {
+    logger.error("Failed to initialize custom UI IPC:", e);
+  }
+
+  // Note: The window auto-shows after the renderer finishes loading via the
+  // 'did-finish-load' handler in window.ts, so it's visible with content painted.
+
+  logger.info("=== UI ready; scheduling background services ===");
+
+  // ── Deferred, staggered background startup ────────────────────────────────
+  // These spawn heavy child processes (Python agent, packaged browser) and do
+  // disk / registry scans (installed-app discovery, file indexing). We start
+  // them AFTER the window is up and stagger them so no single tick saturates
+  // CPU/disk while the user's first interaction is happening — that contention
+  // is what froze the cursor on launch. Trade-off (explicitly accepted): these
+  // features warm up a few seconds later in exchange for a smooth startup.
+  const startStep = (label: string, fn: () => void | Promise<void>, delayMs: number) => {
+    setTimeout(() => {
+      try {
+        logger.info(`[startup] ${label}...`);
+        void Promise.resolve(fn()).catch((e) => logger.error(`[startup] ${label} failed:`, e));
+      } catch (e) {
+        logger.error(`[startup] ${label} failed:`, e);
+      }
+    }, delayMs);
+  };
+
+  startStep("updates", () => { initUpdates(); }, 150);
+  startStep("agent", async () => {
+    syncAgentMediaPathConfig();
+    void migrateLegacyCaptureFiles().catch((e) => logger.warn('[media-library] Legacy capture migration failed:', e));
+    await startAgentIfNeeded();
+  }, 300);
+  startStep("local webhook server", () => { startLocalWebhookServer(); }, 600);
+  startStep("stuards autostart", () => { stuards_autostart(); }, 800);
+  // Workflows autostart needs globalShortcut (registered above) for hotkeys.
+  startStep("workflows autostart", () => { workflows_autostart(); }, 1000);
+  startStep("reminder scheduler", () => { startReminderScheduler(); }, 1200);
+  startStep("sms inbox", () => { startSmsInbox(); }, 1400);
+  // Persistent main WS to cloud-ai (`/ws?client=desktop`): per-user tool/context
+  // bridge for text chat and voice mode.
+  startStep("cloud webhooks WS", () => { startCloudWebhooks(); }, 1700);
+  startStep("voice bridge", () => { startVoiceBridgeService(); }, 1900);
+  startStep("proactive scheduler", () => { startProactiveScheduler(); }, 2200);
+  startStep("bot trigger dispatcher", () => { startBotTriggerDispatcher(); }, 2400);
+  startStep("project notion sync", () => { startProjectNotionSync(); }, 2600);
+  // Local MCP server for external coding agents (Claude Code/Codex/Cursor) →
+  // proxies to cloud /mcp/server with the desktop's token. Starts after the
+  // cloud WS (1700) so device tools can relay back to this desktop.
+  startStep("local MCP server", () => { startMcpLocalServer(); }, 2800);
+  // Loopback WS bridge for the Stuard Browser Connector extension (browser_ext_*).
+  startStep("browser extension bridge", () => { startExtensionBridge(); }, 2900);
+  // Heaviest / least time-sensitive last: installed-app scan and the file-index
+  // sweep. Browser pre-warm was removed from startup entirely — it spawned a
+  // ~150MB Chromium server on every launch for anyone who'd ever used browser
+  // tools, just to save first-call latency. The server now starts lazily on the
+  // first browser tool call (ensureReady/setupBrowserUse), reclaiming that RAM
+  // at idle in exchange for a one-time ~5-10s spawn on first use.
+  startStep("app discovery", () => refreshAppCache(), 3500);
+  startStep("file indexing", () => runStartupIndexing(), 8000);
+
+  logger.info("=== Background startup scheduled ===");
+});
+
+let shutdownCleanupPromise: Promise<void> | null = null;
+let shutdownCleanupComplete = false;
+
+async function runShutdownCleanup(): Promise<void> {
+  if (shutdownCleanupPromise) {
+    return shutdownCleanupPromise;
+  }
+
+  shutdownCleanupPromise = (async () => {
+    logger.info("App quitting...");
+
+    try { globalShortcut.unregisterAll(); } catch {}
+    try { disposeUpdates(); } catch (e) { logger.error("Failed to dispose updates during shutdown:", e); }
+    try { stopReminderScheduler(); } catch (e) { logger.error("Failed to stop reminder scheduler during shutdown:", e); }
+    try { stopSmsInbox(); } catch (e) { logger.error("Failed to stop SMS inbox during shutdown:", e); }
+    try { stopProactiveScheduler(); } catch (e) { logger.error("Failed to stop proactive scheduler during shutdown:", e); }
+    try { stopBotTriggerDispatcher(); } catch (e) { logger.error("Failed to stop bot trigger dispatcher during shutdown:", e); }
+    try { stopProjectNotionSync(); } catch (e) { logger.error("Failed to stop project notion sync during shutdown:", e); }
+    try { stopMcpLocalServer(); } catch (e) { logger.error("Failed to stop local MCP server during shutdown:", e); }
+    try { stopExtensionBridge(); } catch (e) { logger.error("Failed to stop browser extension bridge during shutdown:", e); }
+    try { stopVoiceBridgeService(); } catch (e) { logger.error("Failed to stop voice bridge service during shutdown:", e); }
+    try { shutdownWakewordListener(); } catch (e) { logger.error("Failed to stop wakeword listener during shutdown:", e); }
+    try {
+      const { shutdownRustFileIndexer } = require('./services/rust-file-indexer');
+      shutdownRustFileIndexer?.();
+    } catch (e) { logger.error("Failed to shutdown Rust file indexer during shutdown:", e); }
+    try { require('./workflow-variables').saveVariablesSync(); } catch (e) { logger.error("Failed to flush workflow variables during shutdown:", e); }
+
+    await Promise.allSettled([
+      shutdownAllBrowserUseServers().catch((e) => {
+        logger.error("Failed to stop browser-use servers during shutdown:", e);
+      }),
+      stopAllAgents().catch((e) => {
+        logger.error("Failed to stop agents during shutdown:", e);
+      }),
+    ]);
+
+    logger.info("Cleanup complete");
+    shutdownCleanupComplete = true;
+  })();
+
+  return shutdownCleanupPromise;
+}
+
+app.on("browser-window-focus", () => {
+  // re-register just in case
+  // no-op
+});
+
+app.on("before-quit", (event) => {
+  if (shutdownCleanupComplete) return;
+
+  event.preventDefault();
+  void runShutdownCleanup().finally(() => {
+    shutdownCleanupComplete = true;
+    app.quit();
+  });
+});
+
+app.on("will-quit", () => {
+  if (!shutdownCleanupComplete) {
+    logger.warn("will-quit fired before async shutdown cleanup completed");
+  }
+});
+
+app.on("window-all-closed", () => {
+  logger.debug("All windows closed");
+});
+
+// Catch uncaught exceptions
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught exception:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection:", reason);
+});

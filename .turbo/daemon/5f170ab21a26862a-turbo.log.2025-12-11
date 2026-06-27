@@ -1,0 +1,27 @@
+2025-12-11T05:46:04.706952Z  WARN daemon_server: turborepo_lib::commands::daemon: daemon already running
+2025-12-11T05:46:23.046148Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai")}
+2025-12-11T05:46:23.047018Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T05:46:32.056558Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\components\\memories\\PinboardGraph.tsx")}
+2025-12-11T05:46:32.056598Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-12-11T05:55:57.355669Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai")}
+2025-12-11T05:55:57.355705Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T05:56:52.046776Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai")}
+2025-12-11T05:56:52.046804Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T05:56:52.618134Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-12-11T05:59:29.346404Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\knowledge\\ingestion.ts")}
+2025-12-11T05:59:29.346438Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T05:59:29.958383Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\knowledge\\ingestion.ts")}
+2025-12-11T05:59:29.958416Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T05:59:29.958555Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-12-11T06:00:20.151697Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\components\\memories\\PinboardGraph.tsx")}
+2025-12-11T06:00:20.151764Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-12-11T06:00:52.256784Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\src\\renderer\\components\\MemoriesView.tsx")}
+2025-12-11T06:00:52.256820Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-12-11T06:02:05.550139Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf(""), AnchoredSystemPathBuf("_tmp_64304_a057dadb8aa120f86c51e6675130b827")}
+2025-12-11T06:02:05.550174Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2025-12-11T06:02:05.649982Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("_tmp_64304_a057dadb8aa120f86c51e6675130b827"), AnchoredSystemPathBuf("")}
+2025-12-11T06:02:05.650014Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Root, path: AnchoredSystemPathBuf("") }}))
+2025-12-11T06:04:42.753641Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\knowledge\\ingestion.ts")}
+2025-12-11T06:04:42.753669Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))
+2025-12-11T06:05:29.158544Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\knowledge\\ingestion.ts")}
+2025-12-11T06:05:29.158586Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))

@@ -1,0 +1,36 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "target": "ES2020",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2020", "DOM"],
+    "rootDir": "../..",
+    "outDir": "dist",
+    "types": ["node", "react", "react-dom", "vite/client"],
+    "noEmit": false,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/renderer/*"],
+      "@website-assets/*": ["../website/assets/*"],
+      "react": ["node_modules/@types/react"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["node_modules/@types/react-dom"]
+    }
+  },
+  "include": [
+    "src/**/*",
+    "../../shared/**/*.ts",
+    "../../shared/**/*.tsx",
+    "vite.config.ts",
+    "tsup.config.ts",
+    "tailwind.config.cjs",
+    "postcss.config.cjs"
+  ],
+  "exclude": [
+    "src/**/*.backup.tsx",
+    "src/**/*.backup.ts"
+  ]
+}

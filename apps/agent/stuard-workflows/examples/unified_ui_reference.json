@@ -1,0 +1,144 @@
+{
+    "id": "unified-ui-reference",
+    "name": "Countdown Timer UI",
+    "version": "1",
+    "autostart": false,
+    "requirements": "",
+    "scripts": {},
+    "triggers": [
+        {
+            "id": "trig_0",
+            "type": "manual",
+            "label": "manual",
+            "args": {},
+            "position": {
+                "x": 20,
+                "y": 20
+            }
+        }
+    ],
+    "nodes": [
+        {
+            "id": "ui_step",
+            "type": "local.tool",
+            "tool": "custom_ui",
+            "label": "ui_step",
+            "args": {
+                "title": "Countdown Timer",
+                "window": {
+                    "width": 500,
+                    "height": 600,
+                    "position": "center",
+                    "frameless": true,
+                    "transparent": true
+                },
+                "blocking": true,
+                "css": ".root { background: linear-gradient(135deg, rgba(20, 20, 30, 0.98), rgba(40, 20, 60, 0.98)); color: #ffffff; padding: 32px; border-radius: 16px; border: 1px solid rgba(100, 70, 200, 0.3); box-shadow: 0 20px 60px rgba(0,0,0,0.7); height: 100vh; display: flex; flex-direction: column; font-family: 'Segoe UI', Tahoma, sans-serif; animation: fadeIn 0.4s ease-out; } @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } } .header { font-size: 28px; font-weight: 700; margin-bottom: 12px; text-align: center; background: linear-gradient(90deg, #8b5cf6, #ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; } .sub { font-size: 14px; color: #a78bfa; margin-bottom: 48px; text-align: center; opacity: 0.9; } .timer-display { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 88px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -2px; color: #ffffff; text-shadow: 0 0 40px rgba(139, 92, 246, 0.6), 0 0 80px rgba(139, 92, 246, 0.3); margin: 24px 0; } .input-section { margin-bottom: 32px; } .label { display: block; font-size: 12px; color: #a78bfa; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; } .input { width: 100%; padding: 14px; background: rgba(30, 30, 50, 0.6); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: white; font-size: 16px; transition: all 0.3s; } .input:focus { border-color: #8b5cf6; outline: none; background: rgba(30, 30, 50, 0.8); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1); } .input::placeholder { color: rgba(167, 139, 250, 0.4); } .actions { display: flex; gap: 12px; margin-top: auto; } .btn { flex: 1; padding: 16px; border: none; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: 15px; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; } .btn-start { background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4); } .btn-start:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6); } .btn-pause { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); } .btn-pause:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(245, 158, 11, 0.6); } .btn-reset { background: rgba(55, 65, 81, 0.6); color: white; border: 1px solid rgba(139, 92, 246, 0.2); } .btn-reset:hover { background: rgba(75, 85, 101, 0.8); transform: translateY(-2px); } .btn-close { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); } .btn-close:hover { background: rgba(239, 68, 68, 0.3); border-color: rgba(239, 68, 68, 0.5); }",
+                "layout": {
+                    "type": "div",
+                    "className": "root",
+                    "children": [
+                        {
+                            "type": "div",
+                            "className": "header",
+                            "children": "Countdown Timer"
+                        },
+                        {
+                            "type": "div",
+                            "className": "sub",
+                            "children": "Set your timer and start the countdown"
+                        },
+                        {
+                            "type": "div",
+                            "className": "timer-display",
+                            "children": "{{minutes}}:{{seconds}}"
+                        },
+                        {
+                            "type": "div",
+                            "className": "input-section",
+                            "children": [
+                                {
+                                    "type": "label",
+                                    "className": "label",
+                                    "children": "Duration (minutes)"
+                                },
+                                {
+                                    "type": "input",
+                                    "className": "input",
+                                    "bind": "duration",
+                                    "placeholder": "e.g. 5"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "className": "actions",
+                            "children": [
+                                {
+                                    "type": "button",
+                                    "className": "btn btn-start",
+                                    "children": "Start",
+                                    "on": "click:submit"
+                                },
+                                {
+                                    "type": "button",
+                                    "className": "btn btn-pause",
+                                    "children": "Pause"
+                                },
+                                {
+                                    "type": "button",
+                                    "className": "btn btn-reset",
+                                    "children": "Reset"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "className": "actions",
+                            "children": [
+                                {
+                                    "type": "button",
+                                    "className": "btn btn-close",
+                                    "children": "Close",
+                                    "on": "click:close"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "data": {
+                    "duration": "5",
+                    "minutes": "05",
+                    "seconds": "00"
+                }
+            },
+            "fallbackTo": "",
+            "position": {
+                "x": 40,
+                "y": 60
+            }
+        },
+        {
+            "id": "log_step",
+            "type": "local.tool",
+            "tool": "log",
+            "label": "log_step",
+            "args": {
+                "message": "Countdown started for {{ui_step.data.duration}} minutes"
+            },
+            "fallbackTo": "",
+            "position": {
+                "x": 180,
+                "y": 60
+            }
+        }
+    ],
+    "wires": [
+        {
+            "from": "ui_step",
+            "to": "log_step",
+            "guard": "always",
+            "label": ""
+        }
+    ]
+}

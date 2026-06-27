@@ -1,0 +1,46 @@
+﻿
+src/tests/show-workflow-json-test.ts(30,16): error TS2339: Property 'ok' does not exist on type 'ValidationError<unknown> | { ok: boolean; 
+workflow: any; filePath?: string | undefined; error?: string | undefined; }'.
+src/tests/show-workflow-json-test.ts(39,14): error TS2339: Property 'filePath' does not exist on type 'ValidationError<unknown> | { ok: 
+boolean; workflow: any; filePath?: string | undefined; error?: string | undefined; }'.
+src/tests/show-workflow-json-test.ts(40,33): error TS2339: Property 'filePath' does not exist on type 'ValidationError<unknown> | { ok: 
+boolean; workflow: any; filePath?: string | undefined; error?: string | undefined; }'.
+src/tests/show-workflow-json-test.ts(42,22): error TS2339: Property 'workflow' does not exist on type 'ValidationError<unknown> | { ok: 
+boolean; workflow: any; filePath?: string | undefined; error?: string | undefined; }'.
+src/tools/feedback-tools.ts(303,14): error TS2345: Argument of type 'number | undefined' is not assignable to parameter of type 'number'.
+src/tools/feedback-tools.ts(401,3): error TS2322: Type '(inputData: { title: string; description: string; severity?: "low" | "medium" | 
+"high" | "critical" | undefined; screenshots?: string[] | undefined; }, runCtx: ToolExecutionContext<unknown, unknown, unknown>) => 
+Promise<...>' is not assignable to type '(inputData: { title: string; description: string; severity?: "low" | "medium" | "high" | 
+"critical" | undefined; screenshots?: string[] | undefined; }, context: ToolExecutionContext<unknown, unknown, unknown>) => Promise<...>'.
+src/tools/feedback-tools.ts(429,3): error TS2322: Type '(inputData: { title: string; description: string; screenshots?: string[] | 
+undefined; }, runCtx: ToolExecutionContext<unknown, unknown, unknown>) => Promise<ValidationError<unknown> | { ...; } | undefined>' is not 
+assignable to type '(inputData: { title: string; description: string; screenshots?: string[] | undefined; }, context: 
+ToolExecutionContext<unknown, unknown, unknown>) => Promise<ValidationError<unknown> | { ...; }>'.
+src/tools/image-gen.ts(557,44): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/image-gen.ts(559,71): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/image-gen.ts(572,55): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(572,62): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+src/tools/image-gen.ts(572,65): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(572,92): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(575,52): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(575,59): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+src/tools/image-gen.ts(575,62): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,55): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,62): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,68): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,77): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+src/tools/image-gen.ts(579,80): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,88): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(579,100): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/image-gen.ts(601,11): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/tools/telnyx-tools.ts(350,57): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/telnyx-tools.ts(412,41): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/tts-tools.ts(99,49): error TS2538: Type 'undefined' cannot be used as an index type.
+src/tools/tts-tools.ts(118,61): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/whatsapp-tools.ts(305,57): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/whatsapp-tools.ts(425,41): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/tools/workflow-system.ts(263,32): error TS2345: Argument of type '{ tool: string; args?: any; kind?: "auto" | "cloud" | "local" | 
+undefined; timeoutMs?: number | undefined; }' is not assignable to parameter of type '{ tool: string; args: any; kind: "auto" | "cloud" | 
+"local"; timeoutMs?: number | undefined; }'.
+
+

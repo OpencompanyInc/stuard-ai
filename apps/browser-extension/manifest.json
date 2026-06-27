@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Stuard Browser Connector",
+  "version": "1.0.0",
+  "description": "Lets your Stuard agent read, script, and organize the tabs in your real browser.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "userScripts",
+    "activeTab",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Stuard"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}

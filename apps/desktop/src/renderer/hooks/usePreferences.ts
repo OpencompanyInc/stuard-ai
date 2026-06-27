@@ -1,0 +1,469 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const LS_PREFIX = "stuard.pref.";
+
+export type ChatMode = 'auto' | string;
+export type ModelSourcePreference = 'stuard' | 'api_key' | 'subscription';
+
+/** A single thinking-depth tier, weakest → strongest. */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+/** Per-request reasoning level for models that support it (`none` = thinking off). */
+export type ReasoningLevel = 'none' | ReasoningEffort;
+
+/**
+ * Normalized thinking capability for a model, surfaced by `/v1/models` so the
+ * picker can show only the tiers that apply (some models add an extra-high
+ * tier, some can't be turned off, some don't reason at all).
+ */
+export interface ReasoningControl {
+  supported: boolean;
+  canDisable: boolean;
+  levels: ReasoningEffort[];
+  default: ReasoningEffort;
+}
+
+/**
+ * Providers that support per-request reasoning/thinking level configuration.
+ * xAI and DeepSeek control reasoning at the model-variant level, so they're excluded.
+ */
+const CONFIGURABLE_REASONING_PROVIDERS = new Set(['openai', 'google', 'anthropic']);
+
+/** Returns true if the given model supports per-request reasoning level configuration. */
+export function supportsReasoningConfig(modelId: string): boolean {
+  const provider = modelId.split('/')[0];
+  return CONFIGURABLE_REASONING_PROVIDERS.has(provider) && REASONING_MODEL_IDS.has(modelId);
+}
+
+export interface ChatModeModelConfig {
+  allowed: string[];
+  default: string;
+}
+
+export interface ChatModelsConfig {
+  fast: ChatModeModelConfig;
+  balanced: ChatModeModelConfig;
+  smart: ChatModeModelConfig;
+}
+
+export interface ModelMeta {
+  id: string;
+  name: string;
+  provider: string;
+  providerId?: string;
+  logoUrl?: string;
+  isReasoning: boolean;
+  /** Per-model thinking capability (from `/v1/models`); drives the picker controls. */
+  reasoningControl?: ReasoningControl;
+  contextWindow?: number;
+  category: 'fast' | 'balanced' | 'smart' | 'research';
+}
+
+export const ALL_CHAT_MODEL_IDS: string[] = [
+  // Curated native BYOK surface. Reconciled against the live models.dev
+  // catalog (2026-06) — older generations pruned, current flagships added.
+  // xAI: grok-3/grok-4 were retired upstream; this is the current Grok lineup.
+  'xai/grok-4.3',
+  'xai/grok-4.20-0309-reasoning',
+  'xai/grok-4.20-0309-non-reasoning',
+  // Google Gemini
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+  'google/gemini-2.5-pro',
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-3.5-flash',
+  'google/gemini-3.1-pro-preview',
+  // OpenAI
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4',
+  'openai/gpt-5.5',
+  'openai/gpt-5.5-pro',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.3-codex-spark',
+  // DeepSeek
+  'deepseek/deepseek-chat',
+  'deepseek/deepseek-reasoner',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  // Anthropic
+  'anthropic/claude-haiku-4-5',
+  'anthropic/claude-sonnet-4-6',
+  'anthropic/claude-opus-4-8',
+  // Research models
+  'perplexity/sonar',
+  'perplexity/sonar-pro',
+  'perplexity/sonar-reasoning',
+  'perplexity/sonar-reasoning-pro',
+  'perplexity/sonar-deep-research',
+  'openai/o3-deep-research',
+  'openai/o4-mini-deep-research',
+];
+
+const REASONING_MODEL_IDS = new Set<string>([
+  'xai/grok-4.3',
+  'xai/grok-4.20-0309-reasoning',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+  'google/gemini-2.5-pro',
+  'google/gemini-3.1-flash-lite',
+  'google/gemini-3.5-flash',
+  'google/gemini-3.1-pro-preview',
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4',
+  'openai/gpt-5.5',
+  'openai/gpt-5.5-pro',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.3-codex-spark',
+  'deepseek/deepseek-reasoner',
+  'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  'anthropic/claude-haiku-4-5',
+  'anthropic/claude-sonnet-4-6',
+  'anthropic/claude-opus-4-8',
+]);
+
+const CONTEXT_WINDOWS: Record<string, number> = {
+  'google/gemini-3.1-pro-preview': 1048576,
+  'google/gemini-3.5-flash': 1048576,
+  'google/gemini-3.1-flash-lite': 1048576,
+  'google/gemini-2.5-pro': 1048576,
+  'google/gemini-2.5-flash': 1048576,
+  'google/gemini-2.5-flash-lite': 1048576,
+  'openai/gpt-5.4': 1050000,
+  'openai/gpt-5.4-mini': 400000,
+  'openai/gpt-5.4-nano': 400000,
+  'openai/gpt-5.5': 1050000,
+  'openai/gpt-5.5-pro': 1050000,
+  'openai/gpt-5.3-codex': 400000,
+  'openai/gpt-5.3-codex-spark': 128000,
+  'xai/grok-4.3': 1000000,
+  'xai/grok-4.20-0309-reasoning': 2000000,
+  'xai/grok-4.20-0309-non-reasoning': 2000000,
+  'deepseek/deepseek-chat': 1000000,
+  'deepseek/deepseek-reasoner': 1000000,
+  'deepseek/deepseek-v4-flash': 1000000,
+  'deepseek/deepseek-v4-pro': 1000000,
+  'anthropic/claude-haiku-4-5': 200000,
+  'anthropic/claude-sonnet-4-6': 1000000,
+  'anthropic/claude-opus-4-8': 1000000,
+  // Research models
+  'perplexity/sonar': 128000,
+  'perplexity/sonar-pro': 200000,
+  'perplexity/sonar-reasoning': 128000,
+  'perplexity/sonar-reasoning-pro': 128000,
+  'perplexity/sonar-deep-research': 128000,
+  'openai/o3-deep-research': 200000,
+  'openai/o4-mini-deep-research': 200000,
+};
+
+const MODEL_CATEGORIES: Record<string, 'fast' | 'balanced' | 'smart' | 'research'> = {
+  'xai/grok-4.3': 'smart',
+  'xai/grok-4.20-0309-reasoning': 'smart',
+  'xai/grok-4.20-0309-non-reasoning': 'balanced',
+  'google/gemini-2.5-flash': 'fast',
+  'google/gemini-2.5-flash-lite': 'fast',
+  'google/gemini-2.5-pro': 'smart',
+  'google/gemini-3.1-flash-lite': 'fast',
+  'google/gemini-3.5-flash': 'balanced',
+  'google/gemini-3.1-pro-preview': 'smart',
+  'openai/gpt-5.4-nano': 'fast',
+  'openai/gpt-5.4-mini': 'balanced',
+  'openai/gpt-5.4': 'smart',
+  'openai/gpt-5.5': 'smart',
+  'openai/gpt-5.5-pro': 'smart',
+  'openai/gpt-5.3-codex': 'smart',
+  'openai/gpt-5.3-codex-spark': 'balanced',
+  'deepseek/deepseek-chat': 'fast',
+  'deepseek/deepseek-reasoner': 'smart',
+  'deepseek/deepseek-v4-flash': 'balanced',
+  'deepseek/deepseek-v4-pro': 'smart',
+  'anthropic/claude-haiku-4-5': 'fast',
+  'anthropic/claude-sonnet-4-6': 'smart',
+  'anthropic/claude-opus-4-8': 'smart',
+  // Research models
+  'perplexity/sonar': 'research',
+  'perplexity/sonar-pro': 'research',
+  'perplexity/sonar-reasoning': 'research',
+  'perplexity/sonar-reasoning-pro': 'research',
+  'perplexity/sonar-deep-research': 'research',
+  'openai/o3-deep-research': 'research',
+  'openai/o4-mini-deep-research': 'research',
+};
+
+function humanizeProvider(p: string): string {
+  const s = String(p || '').toLowerCase();
+  if (s === 'xai') return 'xAI';
+  if (s === 'openai') return 'OpenAI';
+  if (s === 'google') return 'Google';
+  if (s === 'deepseek') return 'DeepSeek';
+  if (s === 'anthropic') return 'Anthropic';
+  if (s === 'perplexity') return 'Perplexity';
+  if (s === 'openrouter') return 'OpenRouter';
+  return p;
+}
+
+function titleizeModelName(mid: string): string {
+  try {
+    const base = String(mid || '').replace(/-/g, ' ');
+    // A few nicer aliases
+    if (mid === 'deepseek-chat') return 'DeepSeek V3';
+    if (mid === 'deepseek-reasoner') return 'DeepSeek R1';
+    if (mid.startsWith('gpt ')) return base.toUpperCase();
+    return base.replace(/\b\w/g, (c) => c.toUpperCase());
+  } catch {
+    return String(mid || '');
+  }
+}
+
+export const FALLBACK_MODELS: ModelMeta[] = ALL_CHAT_MODEL_IDS.map((id) => {
+  const raw = String(id);
+  const parts = raw.split('/');
+  const providerKey = parts[0] || 'other';
+  const modelKey = parts.slice(1).join('/') || raw;
+  const isNonReasoning = modelKey.includes('non-reasoning');
+  const isReasoning = !isNonReasoning && REASONING_MODEL_IDS.has(raw);
+  return {
+    id: raw,
+    providerId: providerKey,
+    provider: humanizeProvider(providerKey),
+    name: titleizeModelName(modelKey),
+    isReasoning,
+    contextWindow: CONTEXT_WINDOWS[raw],
+    category: MODEL_CATEGORIES[raw] || 'balanced',
+  };
+});
+
+const DEFAULT_CHAT_MODE: ChatMode = 'auto';
+
+// Legacy config support (can be simplified later)
+export const DEFAULT_CHAT_MODELS: ChatModelsConfig = {
+  // MUST match cloud-ai pricing.ts getDefaultModelForCategory.
+  fast: { allowed: [], default: 'google/gemini-3.1-flash-lite' },
+  balanced: { allowed: [], default: 'google/gemini-3.1-pro-preview' },
+  smart: { allowed: [], default: 'openai/gpt-5.4' },
+};
+
+function normalizeChatMode(v: any, chatModels: ChatModelsConfig): ChatMode {
+  const raw = String(v || '').trim();
+  if (!raw) return 'auto';
+  if (raw === 'auto') return 'auto';
+  // Back-compat: old tier stored
+  if (raw === 'fast' || raw === 'balanced' || raw === 'smart') {
+    const d = (chatModels as any)?.[raw]?.default;
+    return typeof d === 'string' && d.trim() ? d.trim() : 'auto';
+  }
+  // New system: accept any provider/model-id format so desktop doesn't need updates
+  const idx = raw.indexOf('/');
+  if (idx > 0 && idx < raw.length - 1) return raw;
+  return 'auto';
+}
+
+function getLS<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (raw == null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function setLS<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
+  } catch { }
+}
+
+const DEFAULT_WAKEWORD_SENSITIVITY = 0.88;
+
+function normalizeWakewordSensitivity(v: any): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_WAKEWORD_SENSITIVITY;
+  // Migrate previous defaults to the standalone detector default.
+  if (Math.abs(n - 0.80) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  if (Math.abs(n - 0.95) < 0.000001) return DEFAULT_WAKEWORD_SENSITIVITY;
+  return Math.max(0.3, Math.min(0.99, n));
+}
+
+export type TonePreset = "concise" | "friendly" | "formal" | "technical" | "custom";
+export type ThemeMode = "light" | "dark";
+
+function normalizeThemeMode(v: any): ThemeMode {
+  const s = String(v || '').toLowerCase();
+  if (s === 'dark' || s === 'custom') return 'dark';
+  // Back-compat for legacy values
+  if (s === 'default' || s === 'light') return 'light';
+  return 'light';
+}
+
+export function usePreferences() {
+  const [tone, setToneState] = useState<TonePreset>(() => getLS<TonePreset>("tone", "concise"));
+  const [customTone, setCustomToneState] = useState<string>(() => getLS<string>("tone_custom", ""));
+  const [persona, setPersonaState] = useState<string>(() => getLS<string>("persona", ""));
+  const [onboardingComplete, setOnboardingCompleteState] = useState<boolean>(() => getLS<boolean>("onboarding_complete", false));
+  const [tourComplete, setTourCompleteState] = useState<boolean>(() => getLS<boolean>("tour_complete", false));
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => normalizeThemeMode(getLS<any>("theme_mode", "dark")));
+  const [themeDarkShade, setThemeDarkShadeState] = useState<string>(() => getLS<string>("theme_dark", "#0f172a"));
+  const [themeLightShade, setThemeLightShadeState] = useState<string>(() => getLS<string>("theme_light", "#e2e8f0"));
+  const [themeText, setThemeTextState] = useState<"white" | "black">(() => getLS("theme_text", "white"));
+  const [translucentMode, setTranslucentModeState] = useState<boolean>(() => getLS<boolean>("translucent_mode", false));
+  const [wakewordEnabled, setWakewordEnabledState] = useState<boolean>(() => getLS<boolean>("wakeword_enabled", false));
+  const [wakewordSensitivity, setWakewordSensitivityState] = useState<number>(() => normalizeWakewordSensitivity(getLS<any>("wakeword_sensitivity", DEFAULT_WAKEWORD_SENSITIVITY)));
+  const [browserEnabled, setBrowserEnabledState] = useState<boolean>(() => getLS<boolean>("browser_enabled", false));
+  const [screenCaptureInvisible, setScreenCaptureInvisibleState] = useState<boolean>(() => getLS<boolean>("screen_capture_invisible", false));
+  const [chatModels, setChatModelsState] = useState<ChatModelsConfig>(() => getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS));
+  const [chatMode, setChatModeState] = useState<ChatMode>(() => normalizeChatMode(getLS<any>('chat_mode', DEFAULT_CHAT_MODE), getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+  const [modelSource, setModelSourceState] = useState<ModelSourcePreference>(() => {
+    const raw = String(getLS<any>('model_source', 'stuard') || '').trim();
+    return raw === 'api_key' || raw === 'subscription' ? raw : 'stuard';
+  });
+  // Timezone: auto-detect from browser, allow manual override stored in main-process settings
+  const detectedTz = useMemo(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } }, []);
+  const [timezone, setTimezoneState] = useState<string>(() => getLS<string>('timezone', '') || detectedTz);
+  const [timezoneOverride, setTimezoneOverrideState] = useState<boolean>(() => getLS<boolean>('timezone_override', false));
+
+  useEffect(() => { setLS("tone", tone); }, [tone]);
+  useEffect(() => { setLS("tone_custom", customTone); }, [customTone]);
+  useEffect(() => { setLS("persona", persona); }, [persona]);
+  useEffect(() => { setLS("onboarding_complete", onboardingComplete); }, [onboardingComplete]);
+  useEffect(() => { setLS("tour_complete", tourComplete); }, [tourComplete]);
+  useEffect(() => { setLS("theme_mode", themeMode); }, [themeMode]);
+  useEffect(() => { setLS("theme_dark", themeDarkShade); }, [themeDarkShade]);
+  useEffect(() => { setLS("theme_light", themeLightShade); }, [themeLightShade]);
+  useEffect(() => { setLS("theme_text", themeText); }, [themeText]);
+  useEffect(() => { setLS("translucent_mode", translucentMode); }, [translucentMode]);
+  useEffect(() => { setLS("wakeword_enabled", wakewordEnabled); }, [wakewordEnabled]);
+  useEffect(() => { setLS("wakeword_sensitivity", wakewordSensitivity); }, [wakewordSensitivity]);
+  useEffect(() => { setLS("browser_enabled", browserEnabled); }, [browserEnabled]);
+  useEffect(() => { setLS("screen_capture_invisible", screenCaptureInvisible); }, [screenCaptureInvisible]);
+  useEffect(() => {
+    setLS('chat_mode', chatMode);
+    try { (window as any).desktopAPI?.setPrefs?.({ chatMode }); } catch { }
+  }, [chatMode]);
+  useEffect(() => {
+    setLS('chat_models', chatModels);
+    try { (window as any).desktopAPI?.setPrefs?.({ chatModels }); } catch { }
+  }, [chatModels]);
+  useEffect(() => { setLS('model_source', modelSource); }, [modelSource]);
+  useEffect(() => { setLS('timezone', timezone); }, [timezone]);
+  useEffect(() => { setLS('timezone_override', timezoneOverride); }, [timezoneOverride]);
+  // Sync timezone to main process (for cron scheduling) whenever it changes
+  useEffect(() => {
+    try {
+      const tz = timezoneOverride ? timezone : null; // null = auto-detect in main
+      (window as any).stuard?.setTimezone?.(tz);
+    } catch { }
+  }, [timezone, timezoneOverride]);
+
+  useEffect(() => {
+    try {
+      const root = document.documentElement;
+      root.setAttribute('data-stuard-theme', themeMode);
+      if (translucentMode) {
+        root.setAttribute('data-translucent', 'true');
+      } else {
+        root.removeAttribute('data-translucent');
+      }
+
+      const cardBg = themeMode === 'dark' ? '#D0D0D0' : '#E3E3E3';
+      root.style.setProperty('--stuard-card-bg', cardBg);
+    } catch { }
+  }, [themeMode]);
+
+  // Listen for changes from other windows (e.g. onboarding wizard)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key?.startsWith(LS_PREFIX)) {
+        const key = e.key.slice(LS_PREFIX.length);
+        try {
+          const val = e.newValue ? JSON.parse(e.newValue) : null;
+          if (key === 'tone') setToneState(val ?? 'concise');
+          if (key === 'tone_custom') setCustomToneState(val ?? '');
+          if (key === 'persona') setPersonaState(val ?? '');
+          if (key === 'onboarding_complete') setOnboardingCompleteState(val ?? false);
+          if (key === 'tour_complete') setTourCompleteState(val ?? false);
+          if (key === 'theme_mode') setThemeModeState(normalizeThemeMode(val));
+          if (key === 'theme_dark') setThemeDarkShadeState(val ?? '#0f172a');
+          if (key === 'theme_light') setThemeLightShadeState(val ?? '#e2e8f0');
+          if (key === 'theme_text') setThemeTextState(val ?? 'white');
+          if (key === 'translucent_mode') setTranslucentModeState(val ?? false);
+          if (key === 'wakeword_enabled') setWakewordEnabledState(val ?? false);
+          if (key === 'wakeword_sensitivity') setWakewordSensitivityState(normalizeWakewordSensitivity(val));
+          if (key === 'browser_enabled') setBrowserEnabledState(val ?? false);
+          if (key === 'screen_capture_invisible') setScreenCaptureInvisibleState(val ?? false);
+          if (key === 'chat_models') setChatModelsState(val ?? DEFAULT_CHAT_MODELS);
+          if (key === 'chat_mode') setChatModeState(normalizeChatMode(val ?? DEFAULT_CHAT_MODE, getLS<ChatModelsConfig>('chat_models', DEFAULT_CHAT_MODELS)));
+          if (key === 'model_source') setModelSourceState(val === 'api_key' || val === 'subscription' ? val : 'stuard');
+          if (key === 'timezone') setTimezoneState(val || detectedTz);
+          if (key === 'timezone_override') setTimezoneOverrideState(val ?? false);
+        } catch { }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const setTone = useCallback((t: TonePreset) => { setToneState(t); }, []);
+  const setCustomTone = useCallback((v: string) => { setCustomToneState(v); }, []);
+  const setPersona = useCallback((v: string) => { setPersonaState(v); }, []);
+  const setOnboardingComplete = useCallback((v: boolean) => { setOnboardingCompleteState(v); }, []);
+  const setTourComplete = useCallback((v: boolean) => { setTourCompleteState(v); }, []);
+  const setThemeMode = useCallback((m: ThemeMode) => { setThemeModeState(normalizeThemeMode(m)); }, []);
+  const setThemeDarkShade = useCallback((v: string) => { setThemeDarkShadeState(v); }, []);
+  const setThemeLightShade = useCallback((v: string) => { setThemeLightShadeState(v); }, []);
+  const setThemeText = useCallback((v: "white" | "black") => { setThemeTextState(v); }, []);
+  const setTranslucentMode = useCallback((v: boolean) => { setTranslucentModeState(v); }, []);
+  const setWakewordEnabled = useCallback((v: boolean) => { setWakewordEnabledState(v); }, []);
+  const setWakewordSensitivity = useCallback((v: number) => { setWakewordSensitivityState(normalizeWakewordSensitivity(v)); }, []);
+  const setBrowserEnabled = useCallback((v: boolean) => { setBrowserEnabledState(v); }, []);
+  const setScreenCaptureInvisible = useCallback((v: boolean) => { setScreenCaptureInvisibleState(v); }, []);
+  const setChatMode = useCallback((v: ChatMode) => { setChatModeState(v); }, []);
+  const setChatModels = useCallback((v: ChatModelsConfig) => { setChatModelsState(v); }, []);
+  const setModelSource = useCallback((v: ModelSourcePreference) => { setModelSourceState(v === 'api_key' || v === 'subscription' ? v : 'stuard'); }, []);
+  const setTimezone = useCallback((v: string) => { setTimezoneState(v); }, []);
+  const setTimezoneOverride = useCallback((v: boolean) => { setTimezoneOverrideState(v); }, []);
+
+  return {
+    tone,
+    setTone,
+    customTone,
+    setCustomTone,
+    persona,
+    setPersona,
+    onboardingComplete,
+    setOnboardingComplete,
+    tourComplete,
+    setTourComplete,
+    themeMode,
+    setThemeMode,
+    themeDarkShade,
+    setThemeDarkShade,
+    themeLightShade,
+    setThemeLightShade,
+    themeText,
+    setThemeText,
+    translucentMode,
+    setTranslucentMode,
+    wakewordEnabled,
+    setWakewordEnabled,
+    wakewordSensitivity,
+    setWakewordSensitivity,
+    browserEnabled,
+    setBrowserEnabled,
+    screenCaptureInvisible,
+    setScreenCaptureInvisible,
+    chatMode,
+    setChatMode,
+    chatModels,
+    setChatModels,
+    modelSource,
+    setModelSource,
+    timezone,
+    setTimezone,
+    timezoneOverride,
+    setTimezoneOverride,
+    detectedTz,
+  };
+}

@@ -1,0 +1,3918 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Figtree:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+@import './scrollbar.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+
+  /* Default Light Theme - Matching Stuard Overlay */
+  --background: #f0f2f5;
+  --foreground: #1a1a1a;
+  --foreground-muted: #64748b;
+  /* slate-500 */
+
+  /* Compact launcher pill — RGB channels so Tailwind `/X` opacity works */
+  --compact-pill-bg: 255 255 255;
+  --compact-pill-fg: 26 26 26;
+  --compact-pill-fg-muted: 100 116 139;
+  /* Selected/hover row inside the compact dropdown — gray-200 in light mode */
+  --compact-pill-hover: #e5e7eb;
+  /* Soft elevation so the pill lifts off light backgrounds — kept tight so it fits inside the ~14px safe area around the pill in compact mode */
+  --compact-pill-shadow: 0 6px 16px rgba(15, 23, 42, 0.14), 0 2px 4px rgba(15, 23, 42, 0.08);
+
+  --sidebar-bg: #e2e8f0;
+  /* slate-200 */
+  --sidebar-border: #cbd5e1;
+  /* slate-300 */
+  --sidebar-item-hover: #cbd5e1;
+  --sidebar-item-active: #b8c5d6;
+
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+
+  --primary: #ff383c;
+  /* Stuard brand red — single brand accent across every surface */
+  --primary-rgb: 255 56 60;
+  --primary-foreground: #ffffff;
+
+  /* Delegated-agent accent — a single purposeful indigo reserved ONLY for
+     "subagent / delegation" meaning (queue steer rows, steer-target selector,
+     delegation traces). Never used for ordinary brand emphasis. */
+  --agent-accent: #6366f1;
+  /* indigo-500 */
+  --agent-accent-soft: rgba(99, 102, 241, 0.10);
+
+  --accent: #f8fafc;
+  /* slate-50 */
+  --accent-foreground: #0f172a;
+  /* slate-900 */
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e8f0;
+  --border-rgb: 226 232 240;
+  --card-border-rgb: 226 232 240;
+  --sidebar-border-rgb: 203 213 225;
+
+  --radius-card: 1.5rem;
+  --radius-button: 0.75rem;
+  --dashboard-shell-bg: #eef2f6;
+  --dashboard-panel: rgba(255, 255, 255, 0.88);
+  --dashboard-panel-solid: #ffffff;
+  --dashboard-panel-border: rgba(148, 163, 184, 0.22);
+  --dashboard-sidebar-item: rgba(15, 23, 42, 0.05);
+  --dashboard-sidebar-item-active: #f5f5f5;
+  --dashboard-sidebar-item-hover: #eeeeee;
+  --dashboard-sidebar-surface: rgba(255, 255, 255, 0.72);
+  --dashboard-sidebar-divider: #e5e5e5;
+  --dashboard-hover: rgba(15, 23, 42, 0.045);
+  --dashboard-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+  --dashboard-shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.05);
+  --dashboard-glow: rgba(255, 56, 60, 0.14);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Stuard Overlay / VS Code Dark Theme */
+  --background: #1e1e1e;
+  --foreground: #ffffff;
+  --foreground-muted: #a6a6a6;
+
+  /* Compact launcher pill — matches the original hardcoded #171717 / white / #A6A6A6 */
+  --compact-pill-bg: 23 23 23;
+  --compact-pill-fg: 255 255 255;
+  --compact-pill-fg-muted: 166 166 166;
+  /* Original dark-mode selected-row tone */
+  --compact-pill-hover: #262626;
+  /* Tight elevation on dark backgrounds — same vertical footprint as light mode so the safe area math holds */
+  --compact-pill-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+
+  --sidebar-bg: #252526;
+  --sidebar-border: #2b2b2b;
+  /* Slightly darker than main borders */
+  --sidebar-item-hover: #2a2d2e;
+  --sidebar-item-active: #37373d;
+
+  --card-bg: #252526;
+  /* Same as sidebar for flat look, or slightly lighter? Overlay uses 252526 for panels */
+  --card-border: #3e3e3e;
+  /* Standard VS Code border */
+
+  --input-bg: #3c3c3c;
+  --input-border: #3c3c3c;
+  /* Inputs usually blend or have subtle border */
+
+  --primary: #ff4a4e;
+  /* Stuard brand red — brighter calibration for dark surfaces (matches Studio) */
+  --primary-rgb: 255 74 78;
+  --primary-foreground: #ffffff;
+
+  /* Delegated-agent accent — indigo tuned for dark surfaces */
+  --agent-accent: #818cf8;
+  /* indigo-400 */
+  --agent-accent-soft: rgba(129, 140, 248, 0.14);
+
+  --accent: #2d2d2d;
+  --accent-foreground: #ffffff;
+
+  --destructive: #f48771;
+  /* VS Code error red */
+  --destructive-foreground: #ffffff;
+
+  --border: #3e3e3e;
+  --border-rgb: 62 62 62;
+  --card-border-rgb: 62 62 62;
+  --sidebar-border-rgb: 43 43 43;
+
+  --radius-card: 1.5rem;
+  --radius-button: 0.75rem;
+  --dashboard-shell-bg: #000000;
+  --dashboard-panel: rgba(10, 10, 10, 0.96);
+  --dashboard-panel-solid: #1b1b1b;
+  --dashboard-panel-border: #3e3e3e;
+  --dashboard-sidebar-item: rgba(255, 255, 255, 0.06);
+  --dashboard-sidebar-item-active: #262626;
+  --dashboard-sidebar-item-hover: #262626;
+  --dashboard-sidebar-surface: rgba(23, 23, 23, 0.5);
+  --dashboard-sidebar-divider: #404040;
+  --dashboard-hover: rgba(255, 255, 255, 0.075);
+  --dashboard-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+  --dashboard-shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.28);
+  --dashboard-glow: rgba(255, 255, 255, 0.035);
+}
+
+/* Window / sidebar launcher: borrow the compact pill palette so the larger
+   launcher reads as one continuous surface with compact mode. Tokens follow
+   `data-theme`; light mode gets a softer shell so it is not a flat white slab. */
+.launcher-compact-skin {
+  --background: rgb(var(--compact-pill-bg));
+  --card-bg: var(--compact-pill-hover);
+  --input-bg: color-mix(in srgb, var(--compact-pill-hover) 72%, rgb(var(--compact-pill-bg)) 28%);
+  --sidebar-item-hover: var(--compact-pill-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--compact-pill-hover) 80%, rgb(var(--compact-pill-fg)) 14%);
+  --border: rgb(var(--compact-pill-fg) / 0.12);
+  --border-rgb: var(--compact-pill-fg);
+  --foreground: rgb(var(--compact-pill-fg));
+  --foreground-muted: rgb(var(--compact-pill-fg-muted));
+  /* Compact mode's accent is the brand red, not the VS Code blue. */
+  --primary: #ff383c;
+  --primary-rgb: 255 56 60;
+  --primary-foreground: #ffffff;
+  font-family: 'General Sans', 'Inter', 'Figtree', sans-serif;
+  /* Window / sidebar launcher is a large floating panel — give it a layered,
+     softly-graded drop shadow rather than the tight compact-pill shadow. Falls
+     back to the pill shadow until a theme defines --launcher-panel-shadow. */
+  box-shadow: var(--launcher-panel-shadow, var(--compact-pill-shadow));
+}
+
+/* ==highlight== / ++underline++ custom markdown accents */
+mark.md-highlight {
+  background-color: transparent;
+}
+
+.md-highlight {
+  --md-hl-fg: #78350f;
+  --md-hl-bg-1: #fef9c3;
+  --md-hl-bg-2: #fde047;
+  --md-hl-bg-3: #facc15;
+  --md-hl-edge: rgba(180, 83, 9, 0.42);
+  --md-hl-glow: rgba(234, 179, 8, 0.22);
+
+  position: relative;
+  display: inline;
+  padding: 0.1em 0.38em 0.14em;
+  margin: 0 0.06em;
+  font-weight: 650;
+  font-style: normal;
+  color: var(--md-hl-fg);
+  background:
+    linear-gradient(
+      168deg,
+      var(--md-hl-bg-1) 0%,
+      var(--md-hl-bg-2) 42%,
+      var(--md-hl-bg-3) 78%,
+      color-mix(in srgb, var(--md-hl-bg-1) 88%, #ffffff) 100%
+    );
+  border-radius: 3px 6px 2px 5px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow:
+    inset 0 -2px 0 var(--md-hl-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 4px var(--md-hl-glow);
+  text-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.35);
+}
+
+[data-theme='dark'] .md-highlight {
+  --md-hl-fg: #fffbeb;
+  --md-hl-bg-1: rgba(251, 191, 36, 0.48);
+  --md-hl-bg-2: rgba(245, 158, 11, 0.4);
+  --md-hl-bg-3: rgba(217, 119, 6, 0.34);
+  --md-hl-edge: rgba(251, 191, 36, 0.45);
+  --md-hl-glow: rgba(245, 158, 11, 0.28);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.md-underline {
+  --md-ul-stroke: rgba(2, 132, 199, 0.72);
+  --md-ul-glow: rgba(14, 165, 233, 0.14);
+
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  background-image:
+    linear-gradient(transparent calc(100% - 4px), var(--md-ul-stroke) calc(100% - 4px)),
+    linear-gradient(transparent calc(100% - 1px), var(--md-ul-glow) calc(100% - 1px));
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding-bottom: 2px;
+}
+
+[data-theme='dark'] .md-underline {
+  --md-ul-stroke: rgba(56, 189, 248, 0.78);
+  --md-ul-glow: rgba(56, 189, 248, 0.2);
+}
+
+[data-theme='light'] .launcher-compact-skin {
+  /* Tailwind gray-100 */
+  --compact-pill-bg: 243 244 246;
+  --compact-pill-fg: 26 26 26;
+  --compact-pill-fg-muted: 100 116 139;
+  --compact-pill-hover: #dde3eb;
+  --compact-pill-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.12),
+    0 2px 6px rgba(15, 23, 42, 0.07);
+
+  --background: rgb(var(--compact-pill-bg));
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --sidebar-item-hover: #d8dee8;
+  --sidebar-item-active: #ccd4e0;
+  --user-message-bubble-bg: #ffffff;
+  --border: rgba(15, 23, 42, 0.14);
+  /* Layered contact → mid → soft cast for real elevation. The widest layer's
+     reach (offset + blur ≈ 15px) stays inside even the docked sidebar's 16px
+     safe area, so the overflow-hidden shell never slices the shadow into a hard
+     rectangle — it fades to nothing and wraps the rounded corners. */
+  --launcher-panel-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 3px 6px rgba(15, 23, 42, 0.08),
+    0 5px 10px rgba(15, 23, 42, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    var(--launcher-panel-shadow);
+}
+
+/* Compact quick-response panel: keep <<>> attachments readable in a narrow card */
+.compact-response-md img,
+.compact-response-md video {
+  max-height: 168px;
+}
+
+.compact-response-md .compact-media-image img,
+.compact-response-md .compact-media-video {
+  max-height: 168px;
+  width: 100%;
+}
+
+.compact-response-md .compact-media-link,
+.compact-response-md .compact-media-youtube,
+.compact-response-md .compact-media-file,
+.compact-response-md .compact-media-audio {
+  max-width: 100%;
+}
+
+/* Inline backticks flow with prose; fenced blocks stay in pre wrappers */
+.compact-response-md pre {
+  max-width: 100%;
+}
+
+.compact-response-md pre code {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: inherit;
+}
+
+.compact-rich-content-cta:hover {
+  filter: brightness(0.96);
+}
+
+.compact-rich-content-cta:active {
+  transform: scale(0.98);
+}
+
+/* Compact user-message bubble. Light mode gets a soft neutral surface so the
+   bubble is visible against the white panel without going stark; dark mode keeps
+   the existing white bubble. Text/chips inherit via currentColor. */
+.compact-user-bubble {
+  background: #eceef1;
+  color: #171717;
+}
+
+[data-theme='dark'] .compact-user-bubble {
+  background: #ffffff;
+  color: #171717;
+}
+
+/* ─── Compact thinking strip ───────────────────────────────────────────────
+   Seamless, borderless status whisper for compact mode. A shimmering label
+   plus reasoning thoughts that flow upward and dissolve via a top fade mask,
+   so progress is visible without an inset "card" breaking the pill aesthetic. */
+.compact-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 4px;
+  animation: compactThinkingIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.compact-thinking__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 14px;
+}
+
+/* Live label gently breathes its opacity — calm, monochrome, no accent color. */
+.compact-thinking__headline--live {
+  animation: compactThinkingBreathe 2.4s ease-in-out infinite;
+}
+
+.compact-thinking__ellipsis {
+  animation: compactThinkingEllipsis 1.4s steps(4, end) infinite;
+}
+
+/* Latest thoughts: small, muted, faded at the top so older lines dissolve
+   upward as new text streams in. Scroll is pinned to the bottom in JS. */
+.compact-thinking__stream {
+  max-height: 42px;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  opacity: 0.92;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.4) 28%,
+    #000 70%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.4) 28%,
+    #000 70%
+  );
+}
+
+@keyframes compactThinkingIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes compactThinkingBreathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes compactThinkingEllipsis {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-thinking,
+  .compact-thinking__headline--live,
+  .compact-thinking__ellipsis {
+    animation: none;
+  }
+}
+
+/* Window chat: messages scroll under the floating composer */
+.chat-floating-input-fade {
+  height: 80px;
+  background: linear-gradient(
+    to top,
+    var(--background) 0%,
+    color-mix(in srgb, var(--background) 72%, transparent) 42%,
+    transparent 100%
+  );
+}
+
+/* Main chat message list — Virtuoso scroller track stays inside the rounded panel */
+.chat-message-scroller {
+  overflow-x: clip !important;
+  border-radius: 12px;
+}
+
+.chat-floating-composer {
+  pointer-events: none;
+}
+
+.chat-floating-composer > * {
+  pointer-events: auto;
+}
+
+[data-theme='light'] .launcher-compact-skin .chat-floating-composer .launcher-input-surface {
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.08),
+    0 8px 24px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='dark'] .launcher-compact-skin .chat-floating-composer .launcher-input-surface {
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Input card lifts off the gray shell in light mode */
+[data-theme='light'] .launcher-compact-skin .launcher-input-surface {
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='dark'] .launcher-compact-skin {
+  --card-bg: #262626;
+  --input-bg: #2a2a2a;
+  --sidebar-item-hover: #323232;
+  --sidebar-item-active: #3a3a3a;
+  --card-border: #3e3e3e;
+  --border: #3e3e3e;
+  --border-rgb: 62 62 62;
+  --card-border-rgb: 62 62 62;
+  --sidebar-border: #2b2b2b;
+  --sidebar-border-rgb: 43 43 43;
+  /* Same contained reach (~15px) as light mode so it never clips, just deeper
+     opacity because dark backdrops swallow soft shadows. */
+  --launcher-panel-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 3px 6px rgba(0, 0, 0, 0.5),
+    0 5px 10px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--launcher-panel-shadow);
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-input-surface {
+  background: var(--input-bg) !important;
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip {
+  background: #262626;
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip__icon {
+  background: #323232;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip:hover {
+  background: #2e2e2e;
+  border-color: rgba(255, 56, 60, 0.22);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-compact-skin .launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  background: #383838;
+  border-color: transparent;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip__icon {
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  box-shadow: none;
+}
+
+[data-theme='dark'] .launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+/* Launcher search — Applications block: no white hairline in dark mode */
+[data-theme='dark'] .launcher-compact-skin .launcher-apps-panel {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Launcher suggestion cards — rectangular outlined rows with rounded icon tiles */
+.launcher-suggestion-chip {
+  background: color-mix(in srgb, var(--card-bg) 42%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--foreground) 16%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.launcher-suggestion-chip__icon {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 65%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.launcher-suggestion-chip:hover {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 72%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--foreground) 14%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 8%, transparent),
+    0 4px 14px color-mix(in srgb, var(--primary) 10%, rgba(15, 23, 42, 0.08));
+}
+
+.launcher-suggestion-chip:hover .launcher-suggestion-chip__icon {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--foreground) 12%);
+  background: color-mix(in srgb, var(--primary) 8%, var(--card-bg) 92%);
+}
+
+.launcher-suggestion-chip--skeleton {
+  background: color-mix(in srgb, var(--sidebar-item-hover) 55%, transparent);
+  border: 1.5px dashed color-mix(in srgb, var(--foreground) 12%, transparent);
+  box-shadow: none;
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip__icon {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme='light'] .launcher-compact-skin .launcher-suggestion-chip:hover {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 56, 60, 0.28);
+}
+
+/* Internal sidebar — one surface with the launcher shell, no nested white card */
+.launcher-sidebar-panel {
+  box-shadow: none;
+  border: none !important;
+}
+
+/* Model selector dropdown — shadow-only, no light stroke */
+.model-selector-panel {
+  border: none !important;
+  /* Keep the dropdown short so its search header stays on-screen when it opens
+     upward inside the launcher/window chat column (which clips overflow). The
+     list scrolls. Portal callers (e.g. workflows) override this with an inline
+     max-height sized to the available viewport space. */
+  max-height: min(340px, calc(100vh - 8rem));
+}
+
+[data-theme='dark'] .launcher-compact-skin .model-selector-panel {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+/* Inside Studio the panel borrows the workflow palette so its neutral surfaces
+   and brand-accent tints (color-mix on --primary) read as the Studio red, not
+   the app's VS Code blue. Covers both wf themes. */
+[data-wf-theme] .model-selector-panel,
+.model-selector-panel[data-wf-theme] {
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: var(--wf-bg-elevated);
+  --card-border: var(--wf-border);
+  --border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
+  --primary: var(--wf-accent);
+  --primary-foreground: #ffffff;
+}
+
+[data-wf-theme='dark'] .model-selector-panel,
+.model-selector-panel[data-wf-theme='dark'] {
+  color-scheme: dark;
+  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 94%, #12141a);
+  border: 1px solid var(--wf-border) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+[data-wf-theme='dark'] .model-selector-trigger {
+  color: var(--wf-fg);
+}
+
+[data-wf-theme='dark'] .model-selector-trigger:hover,
+[data-wf-theme='dark'] .model-selector-trigger[aria-expanded='true'] {
+  background: var(--wf-hover);
+}
+
+/* Status line floated above the chat input bar (window + launcher) */
+.input-status-float {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  align-self: flex-start;
+  padding: 0 2px;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+}
+
+button.input-status-float {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 2px;
+  cursor: default;
+}
+
+button.input-status-float:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Discovery status — single tip slides in, holds, then clears */
+.discovery-status-ticker__viewport {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 4%,
+    #000 96%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 4%,
+    #000 96%,
+    transparent 100%
+  );
+}
+
+.discovery-status-ticker__tip {
+  opacity: 0;
+  transform: translateX(18px);
+}
+
+.discovery-status-ticker__tip--in {
+  animation: discoveryTipSlideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.discovery-status-ticker__segment--action {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.discovery-status-ticker__segment--action:hover {
+  opacity: 0.88;
+}
+
+@keyframes discoveryTipSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discovery-status-ticker__tip {
+    opacity: 1;
+    transform: none;
+  }
+
+  .discovery-status-ticker__tip--in {
+    animation: none;
+  }
+}
+
+/* Monochrome provider logos — invert to white on dark surfaces */
+.model-provider-logo {
+  object-fit: contain;
+}
+
+[data-theme='dark'] .model-provider-logo--invert-dark {
+  filter: brightness(0) invert(1);
+  opacity: 0.88;
+}
+
+.launcher-sidebar-divider {
+  height: 1px;
+  background: var(--sidebar-border);
+}
+
+[data-theme='dark'] .launcher-sidebar-panel {
+  box-shadow: none;
+}
+
+[data-theme='light'] .launcher-sidebar-panel {
+  box-shadow: none;
+}
+
+.launcher-sidebar-panel .launcher-sidebar-divider {
+  background: var(--sidebar-border);
+}
+
+[data-theme='dark'] .launcher-sidebar-panel .launcher-sidebar-divider {
+  background: var(--sidebar-border);
+}
+
+/* Compact thinking — red tidal swell glowing inside the pill's lower edge.
+   __inner::before → primary crest + thick bottom wash
+   __inner::after  → secondary crest (amber-tinged), half-cycle behind */
+.compact-thinking-glow {
+  --compact-thinking-glow-red: #ff383c;
+  --compact-thinking-glow-red-soft: #ff6b6b;
+  --compact-thinking-glow-amber: #ff8a4c;
+  position: relative;
+  width: 100%;
+  border-radius: 26px;
+  isolation: isolate;
+}
+
+.compact-thinking-glow__inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 26px;
+  overflow: hidden;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--compact-pill-shadow);
+}
+
+/* One continuous swell spanning the pill bottom. Two layered crests run the
+   same morphing keyframe half a cycle apart so one always follows the other.
+   Each crest grows, peaks, and collapses via animated background-size +
+   vertical scale — not a fixed blob sliding on a rail. */
+.compact-thinking-glow__inner::before,
+.compact-thinking-glow__inner::after {
+  content: '';
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  background-repeat: no-repeat;
+  border-radius: 450px;
+  pointer-events: none;
+  z-index: 0;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity, background-position, background-size;
+  animation: compact-thinking-wave 5.8s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+
+.compact-thinking-glow__inner::before {
+  bottom: -12px;
+  height: 26px;
+  background-image: radial-gradient(
+    ellipse 52% 118% at 50% 100%,
+    #FF383C 0%,
+    #FF4246 10%,
+    rgba(255, 56, 60, 0.98) 22%,
+    rgba(255, 85, 85, 0.72) 36%,
+    rgba(255, 56, 60, 0.34) 52%,
+    transparent 74%
+  ),
+  linear-gradient(
+    to top,
+    rgba(255, 44, 48, 0.82) 0%,
+    rgba(255, 56, 60, 0.58) 24%,
+    rgba(255, 75, 75, 0.28) 52%,
+    transparent 100%
+  );
+  background-size: 34% 52%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(9px) saturate(1.6);
+}
+
+.compact-thinking-glow__inner::after {
+  bottom: -10px;
+  height: 22px;
+  background-image: radial-gradient(
+    ellipse 58% 112% at 50% 100%,
+    rgba(255, 110, 55, 0.96) 0%,
+    rgba(255, 56, 60, 0.85) 24%,
+    rgba(255, 85, 80, 0.45) 44%,
+    rgba(255, 56, 60, 0.2) 56%,
+    transparent 74%
+  ),
+  linear-gradient(
+    to top,
+    rgba(255, 56, 60, 0.62) 0%,
+    rgba(255, 90, 65, 0.36) 32%,
+    rgba(255, 80, 80, 0.12) 60%,
+    transparent 100%
+  );
+  background-size: 38% 48%, 100% 100%;
+  background-position: -12% 100%, 0 100%;
+  filter: blur(11px) saturate(1.5);
+  animation-delay: -2.9s;
+}
+
+/* Compact title bump — grows from the input pill top edge as one connected surface */
+.compact-title-bump {
+  z-index: 3;
+  border-radius: 12px 12px 0 0;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow: none;
+}
+
+.compact-title-bump::before,
+.compact-title-bump::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.compact-title-bump::before {
+  left: -10px;
+  background: radial-gradient(circle at 0 0, transparent 10px, rgb(var(--compact-pill-bg)) 10px);
+}
+
+.compact-title-bump::after {
+  right: -10px;
+  background: radial-gradient(circle at 100% 0, transparent 10px, rgb(var(--compact-pill-bg)) 10px);
+}
+
+/* Crest builds as it travels: width + height swell at the peak, collapse
+   into a trough at the tail. Skew leans the face forward like real water.
+   Two layers offset 50% keep the motion continuous with no hard reset. */
+@keyframes compact-thinking-wave {
+  0%, 100% {
+    background-position: -12% 100%, 0 100%;
+    background-size: 34% 48%, 100% 100%;
+    transform: translate3d(0, 4px, 0) scaleY(0.86) skewX(-2deg);
+    opacity: 0.62;
+  }
+  14% {
+    background-position: 14% 100%, 0 100%;
+    background-size: 50% 68%, 100% 100%;
+    transform: translate3d(0, 1px, 0) scaleY(0.98) skewX(-3deg);
+    opacity: 0.84;
+  }
+  30% {
+    background-position: 34% 100%, 0 100%;
+    background-size: 66% 82%, 100% 100%;
+    transform: translate3d(0, -2px, 0) scaleY(1.1) skewX(-1.5deg);
+    opacity: 0.98;
+  }
+  44% {
+    background-position: 50% 100%, 0 100%;
+    background-size: 74% 92%, 100% 100%;
+    transform: translate3d(0, -4px, 0) scaleY(1.16) skewX(0deg);
+    opacity: 1;
+  }
+  58% {
+    background-position: 66% 100%, 0 100%;
+    background-size: 66% 80%, 100% 100%;
+    transform: translate3d(0, -2px, 0) scaleY(1.08) skewX(1.5deg);
+    opacity: 0.96;
+  }
+  74% {
+    background-position: 84% 100%, 0 100%;
+    background-size: 52% 64%, 100% 100%;
+    transform: translate3d(0, 1px, 0) scaleY(0.96) skewX(3deg);
+    opacity: 0.78;
+  }
+  88% {
+    background-position: 108% 100%, 0 100%;
+    background-size: 36% 50%, 100% 100%;
+    transform: translate3d(0, 3px, 0) scaleY(0.88) skewX(2deg);
+    opacity: 0.65;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-thinking-glow__inner::before,
+  .compact-thinking-glow__inner::after {
+    animation: none;
+    background-position: 50% 100%, 0 100%;
+    background-size: 58% 72%, 100% 100%;
+    transform: none;
+    opacity: 0.94;
+  }
+
+  .compact-thinking-glow__inner {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      var(--compact-pill-shadow);
+  }
+}
+
+/* Compact voice button — frosted glass so thinking waves bleed through */
+.compact-voice-btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 42%, transparent);
+  backdrop-filter: blur(14px) saturate(1.45);
+  -webkit-backdrop-filter: blur(14px) saturate(1.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.05),
+    0 2px 8px rgba(15, 23, 42, 0.07);
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.2s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    background-color 0.25s ease;
+}
+
+.compact-voice-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(255, 255, 255, 0) 58%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.compact-voice-btn:hover {
+  color: rgb(var(--compact-pill-fg));
+  border-color: rgb(var(--compact-pill-fg) / 0.16);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 52%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.06),
+    0 3px 10px rgba(15, 23, 42, 0.1);
+}
+
+.compact-voice-btn:active {
+  transform: scale(0.95);
+}
+
+.compact-voice-btn--active {
+  color: rgb(var(--compact-pill-fg));
+  border-color: rgba(255, 56, 60, 0.32);
+  background: color-mix(in srgb, rgba(255, 56, 60, 0.22) 55%, rgb(var(--compact-pill-bg)) 45%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 12px rgba(255, 56, 60, 0.14),
+    0 0 0 1px rgba(255, 56, 60, 0.08),
+    0 2px 10px rgba(255, 56, 60, 0.12);
+}
+
+.compact-voice-btn--active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 120%, rgba(255, 56, 60, 0.35), transparent 68%);
+  pointer-events: none;
+  z-index: 0;
+  animation: compact-voice-pulse 2.4s ease-in-out infinite;
+}
+
+/* Extra clear during thinking glow — waves read through the mic chip */
+.compact-thinking-glow .compact-voice-btn--thinking {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px) saturate(1.65);
+  -webkit-backdrop-filter: blur(10px) saturate(1.65);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -8px 16px rgba(255, 56, 60, 0.08),
+    0 0 14px rgba(255, 56, 60, 0.1);
+}
+
+[data-theme='dark'] .compact-voice-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme='dark'] .compact-voice-btn:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme='dark'] .compact-voice-btn::before {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.03) 45%,
+    rgba(255, 255, 255, 0) 60%
+  );
+}
+
+[data-theme='dark'] .compact-thinking-glow .compact-voice-btn--thinking {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -10px 18px rgba(255, 56, 60, 0.12),
+    0 0 18px rgba(255, 56, 60, 0.14);
+}
+
+@keyframes compact-voice-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-voice-btn--active::after {
+    animation: none;
+    opacity: 0.65;
+  }
+}
+
+/* Voice mode UI — border overlay + VoiceModeOverlay. Surfaces borrow the
+   compact pill palette so voice reads as an extension of compact / launcher. */
+.voice-mode-pill-wrap {
+  position: relative;
+  isolation: isolate;
+  font-family: 'General Sans', 'Inter', 'Figtree', sans-serif;
+}
+
+.voice-mode-pill {
+  min-height: 56px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 26px;
+  background: rgb(var(--compact-pill-bg));
+  box-shadow: var(--compact-pill-shadow);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  color: rgb(var(--compact-pill-fg));
+}
+
+[data-theme='light'] .voice-mode-pill {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    var(--compact-pill-shadow);
+}
+
+.voice-mode-pill__status {
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+  white-space: nowrap;
+}
+
+.voice-mode-pill__btn {
+  height: 36px;
+  width: 36px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgb(var(--compact-pill-fg-muted) / 1);
+  background: transparent;
+  border: none;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.voice-mode-pill__btn:hover {
+  color: rgb(var(--compact-pill-fg));
+  background: rgb(var(--compact-pill-fg) / 0.08);
+}
+
+.voice-mode-pill__btn:active {
+  transform: scale(0.95);
+}
+
+.voice-mode-pill__btn--danger {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.12);
+}
+
+.voice-mode-pill__btn--danger:hover {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.2);
+}
+
+.voice-mode-pill__btn--active {
+  color: #ff383c;
+  background: rgba(255, 56, 60, 0.14);
+}
+
+.voice-mode-pill__btn--active:hover {
+  background: rgba(255, 56, 60, 0.22);
+}
+
+.voice-mode-transcript {
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: rgb(var(--compact-pill-bg));
+  border: 1px solid rgb(var(--compact-pill-fg) / 0.12);
+  box-shadow: var(--compact-pill-shadow);
+  color: rgb(var(--compact-pill-fg));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+[data-theme='light'] .voice-mode-transcript {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 14px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme='dark'] .voice-mode-transcript {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.voice-mode-transcript__text {
+  font-size: 14px;
+  line-height: 1.45;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.voice-mode-transcript__text--user {
+  font-weight: 500;
+  color: rgb(var(--compact-pill-fg));
+}
+
+.voice-mode-transcript__text--assistant {
+  font-style: italic;
+  color: rgb(var(--compact-pill-fg) / 0.78);
+}
+
+.voice-mode-transcript__text--partial {
+  opacity: 0.85;
+}
+
+.voice-mode-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9999px;
+  border: 1px solid rgb(var(--compact-pill-fg) / 0.12);
+  background: color-mix(in srgb, rgb(var(--compact-pill-bg)) 55%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 4px 10px;
+  box-shadow: var(--compact-pill-shadow);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgb(var(--compact-pill-fg) / 0.88);
+}
+
+[data-theme='dark'] .voice-mode-tool-chip {
+  background: color-mix(in srgb, var(--compact-pill-hover) 72%, rgb(var(--compact-pill-bg)) 28%);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+/* Custom Theme - Uses custom gradient colors set via JS */
+:root[style*="--custom-gradient-start"] {
+  --background: var(--custom-gradient-start);
+  --foreground: var(--custom-text-color, #ffffff);
+  --foreground-muted: color-mix(in srgb, var(--custom-text-color, #ffffff) 60%, transparent);
+
+  --sidebar-bg: color-mix(in srgb, var(--custom-gradient-start) 80%, var(--custom-gradient-end) 20%);
+  --sidebar-border: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+  --sidebar-item-hover: color-mix(in srgb, var(--custom-gradient-end) 30%, transparent);
+  --sidebar-item-active: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+
+  --card-bg: color-mix(in srgb, var(--custom-gradient-start) 70%, var(--custom-gradient-end) 30%);
+  --card-border: color-mix(in srgb, var(--custom-gradient-end) 40%, transparent);
+
+  --input-bg: color-mix(in srgb, var(--custom-gradient-start) 60%, var(--custom-gradient-end) 40%);
+  --input-border: color-mix(in srgb, var(--custom-gradient-end) 50%, transparent);
+
+  --border: color-mix(in srgb, var(--custom-gradient-end) 40%, transparent);
+  --dashboard-shell-bg: color-mix(in srgb, var(--custom-gradient-start) 82%, var(--custom-gradient-end) 18%);
+  --dashboard-panel: color-mix(in srgb, var(--custom-gradient-start) 80%, rgba(255,255,255,0.1) 20%);
+  --dashboard-panel-solid: color-mix(in srgb, var(--custom-gradient-start) 84%, var(--custom-gradient-end) 16%);
+  --dashboard-panel-border: color-mix(in srgb, var(--custom-gradient-end) 28%, transparent);
+  --dashboard-sidebar-item: color-mix(in srgb, var(--custom-gradient-end) 18%, transparent);
+  --dashboard-sidebar-item-active: color-mix(in srgb, var(--custom-gradient-end) 28%, transparent);
+  --dashboard-sidebar-surface: color-mix(in srgb, var(--custom-gradient-start) 72%, transparent);
+  --dashboard-sidebar-divider: color-mix(in srgb, var(--custom-gradient-end) 32%, transparent);
+  --dashboard-sidebar-item-hover: color-mix(in srgb, var(--custom-gradient-end) 22%, transparent);
+  --dashboard-hover: color-mix(in srgb, var(--custom-gradient-end) 14%, transparent);
+  --dashboard-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
+  --dashboard-shadow-soft: 0 14px 36px rgba(15, 23, 42, 0.1);
+  --dashboard-glow: color-mix(in srgb, var(--custom-gradient-end) 28%, transparent);
+}
+
+/* Utility classes for using variables with Tailwind */
+.bg-theme-bg {
+  background-color: var(--background);
+}
+
+.bg-theme-sidebar {
+  background-color: var(--sidebar-bg);
+}
+
+.bg-theme-card {
+  background-color: var(--card-bg);
+}
+
+.bg-theme-input {
+  background-color: var(--input-bg);
+}
+
+.bg-theme-hover {
+  background-color: var(--sidebar-item-hover);
+}
+
+.bg-theme-active {
+  background-color: var(--sidebar-item-active);
+}
+
+.bg-theme-user-bubble {
+  background-color: var(--user-message-bubble-bg, var(--sidebar-item-active));
+}
+
+.text-theme-fg {
+  color: var(--foreground);
+}
+
+.text-theme-muted {
+  color: var(--foreground-muted);
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+.text-theme-bg {
+  color: var(--background);
+}
+
+.bg-theme-fg {
+  background-color: var(--foreground);
+}
+
+.border-theme-fg {
+  border-color: var(--foreground);
+}
+
+/* Opacity modifiers on manual theme utilities (bg-theme-hover/45 etc.) do not
+   compile — use these tints in dashboard / Connected Apps instead. */
+.bg-theme-bg-soft {
+  background-color: color-mix(in srgb, var(--background) 60%, transparent);
+}
+
+.bg-theme-hover-soft {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 45%, transparent);
+}
+
+.bg-theme-hover-medium {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 60%, transparent);
+}
+
+.bg-theme-hover-strong {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 70%, transparent);
+}
+
+.bg-theme-card-soft {
+  background-color: color-mix(in srgb, var(--card-bg) 40%, transparent);
+}
+
+.text-theme-muted-soft {
+  color: color-mix(in srgb, var(--foreground-muted) 60%, transparent);
+}
+
+.text-theme-muted-faint {
+  color: color-mix(in srgb, var(--foreground-muted) 70%, transparent);
+}
+
+.text-theme-fg-soft {
+  color: color-mix(in srgb, var(--foreground) 80%, transparent);
+}
+
+.text-theme-muted-half {
+  color: color-mix(in srgb, var(--foreground-muted) 50%, transparent);
+}
+
+.text-theme-muted-ghost {
+  color: color-mix(in srgb, var(--foreground-muted) 30%, transparent);
+}
+
+.bg-theme-muted-soft {
+  background-color: color-mix(in srgb, var(--foreground-muted) 40%, transparent);
+}
+
+.theme-surface-hover:hover {
+  background-color: var(--sidebar-item-hover);
+}
+
+.theme-surface-strong:hover {
+  background-color: var(--sidebar-item-active);
+}
+
+.theme-surface-soft {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 52%, transparent);
+}
+
+.theme-surface-muted {
+  background-color: color-mix(in srgb, var(--sidebar-item-hover) 28%, transparent);
+}
+
+.theme-text-hover:hover {
+  color: var(--foreground);
+}
+
+.theme-border-hover:hover {
+  border-color: var(--border);
+}
+
+/* ── Custom UI Builder chrome — theme-aware surfaces that follow app
+   `data-theme` (the builder portals to <body>, so these track light/dark).
+   Accents use Tailwind rose/semantic tints directly. ─────────────────────── */
+.uib-shell         { background-color: var(--background); color: var(--foreground); }
+.uib-surface       { background-color: var(--card-bg); }
+.uib-surface-2     { background-color: color-mix(in srgb, var(--card-bg) 55%, var(--background)); }
+.uib-sunken        { background-color: color-mix(in srgb, var(--background) 80%, #000); }
+.uib-fg            { color: var(--foreground); }
+.uib-fg-muted      { color: var(--foreground-muted); }
+.uib-fg-faint      { color: color-mix(in srgb, var(--foreground-muted) 62%, transparent); }
+.uib-border        { border-color: var(--border); }
+.uib-border-subtle { border-color: color-mix(in srgb, var(--border) 55%, transparent); }
+.uib-hover:hover    { background-color: var(--sidebar-item-hover); }
+.uib-fg-hover:hover { color: var(--foreground); }
+.uib-input         { background-color: var(--input-bg); border-color: var(--input-border); color: var(--foreground); }
+
+.border-theme {
+  border-color: var(--border);
+}
+
+.border-theme-card {
+  border-color: var(--card-border);
+}
+
+.border-theme-sidebar {
+  border-color: var(--sidebar-border);
+}
+
+/* Chain-of-thought / trace UI borders — grey-scale tokens that track theme. */
+.border-cot-subtle {
+  border-color: color-mix(in srgb, var(--foreground-muted) 16%, transparent);
+}
+
+.border-cot-faint {
+  border-color: color-mix(in srgb, var(--foreground-muted) 10%, transparent);
+}
+
+.border-t-cot-faint {
+  border-top-color: color-mix(in srgb, var(--foreground-muted) 10%, transparent);
+}
+
+.border-l-cot-rail {
+  border-left-color: color-mix(in srgb, var(--foreground-muted) 18%, transparent);
+}
+
+[data-theme='dark'] .border-cot-subtle,
+[data-theme='dark'] .border-cot-faint {
+  border-color: color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+[data-theme='dark'] .border-t-cot-faint {
+  border-top-color: color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+[data-theme='dark'] .border-l-cot-rail {
+  border-left-color: var(--border);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--primary) 65%, transparent);
+  color: var(--primary-foreground);
+}
+
+::-moz-selection {
+  background-color: color-mix(in srgb, var(--primary) 65%, transparent);
+  color: var(--primary-foreground);
+}
+
+/* Memories: dark-mode collection cards should read deeper than default card surfaces */
+[data-theme='dark'] .memory-collection-card,
+[data-theme='dark'] .memory-collection-folder {
+  background-color: #171717 !important;
+}
+
+[data-theme='dark'] .memory-collection-card:hover,
+[data-theme='dark'] .memory-collection-folder:hover {
+  background-color: #1b1b1b !important;
+}
+
+/* Memories: opened collection panel should be darker, with lighter inner elements */
+[data-theme='dark'] .memory-collection-detail {
+  background-color: #0f0f0f !important;
+}
+
+[data-theme='dark'] .memory-collection-detail .memory-collection-folder {
+  background-color: #222222 !important;
+}
+
+[data-theme='dark'] .memory-collection-detail .memory-collection-folder:hover {
+  background-color: #292929 !important;
+}
+
+[data-theme='dark'] .memory-collection-sublist {
+  background-color: #161616 !important;
+}
+
+[data-theme='dark'] .memory-collection-subitem {
+  background-color: #2a2a2a !important;
+}
+
+[data-theme='dark'] .memory-collection-subitem:hover {
+  background-color: #323232 !important;
+}
+
+/* ── Audio player — theme-aware, tactile inline music/TTS controls ─────────── */
+.audio-player__shell {
+  background: var(--card-bg);
+  border-color: var(--card-border);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent) inset,
+    0 6px 20px color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+[data-theme='dark'] .audio-player__shell {
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #ffffff 7%, transparent) inset,
+    0 10px 28px rgba(0, 0, 0, 0.38);
+}
+
+.audio-player--error {
+  background: color-mix(in srgb, var(--destructive) 8%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--destructive) 28%, var(--card-border));
+}
+
+.audio-player__waveform {
+  border-radius: 0.5rem;
+  padding: 2px 0;
+}
+
+.audio-player__icon-btn:hover {
+  background: var(--sidebar-item-hover);
+  color: var(--foreground);
+}
+
+.audio-player__volume {
+  background: color-mix(in srgb, var(--foreground-muted) 28%, transparent);
+  accent-color: var(--foreground-muted);
+}
+
+.audio-player__volume::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--foreground-muted);
+}
+
+/* Memories: dark mode active top tab should be white with black text */
+[data-theme='dark'] .memory-mode-tab.memory-mode-tab-active {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+/* Settings + dashboard: dark-mode card borders use grey scale, not white-alpha hairlines */
+[data-theme='dark'] .dashboard-card,
+[data-theme='dark'] .dashboard-card-premium,
+[data-theme='dark'] .dashboard-card-accent {
+  border-color: var(--border);
+}
+
+.memory-context-surface {
+  background-color: var(--card-bg);
+}
+
+.memory-context-card {
+  background-color: var(--card-bg);
+}
+
+[data-theme='dark'] .memory-context-surface {
+  background-color: #101010;
+}
+
+[data-theme='dark'] .memory-context-card {
+  background-color: #1c1c1c;
+}
+
+.memory-context-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.26) transparent;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.memory-context-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.42);
+}
+
+[data-theme='dark'] .memory-context-scrollbar {
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+[data-theme='dark'] .memory-context-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+[data-theme='dark'] .memory-context-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.text-primary-fg {
+  color: var(--primary-foreground);
+}
+
+.rounded-theme-card {
+  border-radius: var(--radius-card);
+}
+
+.rounded-theme-button {
+  border-radius: var(--radius-button);
+}
+
+.dashboard-root {
+  --dashboard-sidebar-width: 220px;
+  background: var(--dashboard-shell-bg);
+}
+
+.dashboard-sidebar {
+  width: var(--dashboard-sidebar-width);
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/* Figma Frame 112 — brand card with top-left red glow */
+.dashboard-sidebar-brand {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  padding: 16px 14px 18px;
+  min-height: 108px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 42%, transparent) 0%, transparent 38%),
+    radial-gradient(circle at 28% 0%, color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 48%),
+    var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  backdrop-filter: blur(2px);
+}
+
+.dashboard-sidebar-brand-glow {
+  position: absolute;
+  top: -36px;
+  left: -24px;
+  width: 160px;
+  height: 100px;
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 68% 58% at 35% 55%, color-mix(in srgb, var(--primary) 75%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 52% 48% at 62% 35%, color-mix(in srgb, var(--primary) 48%, transparent) 0%, transparent 72%),
+    radial-gradient(ellipse 40% 36% at 18% 28%, color-mix(in srgb, var(--primary) 36%, transparent) 0%, transparent 75%);
+  filter: blur(36px);
+}
+
+[data-theme='dark'] .dashboard-sidebar-brand-glow {
+  opacity: 0.62;
+}
+
+/* Figma Frame 109 — main nav column */
+.dashboard-sidebar-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  border-radius: 24px 24px 0 0;
+  background: var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  backdrop-filter: blur(2px);
+}
+
+.dashboard-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 10px 10px 8px;
+}
+
+.dashboard-sidebar-nav-group {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 2px;
+}
+
+.dashboard-sidebar-divider {
+  flex: none;
+  align-self: stretch;
+  height: 1px;
+  margin: 3px 8px;
+  background: var(--dashboard-sidebar-divider);
+  border: none;
+}
+
+.dashboard-sidebar-footer {
+  padding: 8px 10px 10px;
+  margin-top: 2px;
+  border-top: 1px solid var(--dashboard-sidebar-divider);
+}
+
+.dashboard-sidebar-item {
+  flex: none;
+  align-self: stretch;
+  background: transparent;
+  border: none;
+  color: var(--foreground-muted);
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.dashboard-sidebar-item:hover {
+  background: var(--dashboard-sidebar-item-hover);
+  color: var(--foreground);
+}
+
+.dashboard-sidebar-item:hover svg {
+  color: var(--foreground);
+}
+
+.dashboard-sidebar-item.is-active {
+  background: transparent;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.dashboard-sidebar-item.is-active:hover {
+  background: var(--dashboard-sidebar-item-hover);
+}
+
+.dashboard-sidebar-account {
+  border-radius: 12px;
+}
+
+.dashboard-sidebar-account:hover {
+  background: var(--dashboard-sidebar-item-hover);
+}
+
+/* Connected Apps — skip off-screen card paint until scrolled into view */
+.integrations-app-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 250px;
+}
+
+/* Legacy — settings / other views may still use section cards */
+.dashboard-sidebar-section {
+  background: var(--dashboard-sidebar-surface);
+  border: 0.4px solid var(--dashboard-sidebar-divider);
+  border-radius: 24px;
+  box-shadow: none;
+  backdrop-filter: blur(2px);
+}
+
+[data-theme='dark'] .dashboard-sidebar-section {
+  border-color: var(--dashboard-sidebar-divider);
+}
+
+[data-theme='light'] .dashboard-sidebar-brand-glow {
+  opacity: 0.4;
+}
+
+[data-theme='dark'] .dashboard-sidebar-brand {
+  background:
+    radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--primary) 50%, transparent) 0%, transparent 36%),
+    radial-gradient(circle at 28% 0%, color-mix(in srgb, var(--primary) 28%, transparent) 0%, transparent 46%),
+    var(--dashboard-sidebar-surface);
+}
+
+.dashboard-main-surface {
+  background: var(--dashboard-panel);
+  border: 1px solid var(--dashboard-panel-border);
+  border-radius: 30px;
+  box-shadow: var(--dashboard-shadow);
+  backdrop-filter: blur(24px);
+}
+
+.dashboard-card {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 92%, transparent);
+  border: 1px solid var(--dashboard-panel-border);
+  border-radius: 24px;
+  box-shadow: var(--dashboard-shadow-soft);
+}
+
+.dashboard-card-premium {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 90% 14%, color-mix(in srgb, var(--primary) 26%, transparent) 0%, color-mix(in srgb, var(--primary) 10%, transparent) 20%, transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--dashboard-panel-solid) 96%, black 4%) 0%, color-mix(in srgb, var(--dashboard-panel-solid) 92%, black 8%) 100%);
+}
+
+.dashboard-card-premium::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--primary) 30%, transparent) 0%, color-mix(in srgb, var(--primary) 12%, transparent) 22%, transparent 44%);
+  opacity: 0.4;
+}
+
+.dashboard-card-premium::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 42%;
+  height: 62%;
+  border-top-right-radius: inherit;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.018) 0px, rgba(255,255,255,0.018) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 4px);
+  opacity: 0.45;
+}
+
+.dashboard-card-accent {
+  position: relative;
+  overflow: hidden;
+  border-radius: 30px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--dashboard-panel-solid) 97%, transparent) 0%, color-mix(in srgb, var(--dashboard-panel-solid) 94%, transparent) 100%);
+}
+
+.dashboard-card-accent::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 104%, color-mix(in srgb, var(--primary) 26%, transparent) 0%, color-mix(in srgb, var(--primary) 10%, transparent) 26%, transparent 50%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 5px);
+  opacity: 0.5;
+}
+
+.dashboard-card-accent::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -18%;
+  width: 72%;
+  height: 52%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  border-radius: 999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 24%, transparent) 0%, transparent 68%);
+  filter: blur(32px);
+  opacity: 0.45;
+}
+
+.dashboard-card-muted {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent);
+  border: none;
+  border-radius: 18px;
+}
+
+.dashboard-pill {
+  background: var(--dashboard-sidebar-item-active);
+  border: none;
+  border-radius: 999px;
+}
+
+/* CTA buttons are white pills with off-black text (brief: "CTA buttons should be white"). */
+.dashboard-button-primary {
+  background: #ffffff;
+  color: #131210;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.dashboard-button-primary:hover:not(:disabled) {
+  background: #f1f1f0;
+}
+.dashboard-button-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dashboard-button-secondary {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 78%, transparent);
+  color: var(--foreground);
+  border: 1px solid var(--dashboard-panel-border);
+  border-radius: 999px;
+}
+
+.dashboard-button-secondary:hover,
+.dashboard-card-muted:hover {
+  background: var(--dashboard-hover);
+}
+
+/* Paired CTAs inside dashboard cards — same footprint; only secondary is outlined */
+.dashboard-card-cta {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.dashboard-card-cta:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.dashboard-card .dashboard-button-primary.dashboard-card-cta {
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.dashboard-card .dashboard-button-primary.dashboard-card-cta:hover:not(:disabled) {
+  background: #f5f5f4;
+  opacity: 1;
+}
+
+.dashboard-card .dashboard-button-secondary.dashboard-card-cta {
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 88%, transparent);
+}
+
+.dashboard-card .dashboard-button-secondary.dashboard-card-cta:hover:not(:disabled) {
+  background: var(--dashboard-hover);
+  transform: none;
+}
+
+.dashboard-refresh-button {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 70%, transparent);
+  border: none;
+  color: var(--foreground);
+  border-radius: 999px;
+  box-shadow: var(--dashboard-shadow-soft);
+}
+
+.dashboard-refresh-button:hover {
+  background: var(--dashboard-hover);
+}
+
+/* ─── Brand palette + unified chrome (dashboard window only) ──────────────────
+   Scoped to .dashboard-root so the launcher / chat windows keep their palette,
+   and so the user's custom theme is never clobbered. */
+.dashboard-root {
+  --primary: #ff1727;            /* brand red — accents, active states, CTAs */
+  --primary-rgb: 255 23 39;
+  --primary-foreground: #ffffff;
+}
+
+/* Brand palette — exact values: off-black #131210, light grey #E5E5E5, red #FF1727 */
+:root:not([style*="--custom-gradient-start"])[data-theme='light'] .dashboard-root {
+  --foreground: #131210;                          /* off-black */
+  --dashboard-shell-bg: #e5e5e5;                  /* light grey canvas */
+  --dashboard-panel-solid: #ffffff;
+  --dashboard-panel: rgba(255, 255, 255, 0.86);
+  --dashboard-panel-border: #e5e5e5;              /* light-grey hairline */
+  --dashboard-hover: rgba(19, 18, 16, 0.05);
+  --dashboard-glow: rgba(255, 23, 39, 0.05);      /* faint red accent glow */
+}
+
+:root:not([style*="--custom-gradient-start"])[data-theme='dark'] .dashboard-root {
+  --dashboard-shell-bg: #000000;
+  --dashboard-panel-solid: #1c1b18;
+  --dashboard-panel: rgba(22, 21, 19, 0.96);
+  --dashboard-panel-border: #3e3e3e; /* VS Code grey — matches --border / --card-border */
+  --dashboard-glow: rgba(255, 23, 39, 0.07);      /* faint red accent glow */
+}
+
+/* The single top bar that holds page context + status + CTAs */
+.dashboard-topbar {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 2.6rem 1.5rem 0.85rem;   /* top clears the 40px window drag strip */
+  border-bottom: none;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+/* Floating page icon — soft brand gradient + glow for depth */
+.dashboard-topbar-icon {
+  position: relative;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.85rem;
+  color: var(--primary-foreground);
+  background:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--primary) 92%, white 8%) 0%,
+      color-mix(in srgb, var(--primary) 58%, black 12%) 100%);
+  box-shadow:
+    0 10px 22px color-mix(in srgb, var(--primary) 30%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.dashboard-topbar-icon::after {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 45%, transparent) 0%, transparent 70%);
+  filter: blur(14px);
+  opacity: 0.7;
+}
+
+/* Status pills */
+.dashboard-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 72%, transparent);
+  border: none;
+  color: var(--foreground-muted);
+}
+
+.dashboard-badge--accent {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+  color: color-mix(in srgb, var(--primary) 80%, var(--foreground) 20%);
+}
+
+.dashboard-badge-dot {
+  height: 0.4rem;
+  width: 0.4rem;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+}
+
+/* Solid brand pill (matches the reference's status chip) */
+.dashboard-badge--solid {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primary-foreground);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
+/* Brand wordmark chip in the top bar */
+.dashboard-brand-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.85rem;
+  width: 1.85rem;
+  flex-shrink: 0;
+  border-radius: 0.7rem;
+  color: var(--primary-foreground);
+  background:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--primary) 92%, white 8%) 0%,
+      color-mix(in srgb, var(--primary) 58%, black 12%) 100%);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+/* Segmented control — like the Elements / Symbol toggle in the reference */
+.dashboard-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 60%, transparent);
+  border: 1px solid var(--dashboard-panel-border);
+}
+.dashboard-segment-item {
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dashboard-segment-item:hover {
+  color: var(--foreground);
+}
+.dashboard-segment-item.is-active {
+  color: var(--foreground);
+  background: var(--dashboard-panel-solid);
+  box-shadow: var(--dashboard-shadow-soft);
+}
+
+/* Vibrant soft RED gradient surface for floating, white icon tiles */
+.dashboard-feature-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--primary) 88%, white 12%) 0%, transparent 52%),
+    radial-gradient(circle at 84% 24%, color-mix(in srgb, var(--primary) 70%, black 8%) 0%, transparent 54%),
+    radial-gradient(circle at 60% 96%, color-mix(in srgb, var(--primary) 55%, black 18%) 0%, transparent 56%),
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 92%, white 8%) 0%, var(--primary) 52%, color-mix(in srgb, var(--primary) 70%, black 22%) 100%);
+}
+.dashboard-feature-tile--brand {
+  background:
+    radial-gradient(circle at 20% 16%, color-mix(in srgb, var(--primary) 92%, white 8%) 0%, transparent 54%),
+    radial-gradient(circle at 84% 22%, color-mix(in srgb, var(--primary) 62%, black 10%) 0%, transparent 56%),
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 88%, white 12%) 0%, var(--primary) 55%, color-mix(in srgb, var(--primary) 66%, black 24%) 100%);
+}
+
+/* White floating icon tile that sits on a feature gradient */
+.dashboard-icon-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(17, 17, 26, 0.16), 0 2px 6px rgba(17, 17, 26, 0.08);
+}
+
+[data-theme='dark'] .dashboard-card {
+  background: color-mix(in srgb, var(--dashboard-panel-solid) 94%, transparent);
+}
+
+[data-theme='dark'] .dashboard-card-muted,
+[data-theme='dark'] .dashboard-button-secondary,
+[data-theme='dark'] .dashboard-refresh-button,
+[data-theme='dark'] .dashboard-pill {
+  background: color-mix(in srgb, #171717 94%, transparent);
+}
+
+:root:not([style*="--custom-gradient-start"])[data-theme='dark'] .dashboard-root {
+  --dashboard-sidebar-item-active: #262626;
+  --dashboard-sidebar-item-hover: #262626;
+  --dashboard-sidebar-surface: rgba(23, 23, 23, 0.5);
+  --dashboard-sidebar-divider: #404040;
+}
+
+:root:not([style*="--custom-gradient-start"])[data-theme='light'] .dashboard-root {
+  --dashboard-sidebar-item-active: #f5f5f5;
+  --dashboard-sidebar-item-hover: #eeeeee;
+  --dashboard-sidebar-surface: rgba(255, 255, 255, 0.82);
+  --dashboard-sidebar-divider: #e5e5e5;
+}
+
+.font-stuard {
+  font-family: 'Bricolage Grotesque', 'Figtree', 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ========================================================================
+   Stuard Studio Theme Variables
+   Scoped via [data-wf-theme] on the workflow root container.
+   ======================================================================== */
+
+[data-wf-theme='light'] {
+  /* Neutral studio surfaces + a subtle brand-red accent — mirrors the
+     compact / launcher / window overlay skin (no VS Code blue). */
+  --wf-bg:            #eef1f5;
+  --wf-bg-elevated:   #ffffff;
+  --wf-bg-sunken:     #e4e8ee;
+  --wf-bg-glass:      rgba(255,255,255,0.92);
+  --wf-bg-overlay:    rgba(15,23,42,0.04);
+  --wf-fg:            #1a1a1a;
+  --wf-fg-muted:      #64748b;
+  --wf-fg-faint:      #94a3b8;
+  --wf-border:        rgba(15,23,42,0.10);
+  --wf-border-subtle: rgba(15,23,42,0.06);
+  --wf-hover:         #e8ecf2;
+  --wf-canvas:        #f4f6f9;
+  --wf-canvas-dot:    rgba(15,23,42,0.14);
+  --wf-node-bg:       #ffffff;
+  --wf-node-border:   rgba(15,23,42,0.10);
+  --wf-node-text:     #1e293b;
+  --wf-node-sub:      #64748b;
+  --wf-node-handle:   #111827;
+  --wf-accent:        #ff383c;
+  --wf-accent-soft:   rgba(255,56,60,0.08);
+  --wf-glass-blur:    blur(20px);
+  --wf-panel-bg:      rgba(255,255,255,0.92);
+  --wf-panel-border:  rgba(15,23,42,0.10);
+  --wf-input-bg:      #ffffff;
+  --wf-input-border:  rgba(15,23,42,0.12);
+  --wf-chip-bg:       transparent;
+  --wf-chip-border:   rgba(15,23,42,0.10);
+  --wf-wire-default:  #94a3b8;
+  --wf-wire-icon-bg:  #ffffff;
+  --wf-wire-icon-border: #cbd5e1;
+  --wf-wire-icon-fg:  #64748b;
+  --wf-wire-handle-bg: #ffffff;
+  --primary:            #ff383c;
+  --primary-foreground: #ffffff;
+  /* App theme-* utilities (ModelSelector, bots-ui modals, etc.) → workflow
+     palette. Portaled surfaces re-declare data-wf-theme so these reach them. */
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: var(--wf-bg-elevated);
+  --card-border: var(--wf-border);
+  --card-border-rgb: 15 23 42;
+  --border-rgb: 15 23 42;
+  --sidebar-border-rgb: 15 23 42;
+  --dashboard-panel-border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
+}
+
+[data-wf-theme='dark'] {
+  color-scheme: dark;
+  /* Warm-neutral off-black surfaces (matches the launcher pill #171717 family)
+     with a subtle brand-red accent — no cool VS Code blue. */
+  --wf-bg:            #171717;
+  --border:           #2b2b2b;
+  --border-rgb:       43 43 43;
+  --sidebar-border:   #2b2b2b;
+  --sidebar-border-rgb: 43 43 43;
+  --wf-bg-elevated:   #1e1e1e;
+  --wf-bg-sunken:     #0f0f0f;
+  --wf-bg-glass:      rgba(30,30,30,0.72);
+  --wf-bg-overlay:    rgba(255,255,255,0.04);
+  --wf-fg:            #f5f5f5;
+  --wf-fg-muted:      rgba(255,255,255,0.55);
+  --wf-fg-faint:      rgba(255,255,255,0.32);
+  --wf-border:        #3e3e3e;
+  --wf-border-subtle: #2b2b2b;
+  --wf-hover:         rgba(255,255,255,0.06);
+  --wf-canvas:        #0d0d0d;
+  --wf-canvas-dot:    rgba(255,255,255,0.06);
+  --wf-node-bg:       #141414;
+  --wf-node-border:   #3e3e3e;
+  --wf-node-text:     #f1f5f9;
+  --wf-node-sub:      rgba(255,255,255,0.50);
+  --wf-node-handle:   #141414;
+  --wf-accent:        #ff4a4e;
+  --wf-accent-soft:   rgba(255,74,78,0.12);
+  --wf-glass-blur:    blur(24px);
+  --wf-panel-bg:      rgba(28,28,28,0.78);
+  --wf-panel-border:  #3e3e3e;
+  --wf-input-bg:      #1e1e1e;
+  --wf-input-border:  #3e3e3e;
+  --wf-chip-bg:       transparent;
+  --wf-chip-border:   #3e3e3e;
+  --wf-wire-default:  #6b7280;
+  --wf-wire-icon-bg:  #141414;
+  --wf-wire-icon-border: #4b5563;
+  --wf-wire-icon-fg:  #9ca3af;
+  --wf-wire-handle-bg: #141414;
+  --primary:            #ff4a4e;
+  --primary-foreground: #ffffff;
+  /* App theme-* utilities (ModelSelector, bots-ui modals, etc.) → workflow
+     palette. Portaled surfaces re-declare data-wf-theme so these reach them. */
+  --foreground: var(--wf-fg);
+  --foreground-muted: var(--wf-fg-muted);
+  --background: var(--wf-bg);
+  --card-bg: color-mix(in srgb, var(--wf-bg-elevated) 92%, #0d0d0f);
+  --card-border: var(--wf-border);
+  --card-border-rgb: 62 62 62;
+  --dashboard-panel-border: var(--wf-border);
+  --sidebar-item-hover: var(--wf-hover);
+  --sidebar-item-active: color-mix(in srgb, var(--wf-accent) 12%, var(--wf-hover));
+  --input-bg: var(--wf-input-bg);
+  --input-border: var(--wf-input-border);
+}
+
+/* ========================================================================
+   Stuard Notification Overlay — compact-pill surfaces (matches launcher)
+   ======================================================================== */
+
+.stuard-notification-shell {
+  --background: rgb(var(--compact-pill-bg));
+  --foreground: rgb(var(--compact-pill-fg));
+  --foreground-muted: rgb(var(--compact-pill-fg-muted));
+  --border: rgb(var(--compact-pill-fg) / 0.1);
+  --primary: #ff383c;
+  font-family: 'General Sans', 'Figtree', 'Plus Jakarta Sans', 'Inter', sans-serif;
+}
+
+.stuard-notification-card {
+  background: rgb(var(--compact-pill-bg));
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  border-radius: 26px;
+  box-shadow: var(--compact-pill-shadow);
+  animation: stuard-notification-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes stuard-notification-in {
+  from { opacity: 0; translate: 0 8px; }
+  to   { opacity: 1; translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stuard-notification-card { animation: none; }
+}
+
+.stuard-notification-inner {
+  padding: 14px 16px 15px;
+}
+
+.stuard-notification-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.stuard-notification-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  color: rgb(var(--compact-pill-fg));
+}
+
+.stuard-notification-body {
+  margin-top: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: rgb(var(--compact-pill-fg-muted));
+}
+
+.stuard-notification-body strong {
+  color: rgb(var(--compact-pill-fg));
+  font-weight: 600;
+}
+
+.stuard-notification-body code {
+  background: rgb(var(--compact-pill-fg) / 0.06);
+  border: none;
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: rgb(var(--compact-pill-fg) / 0.9);
+}
+
+.stuard-notification-body pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgb(var(--compact-pill-fg) / 0.05);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.08);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-x: auto;
+}
+
+.stuard-notification-dismiss {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgb(var(--compact-pill-fg-muted));
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.stuard-notification-dismiss:hover {
+  color: rgb(var(--compact-pill-fg));
+  background: rgb(var(--compact-pill-fg) / 0.07);
+}
+
+.stuard-notification-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stuard-notification-btn {
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease;
+}
+
+.stuard-notification-btn:active {
+  transform: scale(0.98);
+}
+
+.stuard-notification-btn-primary {
+  background: rgb(var(--compact-pill-fg));
+  color: rgb(var(--compact-pill-bg));
+}
+
+.stuard-notification-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.stuard-notification-btn-secondary {
+  background: rgb(var(--compact-pill-fg) / 0.06);
+  color: rgb(var(--compact-pill-fg) / 0.88);
+}
+
+.stuard-notification-btn-secondary:hover {
+  background: rgb(var(--compact-pill-fg) / 0.1);
+  color: rgb(var(--compact-pill-fg));
+}
+
+.stuard-notification-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stuard-notification-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  background: rgb(var(--compact-pill-fg) / 0.05);
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.1);
+  border-radius: 12px;
+  color: rgb(var(--compact-pill-fg));
+  transition: border-color 120ms ease;
+}
+
+.stuard-notification-input::placeholder {
+  color: rgb(var(--compact-pill-fg-muted));
+}
+
+.stuard-notification-input:focus {
+  outline: none;
+  border-color: rgb(var(--compact-pill-fg) / 0.2);
+}
+
+.stuard-notification-input-submit {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 34px;
+  padding: 0 12px;
+}
+
+.stuard-notification-embed {
+  margin-top: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  border-radius: 14px;
+  border: 0.5px solid rgb(var(--compact-pill-fg) / 0.08);
+  background: rgb(var(--compact-pill-fg) / 0.04);
+  padding: 8px;
+}
+
+.stuard-notification-progress-track {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgb(var(--compact-pill-fg) / 0.08);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stuard-notification-progress {
+  height: 100%;
+  border-radius: 999px;
+  background: rgb(var(--compact-pill-fg) / 0.28);
+}
+
+.stuard-notification-link {
+  color: rgb(var(--compact-pill-fg));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: rgb(var(--compact-pill-fg-muted) / 0.5);
+}
+
+.stuard-notification-expand {
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgb(var(--compact-pill-fg-muted));
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.stuard-notification-expand:hover {
+  color: rgb(var(--compact-pill-fg));
+}
+
+.stuard-notification-has-progress .stuard-notification-inner {
+  padding-bottom: 18px;
+}
+
+.notification-container.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.notification-container.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground-muted, #64748b) 35%, transparent);
+  border-radius: 999px;
+}
+
+/* Workflow theme utility classes */
+.wf-bg            { background-color: var(--wf-bg); }
+.wf-bg-elevated   { background-color: var(--wf-bg-elevated); }
+.wf-bg-overlay    { background: var(--wf-bg-overlay); }
+.wf-bg-glass      { background: var(--wf-bg-glass); backdrop-filter: var(--wf-glass-blur); }
+.wf-bg-canvas     { background-color: var(--wf-canvas); }
+.wf-fg            { color: var(--wf-fg); }
+.wf-fg-muted      { color: var(--wf-fg-muted); }
+.wf-fg-faint      { color: var(--wf-fg-faint); }
+.wf-border        { border-color: var(--wf-border); }
+.wf-border-subtle { border-color: var(--wf-border-subtle); }
+.wf-panel         { background: var(--wf-panel-bg); border-color: var(--wf-panel-border); }
+
+.wf-dot-grid {
+  background-image: radial-gradient(var(--wf-canvas-dot) 1.5px, transparent 1.5px);
+}
+
+.wf-canvas-content {
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.wf-node-card {
+  background: var(--wf-node-bg);
+  border-color: var(--wf-node-border);
+  color: var(--wf-node-text);
+}
+
+.wf-node-border {
+  border-color: var(--wf-node-border);
+}
+
+.wf-node-header {
+  border-bottom-color: var(--wf-border-subtle);
+}
+
+.wf-node-title {
+  color: var(--wf-node-text);
+}
+
+.wf-node-subtitle {
+  color: var(--wf-node-sub);
+}
+
+.wf-node-arg {
+  background: color-mix(in srgb, var(--wf-node-text) 4%, transparent);
+  border-color: var(--wf-border-subtle);
+}
+
+.wf-node-arg-key {
+  color: color-mix(in srgb, var(--wf-node-sub) 75%, transparent);
+}
+
+.wf-node-arg-value,
+.wf-node-empty {
+  color: var(--wf-node-sub);
+}
+
+.wf-node-handle-ring {
+  border-color: var(--wf-node-handle);
+}
+
+.wf-node-handle-idle {
+  background: color-mix(in srgb, var(--wf-node-handle) 72%, var(--wf-bg));
+  color: color-mix(in srgb, var(--wf-node-text) 55%, transparent);
+}
+
+.wf-node-handle-idle:hover {
+  background: var(--wf-accent);
+  color: #fff;
+}
+
+.wf-overlay-chip {
+  background: color-mix(in srgb, var(--wf-panel-bg) 88%, transparent);
+  border: 1px solid var(--wf-panel-border);
+  color: var(--wf-fg);
+  backdrop-filter: var(--wf-glass-blur);
+}
+
+.wf-overlay-chip-strong {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 94%, transparent);
+  border: 1px solid var(--wf-panel-border);
+  color: var(--wf-fg);
+  backdrop-filter: var(--wf-glass-blur);
+}
+
+.wf-overlay-btn {
+  color: var(--wf-fg-muted);
+}
+
+.wf-overlay-btn:hover {
+  color: var(--wf-fg);
+  background: var(--wf-hover);
+}
+
+.wf-overlay-divider {
+  background: var(--wf-border);
+}
+
+.wf-sidebar-btn {
+  color: var(--wf-fg-muted);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.wf-sidebar-btn:hover {
+  color: var(--wf-fg);
+  background: var(--wf-hover);
+  border-color: var(--wf-border-subtle);
+}
+
+.wf-sidebar-btn-active {
+  color: var(--wf-fg);
+  background: color-mix(in srgb, var(--wf-fg) 8%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow: none;
+}
+
+.wf-resize-handle:hover {
+  background: color-mix(in srgb, var(--wf-fg) 14%, transparent);
+}
+
+.wf-menu {
+  background: color-mix(in srgb, var(--wf-panel-bg) 95%, transparent);
+  border: 1px solid var(--wf-panel-border);
+  color: var(--wf-fg);
+  backdrop-filter: var(--wf-glass-blur);
+}
+
+.wf-menu-header {
+  color: var(--wf-fg-faint);
+  border-bottom: 1px solid var(--wf-border-subtle);
+}
+
+.wf-menu-item {
+  color: var(--wf-fg-muted);
+}
+
+.wf-menu-item:hover {
+  color: var(--wf-fg);
+  background: var(--wf-hover);
+}
+
+.wf-menu-item-muted {
+  color: var(--wf-fg-faint);
+}
+
+.wf-menu-item-danger {
+  color: #ef4444;
+}
+
+.wf-menu-item-danger:hover {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+}
+
+.wf-menu-divider {
+  background: var(--wf-border-subtle);
+}
+
+.wf-menu-shortcut {
+  color: var(--wf-fg-faint);
+  background: color-mix(in srgb, var(--wf-fg) 8%, transparent);
+  border: 1px solid var(--wf-border-subtle);
+}
+
+.wf-tab {
+  color: var(--wf-fg-muted);
+  border: 1px solid transparent;
+}
+
+.wf-tab:hover {
+  color: var(--wf-fg);
+  background: var(--wf-hover);
+}
+
+.wf-tab-active {
+  color: var(--wf-fg);
+  background: color-mix(in srgb, var(--wf-bg-elevated) 92%, transparent);
+  border: 1px solid var(--wf-border);
+}
+
+.wf-breadcrumb-bar {
+  background: color-mix(in srgb, var(--wf-accent) 12%, transparent);
+  border-bottom: 1px solid var(--wf-border-subtle);
+}
+
+.wf-breadcrumb-sep {
+  color: var(--wf-fg-faint);
+}
+
+.wf-breadcrumb-text {
+  color: var(--wf-fg-muted);
+}
+
+.wf-breadcrumb-current {
+  color: var(--wf-fg);
+}
+
+.wf-header-action-btn {
+  color: var(--wf-fg);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.wf-header-action-btn:hover {
+  background: var(--wf-hover);
+  border-color: var(--wf-border-subtle);
+}
+
+.wf-header-action-btn-split {
+  border-left: 1px solid var(--wf-border-subtle);
+}
+
+/* Primary action = calm monochrome (off-black in light, near-white in dark).
+   Brand red is reserved for hover/accent whispers, not solid fills. */
+.wf-primary-btn {
+  background: var(--wf-fg);
+  color: var(--wf-bg);
+  border: 1px solid transparent;
+  transition: opacity 0.18s ease, transform 0.12s ease;
+}
+
+.wf-primary-btn:hover {
+  opacity: 0.9;
+}
+
+.wf-primary-btn:active {
+  transform: translateY(0.5px);
+}
+
+.wf-surface-muted {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 84%, transparent);
+  border: 1px solid var(--wf-border-subtle);
+}
+
+.wf-input {
+  background: var(--wf-input-bg);
+  border: 1px solid var(--wf-input-border);
+  color: var(--wf-fg);
+}
+
+.wf-input::placeholder {
+  color: var(--wf-fg-faint);
+}
+
+/* Tool panel: better placeholder contrast in light mode */
+[data-wf-theme='light'] [data-onboarding="node-palette"] .wf-input::placeholder {
+  color: var(--wf-fg-muted);
+}
+
+.wf-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--wf-accent) 55%, var(--wf-input-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--wf-accent) 28%, transparent);
+}
+
+.wf-hover-bg:hover {
+  background: var(--wf-hover);
+}
+
+.wf-hover-fg:hover {
+  color: var(--wf-fg);
+}
+
+/* ── Studio overlay-language surfaces ─────────────────────────────────────
+   Mirror the compact / launcher suggestion-chip aesthetic: frosted neutral
+   cards on neutral surfaces, with the brand red kept to a *subtle* hover /
+   active accent rather than a dominant fill. */
+.wf-accent-fg   { color: var(--wf-accent); }
+.wf-accent-soft-bg { background: var(--wf-accent-soft); }
+
+.wf-card {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 92%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--wf-fg) 5%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.wf-card-interactive {
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.wf-card-interactive:hover {
+  background: color-mix(in srgb, var(--wf-bg-elevated) 98%, transparent);
+  border-color: color-mix(in srgb, var(--wf-accent) 50%, var(--wf-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wf-accent) 32%, transparent);
+  transform: translateY(-1px);
+}
+
+.wf-card-active {
+  border-color: color-mix(in srgb, var(--wf-accent) 45%, var(--wf-border)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wf-accent) 14%, transparent);
+}
+
+/* Home-hub feature tile — neutral glass surface, brand red shows only on the
+   icon chip + on hover, never as a heavy gradient fill. */
+.wf-feature-tile {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--wf-bg-elevated) 90%, transparent);
+  border: 1px solid var(--wf-border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--wf-fg) 5%, transparent),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  backdrop-filter: var(--wf-glass-blur);
+  -webkit-backdrop-filter: var(--wf-glass-blur);
+  transition: background-color 0.22s ease, border-color 0.22s ease,
+    box-shadow 0.22s ease, transform 0.22s ease;
+}
+
+.wf-feature-tile:hover {
+  border-color: color-mix(in srgb, var(--wf-accent) 52%, var(--wf-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wf-accent) 34%, transparent);
+  transform: translateY(-1px);
+}
+
+/* Icon chip stays neutral at rest; red only blooms on hover (like the
+   launcher suggestion-chip icon). */
+.wf-feature-tile__icon {
+  background: color-mix(in srgb, var(--wf-fg) 6%, transparent);
+  border: 1px solid var(--wf-border-subtle);
+  color: var(--wf-fg-muted);
+  transition: background-color 0.22s ease, border-color 0.22s ease, color 0.22s ease, transform 0.22s ease;
+}
+
+.wf-feature-tile:hover .wf-feature-tile__icon {
+  background: color-mix(in srgb, var(--wf-accent) 10%, var(--wf-bg-elevated));
+  border-color: color-mix(in srgb, var(--wf-accent) 26%, var(--wf-border));
+  color: var(--wf-accent);
+  transform: scale(1.04);
+}
+
+/* Onboarding spotlight — uses brand accent, inherits theme via data-wf-theme on portal root. */
+.wf-spotlight-ring {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 16px;
+  z-index: 60;
+  animation: wf-spotlight-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes wf-spotlight-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--wf-accent) 88%, white),
+      0 0 0 6px color-mix(in srgb, var(--wf-accent) 22%, transparent),
+      0 0 32px 8px color-mix(in srgb, var(--wf-accent) 28%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--wf-accent),
+      0 0 0 10px color-mix(in srgb, var(--wf-accent) 12%, transparent),
+      0 0 48px 16px color-mix(in srgb, var(--wf-accent) 38%, transparent);
+  }
+}
+
+/* Neutral icon chip for list/card rows — quiet by default. */
+.wf-icon-chip {
+  background: color-mix(in srgb, var(--wf-fg) 6%, transparent);
+  color: var(--wf-fg-muted);
+}
+
+/* Brand-red accent text/icon (used by marketplace + publish surfaces). */
+.wf-accent-text { color: var(--wf-accent); }
+.wf-accent-chip {
+  background: color-mix(in srgb, var(--wf-accent) 12%, transparent);
+  color: var(--wf-accent);
+  border: 1px solid color-mix(in srgb, var(--wf-accent) 22%, transparent);
+}
+.wf-accent-soft-bg {
+  background: color-mix(in srgb, var(--wf-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--wf-accent) 18%, transparent);
+}
+
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* When the overlay window is maximized, the floating rounded card should
+   collapse into a flat full-screen surface. We target nested cards by attribute
+   instead of threading the maximized state through every component. */
+[data-overlay-maximized='true'] .rounded-\[28px\],
+[data-overlay-maximized='true'] .rounded-r-\[28px\] {
+  border-radius: 0 !important;
+}
+[data-overlay-maximized='true'] [class*='shadow'] {
+  box-shadow: none !important;
+}
+/* The launcher panel's elevation lives on a class without "shadow" in its name,
+   so drop it explicitly when the window is maximized and fills the screen. */
+[data-overlay-maximized='true'] .launcher-compact-skin {
+  box-shadow: none !important;
+}
+
+/* ─── Workspace (app mode) ───────────────────────────────────────────────────
+   Reads as a real desktop application window: edge-to-edge surface with only a
+   slight corner rounding — no hairline frame or floating-card shadow. Flattens
+   when maximized. */
+.workspace-app-shell.launcher-compact-skin {
+  border-radius: 10px;
+  border: none;
+  overflow: hidden;
+  height: 100%;
+  min-height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+[data-theme='light'] .workspace-app-shell.launcher-compact-skin {
+  box-shadow: none;
+}
+
+[data-theme='dark'] .workspace-app-shell.launcher-compact-skin {
+  border: none;
+}
+
+[data-overlay-maximized='true'] .workspace-app-shell {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* App-chrome title bar: a slightly elevated tone over the body, with a crisp
+   bottom hairline and a 1px top highlight, like a native window caption. */
+.workspace-app-titlebar {
+  background: color-mix(in srgb, var(--card-bg) 58%, var(--background) 42%);
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+[data-theme='dark'] .workspace-app-titlebar {
+  background: color-mix(in srgb, var(--card-bg) 52%, var(--background) 48%);
+  border-bottom-color: var(--border);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.workspace-sidebar-surface {
+  background: color-mix(in srgb, var(--card-bg) 72%, var(--background) 28%);
+}
+
+[data-theme='light'] .workspace-sidebar-surface {
+  background: color-mix(in srgb, #ffffff 88%, rgb(var(--compact-pill-bg)) 12%);
+}
+
+[data-theme='dark'] .workspace-sidebar-surface {
+  background: color-mix(in srgb, var(--card-bg) 65%, var(--background) 35%);
+}
+
+.workspace-main-panel {
+  background: var(--background);
+}
+
+.workspace-files-column {
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--background) 20%);
+  border-left: 1px solid var(--border);
+}
+
+.workspace-resize-handle {
+  position: relative;
+  width: 5px;
+  margin: 0 -2px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.workspace-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: background-color 0.15s ease, width 0.15s ease;
+}
+
+.workspace-resize-handle:hover::before,
+.workspace-resize-handle:active::before {
+  width: 2px;
+  background: color-mix(in srgb, var(--primary) 55%, var(--border));
+}
+
+[data-workspace-app='true'] .launcher-compact-skin {
+  /* Inner chat panel: flat on the workspace canvas, not a nested floating card */
+  box-shadow: none;
+  border: none;
+}
+
+/* Window drag regions */
+.drag {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom thin scrollbars - Minimal & Clean */
+.scrollbar-minimal {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-minimal::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+.scrollbar-minimal:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.4);
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb:active {
+  background-color: rgba(148, 163, 184, 0.6);
+}
+
+/* Dark variant */
+.dark .scrollbar-minimal,
+[data-theme='dark'] .scrollbar-minimal {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.dark .scrollbar-minimal::-webkit-scrollbar-thumb,
+[data-theme='dark'] .scrollbar-minimal::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.dark .scrollbar-minimal:hover::-webkit-scrollbar-thumb,
+[data-theme='dark'] .scrollbar-minimal:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide scrollbar completely */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hidden .simplebar-track {
+  display: none !important;
+}
+
+.scrollbar-hidden .simplebar-scrollbar {
+  display: none !important;
+}
+
+/* GenUI Component Scrollbar - Sleek & Minimal */
+.genui-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary, #ff383c) transparent;
+}
+
+.genui-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.genui-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.genui-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--primary, #ff383c) 50%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  transition: all 0.2s ease;
+}
+
+.genui-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg,
+      color-mix(in srgb, var(--primary, #ff383c) 60%, transparent),
+      color-mix(in srgb, var(--primary, #ff383c) 80%, transparent));
+}
+
+.genui-scrollbar::-webkit-scrollbar-thumb:active {
+  background: var(--primary, #ff383c);
+}
+
+/* GenUI Scrollbar - Dark variant */
+[data-theme='dark'] .genui-scrollbar {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+[data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.15),
+      rgba(255, 255, 255, 0.25));
+}
+
+[data-theme='dark'] .genui-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.25),
+      rgba(255, 255, 255, 0.35));
+}
+
+[data-theme='dark'] .genui-scrollbar::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* GenUI component base styles */
+.genui-card {
+  background-color: var(--card-bg);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.genui-card-header {
+  background-color: color-mix(in srgb, var(--background) 50%, var(--card-bg) 50%);
+  border-color: var(--border);
+}
+
+.genui-input {
+  background-color: var(--input-bg);
+  border-color: var(--input-border);
+  color: var(--foreground);
+}
+
+.genui-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ─── Tool Call Glow Sweep ─── */
+@keyframes toolGlowSweep {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes toolGlowBar {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0.6;
+  }
+}
+
+@keyframes toolFadeComplete {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tool-glow-sweep {
+  background: linear-gradient(
+    90deg,
+    var(--foreground) 0%,
+    var(--foreground) 35%,
+    var(--primary, #ff383c) 50%,
+    var(--foreground) 65%,
+    var(--foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: toolGlowSweep 2s ease-in-out infinite;
+}
+
+.tool-glow-bar {
+  position: relative;
+  overflow: hidden;
+}
+
+.tool-glow-bar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--primary, #ff383c) 40%,
+    color-mix(in srgb, var(--primary, #ff383c) 70%, var(--foreground)) 50%,
+    var(--primary, #ff383c) 60%,
+    transparent 100%
+  );
+  animation: toolGlowBar 1.8s ease-in-out infinite;
+  border-radius: 2px;
+}
+
+.tool-complete-fade {
+  animation: toolFadeComplete 0.3s ease-out both;
+}
+
+/* Radix Dropdown Animations */
+@keyframes slideUpAndFade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideRightAndFade {
+  from {
+    opacity: 0;
+    transform: translateX(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideDownAndFade {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideLeftAndFade {
+  from {
+    opacity: 0;
+    transform: translateX(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.DropdownContent {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+}
+
+.DropdownContent[data-side="top"] {
+  animation-name: slideDownAndFade;
+}
+
+.DropdownContent[data-side="right"] {
+  animation-name: slideLeftAndFade;
+}
+
+.DropdownContent[data-side="bottom"] {
+  animation-name: slideUpAndFade;
+}
+
+.DropdownContent[data-side="left"] {
+  animation-name: slideRightAndFade;
+}
+
+/* Workflow Execution Flow Animations */
+@keyframes flowPulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 20px 10px rgba(16, 185, 129, 0.2);
+    transform: scale(1.02);
+  }
+}
+
+@keyframes wireFlow {
+  0% {
+    stroke-dashoffset: 100;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes streamFlow {
+  0% {
+    stroke-dashoffset: 20;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes glowPulse {
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 2px rgba(16, 185, 129, 0.5));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.8));
+  }
+}
+
+@keyframes stepRunning {
+  0% {
+    border-color: rgb(16, 185, 129);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+
+  50% {
+    border-color: rgb(52, 211, 153);
+    box-shadow: 0 0 15px 5px rgba(16, 185, 129, 0.3);
+  }
+
+  100% {
+    border-color: rgb(16, 185, 129);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+}
+
+.workflow-node-running {
+  animation: stepRunning 1.5s ease-in-out infinite;
+}
+
+.workflow-wire-active {
+  stroke-dasharray: 10 5;
+  animation: wireFlow 1s linear infinite;
+}
+
+.workflow-glow {
+  animation: glowPulse 2s ease-in-out infinite;
+}
+
+/* Mask Utilities */
+.mask-linear-fade {
+  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+}
+
+/* Resize Handle Styles */
+.resize-grip {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 100;
+  pointer-events: auto;
+}
+
+.resize-grip:hover {
+  opacity: 1;
+}
+
+/* Corner grips - visible on hover */
+.resize-grip-corner {
+  width: 12px;
+  height: 12px;
+  background: radial-gradient(circle, var(--primary) 30%, transparent 70%);
+  border-radius: 2px;
+}
+
+.resize-grip-corner.top-left {
+  top: 2px;
+  left: 2px;
+  cursor: nwse-resize;
+}
+
+.resize-grip-corner.top-right {
+  top: 2px;
+  right: 2px;
+  cursor: nesw-resize;
+}
+
+.resize-grip-corner.bottom-left {
+  bottom: 2px;
+  left: 2px;
+  cursor: nesw-resize;
+}
+
+.resize-grip-corner.bottom-right {
+  bottom: 2px;
+  right: 2px;
+  cursor: nwse-resize;
+}
+
+/* Visual resize indicator in corner */
+.resize-indicator {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 12px;
+  height: 12px;
+  opacity: 0.3;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.resize-indicator:hover,
+.resize-indicator.active {
+  opacity: 0.7;
+}
+
+.resize-indicator::before,
+.resize-indicator::after {
+  content: '';
+  position: absolute;
+  background: var(--foreground-muted);
+  border-radius: 1px;
+}
+
+.resize-indicator::before {
+  width: 8px;
+  height: 2px;
+  bottom: 0;
+  right: 0;
+}
+
+.resize-indicator::after {
+  width: 2px;
+  height: 8px;
+  bottom: 0;
+  right: 0;
+}
+
+/* Mode transition animations.
+   Use opacity-only and rely on GPU compositing (will-change) so the
+   animation runs on the compositor thread instead of triggering layout.
+   The previous transform: scale variant caused visible jank on Windows
+   when the BrowserWindow itself was being resized at the same time. */
+@keyframes modeTransition {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mode-transition {
+  animation: modeTransition 120ms ease-out;
+  will-change: opacity;
+}
+
+.overlay-window-shell {
+  transform-origin: top center;
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 160ms ease;
+  will-change: opacity, transform, filter;
+}
+
+.overlay-window-shell-visible {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+  animation: overlaySlideDownIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.overlay-window-shell-hidden {
+  opacity: 0;
+  transform: translateY(-18px);
+  filter: blur(2px);
+  pointer-events: none;
+  animation: overlaySlideUpOut 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes overlaySlideDownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.99);
+    filter: blur(3px);
+  }
+
+  65% {
+    opacity: 1;
+    transform: translateY(1px) scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes overlaySlideUpOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.99);
+    filter: blur(3px);
+  }
+}
+
+/* Smooth size transitions for inner UI elements only.
+   Keep this short so it doesn't fight the native window resize, and
+   transition only properties that the GPU can composite cheaply. */
+.smooth-resize {
+  transition: padding 120ms ease-out;
+}
+
+/* Responsive breakpoints for overlay width */
+@media (max-width: 450px) {
+  .overlay-responsive {
+    --content-padding: 8px;
+  }
+}
+
+@media (min-width: 451px) and (max-width: 600px) {
+  .overlay-responsive {
+    --content-padding: 12px;
+  }
+}
+
+@media (min-width: 601px) {
+  .overlay-responsive {
+    --content-padding: 16px;
+  }
+}
+
+/* Animate-in utilities for dropdowns */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sidebarFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromBottomCentered {
+  from {
+    opacity: 0;
+    transform: translateY(8px) translateX(-50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromTopCentered {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) translateX(-50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+.animate-in {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fadeIn;
+}
+
+.slide-in-from-bottom-2 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-4 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-8 {
+  animation-name: slideInFromBottom;
+}
+
+.slide-in-from-bottom-centered {
+  animation-name: slideInFromBottomCentered;
+}
+
+.slide-in-from-top-2 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-4 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-8 {
+  animation-name: slideInFromTop;
+}
+
+.slide-in-from-top-centered {
+  animation-name: slideInFromTopCentered;
+}
+
+/* Notification System Animations */
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutToLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutToRight {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@keyframes notificationPulse {
+
+  0%,
+  100% {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 4px 30px rgba(0, 122, 204, 0.3);
+  }
+}
+
+/* Animate-out utilities for notifications */
+.animate-out {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-out-0 {
+  animation-name: fadeOut;
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+.slide-out-to-left-5 {
+  animation-name: slideOutToLeft;
+}
+
+.slide-out-to-right-5 {
+  animation-name: slideOutToRight;
+}
+
+.slide-in-from-left-5 {
+  animation-name: slideInFromLeft;
+}
+
+.slide-in-from-right-5 {
+  animation-name: slideInFromRight;
+}
+
+.notification-pulse {
+  animation: notificationPulse 2s ease-in-out infinite;
+}
+
+/* ----------------------------------------------------------------------------
+ * 3D Transforms & Perspective Utilities
+ * ---------------------------------------------------------------------------- */
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.perspective-2000 {
+  perspective: 2000px;
+}
+
+.translate-z-0 {
+  transform: translateZ(0px);
+}
+
+.translate-z-10 {
+  transform: translateZ(10px);
+}
+
+.translate-z-20 {
+  transform: translateZ(20px);
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+}
+
+.rotate-x-10 {
+  transform: rotateX(10deg);
+}
+
+.rotate-x-minus-10 {
+  transform: rotateX(-10deg);
+}
+
+/* Cloud runtime workspace — inherits dashboard theme tokens */
+.cloud-runtime-tree-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: var(--foreground-muted);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.cloud-runtime-tree-row:hover {
+  color: var(--foreground);
+  background: var(--dashboard-hover);
+}
+
+.cloud-runtime-tree-row-active {
+  color: var(--foreground);
+  background: var(--dashboard-sidebar-item-active);
+}
+

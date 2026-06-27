@@ -1,0 +1,52 @@
+export * from "./agent";
+export * from "./updates";
+export * from "./file-indexing";
+export * from "./app-discovery";
+export * from "./app-search";
+export * from "./unified-tasks";
+export * from "./offline-calendar";
+export { startReminderScheduler, stopReminderScheduler, clearFiredReminder } from "./reminder-scheduler";
+export { startSmsInbox, stopSmsInbox } from "./sms-inbox";
+export { startCloudWebhooks, stopCloudWebhooks, startVoiceBridgeService, stopVoiceBridgeService } from "./cloud-webhooks";
+export { startMcpLocalServer, stopMcpLocalServer, getMcpLocalServerInfo } from "./mcp-local-server";
+export {
+  startExtensionBridge,
+  stopExtensionBridge,
+  getExtensionBridgeInfo,
+  getExtensionDistPath,
+  isExtensionConnected,
+  sendExtensionCommand,
+} from "./extension-bridge";
+export type { ExtensionBridgeInfo } from "./extension-bridge";
+export { proactiveService } from "./proactive-service";
+export {
+  startProactiveScheduler,
+  stopProactiveScheduler,
+  triggerManualWakeUp,
+  triggerVmWakeUp,
+  isProactiveSchedulerRunning,
+  handleProactiveReply,
+  executeWakeUpForBot,
+} from "./proactive-scheduler";
+export {
+  startBotTriggerDispatcher,
+  stopBotTriggerDispatcher,
+  syncBotTriggers,
+  syncAllBotTriggers,
+} from "./bot-trigger-dispatcher";
+export { botService, DEFAULT_BOT_ID } from "./bot-service";
+export type { Bot, BotStatus, BotConfig, BotTrigger, BotTriggerType, DeployTarget } from "./bot-service";
+export { deployBotToVm, stopBotOnVm, pullBotMemoryFromVm, pushBotMemoryToVm, syncBotDeploymentToVm, getBotStatusFromVm } from "./bot-vm-deploy";
+export { syncTimezoneToVm, resetTimezoneSyncCache } from "./vm-settings";
+export type { VmTimezoneSyncResult } from "./vm-settings";
+export { botMemoryService } from "./bot-memory-service";
+export {
+  startProjectNotionSync,
+  stopProjectNotionSync,
+  syncProjectNotionNow,
+  searchProjectNotionTargets,
+  linkProjectNotion,
+  updateProjectNotion,
+  unlinkProjectNotion,
+} from "./project-notion-sync";
+export type { BotKanbanCard, BotKanbanStatus, BotRunLogEntry, BotMemoryActor } from "./bot-memory-service";

@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Stuard Workflow Schema",
+  "type": "object",
+  "required": ["name", "version", "steps"],
+  "properties": {
+    "name": {"type": "string"},
+    "version": {"type": "string"},
+    "description": {"type": "string"},
+    "requirements": {"type": "string", "description": "Multiline string of python dependencies (pip style)"},
+    "scripts": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Map of filename to content for embedded scripts"},
+    "mode": {"type": "string", "enum": ["auto", "manual", "hybrid"], "default": "hybrid"},
+    "inputs": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean", "object", "array"]}},
+    "globals": {"type": "object"},
+    "policies": {
+      "type": "object",
+      "properties": {
+        "risk": {"type": "string", "enum": ["low", "medium", "high"], "default": "low"},
+        "spend_limit": {"type": "number"},
+        "ask_on": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "uses"],
+        "properties": {
+          "id": {"type": "string"},
+          "if": {"type": "string", "description": "CEL expression or JS for guard"},
+          "uses": {"type": "string", "description": "tool or agent to invoke"},
+          "with": {"type": "object"},
+          "timeoutMs": {"type": "number"},
+          "retry": {"type": "object", "properties": {"times": {"type": "integer"}, "backoffMs": {"type": "number"}}},
+          "on_error": {"type": "string", "enum": ["skip", "halt", "continue"]},
+          "out": {"type": "object", "description": "outputs mapping"}
+        }
+      }
+    },
+    "outputs": {"type": "object"}
+  }
+}

@@ -1,0 +1,635 @@
+/**
+ * UIBuilderProperties - Properties panel for selected element
+ * Allows editing element properties, styles, and bindings
+ */
+
+import React, { useState } from 'react';
+import {
+  ChevronDown, ChevronRight, Settings2, Palette, Link2, Move, Box,
+  Type, Image, Eye, EyeOff, Lock, Unlock, Trash2, Copy, Layers
+} from 'lucide-react';
+import type { UIElement, UIElementStyle, UIElementProps, UIElementBindings, ButtonVariant } from './types';
+import { COLORS, BUTTON_VARIANTS, SPACING, BORDER_RADIUS } from './utils/defaultStyles';
+
+interface UIBuilderPropertiesProps {
+  element: UIElement | null;
+  onUpdate: (updates: Partial<UIElement>) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+  onBringForward: () => void;
+  onSendBackward: () => void;
+}
+
+// === Section Component ===
+
+function Section({
+  title,
+  icon: Icon,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <div className="border-b uib-border-subtle last:border-b-0">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-2.5 uib-hover transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="w-3.5 h-3.5 uib-fg-faint" />}
+          <span className="text-xs font-semibold uib-fg">{title}</span>
+        </div>
+        {isOpen ? (
+          <ChevronDown className="w-3.5 h-3.5 uib-fg-faint" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 uib-fg-faint" />
+        )}
+      </button>
+      {isOpen && <div className="px-4 pb-4 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
+// === Input Components ===
+
+function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="w-20 shrink-0 text-xs uib-fg-muted">{label}</label>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  className = '',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={`w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40 ${className}`}
+    />
+  );
+}
+
+function NumberInput({
+  value,
+  onChange,
+  min,
+  max,
+  step = 1,
+}: {
+  value: number | undefined;
+  onChange: (v: number | undefined) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <input
+      type="number"
+      value={value ?? ''}
+      onChange={e => onChange(e.target.value ? Number(e.target.value) : undefined)}
+      min={min}
+      max={max}
+      step={step}
+      className="w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
+    />
+  );
+}
+
+function ColorInput({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={value || '#000000'}
+        onChange={e => onChange(e.target.value)}
+        className="w-8 h-8 rounded border uib-border cursor-pointer"
+      />
+      <input
+        type="text"
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder="#000000"
+        className="flex-1 px-2 py-1.5 text-xs border uib-border rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40"
+      />
+    </div>
+  );
+}
+
+function SelectInput<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T | undefined;
+  onChange: (v: T) => void;
+  options: Array<{ value: T; label: string }>;
+}) {
+  return (
+    <select
+      value={value || ''}
+      onChange={e => onChange(e.target.value as T)}
+      className="w-full px-2 py-1.5 text-xs border uib-border rounded-md focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500/40 uib-surface"
+    >
+      <option value="">Select...</option>
+      {options.map(opt => (
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
+      ))}
+    </select>
+  );
+}
+
+function ToggleInput({
+  value,
+  onChange,
+  label,
+}: {
+  value: boolean | undefined;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer">
+      <button
+        type="button"
+        onClick={() => onChange(!value)}
+        className={`relative w-8 h-5 rounded-full transition-colors ${value ? 'bg-rose-500' : 'uib-surface-2'
+          }`}
+      >
+        <div
+          className={`absolute top-0.5 w-4 h-4 rounded-full uib-surface shadow-sm transition-transform ${value ? 'left-3.5' : 'left-0.5'
+            }`}
+        />
+      </button>
+      <span className="text-xs uib-fg-muted">{label}</span>
+    </label>
+  );
+}
+
+// === Main Component ===
+
+export function UIBuilderProperties({
+  element,
+  onUpdate,
+  onDelete,
+  onDuplicate,
+  onBringForward,
+  onSendBackward,
+}: UIBuilderPropertiesProps) {
+  if (!element) {
+    return (
+      <div className="w-64 uib-surface border-l uib-border flex flex-col h-full">
+        <div className="p-4 border-b uib-border-subtle">
+          <div className="text-xs font-bold uib-fg-muted uppercase tracking-wider">Properties</div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center uib-fg-faint">
+            <Box className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p className="text-xs">Select an element to edit its properties</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const updateProps = (updates: Partial<UIElementProps>) => {
+    onUpdate({ props: { ...element.props, ...updates } });
+  };
+
+  const updateStyle = (updates: Partial<UIElementStyle>) => {
+    onUpdate({ style: { ...element.style, ...updates } });
+  };
+
+  const updateBindings = (updates: Partial<UIElementBindings>) => {
+    onUpdate({ bindings: { ...element.bindings, ...updates } });
+  };
+
+  return (
+    <div className="w-64 uib-surface border-l uib-border flex flex-col h-full">
+      {/* Header */}
+      <div className="p-4 border-b uib-border-subtle uib-surface-2">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-bold uib-fg-muted uppercase tracking-wider">Properties</div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onDuplicate}
+              className="p-1.5 uib-fg-faint hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors"
+              title="Duplicate"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onDelete}
+              className="p-1.5 uib-fg-faint hover:text-red-400 hover:bg-red-500/15 rounded transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-rose-500/15 flex items-center justify-center text-rose-500">
+            <Box className="w-4 h-4" />
+          </div>
+          <div>
+            <input
+              type="text"
+              value={element.name || element.type}
+              onChange={e => onUpdate({ name: e.target.value })}
+              className="w-full text-sm font-semibold uib-fg bg-transparent border-none p-0 focus:outline-none focus:ring-0"
+            />
+            <div className="text-[10px] uib-fg-faint font-mono">{element.type} #{element.id.slice(-6)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto scrollbar-minimal">
+        {/* Content Section */}
+        <Section title="Content" icon={Type} defaultOpen={true}>
+          {/* Text property for most components */}
+          {['button', 'text', 'heading', 'badge', 'checkbox'].includes(element.type) && (
+            <PropertyRow label="Text">
+              <TextInput
+                value={element.props.text || ''}
+                onChange={v => updateProps({ text: v })}
+                placeholder="Enter text..."
+              />
+            </PropertyRow>
+          )}
+
+          {/* Placeholder for inputs */}
+          {['input', 'textarea'].includes(element.type) && (
+            <PropertyRow label="Placeholder">
+              <TextInput
+                value={element.props.placeholder || ''}
+                onChange={v => updateProps({ placeholder: v })}
+              />
+            </PropertyRow>
+          )}
+
+          {/* Button variant */}
+          {element.type === 'button' && (
+            <PropertyRow label="Variant">
+              <SelectInput<ButtonVariant>
+                value={element.props.variant}
+                onChange={v => updateProps({ variant: v })}
+                options={[
+                  { value: 'primary', label: 'Primary' },
+                  { value: 'secondary', label: 'Secondary' },
+                  { value: 'danger', label: 'Danger' },
+                  { value: 'ghost', label: 'Ghost' },
+                  { value: 'outline', label: 'Outline' },
+                ]}
+              />
+            </PropertyRow>
+          )}
+
+          {/* Image source */}
+          {element.type === 'image' && (
+            <>
+              <PropertyRow label="Source">
+                <TextInput
+                  value={element.props.src || ''}
+                  onChange={v => updateProps({ src: v })}
+                  placeholder="URL or {{data.field}}"
+                />
+              </PropertyRow>
+              <PropertyRow label="Alt Text">
+                <TextInput
+                  value={element.props.alt || ''}
+                  onChange={v => updateProps({ alt: v })}
+                />
+              </PropertyRow>
+            </>
+          )}
+
+          {/* Heading level */}
+          {element.type === 'heading' && (
+            <PropertyRow label="Level">
+              <SelectInput
+                value={String(element.props.level || 2)}
+                onChange={v => updateProps({ level: Number(v) as 1 | 2 | 3 | 4 | 5 | 6 })}
+                options={[
+                  { value: '1', label: 'H1 - Largest' },
+                  { value: '2', label: 'H2' },
+                  { value: '3', label: 'H3' },
+                  { value: '4', label: 'H4' },
+                  { value: '5', label: 'H5' },
+                  { value: '6', label: 'H6 - Smallest' },
+                ]}
+              />
+            </PropertyRow>
+          )}
+
+          {/* Progress value */}
+          {element.type === 'progress' && (
+            <PropertyRow label="Value">
+              <NumberInput
+                value={element.props.value}
+                onChange={v => updateProps({ value: v })}
+                min={0}
+                max={100}
+              />
+            </PropertyRow>
+          )}
+
+          {/* Disabled toggle */}
+          {['button', 'input', 'textarea', 'select', 'checkbox'].includes(element.type) && (
+            <ToggleInput
+              value={element.props.disabled}
+              onChange={v => updateProps({ disabled: v })}
+              label="Disabled"
+            />
+          )}
+        </Section>
+
+        {/* Position & Size Section */}
+        <Section title="Position & Size" icon={Move} defaultOpen={true}>
+          <div className="grid grid-cols-2 gap-2">
+            <PropertyRow label="X">
+              <NumberInput
+                value={element.x}
+                onChange={v => onUpdate({ x: v ?? 0 })}
+              />
+            </PropertyRow>
+            <PropertyRow label="Y">
+              <NumberInput
+                value={element.y}
+                onChange={v => onUpdate({ y: v ?? 0 })}
+              />
+            </PropertyRow>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <PropertyRow label="Width">
+              {typeof element.width === 'number' ? (
+                <NumberInput
+                  value={element.width}
+                  onChange={v => onUpdate({ width: v ?? 100 })}
+                  min={20}
+                />
+              ) : (
+                <SelectInput
+                  value={element.width}
+                  onChange={v => onUpdate({ width: v })}
+                  options={[
+                    { value: 'auto', label: 'Auto' },
+                    { value: 'full', label: '100%' },
+                  ]}
+                />
+              )}
+            </PropertyRow>
+            <PropertyRow label="Height">
+              {typeof element.height === 'number' ? (
+                <NumberInput
+                  value={element.height}
+                  onChange={v => onUpdate({ height: v ?? 40 })}
+                  min={20}
+                />
+              ) : (
+                <SelectInput
+                  value={element.height}
+                  onChange={v => onUpdate({ height: v })}
+                  options={[
+                    { value: 'auto', label: 'Auto' },
+                    { value: 'full', label: '100%' },
+                  ]}
+                />
+              )}
+            </PropertyRow>
+          </div>
+        </Section>
+
+        {/* Style Section */}
+        <Section title="Style" icon={Palette} defaultOpen={false}>
+          <PropertyRow label="Background">
+            <ColorInput
+              value={element.style.backgroundColor}
+              onChange={v => updateStyle({ backgroundColor: v })}
+            />
+          </PropertyRow>
+          <PropertyRow label="Text Color">
+            <ColorInput
+              value={element.style.textColor}
+              onChange={v => updateStyle({ textColor: v })}
+            />
+          </PropertyRow>
+          <PropertyRow label="Font Family">
+            <SelectInput
+              value={element.style.fontFamily || ''}
+              onChange={v => updateStyle({ fontFamily: v || undefined })}
+              options={[
+                { value: '', label: 'Inherit' },
+                { value: "'Inter', system-ui, sans-serif", label: 'Inter' },
+                { value: "'Poppins', system-ui, sans-serif", label: 'Poppins' },
+                { value: "'Roboto', system-ui, sans-serif", label: 'Roboto' },
+                { value: "'Open Sans', system-ui, sans-serif", label: 'Open Sans' },
+                { value: "'Montserrat', system-ui, sans-serif", label: 'Montserrat' },
+                { value: "'Outfit', system-ui, sans-serif", label: 'Outfit' },
+                { value: "'DM Sans', system-ui, sans-serif", label: 'DM Sans' },
+                { value: "'Plus Jakarta Sans', system-ui, sans-serif", label: 'Plus Jakarta Sans' },
+                { value: "'Manrope', system-ui, sans-serif", label: 'Manrope' },
+                { value: "'Sora', system-ui, sans-serif", label: 'Sora' },
+                { value: "'Nunito', system-ui, sans-serif", label: 'Nunito' },
+                { value: "'Quicksand', system-ui, sans-serif", label: 'Quicksand' },
+                { value: "'Playfair Display', Georgia, serif", label: 'Playfair Display' },
+                { value: "'Merriweather', Georgia, serif", label: 'Merriweather' },
+                { value: "'Lora', Georgia, serif", label: 'Lora' },
+                { value: "'DM Serif Display', Georgia, serif", label: 'DM Serif Display' },
+                { value: "'Bebas Neue', Impact, sans-serif", label: 'Bebas Neue' },
+                { value: "'Oswald', Impact, sans-serif", label: 'Oswald' },
+                { value: "'Caveat', cursive", label: 'Caveat' },
+                { value: "'Dancing Script', cursive", label: 'Dancing Script' },
+                { value: "'Pacifico', cursive", label: 'Pacifico' },
+                { value: "'JetBrains Mono', monospace", label: 'JetBrains Mono' },
+                { value: "'Fira Code', monospace", label: 'Fira Code' },
+                { value: "'Source Code Pro', monospace", label: 'Source Code Pro' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Font Size">
+            <NumberInput
+              value={element.style.fontSize}
+              onChange={v => updateStyle({ fontSize: v })}
+              min={8}
+              max={128}
+            />
+          </PropertyRow>
+          <PropertyRow label="Font Weight">
+            <SelectInput
+              value={element.style.fontWeight}
+              onChange={v => updateStyle({ fontWeight: v })}
+              options={[
+                { value: 'thin', label: 'Thin (100)' },
+                { value: 'extralight', label: 'Extra Light (200)' },
+                { value: 'light', label: 'Light (300)' },
+                { value: 'normal', label: 'Normal (400)' },
+                { value: 'medium', label: 'Medium (500)' },
+                { value: 'semibold', label: 'Semibold (600)' },
+                { value: 'bold', label: 'Bold (700)' },
+                { value: 'extrabold', label: 'Extra Bold (800)' },
+                { value: 'black', label: 'Black (900)' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Style">
+            <SelectInput
+              value={element.style.fontStyle || 'normal'}
+              onChange={v => updateStyle({ fontStyle: v as 'normal' | 'italic' })}
+              options={[
+                { value: 'normal', label: 'Normal' },
+                { value: 'italic', label: 'Italic' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Letter Spacing">
+            <SelectInput
+              value={String(element.style.letterSpacing ?? '')}
+              onChange={v => updateStyle({ letterSpacing: v ? parseFloat(v) : undefined })}
+              options={[
+                { value: '', label: 'Default' },
+                { value: '-0.05', label: 'Tighter' },
+                { value: '-0.025', label: 'Tight' },
+                { value: '0', label: 'Normal' },
+                { value: '0.025', label: 'Wide' },
+                { value: '0.05', label: 'Wider' },
+                { value: '0.1', label: 'Widest' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Line Height">
+            <SelectInput
+              value={String(element.style.lineHeight ?? '')}
+              onChange={v => updateStyle({ lineHeight: v ? parseFloat(v) : undefined })}
+              options={[
+                { value: '', label: 'Default' },
+                { value: '1', label: 'None (1)' },
+                { value: '1.25', label: 'Tight (1.25)' },
+                { value: '1.375', label: 'Snug (1.375)' },
+                { value: '1.5', label: 'Normal (1.5)' },
+                { value: '1.625', label: 'Relaxed (1.625)' },
+                { value: '2', label: 'Loose (2)' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Transform">
+            <SelectInput
+              value={element.style.textTransform || 'none'}
+              onChange={v => updateStyle({ textTransform: v as any })}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'uppercase', label: 'UPPERCASE' },
+                { value: 'lowercase', label: 'lowercase' },
+                { value: 'capitalize', label: 'Capitalize' },
+              ]}
+            />
+          </PropertyRow>
+          <PropertyRow label="Radius">
+            <NumberInput
+              value={element.style.borderRadius}
+              onChange={v => updateStyle({ borderRadius: v })}
+              min={0}
+              max={50}
+            />
+          </PropertyRow>
+          <PropertyRow label="Border">
+            <NumberInput
+              value={element.style.borderWidth}
+              onChange={v => updateStyle({ borderWidth: v })}
+              min={0}
+              max={10}
+            />
+          </PropertyRow>
+          <PropertyRow label="Border Color">
+            <ColorInput
+              value={element.style.borderColor}
+              onChange={v => updateStyle({ borderColor: v })}
+            />
+          </PropertyRow>
+          <PropertyRow label="Shadow">
+            <SelectInput
+              value={element.style.shadow}
+              onChange={v => updateStyle({ shadow: v })}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'sm', label: 'Small' },
+                { value: 'md', label: 'Medium' },
+                { value: 'lg', label: 'Large' },
+                { value: 'xl', label: 'Extra Large' },
+              ]}
+            />
+          </PropertyRow>
+        </Section>
+
+        {/* Data Bindings Section */}
+        <Section title="Data Bindings" icon={Link2} defaultOpen={false}>
+          <PropertyRow label="Bind to">
+            <TextInput
+              value={element.bindings.dataBind || ''}
+              onChange={v => updateBindings({ dataBind: v })}
+              placeholder="e.g. name, items[0].title"
+            />
+          </PropertyRow>
+          <PropertyRow label="Action">
+            <TextInput
+              value={element.bindings.dataAction || ''}
+              onChange={v => updateBindings({ dataAction: v })}
+              placeholder="e.g. submit, cancel"
+            />
+          </PropertyRow>
+          <ToggleInput
+            value={element.bindings.dataHtml}
+            onChange={v => updateBindings({ dataHtml: v })}
+            label="Render as HTML"
+          />
+        </Section>
+
+        {/* Layer Order Section */}
+        <Section title="Layer Order" icon={Layers} defaultOpen={false}>
+          <div className="flex gap-2">
+            <button
+              onClick={onSendBackward}
+              className="flex-1 py-1.5 text-xs font-medium uib-fg-muted border uib-border rounded-md uib-hover transition-colors"
+            >
+              Send Back
+            </button>
+            <button
+              onClick={onBringForward}
+              className="flex-1 py-1.5 text-xs font-medium uib-fg-muted border uib-border rounded-md uib-hover transition-colors"
+            >
+              Bring Forward
+            </button>
+          </div>
+          <div className="text-[10px] uib-fg-faint text-center">
+            Z-Index: {element.zIndex || 0}
+          </div>
+        </Section>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,36 @@
+{
+  "name": "inline-node-test",
+  "version": "1",
+  "description": "Test inline Node.js script execution",
+  "mode": "manual",
+  "triggers": [
+    {
+      "type": "webhook.local",
+      "args": {}
+    }
+  ],
+  "steps": [
+    {
+      "id": "log_start",
+      "uses": "local.log",
+      "with": {
+        "message": "Testing inline Node.js script..."
+      }
+    },
+    {
+      "id": "run_inline",
+      "uses": "local.run_node_script",
+      "with": {
+        "code": "console.log('Node.js', process.version);\nconsole.log('Platform:', process.platform, process.arch);\nconsole.log('Hello from inline script!');\nconst result = 2 + 2;\nconsole.log('2 + 2 =', result);",
+        "timeoutMs": 5000
+      }
+    },
+    {
+      "id": "log_result",
+      "uses": "local.log",
+      "with": {
+        "message": "Exit code: {{run_inline.exitCode}}\nOutput:\n{{run_inline.stdout}}"
+      }
+    }
+  ]
+}

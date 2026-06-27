@@ -1,0 +1,1339 @@
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { clsx } from 'clsx';
+import { supabase } from '../../lib/supabaseClient';
+import { startBrowserSignIn } from '../../auth/browserSignIn';
+import { getValidAccessToken } from '../../auth/authManager';
+import { getCloudAiHttp, getMarketplaceApi, type MarketplaceWorkflow } from '../../utils/cloud';
+import { usePreferences, type TonePreset } from '../../hooks/usePreferences';
+import { useVoiceMode } from '../../hooks/useVoiceMode';
+import { VoiceModeOverlay } from '../../views/VoiceModeOverlay';
+import {
+  ArrowRight,
+  Bell,
+  BookOpen,
+  Briefcase,
+  Check,
+  ChevronLeft,
+  Code2,
+  Command,
+  Download,
+  FileText,
+  Gamepad2,
+  Keyboard,
+  Loader2,
+  Mic,
+  MicOff,
+  MessageSquare,
+  Palette,
+  Phone,
+  Plug,
+  Search,
+  Settings,
+  Sparkles,
+  Star,
+  Users,
+  Workflow,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+
+const DEFAULT_SHORTCUT_KEYS = ['Control', 'Shift', 'Space'];
+const SHORTCUT_MODIFIERS = ['Control', 'Alt', 'Shift', 'Command'];
+const SHORTCUT_KEYS = [
+  'A','B','C','D','E','F','G','H','I','J','K','L','M',
+  'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+  '0','1','2','3','4','5','6','7','8','9','Space','Enter',
+  'Tab','Escape','Backspace','Delete','Home','End','PageUp','PageDown',
+  'ArrowUp','ArrowDown','ArrowLeft','ArrowRight','F1','F2','F3','F4',
+  'F5','F6','F7','F8','F9','F10','F11','F12',
+];
+
+interface ToneOption { id: TonePreset; label: string; icon: LucideIcon }
+
+const TONE_OPTIONS: ToneOption[] = [
+  { id: 'concise', label: 'Concise', icon: Zap },
+  { id: 'friendly', label: 'Friendly', icon: MessageSquare },
+  { id: 'formal', label: 'Formal', icon: FileText },
+  { id: 'technical', label: 'Technical', icon: Command },
+  { id: 'custom', label: 'Custom', icon: Settings },
+];
+
+function tonePreview(tone: TonePreset, customTone: string): string {
+  switch (tone) {
+    case 'concise': return 'Short, direct, and focused on the next move.';
+    case 'friendly': return 'Warm, helpful, and still practical.';
+    case 'formal': return 'Polished, structured, and professional.';
+    case 'technical': return 'Explicit, precise, and detailed.';
+    case 'custom': return customTone.trim() || 'Describe your style below.';
+    default: return '';
+  }
+}
+
+function displayHotkey(keys: string[]): string[] {
+  return keys.map(k => (k === 'Control' ? 'Ctrl' : k === 'Command' ? 'Cmd' : k));
+}
+function toAccelerator(keys: string[]): string {
+  return keys.map(k => (k === 'Control' ? 'Ctrl' : k === 'Command' ? 'Cmd' : k)).join('+');
+}
+function hasValidShortcut(keys: string[]): boolean {
+  return keys.some(k => SHORTCUT_MODIFIERS.includes(k)) && keys.some(k => !SHORTCUT_MODIFIERS.includes(k));
+}
+
+async function getToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token || null;
+  } catch { return null; }
+}
+
+function Fade({ children, delay = 0, duration = 0.8, className }: {
+  children: React.ReactNode; delay?: number; duration?: number; className?: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay, duration, ease: 'easeOut' }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// =============================================================================
+// FULL-SCREEN BACKGROUND
+// =============================================================================
+
+// Reddish atmospheric glow — concentrated in the middle, fades softly to nothing
+// at the edges so the OS shows through and it feels like a real glow, not an overlay.
+// Each layer is centered via a static positioning wrapper (translate(-50%,-50%) in
+// inline style) so framer-motion's animated transforms don't clobber the centering.
+function RedSkyBackground() {
+  return (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden">
+      {/* deep core — warm bright center; only scale animates, so framer-motion composes safely */}
+      <motion.div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          x: '-50%', y: '-50%',
+          width: '65vw', height: '65vh',
+          maxWidth: '880px', maxHeight: '880px',
+          background: 'radial-gradient(ellipse at center, rgba(255,130,100,0.48) 0%, rgba(220,70,65,0.32) 25%, rgba(170,40,60,0.16) 55%, rgba(110,22,50,0.05) 75%, transparent 90%)',
+          filter: 'blur(34px)',
+        }}
+        animate={{ scale: [1, 1.04, 1] }}
+        transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+      />
+
+      {/* hotter highlight just above center */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(-50%, calc(-50% - 6vh))',
+          width: '36vw', height: '36vh',
+          maxWidth: '480px', maxHeight: '480px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(255,170,125,0.30) 0%, rgba(255,100,75,0.14) 45%, transparent 80%)',
+            filter: 'blur(38px)',
+          }}
+          animate={{ x: [0, 14, -8, 0], y: [0, -8, 6, 0] }}
+          transition={{ duration: 22, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+
+      {/* drifting cloud wisp inside the glow */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(-50%, calc(-50% + 5vh))',
+          width: '46vw', height: '22vh',
+          maxWidth: '600px', maxHeight: '290px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(255,115,85,0.14) 0%, transparent 70%)',
+            filter: 'blur(30px)',
+          }}
+          animate={{ x: [0, 18, -10, 0], y: [0, 6, -4, 0] }}
+          transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+
+      {/* irregular edge blobs — break up the perfect-oval silhouette */}
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% - 22vw), calc(-50% - 10vh))',
+          width: '28vw', height: '18vh', maxWidth: '380px', maxHeight: '240px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(220,70,65,0.22) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, 8, -5, 0], y: [0, -5, 3, 0] }}
+          transition={{ duration: 26, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% + 22vw), calc(-50% - 5vh))',
+          width: '26vw', height: '17vh', maxWidth: '340px', maxHeight: '220px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(200,55,70,0.20) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, -7, 5, 0], y: [0, 4, -3, 0] }}
+          transition={{ duration: 30, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      <div
+        className="absolute left-1/2 top-1/2"
+        style={{
+          transform: 'translate(calc(-50% + 3vw), calc(-50% + 16vh))',
+          width: '32vw', height: '16vh', maxWidth: '420px', maxHeight: '210px',
+        }}
+      >
+        <motion.div
+          className="w-full h-full"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(190,50,75,0.18) 0%, transparent 75%)',
+            filter: 'blur(36px)',
+          }}
+          animate={{ x: [0, -10, 6, 0], y: [0, 5, -3, 0] }}
+          transition={{ duration: 32, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
+      {/* fine grain for texture */}
+      <div
+        className="absolute inset-0 opacity-[0.05] mix-blend-overlay"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
+          backgroundSize: '128px 128px',
+        }}
+      />
+    </div>
+  );
+}
+
+function AuroraBackground() {
+  return (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden">
+      <motion.div
+        className="absolute rounded-full"
+        style={{ width: '55vw', height: '55vw', top: '-20%', left: '-12%', background: 'radial-gradient(circle, rgba(56,168,255,0.07) 0%, transparent 60%)' }}
+        animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
+        transition={{ duration: 25, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute rounded-full"
+        style={{ width: '50vw', height: '50vw', bottom: '-15%', right: '-10%', background: 'radial-gradient(circle, rgba(168,85,247,0.05) 0%, transparent 60%)' }}
+        animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
+        transition={{ duration: 30, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute rounded-full"
+        style={{ width: '30vw', height: '30vw', top: '30%', right: '15%', background: 'radial-gradient(circle, rgba(245,158,11,0.04) 0%, transparent 55%)' }}
+        animate={{ x: [0, -25, 0], y: [0, 30, 0] }}
+        transition={{ duration: 20, repeat: Infinity, ease: 'easeInOut' }}
+      />
+    </div>
+  );
+}
+
+// =============================================================================
+// PAGE WRAPPER & SHARED BUTTONS
+// =============================================================================
+
+function Page({ children, stepKey }: { children: React.ReactNode; stepKey: string }) {
+  return (
+    <motion.div
+      key={stepKey}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: { duration: 0.8, ease: 'easeOut' } }}
+      exit={{ opacity: 0, transition: { duration: 1.0, ease: 'easeIn' } }}
+      className="absolute inset-0 flex flex-col items-center justify-center px-8"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function ScrollablePage({ children, stepKey }: { children: React.ReactNode; stepKey: string }) {
+  return (
+    <motion.div
+      key={stepKey}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: { duration: 0.8, ease: 'easeOut' } }}
+      exit={{ opacity: 0, transition: { duration: 1.0, ease: 'easeIn' } }}
+      className="absolute inset-0 flex flex-col items-center pt-20 pb-12 px-8 overflow-y-auto custom-scrollbar"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function ContinueButton({ onClick, label = 'Continue', disabled = false, delay = 1.2 }: {
+  onClick: () => void; label?: string; disabled?: boolean; delay?: number;
+}) {
+  return (
+    <Fade delay={delay}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className="mt-14 inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.06] px-7 py-3 text-[13px] font-normal tracking-wide text-white/80 transition-colors duration-300 hover:bg-white/[0.10] hover:text-white disabled:opacity-25 disabled:cursor-not-allowed"
+      >
+        {label}
+        <ArrowRight size={14} className="text-white/40" />
+      </button>
+    </Fade>
+  );
+}
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Fade delay={0.6}>
+      <button onClick={onClick} className="absolute top-10 left-10 z-20 inline-flex items-center gap-1 text-[12px] tracking-wide text-white/35 transition-colors duration-300 hover:text-white/60">
+        <ChevronLeft size={13} /> Back
+      </button>
+    </Fade>
+  );
+}
+
+function SkipButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Fade delay={1.5} className="absolute top-10 right-10 z-20">
+      <button onClick={onClick} className="text-[12px] tracking-wide text-white/30 transition-colors duration-300 hover:text-white/50">Skip</button>
+    </Fade>
+  );
+}
+
+// Voice-tour toggle — appears in the top-right next to Skip. When active, the
+// user is in a live voice session and Stuard narrates / answers about the
+// current onboarding page.
+function VoiceTourToggle({ active, connecting, disabled, onToggle }: {
+  active: boolean; connecting: boolean; disabled?: boolean; onToggle: () => void;
+}) {
+  return (
+    <Fade delay={1.4} className="absolute top-9 right-24 z-20">
+      <button
+        onClick={onToggle}
+        disabled={disabled}
+        title={disabled ? 'Sign in to try voice mode' : active ? 'Stop voice tour' : 'Start voice tour'}
+        className={clsx(
+          'inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[12px] tracking-wide transition-colors duration-300 disabled:opacity-30 disabled:cursor-not-allowed',
+          active
+            ? 'border-rose-400/30 bg-rose-500/[0.10] text-rose-200/90 hover:bg-rose-500/[0.16]'
+            : 'border-white/[0.10] bg-white/[0.03] text-white/55 hover:text-white/80 hover:border-white/[0.18]',
+        )}
+      >
+        {connecting ? (
+          <Loader2 size={12} className="animate-spin" />
+        ) : active ? (
+          <MicOff size={12} strokeWidth={1.8} />
+        ) : (
+          <Mic size={12} strokeWidth={1.8} />
+        )}
+        {connecting ? 'Connecting…' : active ? 'Voice on' : 'Voice tour'}
+      </button>
+    </Fade>
+  );
+}
+
+// =============================================================================
+// CAPABILITY DATA
+// =============================================================================
+
+interface Capability { id: string; icon: LucideIcon; label: string; line: string; tint: string; ring: string; iconColor: string }
+
+const CAPABILITIES: Capability[] = [
+  {
+    id: 'chat', icon: MessageSquare, label: 'Just ask',
+    line: 'Straight answers, no tabs to dig through.',
+    tint: 'rgba(56,168,255,0.10)', ring: 'rgba(56,168,255,0.22)', iconColor: 'rgba(125,191,255,0.95)',
+  },
+  {
+    id: 'proactive', icon: Bell, label: 'Stays ahead of you',
+    line: 'Catches what would otherwise slip.',
+    tint: 'rgba(245,158,11,0.10)', ring: 'rgba(245,158,11,0.22)', iconColor: 'rgba(252,191,80,0.95)',
+  },
+  {
+    id: 'workflows', icon: Workflow, label: 'Builds your tools',
+    line: 'Describe what you want. It appears.',
+    tint: 'rgba(168,85,247,0.10)', ring: 'rgba(168,85,247,0.22)', iconColor: 'rgba(199,140,255,0.95)',
+  },
+  {
+    id: 'integrations', icon: Plug, label: 'One place for everything',
+    line: 'Gmail, Calendar, GitHub, Slack — together.',
+    tint: 'rgba(34,197,94,0.10)', ring: 'rgba(34,197,94,0.22)', iconColor: 'rgba(110,221,151,0.95)',
+  },
+];
+
+// =============================================================================
+// TYPEWRITER (cycling, with backspace between phrases)
+// =============================================================================
+
+function useTypewriterCycle(phrases: string[], opts: {
+  typeSpeed?: number; deleteSpeed?: number; holdMs?: number; startDelay?: number;
+} = {}) {
+  const { typeSpeed = 45, deleteSpeed = 28, holdMs = 1300, startDelay = 600 } = opts;
+  const [displayed, setDisplayed] = useState('');
+  const [allDone, setAllDone] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wait = (ms: number) => new Promise<void>(r => { timer = setTimeout(r, ms); });
+
+    const run = async () => {
+      await wait(startDelay);
+      for (let p = 0; p < phrases.length; p++) {
+        if (cancelled) return;
+        const phrase = phrases[p];
+        for (let i = 1; i <= phrase.length; i++) {
+          if (cancelled) return;
+          setDisplayed(phrase.slice(0, i));
+          await wait(typeSpeed);
+        }
+        await wait(holdMs);
+        if (cancelled) return;
+        if (p === phrases.length - 1) { setAllDone(true); return; }
+        for (let i = phrase.length - 1; i >= 0; i--) {
+          if (cancelled) return;
+          setDisplayed(phrase.slice(0, i));
+          await wait(deleteSpeed);
+        }
+      }
+    };
+    void run();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [phrases, typeSpeed, deleteSpeed, holdMs, startDelay]);
+
+  return { displayed, allDone };
+}
+
+// =============================================================================
+// PAGE 0: TYPEWRITER INTRO — one line, types → holds → backspaces → next phrase
+// =============================================================================
+
+const HELLO_LINES: string[] = [
+  "Hey. I'm Stuard.",
+  "I live here on your desktop.",
+  "Always one shortcut away.",
+  "The forgettable stuff? I'll handle it.",
+  "Just ask.",
+];
+
+function HelloSplash({ onNext }: { onNext: () => void }) {
+  const { displayed, allDone } = useTypewriterCycle(HELLO_LINES);
+
+  useEffect(() => {
+    if (!allDone) return;
+    const t = setTimeout(onNext, 2400);
+    return () => clearTimeout(t);
+  }, [allDone, onNext]);
+
+  return (
+    <Page stepKey="hello">
+      <div
+        className="flex items-center justify-center text-center max-w-[760px] w-[80vw] px-8 select-none cursor-pointer"
+        onClick={allDone ? onNext : undefined}
+      >
+        <p
+          className="text-[clamp(1.4rem,3.2vw,2.2rem)] font-extralight leading-snug text-white/90"
+          style={{ textShadow: '0 2px 30px rgba(0,0,0,0.7)' }}
+        >
+          {displayed}
+          <span className="inline-block w-[2px] h-[1em] bg-white/65 ml-0.5 align-baseline animate-[pulse_1s_ease-in-out_infinite]" />
+        </p>
+      </div>
+    </Page>
+  );
+}
+
+// =============================================================================
+// PAGE 1: CAPABILITIES OVERVIEW — single page, all four at a glance
+// =============================================================================
+
+function CapabilitiesOverview({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  return (
+    <Page stepKey="caps-overview">
+      <BackButton onClick={onBack} />
+
+      <Fade delay={0.3} duration={0.9}>
+        <h2 className="text-center text-[clamp(1.6rem,3vw,2.2rem)] font-extralight tracking-tight text-white/85">
+          Here's what I do.
+        </h2>
+      </Fade>
+
+      <Fade delay={0.65} duration={0.8}>
+        <p className="mt-3 text-center text-[13.5px] tracking-wide text-white/35 font-light">
+          The rest you'll pick up as you go.
+        </p>
+      </Fade>
+
+      <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-[680px]">
+        {CAPABILITIES.map((cap, i) => {
+          const Icon = cap.icon;
+          return (
+            <motion.div
+              key={cap.id}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 1.0 + i * 0.18, duration: 0.7, ease: 'easeOut' }}
+              className="group relative rounded-2xl border border-white/[0.06] bg-white/[0.015] px-5 py-5 backdrop-blur-sm transition-colors duration-500 hover:border-white/[0.12] hover:bg-white/[0.03]"
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex h-9 w-9 items-center justify-center rounded-xl"
+                  style={{ background: cap.tint, border: `1px solid ${cap.ring}` }}
+                >
+                  <Icon size={15} style={{ color: cap.iconColor }} />
+                </div>
+                <span className="text-[14px] font-light tracking-wide text-white/85">{cap.label}</span>
+              </div>
+              <p className="mt-3 text-[12.5px] leading-relaxed font-light text-white/45">
+                {cap.line}
+              </p>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      <ContinueButton onClick={onNext} delay={1.95} />
+    </Page>
+  );
+}
+
+
+// =============================================================================
+// PAGE 5: SIGN IN
+// =============================================================================
+
+function SignInPage({ signedIn, signingIn, userEmail, onSignIn, onNext, onBack }: {
+  signedIn: boolean; signingIn: boolean; userEmail: string | null;
+  onSignIn: () => Promise<void>; onNext: () => void; onBack: () => void;
+}) {
+  return (
+    <Page stepKey="signin">
+      <BackButton onClick={onBack} />
+      {signedIn ? (
+        <>
+          <Fade delay={0.2} duration={0.9}><div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/10 bg-emerald-500/[0.04]"><Check className="w-7 h-7 text-emerald-400/70" strokeWidth={1.5} /></div></Fade>
+          <Fade delay={0.5}><h2 className="mt-8 text-[28px] font-light text-white/90">Signed in</h2></Fade>
+          <Fade delay={0.7}><p className="mt-2 text-[14px] text-white/50">{userEmail}</p></Fade>
+        </>
+      ) : (
+        <>
+          <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Sign in</h2></Fade>
+          <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/50 font-light">Optional. Sync your settings across devices.</p></Fade>
+          <Fade delay={0.8}>
+            <button onClick={() => void onSignIn()} disabled={signingIn} className="mt-8 rounded-full border border-white/[0.08] bg-white/[0.03] px-7 py-3 text-[13px] font-normal tracking-wide text-white/60 transition-colors duration-300 hover:bg-white/[0.06] hover:text-white/80 disabled:opacity-40">
+              {signingIn ? 'Opening browser...' : 'Sign in with browser'}
+            </button>
+          </Fade>
+        </>
+      )}
+      <ContinueButton onClick={onNext} label={signedIn ? 'Continue' : 'Skip for now'} />
+    </Page>
+  );
+}
+
+// =============================================================================
+// PAGE 6: "WHAT DO YOU DO?" — role selection for personalized suggestions
+// =============================================================================
+
+interface RoleOption { id: string; icon: LucideIcon; label: string; sub: string }
+
+const ROLES: RoleOption[] = [
+  { id: 'developer', icon: Code2, label: 'Developer', sub: 'Code, PRs, automation' },
+  { id: 'student', icon: BookOpen, label: 'Student', sub: 'Research, notes, assignments' },
+  { id: 'creator', icon: Palette, label: 'Creator', sub: 'Content, social, design' },
+  { id: 'business', icon: Briefcase, label: 'Business', sub: 'Email, meetings, reports' },
+  { id: 'hobbyist', icon: Gamepad2, label: 'Hobbyist', sub: 'Projects, learning, fun' },
+];
+
+function RolePage({ onNext, onBack, onSelect }: { onNext: () => void; onBack: () => void; onSelect: (roles: string) => void }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const toggleRole = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      onSelect(Array.from(next).join(','));
+      return next;
+    });
+  };
+
+  return (
+    <Page stepKey="role">
+      <BackButton onClick={onBack} />
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">What do you do?</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/50 font-light">Pick all that apply — this helps Stuard suggest the right workflows.</p></Fade>
+
+      <Fade delay={0.7}>
+        <div className="mt-10 flex flex-wrap justify-center gap-3 max-w-md">
+          {ROLES.map(role => {
+            const active = selected.has(role.id);
+            return (
+              <button
+                key={role.id}
+                onClick={() => toggleRole(role.id)}
+                className={clsx(
+                  'flex items-center gap-3 rounded-2xl border px-5 py-3.5 text-left transition-all duration-300 min-w-[180px]',
+                  active
+                    ? 'border-white/15 bg-white/[0.07]'
+                    : 'border-white/[0.05] bg-white/[0.015] hover:border-white/[0.08] hover:bg-white/[0.03]',
+                )}
+              >
+                <div className={clsx(
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all duration-300',
+                  active ? 'border-white/30 bg-white/[0.12]' : 'border-white/[0.10] bg-white/[0.02]',
+                )}>
+                  {active && <Check size={11} className="text-white/80" strokeWidth={2.5} />}
+                </div>
+                <role.icon size={18} strokeWidth={1.5} className={active ? 'text-white/80' : 'text-white/40'} />
+                <div>
+                  <span className={clsx('text-[13px] font-normal', active ? 'text-white/90' : 'text-white/60')}>{role.label}</span>
+                  <span className={clsx('block text-[11px]', active ? 'text-white/45' : 'text-white/35')}>{role.sub}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Fade>
+
+      {selected.size > 0 && (
+        <Fade delay={0} duration={0.3}>
+          <p className="mt-4 text-[12px] text-white/45">{selected.size} selected</p>
+        </Fade>
+      )}
+
+      <ContinueButton onClick={onNext} disabled={selected.size === 0} />
+    </Page>
+  );
+}
+
+// =============================================================================
+// PAGE 7: FEATURES SETUP — proactive agent, phone number, connect more apps
+// =============================================================================
+
+// The agent Stuard ships with — Scout, the default proactive bot.
+const SCOUT_BOT_ID = 'bot_default';
+
+function FeaturesPage({ onNext, onBack, signedIn }: { onNext: () => void; onBack: () => void; signedIn: boolean }) {
+  // Scout (the default proactive agent) — toggling = running/pausing the bot.
+  const [proactiveOn, setProactiveOn] = useState(false);
+  const [proactiveLoading, setProactiveLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const bot = await (window as any).desktopAPI?.botsGet?.(SCOUT_BOT_ID);
+        if (!cancelled && bot) {
+          setProactiveOn(bot.status === 'running');
+        }
+      } catch { }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Phone (Telnyx)
+  const [phoneStep, setPhoneStep] = useState<'idle' | 'input' | 'code' | 'done'>('idle');
+  const [countryCode, setCountryCode] = useState('+1');
+  const [phoneDigits, setPhoneDigits] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [phoneLoading, setPhoneLoading] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+  const [verifiedPhone, setVerifiedPhone] = useState('');
+
+  const toggleProactive = async () => {
+    setProactiveLoading(true);
+    try {
+      const next = !proactiveOn;
+      await (window as any).desktopAPI.botsSetStatus(SCOUT_BOT_ID, next ? 'running' : 'paused');
+      setProactiveOn(next);
+    } catch {} finally { setProactiveLoading(false); }
+  };
+
+  const handlePhoneRequest = async () => {
+    const digits = phoneDigits.replace(/\D/g, '');
+    if (countryCode === '+1' ? digits.length !== 10 : digits.length < 6) return;
+    setPhoneLoading(true); setPhoneError('');
+    try {
+      const token = await getValidAccessToken();
+      const res = await fetch(`${getCloudAiHttp()}/integrations/telnyx/request-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ phone: `${countryCode}${digits}`, slot: 0 }),
+      });
+      const data = await res.json();
+      if (data.ok) { setPhoneStep('code'); } else { setPhoneError(data.error || 'Failed to send code.'); }
+    } catch { setPhoneError('Network error.'); } finally { setPhoneLoading(false); }
+  };
+
+  const handlePhoneVerify = async () => {
+    if (verifyCode.length < 4) return;
+    setPhoneLoading(true); setPhoneError('');
+    try {
+      const token = await getValidAccessToken();
+      const res = await fetch(`${getCloudAiHttp()}/integrations/telnyx/verify-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ code: verifyCode, slot: 0 }),
+      });
+      const data = await res.json();
+      if (data.ok) { setVerifiedPhone(data.phone || `${countryCode}${phoneDigits.replace(/\D/g, '')}`); setPhoneStep('done'); }
+      else { setPhoneError(data.error || 'Invalid code.'); }
+    } catch { setPhoneError('Network error.'); } finally { setPhoneLoading(false); }
+  };
+
+  const phoneE164 = `${countryCode}${phoneDigits.replace(/\D/g, '')}`;
+  const phoneValid = countryCode === '+1' ? phoneDigits.replace(/\D/g, '').length === 10 : phoneDigits.replace(/\D/g, '').length >= 6;
+
+  return (
+    <ScrollablePage stepKey="features">
+      <BackButton onClick={onBack} />
+
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">A couple things before we start</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">Turn on what you want now — you can always change this later.</p></Fade>
+
+      <Fade delay={0.7}>
+        <div className="mt-10 flex flex-col gap-4 w-full max-w-md">
+
+          {/* PROACTIVE AGENT */}
+          <div className={clsx('rounded-2xl border px-5 py-4 transition-all duration-300', proactiveOn ? 'border-amber-400/20 bg-amber-500/[0.06]' : 'border-white/[0.06] bg-white/[0.02]')}>
+            <div className="flex items-center gap-4">
+              <div className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', proactiveOn ? 'bg-amber-500/15' : 'bg-white/[0.04]')}>
+                <Bell className="w-5 h-5 text-amber-400" strokeWidth={1.5} />
+              </div>
+              <div className="flex-1">
+                <span className="text-[14px] font-normal text-white/90">Scout</span>
+                <p className="text-[12px] text-white/55 mt-0.5">Your proactive agent — checks in on a schedule, sets reminders, and catches what would slip. Asks before anything destructive.</p>
+              </div>
+              <button
+                onClick={() => void toggleProactive()}
+                disabled={proactiveLoading}
+                className={clsx('h-7 w-12 rounded-full border relative transition-all duration-300 shrink-0', proactiveOn ? 'border-amber-400/30 bg-amber-500/20' : 'border-white/[0.10] bg-white/[0.03]')}
+              >
+                {proactiveLoading ? (
+                  <Loader2 className="w-3 h-3 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/50" />
+                ) : (
+                  <div className={clsx('absolute top-1 h-5 w-5 rounded-full transition-all duration-300', proactiveOn ? 'left-[22px] bg-amber-300' : 'left-1 bg-white/30')} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* PHONE — text or call you */}
+          <div className={clsx('rounded-2xl border px-5 py-4 transition-all duration-300', phoneStep === 'done' ? 'border-emerald-400/20 bg-emerald-500/[0.06]' : 'border-white/[0.06] bg-white/[0.02]')}>
+            <div className="flex items-center gap-4">
+              <div className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', phoneStep === 'done' ? 'bg-emerald-500/15' : 'bg-white/[0.04]')}>
+                <Phone className="w-5 h-5 text-emerald-400" strokeWidth={1.5} />
+              </div>
+              <div className="flex-1">
+                <span className="text-[14px] font-normal text-white/90">Phone Number</span>
+                <p className="text-[12px] text-white/55 mt-0.5">
+                  {phoneStep === 'done' ? `Verified: ${verifiedPhone}` : 'Stuard can text or call you — reminders, alerts, check-ins.'}
+                </p>
+              </div>
+              {phoneStep === 'idle' && (
+                <button
+                  onClick={() => signedIn ? setPhoneStep('input') : undefined}
+                  disabled={!signedIn}
+                  className="shrink-0 rounded-full border border-white/[0.10] px-3 py-1.5 text-[11px] text-white/60 transition-colors hover:text-white/80 hover:border-white/[0.15] disabled:opacity-30"
+                >
+                  Verify
+                </button>
+              )}
+              {phoneStep === 'done' && <Check size={16} className="text-emerald-400 shrink-0" />}
+            </div>
+
+            <AnimatePresence>
+              {phoneStep === 'input' && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+                  <div className="mt-4 flex gap-2">
+                    <input value={countryCode} onChange={e => setCountryCode(e.target.value)} className="w-16 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-2 text-[13px] text-white/80 outline-none text-center font-light" />
+                    <input value={phoneDigits} onChange={e => setPhoneDigits(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && phoneValid) handlePhoneRequest(); }} placeholder="Phone number" className="flex-1 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[13px] text-white/80 outline-none placeholder:text-white/25 font-light" />
+                  </div>
+                  {phoneError && <p className="mt-2 text-[11px] text-rose-400/80">{phoneError}</p>}
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => { setPhoneStep('idle'); setPhoneError(''); }} className="rounded-lg border border-white/[0.06] px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors">Cancel</button>
+                    <button onClick={() => void handlePhoneRequest()} disabled={!phoneValid || phoneLoading} className="rounded-lg border border-emerald-400/20 bg-emerald-500/[0.08] px-4 py-1.5 text-[11px] text-emerald-300 hover:bg-emerald-500/[0.12] transition-colors disabled:opacity-30 flex items-center gap-1.5">
+                      {phoneLoading ? <Loader2 size={10} className="animate-spin" /> : null} Send code
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+              {phoneStep === 'code' && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+                  <p className="mt-4 text-[11px] text-white/45">Code sent to {phoneE164}</p>
+                  <input value={verifyCode} onChange={e => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={e => { if (e.key === 'Enter' && verifyCode.length >= 4) handlePhoneVerify(); }} placeholder="Enter code" maxLength={6} className="mt-2 w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[13px] text-white/80 outline-none placeholder:text-white/25 font-light tracking-[0.3em] text-center" />
+                  {phoneError && <p className="mt-2 text-[11px] text-rose-400/80">{phoneError}</p>}
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => { setPhoneStep('input'); setPhoneError(''); setVerifyCode(''); }} className="rounded-lg border border-white/[0.06] px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors">Back</button>
+                    <button onClick={() => void handlePhoneVerify()} disabled={verifyCode.length < 4 || phoneLoading} className="rounded-lg border border-emerald-400/20 bg-emerald-500/[0.08] px-4 py-1.5 text-[11px] text-emerald-300 hover:bg-emerald-500/[0.12] transition-colors disabled:opacity-30 flex items-center gap-1.5">
+                      {phoneLoading ? <Loader2 size={10} className="animate-spin" /> : null} Verify
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {!signedIn && (
+            <p className="text-[11px] text-white/40 text-center mt-1">Sign in first to verify your phone number.</p>
+          )}
+        </div>
+      </Fade>
+
+      <ContinueButton onClick={onNext} />
+    </ScrollablePage>
+  );
+}
+
+// =============================================================================
+// PAGE 8: WORKFLOW MARKETPLACE — real workflows from API
+// =============================================================================
+
+function MarketplacePage({ onNext, onBack, userRole }: { onNext: () => void; onBack: () => void; userRole: string }) {
+  const [workflows, setWorkflows] = useState<MarketplaceWorkflow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  // Fetch real workflows on mount
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const token = await getToken();
+        const api = getMarketplaceApi(() => token);
+        // Try featured first, fall back to search
+        const featured = await api.getFeatured();
+        if (active && featured.ok && featured.workflows.length > 0) {
+          setWorkflows(featured.workflows);
+        } else if (active) {
+          // Search by role for personalized results
+          const roleQueries: Record<string, string> = {
+            developer: 'development',
+            student: 'research',
+            creator: 'content',
+            business: 'productivity',
+            hobbyist: 'automation',
+          };
+          const search = await api.search({ query: roleQueries[userRole] || '', limit: 12 });
+          if (active && search.ok) setWorkflows(search.results);
+        }
+      } catch {} finally { if (active) setLoading(false); }
+    };
+    void load();
+    return () => { active = false; };
+  }, [userRole]);
+
+  const filtered = query.trim()
+    ? workflows.filter(w => w.name.toLowerCase().includes(query.toLowerCase()) || (w.category || '').toLowerCase().includes(query.toLowerCase()))
+    : workflows;
+
+  const toggle = (slug: string) => {
+    setSelected(prev => { const next = new Set(prev); if (next.has(slug)) next.delete(slug); else next.add(slug); return next; });
+  };
+
+  const handleContinue = async () => {
+    // Download selected workflows
+    if (selected.size > 0) {
+      const token = await getToken();
+      const api = getMarketplaceApi(() => token);
+      for (const slug of selected) {
+        setInstalling(slug);
+        try { await api.download(slug); } catch {}
+      }
+      setInstalling(null);
+    }
+    onNext();
+  };
+
+  return (
+    <ScrollablePage stepKey="marketplace">
+      <BackButton onClick={onBack} />
+
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Start with a workflow</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/55 font-light">These are pre-built — grab one and it just works. Or skip and build your own later.</p></Fade>
+
+      <Fade delay={0.7}>
+        <div className="mt-8 w-full max-w-lg relative">
+          <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" strokeWidth={1.5} />
+          <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search workflows..." className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] pl-10 pr-4 py-2.5 text-[13px] text-white/80 outline-none placeholder:text-white/30 focus:border-white/[0.12] font-light" />
+        </div>
+      </Fade>
+
+      <Fade delay={0.9}>
+        <div className="mt-5 w-full max-w-lg">
+          {loading ? (
+            <div className="flex items-center justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-white/30" /></div>
+          ) : filtered.length === 0 ? (
+            <p className="text-center py-12 text-[13px] text-white/45">No workflows found.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+              {filtered.map(wf => {
+                const isSelected = selected.has(wf.slug);
+                const isInstalling = installing === wf.slug;
+                return (
+                  <button
+                    key={wf.id}
+                    onClick={() => toggle(wf.slug)}
+                    disabled={!!installing}
+                    className={clsx(
+                      'flex flex-col gap-2 rounded-xl border px-4 py-3.5 text-left transition-all duration-300',
+                      isSelected ? 'border-white/[0.15] bg-white/[0.07]' : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.10] hover:bg-white/[0.04]',
+                    )}
+                  >
+                    <div className="flex items-center gap-2 w-full">
+                      <span className="text-[13px] font-normal text-white/85 truncate flex-1">{wf.name}</span>
+                      {isInstalling ? <Loader2 size={12} className="animate-spin text-white/50 shrink-0" /> : isSelected ? <Check size={12} className="text-white/60 shrink-0" /> : null}
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-white/50 line-clamp-2">{wf.short_description || wf.description}</p>
+                    <div className="flex items-center gap-3 mt-auto">
+                      {wf.category && <span className="text-[10px] tracking-wide text-white/35 uppercase">{wf.category}</span>}
+                      {wf.download_count > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] text-white/35">
+                          <Download size={9} /> {wf.download_count}
+                        </span>
+                      )}
+                      {wf.rating_avg > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] text-white/35">
+                          <Star size={9} /> {wf.rating_avg.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Fade>
+
+      {selected.size > 0 && (
+        <Fade delay={0} duration={0.3}>
+          <p className="mt-4 text-[12px] text-white/45">{selected.size} selected</p>
+        </Fade>
+      )}
+
+      <ContinueButton onClick={() => void handleContinue()} label={selected.size > 0 ? `Install ${selected.size} & continue` : 'Skip for now'} delay={1.1} />
+    </ScrollablePage>
+  );
+}
+
+// =============================================================================
+// PAGE 9: TONE
+// =============================================================================
+
+function TonePage({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const { tone, setTone, customTone, setCustomTone, persona, setPersona } = usePreferences();
+  const canContinue = tone !== 'custom' || customTone.trim().length > 0;
+
+  return (
+    <Page stepKey="tone">
+      <BackButton onClick={onBack} />
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">How should Stuard talk?</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/50 font-light">You can always change this later.</p></Fade>
+
+      <Fade delay={0.7}>
+        <div className="mt-10 flex flex-wrap justify-center gap-2.5 max-w-md">
+          {TONE_OPTIONS.map(option => {
+            const active = tone === option.id;
+            return (
+              <button key={option.id} onClick={() => setTone(option.id)} className={clsx('flex items-center gap-2 rounded-full border px-4 py-2.5 text-[13px] font-normal tracking-wide transition-colors duration-300', active ? 'border-white/15 bg-white/[0.07] text-white/85' : 'border-white/[0.06] bg-transparent text-white/50 hover:text-white/65 hover:border-white/[0.10]')}>
+                <option.icon size={14} strokeWidth={1.5} />{option.label}
+              </button>
+            );
+          })}
+        </div>
+      </Fade>
+
+      <AnimatePresence mode="wait">
+        <motion.div key={tone} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4 }} className="mt-8 max-w-sm text-center text-[13px] leading-relaxed text-white/55 font-light">
+          &ldquo;{tonePreview(tone, customTone)}&rdquo;
+        </motion.div>
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {tone === 'custom' && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.4 }} className="mt-5 w-full max-w-sm overflow-hidden">
+            <textarea value={customTone} onChange={e => setCustomTone(e.target.value)} rows={2} maxLength={200} placeholder="e.g. Talk like a sharp but friendly teammate" className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-[13px] text-white/80 outline-none placeholder:text-white/30 focus:border-white/[0.12] font-light" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <Fade delay={1}>
+        <div className="mt-6 w-full max-w-sm">
+          <textarea value={persona} onChange={e => setPersona(e.target.value)} rows={2} maxLength={240} placeholder="Optional: describe your role or how you work" className="w-full resize-none rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-[12px] text-white/55 outline-none placeholder:text-white/25 focus:border-white/[0.10] font-light" />
+        </div>
+      </Fade>
+
+      <ContinueButton onClick={onNext} disabled={!canContinue} />
+    </Page>
+  );
+}
+
+// =============================================================================
+// PAGE 10: SHORTCUT
+// =============================================================================
+
+function ShortcutPage({ onBack, onComplete, onSkip }: { onBack: () => void; onComplete: () => void; onSkip?: () => void }) {
+  const [recording, setRecording] = useState(false);
+  const [recordedKeys, setRecordedKeys] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!recording) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault(); event.stopPropagation();
+      if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) { setRecording(false); setError(null); return; }
+      const nextKeys: string[] = [];
+      if (event.ctrlKey) nextKeys.push('Control');
+      if (event.altKey) nextKeys.push('Alt');
+      if (event.shiftKey) nextKeys.push('Shift');
+      if (event.metaKey) nextKeys.push('Command');
+      const rawKey = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+      if (rawKey && !SHORTCUT_MODIFIERS.includes(rawKey) && SHORTCUT_KEYS.includes(rawKey)) nextKeys.push(rawKey);
+      const uniqueKeys = Array.from(new Set(nextKeys));
+      setRecordedKeys(uniqueKeys); setError(null);
+      if (hasValidShortcut(uniqueKeys)) setRecording(false);
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [recording]);
+
+  const displayKeys = displayHotkey(recordedKeys.length > 0 ? recordedKeys : DEFAULT_SHORTCUT_KEYS);
+
+  const handleFinish = async () => {
+    if (recording) return;
+    const keys = recordedKeys.length > 0 ? recordedKeys : DEFAULT_SHORTCUT_KEYS;
+    if (!hasValidShortcut(keys)) { setError('Use a modifier + another key.'); return; }
+    setSaving(true); setError(null);
+    try {
+      const accel = toAccelerator(keys);
+      const result = await (window as any).desktopAPI.setGlobalHotkey(accel);
+      if (!result?.ok) { setError(result?.error || 'Failed to register.'); return; }
+      try { localStorage.setItem('stuard_global_hotkey', accel); } catch {}
+      onComplete();
+    } catch { setError('Something went wrong.'); } finally { setSaving(false); }
+  };
+
+  return (
+    <Page stepKey="shortcut">
+      <BackButton onClick={onBack} />
+      <Fade delay={0.2}><h2 className="text-[28px] font-light text-white/90">Set a shortcut</h2></Fade>
+      <Fade delay={0.5}><p className="mt-3 text-[14px] text-white/50 font-light">{recording ? 'Press your shortcut...' : 'Open Stuard from anywhere on your desktop.'}</p></Fade>
+
+      <Fade delay={0.7}>
+        <div className="mt-12 flex items-center gap-3">
+          {displayKeys.map((key, i) => (
+            <React.Fragment key={`${key}-${i}`}>
+              {i > 0 && <span className="text-[15px] text-white/10 font-light">+</span>}
+              <motion.span layout transition={{ duration: 0.3 }} className={clsx('min-w-[60px] rounded-xl border px-5 py-3 text-center text-[16px] font-light tracking-wide', recording ? 'border-blue-400/15 bg-blue-500/[0.04] text-blue-300/70' : 'border-white/[0.06] bg-white/[0.02] text-white/70')}>{key}</motion.span>
+            </React.Fragment>
+          ))}
+        </div>
+      </Fade>
+
+      {error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="mt-4 text-[12px] text-rose-400/60">{error}</motion.p>}
+
+      <Fade delay={0.9}>
+        <div className="mt-8 flex items-center gap-3">
+          <button onClick={() => { setRecording(true); setRecordedKeys([]); setError(null); }} disabled={saving} className="rounded-full border border-white/[0.08] px-4 py-2 text-[12px] tracking-wide text-white/45 transition-colors duration-300 hover:text-white/65 hover:border-white/[0.12]">
+            <Keyboard size={12} className="inline mr-1.5 -mt-px" strokeWidth={1.5} />{recording ? 'Listening...' : 'Record custom'}
+          </button>
+          {recordedKeys.length > 0 && <button onClick={() => { setRecordedKeys([]); setError(null); }} className="text-[12px] tracking-wide text-white/35 transition-colors duration-300 hover:text-white/55">Reset</button>}
+        </div>
+      </Fade>
+
+      <Fade delay={1.2}>
+        <div className="mt-14 flex items-center gap-6">
+          {onSkip && <button onClick={onSkip} className="text-[12px] text-white/30 transition-colors duration-300 hover:text-white/50">Skip</button>}
+          <button onClick={() => void handleFinish()} disabled={recording || saving} className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.06] px-7 py-3 text-[13px] font-normal tracking-wide text-white/80 transition-colors duration-300 hover:bg-white/[0.10] hover:text-white disabled:opacity-25">
+            {saving ? 'Saving...' : 'Finish'}<ArrowRight size={14} className="text-white/40" />
+          </button>
+        </div>
+      </Fade>
+    </Page>
+  );
+}
+
+// =============================================================================
+// PAGE 11: COMPLETION — two CTAs, fade out background
+// =============================================================================
+
+function CompletionPage({ onConnectApps, onTryHotkey }: { onConnectApps: () => void; onTryHotkey: () => void }) {
+  const savedHotkey = (() => {
+    try { return localStorage.getItem('stuard_global_hotkey') || 'Ctrl+Shift+Space'; } catch { return 'Ctrl+Shift+Space'; }
+  })();
+  const keys = savedHotkey.replace(/Cmd/g, '⌘').split('+').map(k => k.trim());
+
+  return (
+    <Page stepKey="complete">
+      <Fade delay={0.15} duration={0.9}>
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full blur-[60px] opacity-80" style={{ background: 'rgba(56,168,255,0.12)', transform: 'scale(5)' }} />
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04]">
+            <Check className="w-9 h-9 text-white/90" strokeWidth={1.5} />
+          </div>
+        </div>
+      </Fade>
+
+      <Fade delay={0.4} duration={0.9}>
+        <h2 className="mt-10 text-[28px] font-light tracking-tight text-white/90">You're all set</h2>
+      </Fade>
+
+      <Fade delay={0.7} duration={0.9}>
+        <p className="mt-4 max-w-[26rem] text-center text-[15px] leading-relaxed text-white/50 font-light">
+          Stuard is running. Pick how you want to start.
+        </p>
+      </Fade>
+
+      <Fade delay={1.0}>
+        <div className="mt-12 flex flex-col gap-3 w-full max-w-xs">
+          {/* CTA 1: Connect Apps */}
+          <button
+            onClick={onConnectApps}
+            className="group w-full flex items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-5 py-4 transition-all duration-300 hover:border-white/[0.15] hover:bg-white/[0.07] active:scale-[0.98]"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/[0.08] border border-emerald-500/[0.12]">
+              <Plug className="w-5 h-5 text-emerald-400/80" strokeWidth={1.5} />
+            </div>
+            <div className="flex-1 text-left">
+              <span className="text-[14px] font-normal text-white/85">Connect Your Apps</span>
+              <p className="text-[11px] text-white/40 mt-0.5">Gmail, Calendar, GitHub & more</p>
+            </div>
+            <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
+          </button>
+
+          {/* CTA 2: Try the Hotkey */}
+          <button
+            onClick={onTryHotkey}
+            className="group w-full flex items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-5 py-4 transition-all duration-300 hover:border-white/[0.15] hover:bg-white/[0.07] active:scale-[0.98]"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/[0.08] border border-blue-500/[0.12]">
+              <Keyboard className="w-5 h-5 text-blue-400/80" strokeWidth={1.5} />
+            </div>
+            <div className="flex-1 text-left">
+              <span className="text-[14px] font-normal text-white/85">Try the Hotkey</span>
+              <div className="flex items-center gap-1 mt-1">
+                {keys.map((k, i) => (
+                  <React.Fragment key={`${k}-${i}`}>
+                    {i > 0 && <span className="text-[10px] text-white/15">+</span>}
+                    <span className="px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.08] text-[10px] text-white/50 font-mono">{k}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
+          </button>
+        </div>
+      </Fade>
+    </Page>
+  );
+}
+
+// =============================================================================
+// MAIN — hello → caps → sign-in → role → features → marketplace → tone → shortcut → done
+// =============================================================================
+
+interface InteractiveWelcomeProps {
+  onComplete: () => void;
+  onSkip?: () => void;
+}
+
+const PAGE_TOUR_CONTEXT: Record<number, string> = {
+  0: 'the welcome splash',
+  1: 'the four-capabilities overview (chat, proactive, workflows, integrations)',
+  5: 'the sign-in step (optional, syncs settings across devices)',
+  6: 'the role-selection step (developer / student / creator / business / hobbyist)',
+  7: 'the features setup step (Scout proactive-agent toggle and phone-number verification)',
+  8: 'the marketplace step — picking pre-built workflows to install',
+  9: 'the tone-and-persona step',
+  10: 'the global-hotkey step — the keystroke that summons Stuard from anywhere',
+  11: 'the completion screen — Connect Apps or Try the Hotkey',
+};
+
+function buildVoiceTourPrompt(page: number, role: string): string {
+  const where = PAGE_TOUR_CONTEXT[page] ?? 'the onboarding flow';
+  const roleLine = role ? ` The user identifies as: ${role}.` : '';
+  return [
+    "You are Stuard giving a quick voice tour of the desktop app during first-run onboarding.",
+    `The user is currently on ${where}.${roleLine}`,
+    "Be warm, conversational, and very brief — two short sentences max per turn.",
+    "Explain what's on this page, what the buttons do, and answer any questions about Stuard's capabilities (chat, Scout the proactive agent, workflows, integrations, voice, hotkey).",
+    "If they ask to do something, remind them they can click the buttons themselves; the tour is hands-on.",
+    "Never repeat the same explanation twice. Wait for them to talk back.",
+  ].join(' ');
+}
+
+export function InteractiveWelcome({ onComplete, onSkip }: InteractiveWelcomeProps) {
+  const [page, setPage] = useState(0);
+  const [signedIn, setSignedIn] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [userRole, setUserRole] = useState('');
+  const [fadingOut, setFadingOut] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+
+  const voiceSystemPrompt = useMemo(() => buildVoiceTourPrompt(page, userRole), [page, userRole]);
+  const voiceInitialMessage = useMemo(
+    () => "Hey — I'm Stuard. Ask me anything about what's on screen, or just tell me what you're trying to set up.",
+    [],
+  );
+
+  const voice = useVoiceMode({
+    systemPrompt: voiceSystemPrompt,
+    initialMessage: voiceInitialMessage,
+  });
+
+  const startVoiceRef = useRef(voice.start);
+  const stopVoiceRef = useRef(voice.stop);
+  useEffect(() => { startVoiceRef.current = voice.start; stopVoiceRef.current = voice.stop; });
+
+  const handleVoiceToggle = useCallback(() => {
+    if (voiceActive) {
+      try { stopVoiceRef.current(); } catch {}
+      setVoiceActive(false);
+    } else {
+      setVoiceActive(true);
+      void startVoiceRef.current();
+    }
+  }, [voiceActive]);
+
+  // Stop voice when onboarding closes
+  useEffect(() => () => { try { stopVoiceRef.current(); } catch {} }, []);
+
+  // If voice errors out (e.g. not signed in, network), drop back to "off" so
+  // the toggle isn't stuck in the connecting state.
+  useEffect(() => {
+    if (voiceActive && voice.error) setVoiceActive(false);
+  }, [voiceActive, voice.error]);
+
+  const voiceConnecting = voiceActive && voice.state === 'connecting';
+  const voiceShowing = voiceActive && voice.state !== 'idle';
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!active) return;
+      setSignedIn(!!data?.session);
+      setUserEmail(data?.session?.user?.email ?? null);
+    };
+    void load();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_ev, session) => {
+      setSignedIn(!!session);
+      setUserEmail(session?.user?.email ?? null);
+      setSigningIn(false);
+    });
+    return () => { active = false; try { subscription.unsubscribe(); } catch {} };
+  }, []);
+
+  const handleSignIn = async () => {
+    setSigningIn(true);
+    const result = await startBrowserSignIn();
+    if (!result.ok) setSigningIn(false);
+  };
+
+  const handleRoleSelect = (role: string) => {
+    setUserRole(role);
+    try { localStorage.setItem('stuard_user_role', role); } catch {}
+  };
+
+  // Page numbers: 0=hello, 1=capabilities, 5=signin, 6=role, 7=features, 8=marketplace, 9=tone, 10=shortcut, 11=done.
+  // Pages 2-4 are skipped (formerly per-capability pages, consolidated into page 1).
+  const next = useCallback(() => setPage(p => (p === 1 ? 5 : p + 1)), []);
+  const back = useCallback(() => setPage(p => {
+    if (p === 5) return 1;
+    return Math.max(0, p - 1);
+  }), []);
+
+  // Fade out the entire background then call onComplete
+  const dismiss = useCallback(() => {
+    setFadingOut(true);
+    setTimeout(() => onComplete(), 600);
+  }, [onComplete]);
+
+  const handleConnectApps = useCallback(() => {
+    // Open dashboard integrations tab before closing onboarding window
+    try { (window as any).desktopAPI?.openDashboard?.({ tab: 'integrations' }); } catch {}
+    dismiss();
+  }, [dismiss]);
+
+  const handleTryHotkey = useCallback(() => {
+    dismiss();
+  }, [dismiss]);
+
+  return (
+    <motion.div
+      className="relative h-full w-full overflow-hidden"
+      initial={{ opacity: 1 }}
+      animate={{ opacity: fadingOut ? 0 : 1 }}
+      transition={{ duration: 0.6, ease: 'easeOut' }}
+    >
+      {page === 0 ? <RedSkyBackground /> : <AuroraBackground />}
+      {page > 0 && page < 11 && (
+        <VoiceTourToggle
+          active={voiceActive}
+          connecting={voiceConnecting}
+          disabled={!signedIn}
+          onToggle={handleVoiceToggle}
+        />
+      )}
+      {onSkip && page > 0 && page < 11 && <SkipButton onClick={onSkip} />}
+      <div className="relative z-10 h-full w-full">
+        <AnimatePresence mode="wait">
+          {page === 0 && <HelloSplash onNext={next} />}
+          {page === 1 && <CapabilitiesOverview onNext={next} onBack={back} />}
+          {page === 5 && <SignInPage signedIn={signedIn} signingIn={signingIn} userEmail={userEmail} onSignIn={handleSignIn} onNext={next} onBack={back} />}
+          {page === 6 && <RolePage onNext={next} onBack={back} onSelect={handleRoleSelect} />}
+          {page === 7 && <FeaturesPage onNext={next} onBack={back} signedIn={signedIn} />}
+          {page === 8 && <MarketplacePage onNext={next} onBack={back} userRole={userRole} />}
+          {page === 9 && <TonePage onNext={next} onBack={back} />}
+          {page === 10 && <ShortcutPage onBack={back} onComplete={next} onSkip={() => setPage(11)} />}
+          {page === 11 && <CompletionPage onConnectApps={handleConnectApps} onTryHotkey={handleTryHotkey} />}
+        </AnimatePresence>
+      </div>
+      <VoiceModeOverlay
+        visible={voiceShowing}
+        state={voice.state}
+        audioLevel={voice.audioLevel}
+        muted={voice.muted}
+        transcripts={voice.transcripts}
+        activeTool={voice.activeTool}
+        sharingScreen={voice.sharingScreen}
+        onMuteToggle={voice.toggleMute}
+        onShareScreen={voice.toggleScreenShare}
+        onClose={handleVoiceToggle}
+      />
+    </motion.div>
+  );
+}

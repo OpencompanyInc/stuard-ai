@@ -1,0 +1,682 @@
+name: Beta Release (Develop)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to deploy (leave empty for current branch)'
+        required: false
+        default: ''
+      deploy_cloud:
+        description: 'Deploy Cloud AI backend'
+        type: boolean
+        default: true
+      deploy_website:
+        description: 'Deploy Website'
+        type: boolean
+        default: false
+      build_desktop:
+        description: 'Build Desktop App'
+        type: boolean
+        default: false
+      deploy_vm:
+        description: 'Build & upload VM agent bundles'
+        type: boolean
+        default: true
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+  GAR_REPO: ${{ secrets.GAR_REPO }}
+  GAR_HOST: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+  # tsc OOMs on the default 2GB heap when typechecking cloud-ai (large include via ../../shared).
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  # 0. CI Checks (Gatekeeper)
+  ci-checks:
+    name: Verify Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Lint (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run lint --filter=@stuardai/cloud-ai
+      - name: Typecheck (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/cloud-ai
+      - name: Build (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/cloud-ai
+      - name: Unit Tests (Cloud)
+        if: ${{ github.event.inputs.deploy_cloud == 'true' || github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run test --filter=@stuardai/cloud-ai
+
+      - name: Typecheck (VM Agent)
+        if: ${{ github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/vm-agent
+      - name: Build (VM Agent)
+        if: ${{ github.event.inputs.deploy_vm == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/vm-agent
+
+      - name: Lint (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run lint --filter=stuard-ai-website
+      - name: Typecheck (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run typecheck --filter=stuard-ai-website
+      - name: Build (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        env:
+          # NEXT_PUBLIC_* are inlined at build time and supabaseClient.ts throws if
+          # they're missing, which breaks static prerender. This is a throwaway
+          # validation build (the real deploy uses Vercel-managed env), so feed it
+          # harmless placeholders just so prerender can evaluate the module.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+        run: pnpm turbo run build --filter=stuard-ai-website
+      - name: Unit Tests (Website)
+        if: ${{ github.event.inputs.deploy_website == 'true' }}
+        run: pnpm turbo run test --filter=stuard-ai-website
+
+      - name: Lint (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run lint --filter=@stuardai/desktop
+      - name: Typecheck (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run typecheck --filter=@stuardai/desktop
+      - name: Build (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run build --filter=@stuardai/desktop
+      - name: Unit Tests (Desktop)
+        if: ${{ github.event.inputs.build_desktop == 'true' }}
+        run: pnpm turbo run test --filter=@stuardai/desktop
+
+  # 1. Build & upload VM agent bundles to GCS
+  # Always rebuild+upload to ensure GCS has the latest bundles.
+  # The old HEAD~1 diff check was unreliable (missed multi-commit changes).
+  build-vm-agents:
+    name: VM Agent Bundles
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_vm == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build & upload VM agent bundle
+        working-directory: apps/vm-agent
+        run: node scripts/build.cjs --upload
+        env:
+          CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
+
+      - name: Build & upload Python agent bundle
+        working-directory: apps/cloud-ai
+        run: node scripts/build-python-agent.cjs --upload
+        env:
+          CLOUD_ENGINE_BUCKET: ${{ secrets.CLOUD_ENGINE_BUCKET || 'stuard-user-data' }}
+
+  # 2. Deploy Cloud AI (Backend) to Cloud Run (Beta)
+  deploy-beta-backend:
+    name: Cloud AI (Beta)
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker $GAR_HOST --quiet
+
+      - name: Build & Push Container
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:beta"
+          docker build -f apps/cloud-ai/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Notify Ops – Deploying
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deploying\",\"workflow_run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" || true)
+          echo "Ops callback (deploying) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (deploying) failed with HTTP $HTTP_CODE"
+          fi
+
+      - name: Deploy to Cloud Run (Beta)
+        run: |
+          IMAGE="$GAR_HOST/$GCP_PROJECT_ID/$GAR_REPO/stuard-cloud-ai:beta"
+
+          # All secrets from Google Cloud Secret Manager
+          SECRETS="XAI_API_KEY=XAI_API_KEY:latest"
+          SECRETS="$SECRETS,GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest"
+          SECRETS="$SECRETS,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
+          SECRETS="$SECRETS,OPENAI_API_KEY=OPENAI_API_KEY:latest"
+          SECRETS="$SECRETS,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+          SECRETS="$SECRETS,DEEPSEEK_API_KEY=DEEPSEEK_API_KEY:latest"
+          SECRETS="$SECRETS,SUPABASE_PUBLISHABLE_KEY=SUPABASE_PUBLISHABLE_KEY:latest"
+          SECRETS="$SECRETS,SUPABASE_SECRET_KEY=SUPABASE_SECRET_KEY:latest"
+          SECRETS="$SECRETS,PERPLEXITY_API_KEY=PERPLEXITY_API_KEY:latest"
+          SECRETS="$SECRETS,TAVILY_API_KEY=TAVILY_API_KEY:latest"
+          SECRETS="$SECRETS,ASSEMBLYAI_API_KEY=ASSEMBLYAI_API_KEY:latest"
+          SECRETS="$SECRETS,OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest"
+          SECRETS="$SECRETS,ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest"
+          SECRETS="$SECRETS,YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest"
+          SECRETS="$SECRETS,GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest"
+          # OAuth credentials
+          SECRETS="$SECRETS,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest"
+          SECRETS="$SECRETS,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest"
+          SECRETS="$SECRETS,GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest"
+          SECRETS="$SECRETS,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest"
+          SECRETS="$SECRETS,MS_CLIENT_ID=MS_CLIENT_ID:latest"
+          SECRETS="$SECRETS,MS_CLIENT_SECRET=MS_CLIENT_SECRET:latest"
+          SECRETS="$SECRETS,DISCORD_CLIENT_ID=DISCORD_CLIENT_ID:latest"
+          SECRETS="$SECRETS,DISCORD_CLIENT_SECRET=DISCORD_CLIENT_SECRET:latest"
+          SECRETS="$SECRETS,META_APP_ID=META_APP_ID:latest"
+          SECRETS="$SECRETS,META_APP_SECRET=META_APP_SECRET:latest"
+          # Instagram has its own app id/secret (distinct from the umbrella META app)
+          SECRETS="$SECRETS,INSTAGRAM_APP_ID=INSTAGRAM_APP_ID:latest"
+          SECRETS="$SECRETS,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest"
+          SECRETS="$SECRETS,META_WEBHOOK_VERIFY_TOKEN=META_WEBHOOK_VERIFY_TOKEN:latest"
+          # Threads/Facebook get their own app creds — add THREADS_APP_ID/SECRET + FACEBOOK_APP_ID/SECRET here once those products are configured in Meta + created in Secret Manager
+          # X (Twitter) OAuth
+          SECRETS="$SECRETS,X_CLIENT_ID=X_CLIENT_ID:latest"
+          SECRETS="$SECRETS,X_CLIENT_SECRET=X_CLIENT_SECRET:latest"
+          # X v2 webhook CRC/signature secret = the app's Consumer Secret (API Key Secret), distinct from the OAuth2 client secret
+          SECRETS="$SECRETS,X_WEBHOOK_SECRET=X_WEBHOOK_SECRET:latest"
+          # Notion OAuth
+          SECRETS="$SECRETS,NOTION_CLIENT_ID=NOTION_CLIENT_ID:latest"
+          SECRETS="$SECRETS,NOTION_CLIENT_SECRET=NOTION_CLIENT_SECRET:latest"
+          # Messaging
+          SECRETS="$SECRETS,WA_PHONE_NUMBER_ID=WA_PHONE_NUMBER_ID:latest"
+          SECRETS="$SECRETS,WA_ACCESS_TOKEN=WA_ACCESS_TOKEN:latest"
+          SECRETS="$SECRETS,WA_WEBHOOK_VERIFY_TOKEN=WA_WEBHOOK_VERIFY_TOKEN:latest"
+          SECRETS="$SECRETS,TELNYX_API_KEY=TELNYX_API_KEY:latest"
+          SECRETS="$SECRETS,TELNYX_FROM_NUMBER=TELNYX_FROM_NUMBER:latest"
+          SECRETS="$SECRETS,TELNYX_MESSAGING_PROFILE_ID=TELNYX_MESSAGING_PROFILE_ID:latest"
+          SECRETS="$SECRETS,TELNYX_SIP_CONNECTION_ID=TELNYX_SIP_CONNECTION_ID:latest"
+          # Internal
+          SECRETS="$SECRETS,INTEGRATION_STATE_SECRET=INTEGRATION_STATE_SECRET:latest"
+          # Per-user envelope encryption key for OAuth tokens in external_accounts
+          SECRETS="$SECRETS,TOKEN_ENCRYPTION_PEPPER=TOKEN_ENCRYPTION_PEPPER:latest"
+          # Billing — Polar.sh API + webhook
+          SECRETS="$SECRETS,POLAR_ACCESS_TOKEN=POLAR_ACCESS_TOKEN:latest"
+          SECRETS="$SECRETS,POLAR_WEBHOOK_SECRET=POLAR_WEBHOOK_SECRET:latest"
+
+          gcloud run deploy stuard-cloud-ai-beta \
+            --image "$IMAGE" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account "${{ secrets.GCP_RUN_SA }}" \
+            --memory 1Gi \
+            --cpu 2 \
+            --timeout 3600 \
+            --concurrency 80 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --set-env-vars NODE_ENV=beta,CLOUD_PUBLIC_URL=https://beta-api.stuard.ai,WEBSITE_BASE_URL=https://beta.stuard.ai,SUPABASE_URL=${{ secrets.SUPABASE_URL }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_ZONE=${{ secrets.GCP_ZONE || 'us-central1-a' }} \
+            --set-secrets "$SECRETS"
+
+      - name: Notify Ops – Deployed
+        if: ${{ success() }}
+        continue-on-error: true
+        run: |
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"deployed\"}" || true)
+          echo "Ops callback (deployed) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (deployed) failed with HTTP $HTTP_CODE"
+          fi
+
+      - name: Notify Ops – Failed
+        if: ${{ failure() }}
+        continue-on-error: true
+        run: |
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X POST https://api.stuard.ai/v1/ops/deployments/callback \
+            -H 'Content-Type: application/json' \
+            -d "{\"secret\":\"${{ secrets.DEPLOY_CALLBACK_SECRET }}\",\"channel\":\"beta\",\"status\":\"failed\",\"error_message\":\"Cloud Run deploy failed\"}" || true)
+          echo "Ops callback (failed) HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Ops callback (failed) failed with HTTP $HTTP_CODE"
+          fi
+
+  # 2b. Sync tool descriptions + embeddings to Supabase (tool_embeddings).
+  # Tool docs are read from the source registry, so search_tools serves stale
+  # descriptions until this runs. Incremental sync re-embeds only tools whose
+  # description changed. Dev syncs via `pnpm --filter @stuardai/cloud-ai sync:tools`.
+  sync-beta-tool-docs:
+    name: Sync Tool Docs (Beta)
+    runs-on: ubuntu-latest
+    needs: deploy-beta-backend
+    if: ${{ github.event.inputs.deploy_cloud == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - name: Install Dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Sync tool docs to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          export SUPABASE_SECRET_KEY="$(gcloud secrets versions access latest --secret=SUPABASE_SECRET_KEY)"
+          export GOOGLE_API_KEY="$(gcloud secrets versions access latest --secret=GOOGLE_API_KEY)"
+          export OPENAI_API_KEY="$(gcloud secrets versions access latest --secret=OPENAI_API_KEY)"
+          pnpm --filter @stuardai/cloud-ai run sync:tools
+
+  # 3. Deploy Website (Frontend) to Vercel Preview
+  deploy-beta-website:
+    name: Website (Beta)
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    if: ${{ github.event.inputs.deploy_website == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+      - name: Pull Vercel environment (preview)
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Pin Root Directory to apps/website
+        # The Vercel project's pulled rootDirectory is null (it treats the app as
+        # repo-root) but the Next app + its vercel.json actually live in
+        # apps/website. We run the Vercel CLI from the repo root (the real pnpm
+        # monorepo root) and point Vercel at the package via rootDirectory, so the
+        # @vercel/next builder resolves output to <repo-root>/apps/website/.next.
+        # Running the CLI *inside* apps/website made the builder treat that as the
+        # monorepo root and append the package path again ->
+        # apps/website/apps/website/.next (ENOENT routes-manifest.json). cat
+        # before/after keeps the real pulled settings visible in the run log.
+        run: |
+          echo "---- .vercel/project.json (pulled) ----"
+          cat .vercel/project.json || true
+          node -e "const fs=require('fs');const p='.vercel/project.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.settings=j.settings||{};j.settings.rootDirectory='apps/website';fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          echo "---- after ----"
+          cat .vercel/project.json || true
+      - name: Build with Vercel (preview)
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel build --token=${{ secrets.VERCEL_TOKEN }} || {
+            echo "=== build failed; locating Next output to compare vs the path Vercel expected ==="
+            find . -name routes-manifest.json -not -path '*/node_modules/*' 2>/dev/null || true
+            exit 1
+          }
+      - name: Deploy prebuilt to Vercel (preview)
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
+
+  # 4. Build Desktop App for all platforms
+  build-beta-desktop:
+    name: Desktop App (Beta - ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
+    needs: ci-checks
+    if: ${{ github.event.inputs.build_desktop == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: stuard-desktop-beta-windows
+            artifact-ext: exe
+          # - os: macos-13
+          #   artifact-name: stuard-desktop-beta-mac-intel
+          #   artifact-ext: dmg
+          #   arch: x64
+          # - os: macos-latest
+          #   artifact-name: stuard-desktop-beta-mac-silicon
+          #   artifact-ext: dmg
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   artifact-name: stuard-desktop-beta-linux
+          #   artifact-ext: AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      
+      # Build Python service executables (agent + browser + mediapipe + wakeword)
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev scrot xvfb libportaudio2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'apps/agent/requirements.txt'
+
+      - name: Install Python dependencies
+        working-directory: apps/agent
+        run: |
+          pip install -r requirements.txt
+          pip install mediapipe opencv-python
+
+      - name: Cache PyInstaller builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/agent/build
+            ~/.pyinstaller
+          key: pyinstaller-services-${{ runner.os }}-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-agent.spec', 'apps/agent/stuard-browser.spec', 'apps/agent/stuard-mediapipe.spec', 'apps/agent/stuard-wakeword.spec', 'apps/desktop/resources/wakeword/listen_numpy.py', 'apps/desktop/resources/wakeword/models/kws_weights.npz') }}
+          restore-keys: |
+            pyinstaller-services-${{ runner.os }}-
+            pyinstaller-${{ runner.os }}-
+
+      - name: Build all service executables
+        working-directory: apps/agent
+        run: python build-services.py --services agent browser mediapipe wakeword
+
+      - name: Build file indexer (Rust, branded "Stuard AI")
+        shell: bash
+        run: |
+          cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml
+          mkdir -p dist
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer.exe dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-macos
+          else
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-linux
+          fi
+
+      - name: Verify service binaries
+        run: |
+          echo "=== Service binaries ==="
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ls -la dist/stuard-agent.exe dist/stuard-browser.exe dist/stuard-mediapipe.exe dist/stuard-wakeword.exe 2>/dev/null || true
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            ls -la dist/stuard-agent-macos dist/stuard-browser-macos dist/stuard-mediapipe-macos dist/stuard-wakeword-macos 2>/dev/null || true
+          else
+            ls -la dist/stuard-agent-linux dist/stuard-browser-linux dist/stuard-mediapipe-linux dist/stuard-wakeword-linux 2>/dev/null || true
+          fi
+          echo "=== Required: agent + browser + wakeword + file-indexer ==="
+          # Agent, browser, wakeword, and the file indexer are required; mediapipe is optional.
+          # The file indexer powers local/launcher file search and has NO runtime
+          # fallback, so a build missing it ships broken file search — fail loudly.
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            test -f dist/stuard-agent.exe && test -f dist/stuard-browser.exe && test -f dist/stuard-wakeword.exe && test -f dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            test -f dist/stuard-agent-macos && test -f dist/stuard-browser-macos && test -f dist/stuard-wakeword-macos && test -f dist/stuard-file-indexer-macos
+          else
+            test -f dist/stuard-agent-linux && test -f dist/stuard-browser-linux && test -f dist/stuard-wakeword-linux && test -f dist/stuard-file-indexer-linux
+          fi
+        shell: bash
+      
+      # Build Electron App (use npm for desktop to avoid pnpm transitive dep issues)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Cache npm modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-desktop-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            npm-desktop-${{ runner.os }}-
+
+      - name: Cache Electron & electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron-builder/Cache
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      - name: Install Desktop Dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Write Cloud Config for Beta
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/apps/desktop/build/agent"
+          echo "CLOUD_PUBLIC_URL=https://beta-api.stuard.ai" > "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "CLOUD_AI_HTTP=https://beta-api.stuard.ai" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "UPDATE_CHANNEL=beta" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "STUARD_UPDATE_BASE_URL=https://updates.stuard.ai/desktop" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY }}" >> "$GITHUB_WORKSPACE/apps/desktop/build/.env"
+          cp "$GITHUB_WORKSPACE/apps/desktop/build/.env" "$GITHUB_WORKSPACE/apps/desktop/build/agent/.env"
+      - name: Build Desktop App
+        working-directory: apps/desktop
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            npm run build && npm run obfuscate && npm run prepare:agent && npx electron-builder --${{ matrix.arch }}
+          else
+            npm run dist
+          fi
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOUD_PUBLIC_URL: "https://beta-api.stuard.ai"
+          # This desktop build uses `npm install` (flat node_modules), so the
+          # vite renderer build needs preserveSymlinks to resolve the symlinked
+          # @stuardai/* workspace packages' transitive imports. The pnpm-based
+          # gate/local builds must NOT set this (it breaks .pnpm-store resolution).
+          STUARD_DESKTOP_NPM_BUILD: "1"
+          # Fail the build if prepare:agent can't find the Rust file indexer, so a
+          # release can never silently ship with local file search disabled.
+          STUARD_REQUIRE_FILE_INDEXER: "1"
+          # PostHog analytics enabled for beta only
+          VITE_PUBLIC_POSTHOG_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          VITE_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com"
+          # macOS code signing (optional - uncomment when ready)
+          # CSC_LINK: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      
+      # Windows: Compile Inno Setup installer
+      - name: Get App Version
+        if: runner.os == 'Windows'
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./apps/desktop/package.json').version")" >> $GITHUB_OUTPUT
+      
+      - name: Compile Inno Setup Installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMY_APP_VERSION=${{ steps.version.outputs.version }} apps\desktop\inno\setup.iss
+      
+      - name: Configure R2 credentials
+        shell: bash
+        run: |
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+          echo "AWS_REGION=auto" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=auto" >> $GITHUB_ENV
+      
+      # Generate update manifest
+      - name: Generate Update Manifest (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node apps/desktop/scripts/generate-update-manifest.cjs ${{ steps.version.outputs.version }} beta windows
+      
+      - name: Generate Update Manifest (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          node apps/desktop/scripts/generate-update-manifest.cjs $VERSION beta mac
+      
+      - name: Generate Update Manifest (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          node apps/desktop/scripts/generate-update-manifest.cjs $VERSION beta linux
+      
+      # Upload artifacts + manifest
+      - name: Upload to R2 (Mac)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Upload with architecture suffix for clarity
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          for f in apps/desktop/release/*.dmg; do
+            filename=$(basename "$f" .dmg)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/${filename}-${{ matrix.arch }}.dmg" --endpoint-url "$ENDPOINT"
+          done
+          for f in apps/desktop/release/*.zip; do
+            filename=$(basename "$f" .zip)
+            aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/${filename}-${{ matrix.arch }}.zip" --endpoint-url "$ENDPOINT"
+          done || true
+          aws s3 cp apps/desktop/release/latest-mac.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest-mac-${{ matrix.arch }}.yml" --endpoint-url "$ENDPOINT"
+      
+      - name: Upload to R2 (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          aws s3 cp apps/desktop/release/*.AppImage "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          # .deb package (Debian/Ubuntu). Guarded so a missing file doesn't fail the job.
+          for f in apps/desktop/release/*.deb; do
+            [ -e "$f" ] && aws s3 cp "$f" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          done
+          aws s3 cp apps/desktop/release/latest-linux.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest-linux.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
+      
+      - name: Upload to R2 (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          CACHE_ASSET="public, max-age=31536000, immutable"
+          CACHE_MANIFEST="public, max-age=60"
+          aws s3 cp apps/desktop/release/StuardAI-Setup-*.exe "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_ASSET"
+          aws s3 cp apps/desktop/release/latest.yml "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/desktop/beta/latest.yml" --endpoint-url "$ENDPOINT" --cache-control "$CACHE_MANIFEST"
+
+      # Upload standalone service binaries to R2 for on-demand download
+      - name: Upload service binaries to R2
+        shell: bash
+        run: |
+          ENDPOINT="https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}"
+          CACHE="public, max-age=86400"
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+
+          # Determine platform suffix for R2 path
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            PLAT="windows"
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            PLAT="mac-${{ matrix.arch }}"
+          else
+            PLAT="linux"
+          fi
+
+          echo "Uploading service binaries for $PLAT (v$VERSION)..."
+          for bin in dist/stuard-browser* dist/stuard-mediapipe* dist/stuard-wakeword*; do
+            if [ -f "$bin" ]; then
+              FNAME=$(basename "$bin")
+              # Upload versioned + latest
+              aws s3 cp "$bin" "$BUCKET/services/beta/$PLAT/$VERSION/$FNAME" --endpoint-url "$ENDPOINT" --cache-control "$CACHE"
+              aws s3 cp "$bin" "$BUCKET/services/beta/$PLAT/latest/$FNAME" --endpoint-url "$ENDPOINT" --cache-control "$CACHE"
+              echo "  Uploaded: $FNAME"
+            fi
+          done

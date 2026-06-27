@@ -1,0 +1,8 @@
+﻿
+src/tools/tts-tools.ts(129,21): error TS18048: 'filePath' is possibly 'undefined'.
+src/tools/tts-tools.ts(129,43): error TS18048: 'filePath' is possibly 'undefined'.
+src/tools/tts-tools.ts(129,72): error TS18048: 'filePath' is possibly 'undefined'.
+src/tools/tts-tools.ts(134,25): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'PathLike | 
+FileHandle'.
+
+

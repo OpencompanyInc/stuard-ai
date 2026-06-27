@@ -1,0 +1,223 @@
+import React from "react";
+import type { ValidationError } from "../builder/compiler";
+import type { DesignerModel } from "../types";
+import type { ExecutionState, OpenFileTab, RightPanel, WorkspaceInfo } from "./types";
+import { WorkflowCanvasPane } from "./WorkflowCanvasPane";
+import { WorkflowRightPanels } from "./WorkflowRightPanels";
+
+interface WorkflowCanvasAndPanelsProps {
+  model: DesignerModel;
+  selectedId: string;
+  selectedNodeId: string;
+  selectedNodeIds: Set<string>;
+  connectingFrom: string;
+  reconnecting: { wireIndex: number; end: "from" | "to" } | null;
+  executionState: ExecutionState | null;
+  size: { w: number; h: number };
+  canvasRef: React.RefObject<HTMLDivElement>;
+  alignmentGuides: any[];
+  zoom: number;
+  selectedWireIndex: number | null;
+  selectionBox: { startX: number; startY: number; endX: number; endY: number } | null;
+  activeTab: string;
+  openTabs: OpenFileTab[];
+  logs: Array<{ ts: string; msg: string }>;
+  floatingContent?: React.ReactNode;
+  rightPanel: RightPanel;
+  /** True while the floating AI panel is open — docked panels dock to its left. */
+  aiOpen: boolean;
+  /** Current width of the AI panel, used to offset docked panels beside it. */
+  aiLeftWidth: number;
+  manualRightWidth: number;
+  errors: ValidationError[];
+  showWorkspace: boolean;
+  workspaceInfo: WorkspaceInfo | null;
+  onSetActiveTab: (tab: string) => void;
+  onCloseFileTab: (filePath: string) => void;
+  onClearLogs: () => void;
+  onSendLogsToChat: (text: string) => void;
+  onCanvasMouseDown: (e: React.MouseEvent) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  onZoomFit?: () => void;
+  bindWheelTarget?: (el: HTMLDivElement | null) => () => void;
+  onAutoOrganize: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onMouseMove: (e: React.MouseEvent) => void;
+  onMouseUp: () => void;
+  onMouseLeave: () => void;
+  onCanvasClick: () => void;
+  onNodeSelect: (id: string, e?: React.MouseEvent) => void;
+  onNodeMouseDown: (id: string, e: React.MouseEvent) => void;
+  onNodeContextMenu: (id: string, e: React.MouseEvent) => void;
+  onNodeConnect: (id: string) => void;
+  onWireSelect: (i: number) => void;
+  onWireDelete: (i: number) => void;
+  onWireContextMenu: (wireIndex: number, e: React.MouseEvent) => void;
+  onWireReconnect: (wireIndex: number, end: "from" | "to") => void;
+  onCanvasContextMenu: (e: React.MouseEvent) => void;
+  onStartResizeManualRight: (e: React.MouseEvent) => void;
+  onResetManualRightWidth: () => void;
+  onSetSelectedWireIndex: (index: number | null) => void;
+  onSetRightPanel: (panel: RightPanel) => void;
+  onUpdateModel: (model: DesignerModel) => void;
+  onDeleteNode: () => void;
+  onStartReconnect: (wireIndex: number, end: "from" | "to") => void;
+  onRefreshWorkspace: () => void;
+  onCloseWorkspace: () => void;
+  onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenStuard?: (subPath: string) => void;
+  /** Breadcrumbs for sub-workflow navigation */
+  breadcrumbs?: Array<{ label: string; path: string | null }>;
+  /** Current sub-workflow path (null = main) */
+  currentSubPath?: string | null;
+  /** Navigate back to parent workflow */
+  onNavigateBack?: () => void;
+}
+
+export function WorkflowCanvasAndPanels({
+  model,
+  selectedId,
+  selectedNodeId,
+  selectedNodeIds,
+  connectingFrom,
+  reconnecting,
+  executionState,
+  size,
+  canvasRef,
+  alignmentGuides,
+  zoom,
+  selectedWireIndex,
+  selectionBox,
+  activeTab,
+  openTabs,
+  logs,
+  floatingContent,
+  rightPanel,
+  aiOpen,
+  aiLeftWidth,
+  manualRightWidth,
+  errors,
+  showWorkspace,
+  workspaceInfo,
+  onSetActiveTab,
+  onCloseFileTab,
+  onClearLogs,
+  onSendLogsToChat,
+  onCanvasMouseDown,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  onZoomFit,
+  bindWheelTarget,
+  onAutoOrganize,
+  onDragOver,
+  onDrop,
+  onMouseMove,
+  onMouseUp,
+  onMouseLeave,
+  onCanvasClick,
+  onNodeSelect,
+  onNodeMouseDown,
+  onNodeContextMenu,
+  onNodeConnect,
+  onWireSelect,
+  onWireDelete,
+  onWireContextMenu,
+  onWireReconnect,
+  onCanvasContextMenu,
+  onStartResizeManualRight,
+  onResetManualRightWidth,
+  onSetSelectedWireIndex,
+  onSetRightPanel,
+  onUpdateModel,
+  onDeleteNode,
+  onStartReconnect,
+  onRefreshWorkspace,
+  onCloseWorkspace,
+  onOpenFile,
+  onOpenStuard,
+  breadcrumbs,
+  currentSubPath,
+  onNavigateBack,
+}: WorkflowCanvasAndPanelsProps) {
+  return (
+    <>
+      <WorkflowCanvasPane
+        model={model}
+        selectedId={selectedId}
+        selectedNodeId={selectedNodeId}
+        selectedNodeIds={selectedNodeIds}
+        connectingFrom={connectingFrom}
+        reconnecting={reconnecting}
+        executionState={executionState}
+        size={size}
+        canvasRef={canvasRef}
+        alignmentGuides={alignmentGuides}
+        zoom={zoom}
+        selectedWireIndex={selectedWireIndex}
+        selectionBox={selectionBox}
+        activeTab={activeTab}
+        openTabs={openTabs}
+        floatingContent={floatingContent}
+        onSetActiveTab={onSetActiveTab}
+        onCloseFileTab={onCloseFileTab}
+        onCanvasMouseDown={onCanvasMouseDown}
+        onZoomIn={onZoomIn}
+        onZoomOut={onZoomOut}
+        onZoomReset={onZoomReset}
+        onZoomFit={onZoomFit}
+        bindWheelTarget={bindWheelTarget}
+        onAutoOrganize={onAutoOrganize}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        onCanvasClick={onCanvasClick}
+        onNodeSelect={onNodeSelect}
+        onNodeMouseDown={onNodeMouseDown}
+        onNodeContextMenu={onNodeContextMenu}
+        onNodeConnect={onNodeConnect}
+        onWireSelect={onWireSelect}
+        onWireDelete={onWireDelete}
+        onWireContextMenu={onWireContextMenu}
+        onWireReconnect={onWireReconnect}
+        onCanvasContextMenu={onCanvasContextMenu}
+        breadcrumbs={breadcrumbs}
+        currentSubPath={currentSubPath}
+        onNavigateBack={onNavigateBack}
+      />
+
+      <WorkflowRightPanels
+        rightPanel={rightPanel}
+        aiOpen={aiOpen}
+        aiLeftWidth={aiLeftWidth}
+        manualRightWidth={manualRightWidth}
+        onStartResizeManualRight={onStartResizeManualRight}
+        onResetManualRightWidth={onResetManualRightWidth}
+        logs={logs}
+        onClearLogs={onClearLogs}
+        onSendLogsToChat={onSendLogsToChat}
+        model={model}
+        errors={errors}
+        selectedNodeId={selectedNodeId}
+        selectedWireIndex={selectedWireIndex}
+        onSetSelectedWireIndex={onSetSelectedWireIndex}
+        onSetRightPanel={onSetRightPanel}
+        onUpdateModel={onUpdateModel}
+        onDeleteNode={onDeleteNode}
+        onStartReconnect={onStartReconnect}
+        showWorkspace={showWorkspace}
+        selectedId={selectedId}
+        workspaceInfo={workspaceInfo}
+        onRefreshWorkspace={onRefreshWorkspace}
+        onCloseWorkspace={onCloseWorkspace}
+        onOpenFile={onOpenFile}
+        onOpenStuard={onOpenStuard}
+      />
+    </>
+  );
+}

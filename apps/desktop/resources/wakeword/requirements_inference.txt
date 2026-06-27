@@ -1,0 +1,5 @@
+# Ultra-lightweight inference dependencies
+# Only ~30-50MB RAM usage
+numpy>=1.20.0
+sounddevice>=0.4.0
+soundfile>=0.10.0

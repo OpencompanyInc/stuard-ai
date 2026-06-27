@@ -1,0 +1,7 @@
+2025-11-23T09:25:15.684073Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop\\tsup.config.bundled_1f3wny313z8.mjs"), AnchoredSystemPathBuf("apps\\desktop")}
+2025-11-23T09:25:15.684167Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-11-23T09:25:16.409369Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\desktop")}
+2025-11-23T09:25:16.409401Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/desktop"), path: AnchoredSystemPathBuf("apps\\desktop") }}))
+2025-11-23T09:25:16.409550Z  WARN turborepo_lib::package_changes_watcher: hashes are the same, no need to rerun
+2025-11-23T09:28:35.979374Z  WARN turborepo_lib::package_changes_watcher: changed_files: {AnchoredSystemPathBuf("apps\\cloud-ai\\src\\agents\\workflow-agent.ts")}
+2025-11-23T09:28:35.979412Z  WARN turborepo_lib::package_changes_watcher: changed_packages: Ok(Some({WorkspacePackage { name: Other("@stuardai/cloud-ai"), path: AnchoredSystemPathBuf("apps\\cloud-ai") }}))

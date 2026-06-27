@@ -1,0 +1,50 @@
+{
+  "id": "flow_clipboard_manager",
+  "name": "Clipboard Manager",
+  "version": "1",
+  "description": "A clipboard history manager with search and quick paste functionality",
+  "triggers": [
+    {
+      "id": "trig_hotkey",
+      "type": "hotkey",
+      "label": "Open Clipboard Manager",
+      "args": { "hotkey": "Ctrl+Shift+V" },
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "clipboard_ui",
+      "tool": "custom_ui",
+      "label": "Clipboard Manager",
+      "args": {
+        "id": "clipboard_manager",
+        "title": "Clipboard Manager",
+        "window": {
+          "width": 400,
+          "height": 500,
+          "position": "center",
+          "borderRadius": 12,
+          "alwaysOnTop": true
+        },
+        "css": ".clip-item { transition: all 0.15s; } .clip-item:hover { background: rgba(99, 102, 241, 0.2) !important; }",
+        "html": "<div class=\"flex flex-col h-screen bg-slate-900\"><div class=\"p-3 border-b border-slate-700\"><input id=\"search\" type=\"text\" placeholder=\"Search clipboard history...\" class=\"w-full bg-slate-800 border-slate-600\" /></div><div id=\"history\" class=\"flex-1 overflow-y-auto p-2 space-y-1\"></div><div class=\"p-2 border-t border-slate-700 flex justify-between items-center\"><span id=\"count\" class=\"text-xs text-slate-500\">0 items</span><button id=\"clear-all\" class=\"text-xs text-red-400 hover:text-red-300\">Clear All</button></div></div>",
+        "script": "const history = JSON.parse(localStorage.getItem('clipHistory') || '[]');\nlet filteredHistory = [...history];\n\nfunction renderHistory() {\n  const container = document.getElementById('history');\n  const search = document.getElementById('search').value.toLowerCase();\n  filteredHistory = history.filter(item => item.text.toLowerCase().includes(search));\n  \n  container.innerHTML = filteredHistory.length === 0 \n    ? '<div class=\"text-center text-slate-500 py-8\">No items</div>'\n    : filteredHistory.map((item, i) => `\n      <div class=\"clip-item p-2 rounded-lg bg-slate-800 cursor-pointer group\" data-index=\"${i}\">\n        <div class=\"text-sm text-slate-200 truncate\">${escapeHtml(item.text.slice(0, 100))}</div>\n        <div class=\"text-xs text-slate-500 mt-1 flex justify-between\">\n          <span>${new Date(item.time).toLocaleTimeString()}</span>\n          <span class=\"opacity-0 group-hover:opacity-100\">Click to paste</span>\n        </div>\n      </div>\n    `).join('');\n  \n  document.getElementById('count').textContent = `${filteredHistory.length} items`;\n}\n\nfunction escapeHtml(text) {\n  const div = document.createElement('div');\n  div.textContent = text;\n  return div.innerHTML;\n}\n\n// Add current clipboard to history\nasync function captureClipboard() {\n  const result = await stuard.callTool('get_clipboard_content');\n  if (result.ok && result.text && result.text.trim()) {\n    const exists = history.find(h => h.text === result.text);\n    if (!exists) {\n      history.unshift({ text: result.text, time: Date.now() });\n      if (history.length > 50) history.pop();\n      localStorage.setItem('clipHistory', JSON.stringify(history));\n      renderHistory();\n    }\n  }\n}\n\n// Click to paste\ndocument.getElementById('history').addEventListener('click', async (e) => {\n  const item = e.target.closest('.clip-item');\n  if (item) {\n    const index = parseInt(item.dataset.index);\n    const text = filteredHistory[index].text;\n    await stuard.copyToClipboard(text);\n    stuard.close({ action: 'paste', text });\n  }\n});\n\n// Search\ndocument.getElementById('search').addEventListener('input', renderHistory);\n\n// Clear all\ndocument.getElementById('clear-all').addEventListener('click', () => {\n  history.length = 0;\n  localStorage.setItem('clipHistory', '[]');\n  renderHistory();\n});\n\n// Focus search on open\ndocument.getElementById('search').focus();\n\n// Escape to close\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'Escape') stuard.close();\n  if (e.key === 'Enter' && filteredHistory.length > 0) {\n    stuard.copyToClipboard(filteredHistory[0].text);\n    stuard.close({ action: 'paste', text: filteredHistory[0].text });\n  }\n});\n\ncaptureClipboard();\nrenderHistory();",
+        "data": {}
+      },
+      "position": { "x": 200, "y": 50 }
+    },
+    {
+      "id": "paste_action",
+      "tool": "send_hotkey",
+      "label": "Paste",
+      "condition": "{{clipboard_ui.action}} == 'paste'",
+      "args": { "keys": ["Control", "v"] },
+      "position": { "x": 350, "y": 50 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_hotkey", "to": "clipboard_ui" },
+    { "from": "clipboard_ui", "to": "paste_action" }
+  ]
+}

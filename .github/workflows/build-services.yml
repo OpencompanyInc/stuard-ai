@@ -1,0 +1,138 @@
+name: Build Service Executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Services to build (space-separated: agent browser mediapipe wakeword)'
+        required: false
+        default: 'agent browser mediapipe wakeword'
+      os:
+        description: 'Target OS'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+        default: 'all'
+  workflow_call:
+    inputs:
+      services:
+        type: string
+        default: 'agent browser wakeword'
+      ref:
+        type: string
+        default: ''
+
+env:
+  REQUESTED_OS: ${{ inputs.os || 'all' }}
+
+jobs:
+  build:
+    name: Services (${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            artifact-suffix: windows
+          # - os: macos-13
+          #   platform: macos
+          #   artifact-suffix: mac-intel
+          #   arch: x64
+          # - os: macos-latest
+          #   platform: macos
+          #   artifact-suffix: mac-silicon
+          #   arch: arm64
+          # - os: ubuntu-latest
+          #   platform: linux
+          #   artifact-suffix: linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check platform filter
+        id: filter
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ env.REQUESTED_OS }}" == "all" || "${{ env.REQUESTED_OS }}" == "${{ matrix.platform }}" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping ${{ matrix.platform }} (requested: ${{ env.REQUESTED_OS }})"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.filter.outputs.run == 'true'
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Linux system deps
+        if: steps.filter.outputs.run == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev libportaudio2
+
+      - name: Set up Python
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'apps/agent/requirements.txt'
+
+      - name: Install Python dependencies
+        if: steps.filter.outputs.run == 'true'
+        working-directory: apps/agent
+        run: |
+          pip install -r requirements.txt
+          pip install mediapipe opencv-python
+
+      - name: Cache PyInstaller builds
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/agent/build
+            ~/.pyinstaller
+          # Pin Python ABI in the cache key — see release.yml for rationale.
+          key: pyinstaller-services-${{ runner.os }}-py3.11-${{ hashFiles('apps/agent/requirements.txt', 'apps/agent/stuard-*.spec') }}
+          restore-keys: |
+            pyinstaller-services-${{ runner.os }}-py3.11-
+
+      - name: Build services
+        if: steps.filter.outputs.run == 'true'
+        working-directory: apps/agent
+        run: |
+          SERVICES="${{ inputs.services || 'agent browser mediapipe' }}"
+          python build-services.py --services $SERVICES
+        shell: bash
+
+      - name: Build file indexer (Rust, branded "Stuard AI")
+        if: steps.filter.outputs.run == 'true'
+        shell: bash
+        run: |
+          cargo build --release --manifest-path apps/agent/native/file-indexer/Cargo.toml
+          mkdir -p dist
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer.exe dist/stuard-file-indexer.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-macos
+          else
+            cp apps/agent/native/file-indexer/target/release/stuard-file-indexer dist/stuard-file-indexer-linux
+          fi
+
+      - name: List outputs
+        if: steps.filter.outputs.run == 'true'
+        run: ls -la dist/stuard-* 2>/dev/null || echo "No binaries found"
+        shell: bash
+
+      - name: Upload artifacts
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: services-${{ matrix.artifact-suffix }}
+          path: dist/stuard-*
+          if-no-files-found: error
+          retention-days: 7

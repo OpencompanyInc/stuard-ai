@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Native Acrylic Test</title>
+    <style>
+      :root { color-scheme: dark; }
+      /* Both html AND body must be transparent or Chromium paints over DWM. */
+      html, body {
+        background: transparent !important;
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        color: rgba(255, 255, 255, 0.92);
+        user-select: none;
+      }
+      body { -webkit-app-region: drag; }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 32px;
+        box-sizing: border-box;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .sub { opacity: 0.75; font-size: 13px; }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        -webkit-app-region: no-drag;
+      }
+      button {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.10);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: inherit;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover { background: rgba(255, 255, 255, 0.16); }
+      button.active { background: rgba(120, 170, 255, 0.30); border-color: rgba(120, 170, 255, 0.55); }
+      .card {
+        margin-top: auto;
+        padding: 16px 18px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        font-size: 12.5px;
+        line-height: 1.5;
+        -webkit-app-region: no-drag;
+      }
+      code { font-family: "Cascadia Mono", Consolas, monospace; opacity: 0.85; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div>
+        <h1>Native Win11 backdrop materials</h1>
+        <div class="sub">Click a material to apply. Move/colorful content behind the window so the blend is obvious.</div>
+      </div>
+      <div class="row" id="materials">
+        <button data-mat="none">none</button>
+        <button data-mat="auto">auto</button>
+        <button data-mat="mica">mica</button>
+        <button data-mat="acrylic" class="active">acrylic</button>
+        <button data-mat="tabbed">tabbed</button>
+      </div>
+      <div class="card">
+        If every option looks the same flat colour, DWM isn't accepting the backdrop — most likely a Windows transparency/effects toggle or a GPU-acceleration issue.
+        If <code>acrylic</code> / <code>mica</code> visibly differ from <code>none</code>, the feature works and we can wire it into the real app.
+      </div>
+    </div>
+    <script>
+      const buttons = document.querySelectorAll("#materials button");
+      buttons.forEach((b) => {
+        b.addEventListener("click", async () => {
+          const mat = b.dataset.mat;
+          await window.testAPI.setMaterial(mat);
+          buttons.forEach((x) => x.classList.toggle("active", x === b));
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,33 @@
+name: Web Research
+version: "0.1"
+description: "Search, read, and summarize with citations"
+mode: hybrid
+inputs:
+  query: string
+policies:
+  risk: low
+  spend_limit: 1.50
+  ask_on: ["external_post", "purchase", "email_send"]
+steps:
+  - id: search
+    uses: tool.web.search
+    with:
+      q: "{{inputs.query}}"
+      topK: 5
+    out:
+      results: $.hits
+  - id: read
+    uses: tool.web.open_and_extract
+    with:
+      urls: "{{steps.search.results[0:3].url}}"
+    out:
+      pages: $
+  - id: summarize
+    uses: agent.summarizer
+    with:
+      content: "{{steps.read.pages}}"
+      style: concise
+    out:
+      summary: $
+outputs:
+  summary: "{{steps.summarize.summary}}"

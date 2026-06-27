@@ -1,0 +1,290 @@
+import { convertLatexDelims, escapeCurrencyDollars } from '../../../../../../utils/text';
+import { GENUI_COMPONENT_MAP } from '../constants';
+import { extractYouTubeVideoId, isImageUrl } from './media';
+import { normalizeMarkdownSpacing } from './markdown';
+import type { ContentSegment } from '../types';
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const AUDIO_EXTS = new Set(['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac', 'opus']);
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'm4v', 'webm']);
+
+function getAttachmentType(src: string): 'image' | 'video' | 'audio' | 'file' {
+  // data: URIs (e.g. TTS audio, generated images) carry their type inline and
+  // usually have no file extension — classify by the data: prefix first.
+  const dataUri = /^data:(image|audio|video)\//i.exec(src.trim());
+  if (dataUri) return dataUri[1].toLowerCase() as 'image' | 'audio' | 'video';
+  const ext = (src.match(/\.([a-zA-Z0-9]+)(?:[?#].*)?$/)?.[1] || '').toLowerCase();
+  if (AUDIO_EXTS.has(ext)) return 'audio';
+  if (VIDEO_EXTS.has(ext)) return 'video';
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  return 'file';
+}
+
+/**
+ * Ranges of the text that live inside fenced code blocks (``` … ```), including
+ * a block still streaming in without its closing fence, or inline code spans
+ * (`…`). URLs, media markers and file paths inside these must stay literal —
+ * turning a `curl -fsSL https://… | bash` install snippet's URL into a
+ * link-preview card shatters the surrounding code block.
+ */
+function findCodeRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  // Opening run of >=3 backticks, lazily up to a matching closing run or the end
+  // of the string (the unterminated case while a response is still streaming).
+  const fenceRe = /(`{3,})[\s\S]*?(?:\1|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(text)) !== null) {
+    ranges.push({ start: m.index, end: m.index + m[0].length });
+    if (fenceRe.lastIndex === m.index) fenceRe.lastIndex++; // never stall on an empty match
+  }
+  // Inline code spans, ignoring backticks that are already inside a fenced block.
+  const inlineRe = /`[^`\n]+`/g;
+  while ((m = inlineRe.exec(text)) !== null) {
+    const start = m.index;
+    const end = m.index + m[0].length;
+    if (!ranges.some((r) => start >= r.start && end <= r.end)) {
+      ranges.push({ start, end });
+    }
+  }
+  return ranges;
+}
+
+export function extractContentSegments(inputText: string): ContentSegment[] {
+  if (!inputText) return [];
+  const result: ContentSegment[] = [];
+
+  // Code-block / inline-code ranges whose contents must not be auto-promoted to
+  // link previews, embeds or media players (they'd break the code rendering).
+  const codeRanges = findCodeRanges(inputText);
+  const overlapsCode = (start: number, end: number) =>
+    codeRanges.some((r) => start < r.end && end > r.start);
+
+  // Regex for genui code blocks: ```genui:component\n{json}\n```
+  const genuiRegex = /```genui:(\w+)\s*\n([\s\S]*?)```/g;
+  const genuiIncompleteRegex = /```genui:(\w+)\s*\n([\s\S]*)$/; // Matches incomplete block at end
+  const mediaRegex = /<<([^<>]+)>>/g;
+  const youtubeRegex = /https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?[^\s]*v=|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})[^\s]*/gi;
+  // Standalone http/https links (not in brackets, not in quotes, bounded by whitespace/newlines)
+  const linkPreviewRegex = /(?:^|\s)(https?:\/\/[^\s]+)(?:$|\s)/g;
+  const rawAudioRegex = /(?:[a-zA-Z]:\\[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac|webm)|(?:\/[^<>:"|?*\n\r]+\.(?:wav|mp3|ogg|m4a|aac|webm)))(?=\s|$)/gi;
+
+  // First pass: extract complete GenUI blocks
+  const genuiMatches: { start: number; end: number; component: string; args: any; id: string; loading?: boolean; title?: string }[] = [];
+  let genuiMatch;
+  let genuiCounter = 0;
+  while ((genuiMatch = genuiRegex.exec(inputText)) !== null) {
+    const componentName = genuiMatch[1].toLowerCase();
+    const jsonContent = genuiMatch[2].trim();
+    let args = {};
+    try {
+      args = JSON.parse(jsonContent);
+    } catch (e) {
+      console.warn('[GenUI] Failed to parse JSON for', componentName, ':', e);
+      continue;
+    }
+    const toolName = GENUI_COMPONENT_MAP[componentName] || componentName;
+    genuiMatches.push({
+      start: genuiMatch.index,
+      end: genuiMatch.index + genuiMatch[0].length,
+      component: toolName,
+      args,
+      id: `genui-${genuiMatch.index}-${genuiCounter++}`,
+    });
+  }
+
+  // Check for incomplete GenUI block at the end (streaming)
+  const incompleteMatch = inputText.match(genuiIncompleteRegex);
+  if (incompleteMatch) {
+    const incompleteStart = inputText.lastIndexOf('```genui:');
+    const alreadyMatched = genuiMatches.some(m => m.start === incompleteStart);
+    if (!alreadyMatched && incompleteStart >= 0) {
+      const componentName = incompleteMatch[1].toLowerCase();
+      const toolName = GENUI_COMPONENT_MAP[componentName] || componentName;
+      let title: string | undefined;
+      try {
+        const partialJson = incompleteMatch[2];
+        const titleMatch = partialJson.match(/"title"\s*:\s*"([^"]+)"/);
+        if (titleMatch) title = titleMatch[1];
+      } catch { }
+      genuiMatches.push({
+        start: incompleteStart,
+        end: inputText.length,
+        component: toolName,
+        args: {},
+        id: `genui-loading-${incompleteStart}`,
+        loading: true,
+        title,
+      });
+    }
+  }
+
+  const youtubeMatches: { start: number; end: number; videoId: string; url: string }[] = [];
+  let ytMatch;
+  while ((ytMatch = youtubeRegex.exec(inputText)) !== null) {
+    const videoId = extractYouTubeVideoId(ytMatch[0]);
+    if (videoId) {
+      youtubeMatches.push({
+        start: ytMatch.index,
+        end: ytMatch.index + ytMatch[0].length,
+        videoId,
+        url: ytMatch[0],
+      });
+    }
+  }
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const processTextChunk = (chunk: string) => {
+    if (!chunk) return;
+    // While streaming, hide a trailing incomplete <<media marker so users don't
+    // briefly see raw "<<" or ">>" before the closing delimiter arrives.
+    let sanitized = chunk.replace(/<<[^>\n]*$/, '');
+    let t = sanitized
+      .replace(/==([\s\S]*?)==/g, '[$1](#highlight)')
+      .replace(/\+\+([\s\S]*?)\+\+/g, '[$1](#underline)');
+    t = normalizeMarkdownSpacing(convertLatexDelims(escapeCurrencyDollars(t)));
+    if (!t.trim()) return;
+    result.push({ kind: 'text', value: t });
+  };
+
+  const allMatches: Array<{ type: 'image' | 'video' | 'audio' | 'file' | 'youtube' | 'link_preview' | 'genui' | 'genui_loading' | 'report_button'; start: number; end: number; data: any }> = [];
+
+  // Add GenUI matches first (highest priority)
+  for (const g of genuiMatches) {
+    if (g.loading) {
+      allMatches.push({
+        type: 'genui_loading',
+        start: g.start,
+        end: g.end,
+        data: { component: g.component, title: g.title },
+      });
+    } else {
+      allMatches.push({
+        type: 'genui',
+        start: g.start,
+        end: g.end,
+        data: { component: g.component, args: g.args, id: g.id },
+      });
+    }
+  }
+
+  while ((match = mediaRegex.exec(inputText)) !== null) {
+    const src = String(match[1] || '').trim();
+    // <<report>> or <<report: Title>> — the research-mode "open the full report"
+    // affordance. Renders an inline button instead of a media attachment.
+    const reportMatch = src.match(/^report\s*(?::\s*(.+))?$/i);
+    if (reportMatch) {
+      allMatches.push({
+        type: 'report_button',
+        start: match.index,
+        end: match.index + match[0].length,
+        data: { title: reportMatch[1]?.trim() || undefined },
+      });
+      continue;
+    }
+    allMatches.push({
+      type: getAttachmentType(src),
+      start: match.index,
+      end: match.index + match[0].length,
+      data: { src },
+    });
+  }
+
+  while ((match = rawAudioRegex.exec(inputText)) !== null) {
+    const src = match[0].trim();
+    const overlap = allMatches.some(
+      (m) =>
+        (match!.index >= m.start && match!.index < m.end) ||
+        (match!.index + src.length > m.start && match!.index + src.length <= m.end)
+    );
+
+    if (!overlap && !overlapsCode(match.index, match.index + src.length)) {
+      allMatches.push({
+        type: 'audio',
+        start: match.index,
+        end: match.index + src.length,
+        data: { src },
+      });
+    }
+  }
+
+  for (const yt of youtubeMatches) {
+    const insideMedia = allMatches.some((m) => yt.start >= m.start && yt.end <= m.end);
+    if (!insideMedia && !overlapsCode(yt.start, yt.end)) {
+      allMatches.push({
+        type: 'youtube',
+        start: yt.start,
+        end: yt.end,
+        data: { videoId: yt.videoId, url: yt.url },
+      });
+    }
+  }
+
+  while ((match = linkPreviewRegex.exec(inputText)) !== null) {
+    const raw = String(match[1] || '').trim();
+    if (!raw) continue;
+    const urlStart = match.index + match[0].indexOf(raw);
+    const urlEnd = urlStart + raw.length;
+    // A URL inside a code block / inline code (e.g. `curl -fsSL https://… | bash`)
+    // stays literal text instead of becoming a card that splits the block apart.
+    if (overlapsCode(urlStart, urlEnd)) continue;
+    const overlap = allMatches.some(
+      (m) =>
+        (urlStart >= m.start && urlStart < m.end) ||
+        (urlEnd > m.start && urlEnd <= m.end) ||
+        (urlStart <= m.start && urlEnd >= m.end)
+    );
+    if (!overlap) {
+      if (isImageUrl(raw)) {
+        allMatches.push({
+          type: 'image',
+          start: urlStart,
+          end: urlEnd,
+          data: { src: raw },
+        });
+      } else {
+        allMatches.push({
+          type: 'link_preview',
+          start: urlStart,
+          end: urlEnd,
+          data: { url: raw },
+        });
+      }
+    }
+  }
+
+  allMatches.sort((a, b) => a.start - b.start);
+
+  for (const m of allMatches) {
+    if (m.start > lastIndex) {
+      processTextChunk(inputText.slice(lastIndex, m.start));
+    }
+    if (m.type === 'genui') {
+      result.push({ kind: 'genui', component: m.data.component, args: m.data.args, id: m.data.id });
+    } else if (m.type === 'genui_loading') {
+      result.push({ kind: 'genui_loading', component: m.data.component, title: m.data.title });
+    } else if (m.type === 'image' && m.data.src) {
+      result.push({ kind: 'image', src: m.data.src });
+    } else if (m.type === 'video' && m.data.src) {
+      result.push({ kind: 'video', src: m.data.src });
+    } else if (m.type === 'audio' && m.data.src) {
+      result.push({ kind: 'audio', src: m.data.src });
+    } else if (m.type === 'file' && m.data.src) {
+      result.push({ kind: 'file', src: m.data.src });
+    } else if (m.type === 'youtube') {
+      result.push({ kind: 'youtube', videoId: m.data.videoId, url: m.data.url });
+    } else if (m.type === 'link_preview') {
+      result.push({ kind: 'link_preview', url: m.data.url });
+    } else if (m.type === 'report_button') {
+      result.push({ kind: 'report_button', title: m.data.title });
+    }
+    lastIndex = m.end;
+  }
+
+  if (lastIndex < inputText.length) {
+    processTextChunk(inputText.slice(lastIndex));
+  }
+
+  return result;
+}

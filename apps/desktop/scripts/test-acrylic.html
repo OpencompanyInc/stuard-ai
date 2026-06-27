@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: 'Segoe UI', sans-serif;
+    color: white;
+  }
+  /* The captured screen, positioned so that the pixels behind our window
+     align under our body. Blur + saturation gives the frosted-glass look. */
+  #backdrop {
+    position: fixed;
+    pointer-events: none;
+    object-fit: cover;
+    filter: blur(40px) saturate(1.6) brightness(0.85);
+    transform: scale(1.08);            /* hides the bluring edge halo */
+    transform-origin: top left;
+  }
+  .pill {
+    position: absolute;
+    left: 20px; top: 20px; right: 20px; bottom: 20px;
+    border-radius: 16px;
+    background: rgba(23, 23, 23, 0.35);
+    border: 0.4px solid rgba(255, 56, 60, 0.9);
+    box-shadow: 0 0 20px rgba(255, 56, 60, 0.25);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    -webkit-app-region: drag;
+    backdrop-filter: blur(2px);        /* tiny extra blur on top of the captured backdrop */
+  }
+  #err {
+    position: absolute; left: 8px; bottom: 8px;
+    color: #ff8888; font-size: 11px;
+    -webkit-app-region: no-drag;
+  }
+</style>
+</head>
+<body>
+  <video id="backdrop" autoplay muted playsinline></video>
+  <div class="pill" id="pill">Fake acrylic — drag over colorful content</div>
+  <div id="err"></div>
+
+<script>
+  const { ipcRenderer } = require('electron');
+  const video = document.getElementById('backdrop');
+  const errEl = document.getElementById('err');
+
+  function logErr(msg) {
+    console.error(msg);
+    errEl.textContent = String(msg);
+  }
+
+  async function init() {
+    try {
+      const [sourceId, display] = await Promise.all([
+        ipcRenderer.invoke('get-screen-source'),
+        ipcRenderer.invoke('get-display-info'),
+      ]);
+      if (!sourceId) throw new Error('No screen source available');
+
+      // Size the video to the FULL screen so we can offset it under our window.
+      video.style.width = display.width + 'px';
+      video.style.height = display.height + 'px';
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: sourceId,
+            maxWidth: display.width,
+            maxHeight: display.height,
+            maxFrameRate: 30,
+          },
+        },
+      });
+      video.srcObject = stream;
+      await video.play();
+      console.log('Backdrop stream live');
+    } catch (e) {
+      logErr(e.message || e);
+    }
+  }
+
+  ipcRenderer.on('window-bounds', (_e, b) => {
+    // Negative offset = shift the full-screen image so the part behind our
+    // window aligns at (0,0) of our window's client area.
+    video.style.left = `-${b.x}px`;
+    video.style.top = `-${b.y}px`;
+  });
+
+  init();
+</script>
+</body>
+</html>

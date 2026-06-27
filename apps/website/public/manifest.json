@@ -1,0 +1,19 @@
+{
+  "name": "Stuard — The AI workspace for your PC",
+  "short_name": "Stuard",
+  "description": "Stuard turns your PC into an AI workspace — chat, workflows, mini-apps, and agents, all local-first.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#1a237e",
+  "categories": ["productivity", "utilities", "business"],
+  "icons": [
+    {
+      "src": "/stuard-mark.png",
+      "sizes": "512x512 192x192 180x180 96x96 64x64 32x32 16x16",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+} 

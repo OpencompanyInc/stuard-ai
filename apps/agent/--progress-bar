@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+    <title> download </title>
+	<meta name="keywords" content="">
+	<meta name="author" content="Helios Software Solutions">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="google-site-verification" content="nLerutcY5lC3-v0vCF7Hz_MqucF5tRe0vHfnoRlhoR4" />
+	<link rel="canonical" href="https://www.textpad.com/file" />
+	<link rel="icon" type="image/svg+xml" sizes="any" href="/img/icons/favicon.svg">
+	<link rel="alternate icon" href="/favicon.ico">
+	<link rel="stylesheet" type="text/css" href="/style/base.css">
+	</head>
+
+<html>
+<body>
+<div class="pagebody">
+
+<div class="banner">
+	<div>
+		<a href="home" aria-hidden="true" tabindex="-1"><img alt="TextPad - the text editor for Windows" src="/img/toolbar/textpad-logo.svg" style="width:180px;height:54px;"></a>
+	</div>
+	<div style="text-align: center">
+		
+		<div class="dropdown">
+			<button class="dropbtn" role="language selection" aria-hidden="true" tabindex="-1">&equiv; English</button>
+			<div class="dropdown-content">
+															<a href="/lang?locale=en&url=file">English</a>
+																				<a href="/lang?locale=de&url=file">Deutsch</a>
+																				<a href="/lang?locale=fr&url=file">Français</a>
+																				<a href="/lang?locale=pt&url=file">Português</a>
+																				<a href="/lang?locale=ja&url=file">日本語</a>
+												</div>
+		</div>
+	</div>
+	<div>
+		<img src="/img/badges/helios.svg" alt="Helios Software Solutions" style="width:132px;height:26px;float:right;padding:16px 8px">
+	</div>
+</div>
+
+<div>
+	<ul class="mainmenu" role="list" aria-label="Main Navigation">
+	<li><a href="../home"><img alt="Home" src="/img/icons/homepage.png"></a></li><li><a href="../news">News</a></li><li><a href="../products">Products</a></li><li><a href="../download">Download</a></li><li><a href="../buy">Buy</a></li><li><a href="../forum">Forums</a></li><li><a href="../help">Help</a></li><li><a href="../contact">Contact</a></li>	</ul>
+</div>
+
+<!-- ============================ Page contents ================================ -->
+<div class="content">
+
+
+<div class="pagebody">
+<div class="indent">
+
+	
+	<form action="https://www.textpad.com/validatedownloader"
+				onsubmit="document.getElementById('submit').disabled = true;">
+		<input type="hidden" name="_token" value="filarGTtHRdkjJtqh23wftZvqkhIMhRzDvHKJUQA" autocomplete="off">					<input type="hidden" name="start" value="1777858342">
+					<input type="hidden" name="filename" value="v9/TextPadSetupV9-x64.exe">
+					<input type="hidden" name="hashval" value="9B851EBC14588625C3B86D569EE2F14E75AAA5D6D51BD80DBADF0EC70D438D35">
+		
+		<div>
+	<p class="norobot">Checking that you are not a robot wasting Internet bandwidth.</p>
+	<input type="hidden" name="promptword" value="Neon">
+	<input type="hidden" name="wordhash" value="959F87A55D4386A30DBAC6565F617AEC0B65ABE541F5E9BE4A9D8F787DC96D07">
+	<label for="Neon">Type this word without its vowels: Neon</label>&nbsp;
+	<input type="text" id="Neon" name="Neon" size="25" required autocomplete="off" autofocus>
+	<p>(Example: for &quot;TextPad&quot; type &quot;TxtPd&quot;)</p>
+</div>
+
+		<div class="center">
+			<input type="submit" class="button" id="submit" value="Verify" formmethod="post">
+		</div>
+	</form>
+
+</div><!-- indent -->
+</div>
+
+</div> <!-- content -->
+</div> <!-- pagebody -->
+
+
+</body>
+</html>

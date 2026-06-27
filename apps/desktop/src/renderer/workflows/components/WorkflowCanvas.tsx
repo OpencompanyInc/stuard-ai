@@ -1,0 +1,1114 @@
+/**
+ * WorkflowCanvas - The visual canvas for rendering workflow nodes and wires
+ */
+import React, { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { MousePointer2, ZoomIn, ZoomOut, Maximize2, Trash2, LayoutGrid } from "lucide-react";
+import { DiscoverTips } from "./DiscoverTips";
+import { WorkflowNode } from "./WorkflowNodeCard";
+import { WorkflowMinimap } from "./WorkflowMinimap";
+import { WorkflowGroupBox } from "./WorkflowGroupBox";
+import { buildGroupRender, resolveEndpoint } from "../utils/groupGeometry";
+import { useWorkflowGroupsContext } from "../WorkflowGroupsContext";
+import type { DesignerModel, DesignerWire } from "../types";
+import type { StepExecutionStatus } from "./WorkflowNodeCard";
+import type { AlignmentGuide } from "../utils/alignment";
+import { isBackEdge as isBackEdgeCycle, isContinueInLoopWire, WIRE_COLOR_LOOP_BACK, WIRE_COLOR_LOOP_CONFIG, WIRE_COLOR_LOOP_CONTINUE, WIRE_COLOR_LOOP_EXIT } from "../utils/graphUtils";
+import { guardToShortLabel, guardExtractComparison } from "../builder/guards";
+
+// Back edge (cycle) detection is in ../utils/graphUtils.ts
+
+interface ExecutionState {
+  flowId: string;
+  isRunning: boolean;
+  stepStates: Record<string, StepExecutionStatus>;
+  activeWireFrom?: string;
+  activeWireTo?: string;
+  activeStreams?: Set<string>; // Set of "sourceId->consumerId" keys for active stream wires
+}
+
+interface WorkflowCanvasProps {
+  model: DesignerModel;
+  selectedId: string;
+  selectedNodeId: string;
+  selectedNodeIds: Set<string>;
+  connectingFrom: string;
+  reconnecting?: { wireIndex: number; end: 'from' | 'to' } | null;
+  executionState: ExecutionState | null;
+  size: { w: number; h: number };
+  canvasRef: React.RefObject<HTMLDivElement>;
+  alignmentGuides?: AlignmentGuide[];
+  zoom?: number;
+  selectedWireIndex?: number | null;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomReset?: () => void;
+  onZoomFit?: () => void;
+  bindWheelTarget?: (el: HTMLDivElement | null) => () => void;
+  onAutoOrganize?: () => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onMouseMove?: (e: React.MouseEvent) => void;
+  onMouseUp?: () => void;
+  onMouseLeave?: () => void;
+  onCanvasClick?: () => void;
+  onNodeSelect?: (id: string, e?: React.MouseEvent) => void;
+  onNodeMouseDown?: (id: string, e: React.MouseEvent) => void;
+  onNodeContextMenu?: (id: string, e: React.MouseEvent) => void;
+  onNodeConnect?: (id: string) => void;
+  onWireSelect?: (index: number) => void;
+  onWireDelete?: (index: number) => void;
+  onWireContextMenu?: (index: number, e: React.MouseEvent) => void;
+  onWireReconnect?: (index: number, end: 'from' | 'to') => void;
+  onCanvasContextMenu?: (e: React.MouseEvent) => void;
+  connectingStreamFrom?: string;
+  onNodeStreamConnect?: (id: string) => void;
+  // Marquee selection
+  selectionBox?: { startX: number; startY: number; endX: number; endY: number } | null;
+  onCanvasMouseDown?: (e: React.MouseEvent) => void;
+}
+
+export function WorkflowCanvas({
+  model, selectedId, selectedNodeId, selectedNodeIds, connectingFrom, reconnecting, executionState, size,
+  canvasRef, alignmentGuides = [], zoom = 1, selectedWireIndex, onZoomIn, onZoomOut, onZoomReset, onZoomFit, bindWheelTarget, onAutoOrganize,
+  onDragOver, onDrop, onMouseMove, onMouseUp, onMouseLeave, onCanvasClick,
+  onNodeSelect, onNodeMouseDown, onNodeContextMenu, onNodeConnect, onWireSelect, onWireDelete, onWireContextMenu, onWireReconnect, onCanvasContextMenu,
+  connectingStreamFrom, onNodeStreamConnect,
+  selectionBox, onCanvasMouseDown
+}: WorkflowCanvasProps) {
+  const [hoveredWireIndex, setHoveredWireIndex] = useState<number | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+
+  const safeWires: DesignerWire[] = Array.isArray((model as any)?.wires) ? ((model as any).wires as DesignerWire[]) : [];
+
+  // Editor-only visual groups (sidecar — never part of the model/AI).
+  const groupsCtx = useWorkflowGroupsContext();
+  const groups = groupsCtx?.groups ?? [];
+  const groupRender = useMemo(() => buildGroupRender(groups, model), [groups, model]);
+  const nodesById = useMemo(() => {
+    const m = new Map<string, { id: string; position: { x: number; y: number } }>();
+    for (const tr of model.triggers) m.set(tr.id, tr);
+    for (const nd of model.nodes) m.set(nd.id, nd);
+    return m;
+  }, [model]);
+
+  // Compute which nodes have stream wires connected (for showing stream ports)
+  const streamPortInfo = useMemo(() => {
+    const hasStreamOut = new Set<string>();
+    const hasStreamIn = new Set<string>();
+    for (const w of safeWires) {
+      if ((w as any).stream) {
+        hasStreamOut.add(w.from);
+        hasStreamIn.add(w.to);
+      }
+    }
+    return { hasStreamOut, hasStreamIn };
+  }, [safeWires]);
+
+  // Detect sibling guard display mode per source node
+  const guardDisplayMode = useMemo(() => {
+    const srcCmps = new Map<string, Array<{ left: string; op: string; right: string }>>();
+    for (const w of safeWires) {
+      const cmp = guardExtractComparison(w.guard);
+      if (!cmp) continue;
+      if (!srcCmps.has(w.from)) srcCmps.set(w.from, []);
+      srcCmps.get(w.from)!.push(cmp);
+    }
+    const rightOnly = new Set<string>();
+    const booleanPair = new Set<string>();
+    for (const [src, cmps] of srcCmps) {
+      const lefts = new Set(cmps.map(c => c.left));
+      if (lefts.size !== 1) continue;
+      // Two wires, same left + same right, == vs != → boolean pair
+      if (cmps.length === 2) {
+        const [a, b] = cmps;
+        if (a.right === b.right &&
+          ((a.op === '==' && b.op === '!=') || (a.op === '!=' && b.op === '=='))) {
+          booleanPair.add(src);
+          continue;
+        }
+      }
+      rightOnly.add(src);
+    }
+    return { rightOnly, booleanPair };
+  }, [safeWires]);
+
+  const GRID_STEP = 24;
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  const transformContentRef = useRef<HTMLDivElement>(null);
+
+  const applyZoomDom = useCallback(
+    (z: number) => {
+      const wrapper = scrollContentRef.current;
+      const inner = transformContentRef.current;
+      if (wrapper) {
+        wrapper.style.width = `${size.w * z}px`;
+        wrapper.style.height = `${size.h * z}px`;
+      }
+      if (inner) {
+        inner.style.transform = `scale(${z})`;
+      }
+    },
+    [size.w, size.h],
+  );
+
+  useLayoutEffect(() => {
+    applyZoomDom(zoom);
+  }, [zoom, applyZoomDom]);
+
+  const syncGridDom = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    el.style.backgroundPosition = `${-(el.scrollLeft % GRID_STEP)}px ${-(el.scrollTop % GRID_STEP)}px`;
+  }, [canvasRef]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    syncGridDom();
+    el.addEventListener("scroll", syncGridDom, { passive: true });
+    window.addEventListener("resize", syncGridDom);
+    return () => {
+      el.removeEventListener("scroll", syncGridDom);
+      window.removeEventListener("resize", syncGridDom);
+    };
+  }, [canvasRef, syncGridDom]);
+
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+
+  const mergedCanvasRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      (canvasRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      setCanvasEl(node);
+    },
+    [canvasRef],
+  );
+
+  useLayoutEffect(() => {
+    if (!canvasEl || !bindWheelTarget) return;
+    return bindWheelTarget(canvasEl);
+  }, [canvasEl, bindWheelTarget]);
+
+  return (
+    <div className="w-full h-full relative overflow-hidden wf-bg-canvas" data-onboarding="workflow-canvas">
+      {/* Scrollable canvas area — dot grid tiles infinitely across the viewport */}
+      <div
+        ref={mergedCanvasRef}
+        className="absolute inset-0 overflow-auto scrollbar-minimal wf-dot-grid"
+        style={{
+          cursor: 'default',
+          backgroundSize: `${GRID_STEP}px ${GRID_STEP}px`,
+        }}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onMouseMove={(e) => {
+          if (connectingStreamFrom) {
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (rect) {
+              const cx = (e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0)) / zoom;
+              const cy = (e.clientY - rect.top + (canvasRef.current?.scrollTop || 0)) / zoom;
+              setMousePos({ x: cx, y: cy });
+            }
+          }
+          onMouseMove?.(e);
+        }}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        onClick={onCanvasClick}
+        onContextMenu={onCanvasContextMenu}
+        onMouseDown={(e) => {
+          // Prevent browser auto-scroll on middle click
+          if (e.button === 1) e.preventDefault();
+          if ((e.button === 0 || e.button === 1) && onCanvasMouseDown) {
+            onCanvasMouseDown(e);
+          }
+        }}
+      >
+        {/* Scrollable content wrapper */}
+        <div ref={scrollContentRef} data-wf-scroll-content style={{ position: 'relative' }}>
+        {/* Scaled Content Container — size/transform applied via ref to survive pinch without React re-renders */}
+        <div
+          ref={transformContentRef}
+          data-wf-transform-content
+          className="absolute top-0 left-0 origin-top-left wf-canvas-content"
+          style={{
+            transformOrigin: 'top left',
+            width: size.w,
+            height: size.h,
+          }}
+        >
+          {/* Expanded group frames — drawn behind wires + nodes */}
+          {groupRender.expandedFrames.map(({ group, box }) => {
+            const selected = group.memberIds.length > 0 && group.memberIds.every(id => selectedNodeIds.has(id));
+            return (
+            <WorkflowGroupBox
+              key={group.id}
+              group={group}
+              box={box}
+              variant="frame"
+              memberCount={groupRender.memberCountByGroupId.get(group.id) || group.memberIds.length}
+              zoom={zoom}
+              selected={selected}
+              onSelect={() => groupsCtx?.selectGroup(group)}
+              onToggleCollapse={() => groupsCtx?.toggleCollapsed(group.id)}
+              onRename={(name) => groupsCtx?.renameGroup(group.id, name)}
+              onUngroup={() => groupsCtx?.ungroup(group.id)}
+              onMoveBy={(dx, dy) => groupsCtx?.moveGroupBy(group.id, dx, dy)}
+            />
+            );
+          })}
+
+          <svg className="absolute inset-0 pointer-events-none overflow-visible" width={size.w} height={size.h}>
+            {/* Wire animation defs */}
+            <defs>
+              <marker id="ah" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="var(--wf-wire-default)" />
+              </marker>
+              <marker id="ah-active" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="#6366f1" />
+              </marker>
+              <marker id="ah-completed" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="#10b981" />
+              </marker>
+              <marker id="ah-selected" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="#ef4444" />
+              </marker>
+              <marker id="ah-loop" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_BACK} />
+              </marker>
+              <marker id="ah-loop-config" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_CONFIG} />
+              </marker>
+              <marker id="ah-loop-continue" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_CONTINUE} />
+              </marker>
+              <marker id="ah-loop-break" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill={WIRE_COLOR_LOOP_EXIT} />
+              </marker>
+              <marker id="ah-stream" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="#06b6d4" />
+              </marker>
+              <marker id="ah-callnode" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0,0 L6,2 L0,4" fill="#14b8a6" />
+              </marker>
+
+              {/* Animated Gradients */}
+              <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#6366f1" stopOpacity="0.2">
+                  <animate attributeName="stop-opacity" values="0.2;1;0.2" dur="2s" repeatCount="indefinite" />
+                </stop>
+                <stop offset="50%" stopColor="#818cf8">
+                  <animate attributeName="offset" values="0;1" dur="1s" repeatCount="indefinite" />
+                </stop>
+                <stop offset="100%" stopColor="#6366f1" stopOpacity="0.2" />
+              </linearGradient>
+              {/* Stream wire animated gradient - only animate when active via CSS */}
+              <linearGradient id="stream-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.3" />
+                <stop offset="50%" stopColor="#22d3ee" />
+                <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.3" />
+              </linearGradient>
+            </defs>
+
+            {(() => {
+
+              // Compute which nodes are part of an active streaming pipeline.
+              // Walk forward from stream consumer nodes through flow wires so
+              // downstream wires (e.g. mediapipe → custom_ui) also get the
+              // stream animation when data is flowing.
+              const streamingPipelineNodes = new Set<string>();
+              if (executionState?.activeStreams?.size) {
+                // Seed with consumer nodes of active streams
+                for (const key of executionState.activeStreams) {
+                  const arrow = key.indexOf('->');
+                  if (arrow > 0) {
+                    streamingPipelineNodes.add(key.slice(arrow + 2));
+                  }
+                }
+                // BFS forward through flow wires
+                const queue = [...streamingPipelineNodes];
+                while (queue.length > 0) {
+                  const nodeId = queue.shift()!;
+                  for (const wire of safeWires) {
+                    if (wire.from === nodeId && !(wire as any).stream && !streamingPipelineNodes.has(wire.to)) {
+                      streamingPipelineNodes.add(wire.to);
+                      queue.push(wire.to);
+                    }
+                  }
+                }
+              }
+
+              // Loop scope detection uses upstream open-loop counting (see graphUtils).
+              // The old cycle-path BFS missed the common pattern where `.loop` sits on
+              // the entry wire and the true back-edge is a separate wire (e.g. c→b).
+
+              return safeWires.map((w, i) => {
+                // Group-aware endpoints: hide wires fully internal to a collapsed
+                // group; re-route wires crossing a collapsed boundary to the tile.
+                const gFrom = groupRender.collapsedGroupByMember.get(w.from);
+                const gTo = groupRender.collapsedGroupByMember.get(w.to);
+                if (gFrom && gTo && gFrom.id === gTo.id) return null;
+                const f = resolveEndpoint(w.from, nodesById, groupRender);
+                const t = resolveEndpoint(w.to, nodesById, groupRender);
+                if (!f || !t) return null;
+
+                const isStreamWire = !!(w as any).stream;
+                const isCallNodeWire = !!(w as any).callNode;
+
+                // Detect if this wire creates an actual cycle (x→y→...→x)
+                const isBackEdge = isBackEdgeCycle(w.from, w.to, safeWires);
+
+                let x1: number, y1: number, x2: number, y2: number;
+                let pathD: string;
+                let midX: number;
+                let midY: number;
+                let guardLabelX: number = 0;
+                let guardLabelY: number = 0;
+
+                if (isStreamWire) {
+                  // Stream wire: U-shape orthogonal routing
+                  // Both source and target connect from the SAME side (bottom or top)
+                  // with the turn point beyond both nodes — clean U or inverted-U shape
+                  const nodeW = 256;
+                  const nodeH = 80;
+                  const fCx = f.position.x + nodeW / 2;
+                  const fCy = f.position.y + nodeH / 2;
+                  const tCx = t.position.x + nodeW / 2;
+                  const tCy = t.position.y + nodeH / 2;
+                  const targetBelow = tCy >= fCy;
+                  const dirX = tCx >= fCx ? 1 : -1; // horizontal direction toward target
+
+                  x1 = fCx;
+                  x2 = tCx;
+
+                  const cr = 12; // corner radius
+                  const arm = 40; // how far the orthogonal arm extends beyond the outermost node
+
+                  if (targetBelow) {
+                    // U-shape below: both ports at bottom, turn below both
+                    y1 = f.position.y + nodeH; // source bottom
+                    y2 = t.position.y + nodeH; // target bottom
+                    const turnY = Math.max(y1, y2) + arm;
+                    pathD = `M ${x1} ${y1} ` +
+                      `L ${x1} ${turnY - cr} ` +
+                      `Q ${x1} ${turnY} ${x1 + dirX * cr} ${turnY} ` +
+                      `L ${x2 - dirX * cr} ${turnY} ` +
+                      `Q ${x2} ${turnY} ${x2} ${turnY - cr} ` +
+                      `L ${x2} ${y2}`;
+                    midX = (x1 + x2) / 2;
+                    midY = turnY;
+                  } else {
+                    // Inverted U-shape above: both ports at top, turn above both
+                    y1 = f.position.y; // source top
+                    y2 = t.position.y; // target top
+                    const turnY = Math.min(y1, y2) - arm;
+                    pathD = `M ${x1} ${y1} ` +
+                      `L ${x1} ${turnY + cr} ` +
+                      `Q ${x1} ${turnY} ${x1 + dirX * cr} ${turnY} ` +
+                      `L ${x2 - dirX * cr} ${turnY} ` +
+                      `Q ${x2} ${turnY} ${x2} ${turnY + cr} ` +
+                      `L ${x2} ${y2}`;
+                    midX = (x1 + x2) / 2;
+                    midY = turnY;
+                  }
+                } else if (isBackEdge) {
+                  // Normal wires: center-right → center-left
+                  x1 = f.position.x + 256;
+                  y1 = f.position.y + 40;
+                  x2 = t.position.x;
+                  y2 = t.position.y + 40;
+
+                  // Loop-back wire: goes right, up, left (over nodes), then down to target
+                  const loopOffset = 60;
+                  const rightExtend = 40;
+                  const cornerRadius = 12;
+                  // Find the minimum Y of all nodes whose X center falls within the loop wire's horizontal span
+                  // so the overhead wire clears them all, not just source/target
+                  const allItems = [...model.triggers, ...model.nodes];
+                  const loopLeftX = Math.min(t.position.x, f.position.x);
+                  const loopRightX = Math.max(f.position.x + 256, t.position.x + 256);
+                  let minYBetween = Math.min(f.position.y, t.position.y);
+                  for (const item of allItems) {
+                    const ix = item.position.x;
+                    const iy = item.position.y;
+                    // Check if node is horizontally within the loop wire span
+                    if (ix + 256 > loopLeftX && ix < loopRightX) {
+                      minYBetween = Math.min(minYBetween, iy);
+                    }
+                  }
+                  const topY = minYBetween - loopOffset;
+                  const rightX = x1 + rightExtend;
+                  const leftX = x2 - rightExtend;
+
+                  pathD = `M ${x1} ${y1} ` +
+                    `L ${rightX - cornerRadius} ${y1} ` +
+                    `Q ${rightX} ${y1} ${rightX} ${y1 - cornerRadius} ` +
+                    `L ${rightX} ${topY + cornerRadius} ` +
+                    `Q ${rightX} ${topY} ${rightX - cornerRadius} ${topY} ` +
+                    `L ${leftX + cornerRadius} ${topY} ` +
+                    `Q ${leftX} ${topY} ${leftX} ${topY + cornerRadius} ` +
+                    `L ${leftX} ${y2 - cornerRadius} ` +
+                    `Q ${leftX} ${y2} ${leftX + cornerRadius} ${y2} ` +
+                    `L ${x2} ${y2}`;
+                  midX = (rightX + leftX) / 2;
+                  midY = topY;
+                  // Guard label on the right vertical segment, offset outward
+                  guardLabelX = rightX + 14;
+                  guardLabelY = y1 + (topY - y1) * 0.35;
+                } else {
+                  // Normal forward wire: center-right → center-left, Cubic Bezier
+                  x1 = f.position.x + 256;
+                  y1 = f.position.y + 40;
+                  x2 = t.position.x;
+                  y2 = t.position.y + 40;
+
+                  const dist = Math.abs(x2 - x1);
+                  const cp1x = x1 + Math.max(dist * 0.5, 50);
+                  const cp1y = y1;
+                  const cp2x = x2 - Math.max(dist * 0.5, 50);
+                  const cp2y = y2;
+
+                  pathD = `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
+
+                  const midT = 0.5;
+                  midX = Math.pow(1 - midT, 3) * x1 + 3 * Math.pow(1 - midT, 2) * midT * cp1x + 3 * (1 - midT) * Math.pow(midT, 2) * cp2x + Math.pow(midT, 3) * x2;
+                  midY = Math.pow(1 - midT, 3) * y1 + 3 * Math.pow(1 - midT, 2) * midT * cp1y + 3 * (1 - midT) * Math.pow(midT, 2) * cp2y + Math.pow(midT, 3) * y2;
+
+                  // Guard label: position at ~35% along the Bezier, offset perpendicular to tangent
+                  const glt = 0.35;
+                  const glx = Math.pow(1 - glt, 3) * x1 + 3 * Math.pow(1 - glt, 2) * glt * cp1x + 3 * (1 - glt) * Math.pow(glt, 2) * cp2x + Math.pow(glt, 3) * x2;
+                  const gly = Math.pow(1 - glt, 3) * y1 + 3 * Math.pow(1 - glt, 2) * glt * cp1y + 3 * (1 - glt) * Math.pow(glt, 2) * cp2y + Math.pow(glt, 3) * y2;
+                  // Tangent at glt
+                  const tdx = 3 * Math.pow(1 - glt, 2) * (cp1x - x1) + 6 * (1 - glt) * glt * (cp2x - cp1x) + 3 * Math.pow(glt, 2) * (x2 - cp2x);
+                  const tdy = 3 * Math.pow(1 - glt, 2) * (cp1y - y1) + 6 * (1 - glt) * glt * (cp2y - cp1y) + 3 * Math.pow(glt, 2) * (y2 - cp2y);
+                  const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+                  // Perpendicular offset (always pick the "upward" normal)
+                  let px = -tdy / tlen;
+                  let py = tdx / tlen;
+                  if (py > 0) { px = -px; py = -py; }
+                  guardLabelX = glx + px * 14;
+                  guardLabelY = gly + py * 14;
+                }
+
+                const isActiveWire = executionState?.flowId === selectedId &&
+                  executionState?.activeWireFrom === w.from &&
+                  executionState?.activeWireTo === w.to;
+
+                const sourceStatus = executionState?.stepStates[w.from];
+                const targetStatus = executionState?.stepStates[w.to];
+                const isCompletedWire = sourceStatus === 'completed' && (targetStatus === 'completed' || targetStatus === 'running');
+                const isSelected = selectedWireIndex === i;
+                const isHovered = hoveredWireIndex === i;
+                const isReconnecting = reconnecting?.wireIndex === i;
+
+                // Check if this wire has a loop configuration
+                const hasLoop = !!(w as any).loop;
+                const loopType = (w as any).loop?.type;
+                const hasLoopBreak = !!(w as any).loopBreak;
+                // Check if this wire is a stream wire
+                // (computed earlier for path endpoints)
+
+                // Check if this stream wire is currently active (flowing data)
+                const isStreamActive = isStreamWire && executionState?.flowId === selectedId &&
+                  executionState?.activeStreams?.has(`${w.from}->${w.to}`);
+
+                // Check if this flow wire is part of an active streaming pipeline
+                // (downstream of a stream consumer that is currently receiving chunks)
+                const isInStreamPipeline = !isStreamWire && streamingPipelineNodes.has(w.from) && streamingPipelineNodes.has(w.to);
+
+                // Check if this wire continues inside an open loop scope
+                const isInsideLoop = isContinueInLoopWire(w, safeWires, isBackEdge);
+
+                // Compute guard label for conditional wires
+                const guardLabel = !isStreamWire && !isCallNodeWire
+                  ? guardToShortLabel(w.guard, guardDisplayMode.rightOnly.has(w.from), guardDisplayMode.booleanPair.has(w.from))
+                  : null;
+
+                // Special colors for back edges, loop wires, loop breaks, stream wires, and callNode wires
+                // Rose = continues in loop, Amber = back-edge, Slate = loopBreak exit, Purple = loop entry
+                const wireColor = isReconnecting ? WIRE_COLOR_LOOP_BACK
+                  : isSelected ? '#ef4444'
+                    : isActiveWire ? '#6366f1'
+                      : isCompletedWire ? '#10b981'
+                        : isHovered ? 'var(--wf-wire-icon-border)'
+                          : isCallNodeWire ? '#14b8a6'
+                            : isStreamWire ? '#06b6d4'
+                              : isInStreamPipeline ? '#06b6d4'
+                                : isInsideLoop ? WIRE_COLOR_LOOP_CONTINUE
+                                  : hasLoop ? WIRE_COLOR_LOOP_CONFIG
+                                    : isBackEdge ? WIRE_COLOR_LOOP_BACK
+                                      : hasLoopBreak ? WIRE_COLOR_LOOP_EXIT
+                                        : 'var(--wf-wire-default)';
+
+                const markerEnd = isReconnecting ? 'url(#ah-loop)'
+                  : isSelected ? 'url(#ah-selected)'
+                    : isActiveWire ? 'url(#ah-active)'
+                      : isCompletedWire ? 'url(#ah-completed)'
+                        : isCallNodeWire ? 'url(#ah-callnode)'
+                          : isStreamWire ? 'url(#ah-stream)'
+                            : isInStreamPipeline ? 'url(#ah-stream)'
+                              : isInsideLoop ? 'url(#ah-loop-continue)'
+                                : hasLoop ? 'url(#ah-loop-config)'
+                                  : isBackEdge ? 'url(#ah-loop)'
+                                    : hasLoopBreak ? 'url(#ah-loop-break)'
+                                      : 'url(#ah)';
+
+                return (
+                  <g key={i}>
+                    {/* Invisible wider path for easier clicking */}
+                    <path
+                      d={pathD}
+                      stroke="transparent"
+                      strokeWidth="20"
+                      fill="none"
+                      className="cursor-pointer"
+                      style={{ pointerEvents: 'stroke' }}
+                      onMouseEnter={() => setHoveredWireIndex(i)}
+                      onMouseLeave={() => setHoveredWireIndex(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onWireSelect?.(i);
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onWireContextMenu?.(i, e as any);
+                      }}
+                    />
+
+                    {/* Main wire path */}
+                    <path
+                      d={pathD}
+                      stroke={(isStreamWire || isInStreamPipeline) && !isSelected ? '#06b6d4' : wireColor}
+                      strokeWidth={isReconnecting ? 3 : isSelected ? 3 : isActiveWire ? 3 : isStreamActive ? 3 : isInStreamPipeline ? 2.5 : isStreamWire ? 2.5 : isHovered ? 2.5 : 2}
+                      strokeDasharray={isReconnecting ? '8 4' : isCallNodeWire ? '4 3' : (isStreamWire || isInStreamPipeline) ? '6 4' : undefined}
+                      fill="none"
+                      markerEnd={markerEnd}
+                      className={`transition-all duration-200 ${isActiveWire ? 'drop-shadow-md' : ''} ${isSelected ? 'drop-shadow-md' : ''} ${isReconnecting ? 'drop-shadow-md animate-pulse' : ''} ${(isStreamActive || isInStreamPipeline) ? 'drop-shadow-md stream-wire-active' : isStreamWire ? 'drop-shadow-sm' : ''} ${isBackEdge ? 'stroke-dasharray-none' : ''}`}
+                      style={{ pointerEvents: 'none', ...((isStreamActive || isInStreamPipeline) ? { animation: 'streamFlow 1.5s linear infinite', filter: 'drop-shadow(0 0 4px rgba(6,182,212,0.6))' } : {}) }}
+                    />
+
+                    {/* Loop indicator icon for configured loops */}
+                    {hasLoop && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_CONFIG} strokeWidth="1.5" className="drop-shadow-sm" />
+                        {loopType === 'forEach' && (
+                          // List icon for forEach
+                          <g transform="translate(-5, -5)" stroke={WIRE_COLOR_LOOP_CONFIG} strokeWidth="1.5" fill="none">
+                            <line x1="2" y1="3" x2="8" y2="3" />
+                            <line x1="2" y1="6" x2="8" y2="6" />
+                            <line x1="2" y1="9" x2="8" y2="9" />
+                          </g>
+                        )}
+                        {loopType === 'repeat' && (
+                          // Repeat icon
+                          <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="bold" fill={WIRE_COLOR_LOOP_CONFIG}>
+                            {(w as any).loop?.count || 'N'}
+                          </text>
+                        )}
+                        {loopType === 'while' && (
+                          // While loop icon (circular arrow)
+                          <path
+                            d="M-4 0 A4 4 0 1 1 4 0 M4 0 L2 -2 M4 0 L2 2"
+                            fill="none"
+                            stroke={WIRE_COLOR_LOOP_CONFIG}
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
+                        )}
+                      </g>
+                    )}
+
+                    {/* Loop-break indicator: this wire EXITS the loop scope (runs once after all iterations) */}
+                    {hasLoopBreak && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_EXIT} strokeWidth="1.5" className="drop-shadow-sm" />
+                        {/* exit-loop glyph (LogOut-style: a box with an arrow leaving it) */}
+                        <g transform="translate(-5, -5)" stroke={WIRE_COLOR_LOOP_EXIT} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 1 H2 a1 1 0 0 0 -1 1 V8 a1 1 0 0 0 1 1 H4" />
+                          <path d="M6.5 5 H10.5" />
+                          <path d="M8.5 3 L10.5 5 L8.5 7" />
+                        </g>
+                      </g>
+                    )}
+
+                    {/* Loop indicator icon for back edges (no explicit config) */}
+                    {isBackEdge && !hasLoop && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="8" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" className="drop-shadow-sm" />
+                        <path
+                          d="M-3 0 A3 3 0 1 1 3 0 M3 0 L1 -2 M3 0 L1 2"
+                          fill="none"
+                          stroke={WIRE_COLOR_LOOP_BACK}
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                      </g>
+                    )}
+
+                    {/* Continue in loop — forward chevrons inside a dashed orbit (distinct from back-edge arrow) */}
+                    {isInsideLoop && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke={WIRE_COLOR_LOOP_CONTINUE} strokeWidth="1.5" className="drop-shadow-sm" />
+                        <circle
+                          r="6.5"
+                          fill="none"
+                          stroke={WIRE_COLOR_LOOP_CONTINUE}
+                          strokeWidth="1"
+                          strokeDasharray="2.5 2"
+                          opacity="0.55"
+                        />
+                        <g fill={WIRE_COLOR_LOOP_CONTINUE} stroke="none">
+                          <path d="M-3.5 -2.5 L-0.5 0 L-3.5 2.5 Z" />
+                          <path d="M-0.5 -2.5 L2.5 0 L-0.5 2.5 Z" />
+                        </g>
+                      </g>
+                    )}
+
+                    {/* Stream wire indicator icon (cyan radio/signal icon) */}
+                    {isStreamWire && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#06b6d4" strokeWidth="1.5" className="drop-shadow-sm" />
+                        {/* Radio/signal icon - concentric arcs */}
+                        <g stroke="#06b6d4" strokeWidth="1.5" fill="none" strokeLinecap="round">
+                          <circle cx="0" cy="0" r="2" fill="#06b6d4" />
+                          <path d="M-4 -3 A5 5 0 0 1 -4 3" />
+                          <path d="M4 -3 A5 5 0 0 0 4 3" />
+                        </g>
+                      </g>
+                    )}
+
+                    {/* callNode wire indicator icon (teal plug/socket icon) */}
+                    {isCallNodeWire && !isSelected && !isHovered && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <circle r="10" fill="var(--wf-wire-icon-bg)" stroke="#14b8a6" strokeWidth="1.5" className="drop-shadow-sm" />
+                        {/* Plug icon — vertical prong with socket arc */}
+                        <g stroke="#14b8a6" strokeWidth="1.5" fill="none" strokeLinecap="round">
+                          <line x1="-2" y1="-5" x2="-2" y2="0" />
+                          <line x1="2" y1="-5" x2="2" y2="0" />
+                          <path d="M-4 0 A4 4 0 0 0 4 0" />
+                          <line x1="0" y1="4" x2="0" y2="6" />
+                        </g>
+                      </g>
+                    )}
+
+                    {/* Guard condition label — True/False or compact expression */}
+                    {guardLabel && !isSelected && !isReconnecting && (() => {
+                      const pillW = Math.max(guardLabel.text.length * 6 + 14, 34);
+                      return (
+                        <g
+                          transform={`translate(${guardLabelX}, ${guardLabelY})`}
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          <rect
+                            x={-pillW / 2}
+                            y={-9}
+                            width={pillW}
+                            height={18}
+                            rx={9}
+                            fill={guardLabel.positive ? '#064e3b' : '#450a0a'}
+                            stroke={guardLabel.positive ? '#10b981' : '#ef4444'}
+                            strokeWidth={1}
+                            className="drop-shadow-sm"
+                          />
+                          <text
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fontSize="9"
+                            fontWeight="600"
+                            fontFamily="system-ui, -apple-system, sans-serif"
+                            fill={guardLabel.positive ? '#6ee7b7' : '#fca5a5'}
+                          >
+                            {guardLabel.text}
+                          </text>
+                        </g>
+                      );
+                    })()}
+
+                    {/* Active particle animation */}
+                    {isActiveWire && (
+                      <circle r="4" fill="#6366f1" className="drop-shadow-lg">
+                        <animateMotion
+                          dur={isBackEdge ? "1.5s" : "1s"}
+                          repeatCount="indefinite"
+                          path={pathD}
+                          keyPoints="0;1"
+                          keyTimes="0;1"
+                          calcMode="spline"
+                          keySplines="0.4 0 0.2 1"
+                        />
+                      </circle>
+                    )}
+
+                    {/* Delete button on hover/select */}
+                    {(isSelected || isHovered) && onWireDelete && !isReconnecting && (
+                      <g
+                        transform={`translate(${midX}, ${midY})`}
+                        className="cursor-pointer"
+                        style={{ pointerEvents: 'all' }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onWireDelete(i);
+                        }}
+                      >
+                        {/* Invisible larger hit area */}
+                        <circle r="18" fill="transparent" />
+                        {/* Visible button */}
+                        <circle
+                          r="12"
+                          fill={isSelected ? 'var(--wf-wire-handle-bg)' : 'var(--wf-wire-icon-bg)'}
+                          stroke={isSelected ? '#ef4444' : 'var(--wf-wire-icon-border)'}
+                          strokeWidth="2"
+                          className="drop-shadow-md transition-all"
+                        />
+                        <g stroke={isSelected ? '#ef4444' : 'var(--wf-wire-icon-fg)'} strokeWidth="2" strokeLinecap="round" className="transition-colors">
+                          <line x1="-4" y1="-4" x2="4" y2="4" />
+                          <line x1="4" y1="-4" x2="-4" y2="4" />
+                        </g>
+                      </g>
+                    )}
+
+                    {/* Disconnect handles at endpoints when wire is selected */}
+                    {isSelected && onWireReconnect && !isReconnecting && (
+                      <>
+                        {/* Source endpoint disconnect handle */}
+                        <g
+                          transform={`translate(${x1}, ${y1})`}
+                          className="cursor-pointer"
+                          style={{ pointerEvents: 'all' }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onWireReconnect(i, 'from');
+                          }}
+                        >
+                          <circle r="14" fill="transparent" />
+                          <circle
+                            r="10"
+                            fill="var(--wf-wire-handle-bg)"
+                            stroke={WIRE_COLOR_LOOP_BACK}
+                            strokeWidth="2"
+                            className="drop-shadow-md transition-all"
+                          />
+                          <g stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" strokeLinecap="round" fill="none">
+                            <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
+                          </g>
+                        </g>
+
+                        {/* Target endpoint disconnect handle */}
+                        <g
+                          transform={`translate(${x2}, ${y2})`}
+                          className="cursor-pointer"
+                          style={{ pointerEvents: 'all' }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onWireReconnect(i, 'to');
+                          }}
+                        >
+                          <circle r="14" fill="transparent" />
+                          <circle
+                            r="10"
+                            fill="var(--wf-wire-handle-bg)"
+                            stroke={WIRE_COLOR_LOOP_BACK}
+                            strokeWidth="2"
+                            className="drop-shadow-md transition-all"
+                          />
+                          <g stroke={WIRE_COLOR_LOOP_BACK} strokeWidth="1.5" strokeLinecap="round" fill="none">
+                            <path d="M-3,-3 L3,3 M-1,-4 L-4,-1 M1,4 L4,1" />
+                          </g>
+                        </g>
+                      </>
+                    )}
+                  </g>
+                );
+              })
+            })()}
+
+            {/* Connection Line Preview */}
+            {connectingFrom && (
+              (() => {
+                const all = [...model.triggers, ...model.nodes];
+                const source = all.find(n => n.id === connectingFrom);
+                if (source) {
+                  return null;
+                }
+              })()
+            )}
+
+            {/* Stream connection preview — U-shape orthogonal routing */}
+            {connectingStreamFrom && mousePos && (
+              (() => {
+                const all = [...model.triggers, ...model.nodes];
+                const source = all.find(n => n.id === connectingStreamFrom);
+                if (!source) return null;
+                const nodeW = 256;
+                const nodeH = 80;
+                const sCx = source.position.x + nodeW / 2;
+                const sCy = source.position.y + nodeH / 2;
+                const mouseBelow = mousePos.y >= sCy;
+                const sx = sCx;
+                const sy = mouseBelow ? (source.position.y + nodeH) : source.position.y;
+                const ex = mousePos.x;
+                const cr = 12;
+                const arm = 40;
+                const dirX = ex >= sx ? 1 : -1;
+                // U-shape: turn beyond both source port and mouse Y
+                const turnY = mouseBelow
+                  ? Math.max(sy, mousePos.y) + arm
+                  : Math.min(sy, mousePos.y) - arm;
+                const vertDir = mouseBelow ? -1 : 1; // cr direction for first vertical
+                const d = `M ${sx} ${sy} ` +
+                  `L ${sx} ${turnY + vertDir * cr} ` +
+                  `Q ${sx} ${turnY} ${sx + dirX * cr} ${turnY} ` +
+                  `L ${ex - dirX * cr} ${turnY} ` +
+                  `Q ${ex} ${turnY} ${ex} ${turnY + vertDir * cr} ` +
+                  `L ${ex} ${mousePos.y}`;
+                return (
+                  <path
+                    d={d}
+                    stroke="url(#stream-gradient)"
+                    strokeWidth={2.5}
+                    strokeDasharray="6 4"
+                    fill="none"
+                    markerEnd="url(#ah-stream)"
+                    className="drop-shadow-sm"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                );
+              })()
+            )}
+
+            {/* Alignment Guides */}
+            {alignmentGuides.map((guide, i) => (
+              <line
+                key={`alignment-guide-${i}`}
+                x1={guide.type === 'vertical' ? guide.position : guide.start}
+                y1={guide.type === 'horizontal' ? guide.position : guide.start}
+                x2={guide.type === 'vertical' ? guide.position : guide.end}
+                y2={guide.type === 'horizontal' ? guide.position : guide.end}
+                stroke="#6366f1"
+                strokeWidth="1"
+                strokeDasharray="4 2"
+                className="pointer-events-none"
+              />
+            ))}
+          </svg>
+
+          {/* Render trigger nodes */}
+          {model.triggers.map(n => {
+            if (groupRender.hiddenNodeIds.has(n.id)) return null;
+            // Check if this node is a valid reconnect target
+            const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
+            const isReconnectTarget = reconnecting && wire && (
+              (reconnecting.end === 'from' && n.id !== wire.to) ||
+              (reconnecting.end === 'to' && n.id !== wire.from)
+            );
+
+            return (
+              <WorkflowNode
+                key={n.id}
+                node={n}
+                isTrigger
+                selected={selectedNodeId === n.id}
+                multiSelected={selectedNodeIds.has(n.id)}
+                connecting={connectingFrom === n.id}
+                reconnectTarget={isReconnectTarget}
+                executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+                hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
+                hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
+                connectingStreamFrom={connectingStreamFrom}
+                onSelect={(e) => onNodeSelect?.(n.id, e)}
+                onMouseDown={e => onNodeMouseDown?.(n.id, e)}
+                onContextMenu={e => onNodeContextMenu?.(n.id, e)}
+                onConnect={() => onNodeConnect?.(n.id)}
+                onStreamConnect={() => onNodeStreamConnect?.(n.id)}
+              />
+            );
+          })}
+
+          {/* Render step nodes */}
+          {model.nodes.map(n => {
+            if (groupRender.hiddenNodeIds.has(n.id)) return null;
+            // Check if this node is a valid reconnect target
+            const wire = reconnecting ? model.wires[reconnecting.wireIndex] : null;
+            const isReconnectTarget = reconnecting && wire && (
+              (reconnecting.end === 'from' && n.id !== wire.to) ||
+              (reconnecting.end === 'to' && n.id !== wire.from)
+            );
+
+            return (
+              <WorkflowNode
+                key={n.id}
+                node={n}
+                selected={selectedNodeId === n.id}
+                multiSelected={selectedNodeIds.has(n.id)}
+                connecting={connectingFrom === n.id}
+                reconnectTarget={isReconnectTarget}
+                executionStatus={executionState?.flowId === selectedId ? executionState.stepStates[n.id] : undefined}
+                hasStreamOut={model.wires?.some(w => w.from === n.id && !!(w as any).stream)}
+                hasStreamIn={model.wires?.some(w => w.to === n.id && !!(w as any).stream)}
+                connectingStreamFrom={connectingStreamFrom}
+                onSelect={(e) => onNodeSelect?.(n.id, e)}
+                onMouseDown={e => onNodeMouseDown?.(n.id, e)}
+                onContextMenu={e => onNodeContextMenu?.(n.id, e)}
+                onConnect={() => onNodeConnect?.(n.id)}
+                onStreamConnect={() => onNodeStreamConnect?.(n.id)}
+              />
+            );
+          })}
+
+          {/* Collapsed group tiles — stand in for hidden members */}
+          {groupRender.collapsedTiles.map(({ group, box }) => {
+            const selected = group.memberIds.length > 0 && group.memberIds.every(id => selectedNodeIds.has(id));
+            return (
+              <WorkflowGroupBox
+                key={group.id}
+                group={group}
+                box={box}
+                variant="collapsed"
+                memberCount={groupRender.memberCountByGroupId.get(group.id) || group.memberIds.length}
+                zoom={zoom}
+                selected={selected}
+                onSelect={() => groupsCtx?.selectGroup(group)}
+                onToggleCollapse={() => groupsCtx?.toggleCollapsed(group.id)}
+                onRename={(name) => groupsCtx?.renameGroup(group.id, name)}
+                onUngroup={() => groupsCtx?.ungroup(group.id)}
+                onMoveBy={(dx, dy) => groupsCtx?.moveGroupBy(group.id, dx, dy)}
+              />
+            );
+          })}
+
+          {/* Marquee Selection Rectangle */}
+          {selectionBox && (() => {
+            const x = Math.min(selectionBox.startX, selectionBox.endX);
+            const y = Math.min(selectionBox.startY, selectionBox.endY);
+            const w = Math.abs(selectionBox.endX - selectionBox.startX);
+            const h = Math.abs(selectionBox.endY - selectionBox.startY);
+            return (
+              <div
+                className="absolute pointer-events-none border-2 border-blue-400/60 bg-blue-400/10 rounded-sm z-50"
+                style={{ left: x, top: y, width: w, height: h }}
+              />
+            );
+          })()}
+
+          {/* Empty State */}
+          {model.triggers.length === 0 && model.nodes.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center max-w-md px-4">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 wf-surface-muted">
+                  <MousePointer2 className="w-6 h-6 wf-fg-muted" />
+                </div>
+                <h3 className="text-lg font-semibold wf-fg">Start building</h3>
+                <p className="text-sm wf-fg-muted mt-1 max-w-xs mx-auto mb-4">
+                  Drag tools from the palette or ask the AI to design a workflow for you.
+                </p>
+                <div className="pointer-events-auto">
+                  <DiscoverTips
+                    compact
+                    title="Discover workflows"
+                    className="text-left"
+                    tips={[
+                      {
+                        id: "canvas-ai",
+                        title: "Use AI when you know the goal, not the wiring",
+                        description: "Ask for the result you want, then fine-tune the generated workflow visually.",
+                      },
+                      {
+                        id: "canvas-ui",
+                        title: "Custom UI can turn a workflow into a mini tool",
+                        description: "Forms and status views help workflows feel interactive instead of hidden in the background.",
+                      },
+                      {
+                        id: "canvas-start",
+                        title: "Start with one useful action, then expand",
+                        description: "The best workflows usually begin with a single repeated task and grow from there.",
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        </div>
+      </div>
+
+      {/* Zoom Controls - non-scrolling overlay */}
+      <div className="absolute bottom-6 left-6 z-50 flex items-center rounded-2xl shadow-lg p-1 transition-all wf-overlay-chip">
+        {onAutoOrganize && (
+          <>
+            <button
+              onClick={onAutoOrganize}
+              className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
+              title="Auto-organize layout"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <div className="w-px h-4 mx-1 wf-overlay-divider" />
+          </>
+        )}
+        <button
+          onClick={onZoomFit ?? onZoomReset}
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
+          title="Fit workflow to view"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onZoomOut}
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
+          title="Zoom out (Ctrl + scroll or pinch)"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onZoomReset}
+          className="px-1.5 py-1 rounded-xl transition-colors text-[11px] font-bold min-w-[2.5rem] tabular-nums wf-overlay-btn"
+          title="Reset zoom to 100%"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          onClick={onZoomIn}
+          className="p-1.5 rounded-xl transition-colors wf-overlay-btn"
+          title="Zoom in (Ctrl + scroll or pinch)"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Minimap - non-scrolling navigation overlay (only once there's something to map) */}
+      {(model.triggers.length > 0 || model.nodes.length > 0) && (
+        <WorkflowMinimap model={model} size={size} zoom={zoom} canvasRef={canvasRef} />
+      )}
+
+      {connectingFrom && (
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none wf-overlay-chip-strong">
+          <div className="w-2 h-2 bg-indigo-400 rounded-full animate-pulse" />
+          Select a target node to connect
+        </div>
+      )}
+
+      {/* Reconnecting mode indicator */}
+      {reconnecting && (
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-amber-600 text-amber-50 text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 flex items-center gap-2 pointer-events-none">
+          <div className="w-2 h-2 bg-amber-300 rounded-full animate-pulse" />
+          Click a node to reconnect the {reconnecting.end === 'from' ? 'source' : 'target'} • Press Esc to cancel
+        </div>
+      )}
+
+      {/* Execution overlay indicator */}
+      {executionState?.flowId === selectedId && executionState.isRunning && (
+        <div className="absolute top-6 right-6 border border-emerald-500/30 text-emerald-500 text-xs font-medium px-4 py-2 rounded-full flex items-center gap-2 shadow-lg z-50 pointer-events-none wf-overlay-chip">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          Running Workflow...
+        </div>
+      )}
+    </div>
+  );
+}

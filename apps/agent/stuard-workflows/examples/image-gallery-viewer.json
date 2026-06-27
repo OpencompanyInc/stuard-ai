@@ -1,0 +1,41 @@
+{
+  "id": "flow_image_gallery",
+  "name": "Quick Image Gallery",
+  "version": "1",
+  "description": "Browse and preview images from a folder with keyboard navigation",
+  "triggers": [
+    {
+      "id": "trig_manual",
+      "type": "manual",
+      "label": "Open Gallery",
+      "args": {},
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "gallery_ui",
+      "tool": "custom_ui",
+      "label": "Image Gallery",
+      "args": {
+        "id": "image_gallery",
+        "title": "Image Gallery",
+        "window": {
+          "width": 800,
+          "height": 600,
+          "position": "center",
+          "borderRadius": 12,
+          "alwaysOnTop": false
+        },
+        "css": ".thumbnail { transition: all 0.2s; border: 2px solid transparent; } .thumbnail:hover { border-color: #6366f1; } .thumbnail.active { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.3); }",
+        "html": "<div class=\"flex h-screen bg-slate-900\"><div class=\"w-48 border-r border-slate-700 flex flex-col\"><div class=\"p-2 border-b border-slate-700\"><button id=\"pick-folder\" class=\"btn btn-primary w-full text-sm\">Open Folder</button></div><div id=\"thumbnails\" class=\"flex-1 overflow-y-auto p-2 space-y-2\"></div><div class=\"p-2 border-t border-slate-700 text-xs text-slate-500\"><span id=\"image-count\">0 images</span></div></div><div class=\"flex-1 flex flex-col\"><div class=\"flex-1 flex items-center justify-center bg-slate-950 p-4\"><img id=\"preview\" class=\"max-w-full max-h-full object-contain hidden\" /><div id=\"placeholder\" class=\"text-slate-600 text-center\"><div class=\"text-4xl mb-2\">🖼️</div><div>Select a folder to browse images</div><div class=\"text-sm mt-2\">Use ← → or click thumbnails</div></div></div><div class=\"p-3 border-t border-slate-700 flex justify-between items-center\"><div class=\"text-sm text-slate-400\"><span id=\"filename\">No image selected</span></div><div class=\"flex gap-2\"><button id=\"prev\" class=\"btn btn-secondary text-sm\" disabled>← Prev</button><button id=\"next\" class=\"btn btn-secondary text-sm\" disabled>Next →</button></div></div></div></div>",
+        "script": "let images = [];\nlet currentIndex = -1;\n\nconst thumbnails = document.getElementById('thumbnails');\nconst preview = document.getElementById('preview');\nconst placeholder = document.getElementById('placeholder');\nconst filename = document.getElementById('filename');\nconst imageCount = document.getElementById('image-count');\nconst prevBtn = document.getElementById('prev');\nconst nextBtn = document.getElementById('next');\n\nconst imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];\n\nasync function loadFolder() {\n  const result = await stuard.pickFolder({ title: 'Select Image Folder' });\n  if (result.canceled || !result.filePaths[0]) return;\n  \n  const folderPath = result.filePaths[0];\n  \n  // Use list_directory tool to get files\n  const listResult = await stuard.callTool('list_directory', { path: folderPath });\n  \n  if (!listResult.ok) {\n    stuard.notify('Error', 'Failed to read folder');\n    return;\n  }\n  \n  // Filter for images\n  images = (listResult.entries || [])\n    .filter(entry => !entry.isDirectory && imageExtensions.some(ext => entry.name.toLowerCase().endsWith(ext)))\n    .map(entry => ({ name: entry.name, path: entry.path }));\n  \n  imageCount.textContent = `${images.length} images`;\n  \n  // Render thumbnails\n  thumbnails.innerHTML = images.map((img, i) => `\n    <div class=\"thumbnail rounded-lg overflow-hidden cursor-pointer bg-slate-800 aspect-square flex items-center justify-center\" data-index=\"${i}\">\n      <img src=\"local-file://${img.path.replace(/\\\\/g, '/')}\" class=\"w-full h-full object-cover\" onerror=\"this.parentElement.innerHTML='<span class=\\'text-2xl\\'>🖼️</span>'\" />\n    </div>\n  `).join('');\n  \n  if (images.length > 0) {\n    selectImage(0);\n  }\n}\n\nfunction selectImage(index) {\n  if (index < 0 || index >= images.length) return;\n  \n  currentIndex = index;\n  const img = images[index];\n  \n  // Update preview\n  preview.src = `local-file://${img.path.replace(/\\\\/g, '/')}`;\n  preview.classList.remove('hidden');\n  placeholder.classList.add('hidden');\n  filename.textContent = img.name;\n  \n  // Update thumbnails\n  document.querySelectorAll('.thumbnail').forEach((el, i) => {\n    el.classList.toggle('active', i === index);\n  });\n  \n  // Update buttons\n  prevBtn.disabled = index === 0;\n  nextBtn.disabled = index === images.length - 1;\n  \n  // Scroll thumbnail into view\n  const thumb = thumbnails.children[index];\n  if (thumb) thumb.scrollIntoView({ block: 'nearest' });\n}\n\n// Event listeners\ndocument.getElementById('pick-folder').addEventListener('click', loadFolder);\n\nthumbnails.addEventListener('click', (e) => {\n  const thumb = e.target.closest('.thumbnail');\n  if (thumb) selectImage(parseInt(thumb.dataset.index));\n});\n\nprevBtn.addEventListener('click', () => selectImage(currentIndex - 1));\nnextBtn.addEventListener('click', () => selectImage(currentIndex + 1));\n\n// Keyboard navigation\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'ArrowLeft') selectImage(currentIndex - 1);\n  if (e.key === 'ArrowRight') selectImage(currentIndex + 1);\n  if (e.key === 'Escape') stuard.close();\n  if (e.key === 'Home') selectImage(0);\n  if (e.key === 'End') selectImage(images.length - 1);\n});",
+        "data": {}
+      },
+      "position": { "x": 200, "y": 50 }
+    }
+  ],
+  "wires": [
+    { "from": "trig_manual", "to": "gallery_ui" }
+  ]
+}

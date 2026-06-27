@@ -1,0 +1,39 @@
+{
+  "id": "flow_ka3kby7p",
+  "name": "Dinosaur Game",
+  "version": "1",
+  "triggers": [
+    {
+      "id": "trig_0",
+      "type": "manual",
+      "label": "Play Game",
+      "args": {},
+      "position": { "x": 50, "y": 50 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "dino_ui",
+      "tool": "custom_ui",
+      "label": "Dino Game",
+      "args": {
+        "id": "dino_game",
+        "title": "Dinosaur Game",
+        "html": "<div>Chrome Dino Game HTML here...</div>",
+        "data": {},
+        "window": {
+          "width": 900,
+          "height": 300
+        }
+      },
+      "position": { "x": 200, "y": 50 }
+    }
+  ],
+  "wires": [
+    {
+      "from": "trig_0",
+      "to": "dino_ui"
+    }
+  ]
+}
+
